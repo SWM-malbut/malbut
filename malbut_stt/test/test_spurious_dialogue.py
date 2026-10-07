@@ -20,7 +20,7 @@ def dialogue():
     def create(*, awake=True, text='감사합니다.', aec=True):
         run = SimpleNamespace(
             now=0.0, transcripts=[], statuses=[], controls=[], interruptions=[],
-            calls=[], reports=[], endpoint_chimes=[], wake_chimes=[],
+            calls=[], reports=[], endpoint_chimes=[], wake_chimes=[], failure_chimes=[],
         )
 
         def transcribe(kind, pcm, rate):
@@ -43,6 +43,7 @@ def dialogue():
             publish_input_status=lambda *args: run.statuses.append(args),
             on_endpoint=lambda: run.endpoint_chimes.append('endpoint'),
             on_wake=lambda: run.wake_chimes.append('wake'),
+            on_failure=lambda: run.failure_chimes.append('failure'),
             report=run.reports.append, clock=lambda: run.now, input_has_aec=aec,
         )
         pipelines.append(pipeline)
@@ -89,7 +90,7 @@ def test_isolated_vad_blips_never_reach_asr_or_create_dialogue_events(dialogue, 
 
     assert run.calls == []
     assert run.transcripts == run.statuses == run.controls == run.interruptions == []
-    assert run.endpoint_chimes == run.wake_chimes == []
+    assert run.endpoint_chimes == run.wake_chimes == run.failure_chimes == []
     assert run.pipeline.session.active is awake
     assert run.pipeline.session.utterance_id is None
     assert run.pipeline.jobs.empty() and run.pipeline.results.empty()
@@ -113,6 +114,7 @@ def test_short_confirmation_survives_the_default_onset_guard(dialogue):
     assert VOICE * 4 in run.calls[0][1]
     assert run.statuses == [('fall-confirmation', uid, 'started')]
     assert run.endpoint_chimes == ['endpoint']
+    assert run.failure_chimes == []
 
 
 def test_separate_real_identical_utterances_are_each_accepted(dialogue):

@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Optional, Sequence
 
 from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
-from malbut_stt.chime import play_endpoint_chime, play_wake_chime
+from malbut_stt.chime import play_endpoint_chime, play_failure_chime, play_wake_chime
 from malbut_stt.dialogue_pipeline import DialoguePipeline
 from malbut_stt.transcription import LocalWhisperTranscriber
 
@@ -335,7 +335,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 'transcription_failed', 'empty_transcript', 'utterance_discarded',
                 'addressee_unknown', 'audio_queue_overflow', 'barge_in_requires_aec',
                 'speech_discarded', 'wake_chime_unavailable', 'wake_chime_failed',
-                'endpoint_chime_failed',
+                'endpoint_chime_failed', 'failure_chime_failed',
             )):
                 node.get_logger().warning(event)
             else:
@@ -359,6 +359,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             report=report,
             on_wake=lambda: play_wake_chime(wake_chime_device_index),
             on_endpoint=lambda: play_endpoint_chime(wake_chime_device_index),
+            on_failure=lambda: play_failure_chime(wake_chime_device_index),
             settings=settings,
             input_has_aec=input_has_aec,
             # A shorter explicit fallback keeps its existing behavior without predecode.

@@ -214,6 +214,7 @@ def runtime(monkeypatch, tmp_path):
             state.pipeline_args['report']('barge_in_requires_aec')
             state.pipeline_args['on_wake']()
             state.pipeline_args['on_endpoint']()
+            state.pipeline_args['on_failure']()
 
         def on_playback_status(self, pid, status, *, interim=False, request_id=''):
             if status == 'invalid':
@@ -306,6 +307,9 @@ def runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(
         'malbut_stt.node.play_endpoint_chime',
         lambda device: state.calls.setdefault('endpoint_chimes', []).append(device))
+    monkeypatch.setattr(
+        'malbut_stt.node.play_failure_chime',
+        lambda device: state.calls.setdefault('failure_chimes', []).append(device))
     monkeypatch.setattr('malbut_stt.node.LocalWhisperTranscriber', create_transcriber)
     monkeypatch.setattr(
         'malbut_stt.cpp_transcription.CppWhisperTranscriber', create_cpp_transcriber)
@@ -392,6 +396,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert ('warning', 'barge_in_requires_aec') in runtime.logs
     assert runtime.calls['chimes'] == [-1]
     assert runtime.calls['endpoint_chimes'] == [-1]
+    assert runtime.calls['failure_chimes'] == [-1]
     assert runtime.closed == ['pipeline', 'node', 'ros']
     assert [topic for topic, _ in runtime.published] == ['/malbut/speech/transcript']
     assert [vars(msg) for _, msg in runtime.published] == [
@@ -564,12 +569,13 @@ def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
     robot_node = {'__name__': 'robot_stt_node', '__file__': str(path)}
     exec(compile(path.read_text(), str(path), 'exec'), robot_node)
     for name in ('DialoguePipeline', 'LocalWhisperTranscriber', 'SoundDeviceRecorder',
-                 'play_wake_chime', 'play_endpoint_chime', 'monotonic'):
+                 'play_wake_chime', 'play_endpoint_chime', 'play_failure_chime', 'monotonic'):
         robot_node[name] = getattr(source_node, name)
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
     assert runtime.pipeline_args['input_has_aec'] is False
     assert runtime.calls['endpoint_chimes'] == [-1]
+    assert runtime.calls['failure_chimes'] == [-1]
 
 
 def test_symlink_to_same_model_reuses_one_local_model(runtime, tmp_path):
@@ -699,6 +705,7 @@ def test_acknowledgement_chimes_use_selected_output_device(runtime):
     assert main() == 0
     assert runtime.calls['chimes'] == [4]
     assert runtime.calls['endpoint_chimes'] == [4]
+    assert runtime.calls['failure_chimes'] == [4]
 
 
 @pytest.mark.parametrize('duration', [0.02, 0.08, 0.12, 0.3])
@@ -716,14 +723,15 @@ def test_invalid_speech_onset_is_rejected_before_loading_model(runtime, duration
     assert 'recorder' not in runtime.calls
 
 
-def test_endpoint_chime_failure_is_reported_as_warning(runtime):
+@pytest.mark.parametrize('event', ['endpoint_chime_failed', 'failure_chime_failed'])
+def test_chime_failure_is_reported_as_warning(runtime, event):
     def report_failure():
-        runtime.pipeline_args['report']('endpoint_chime_failed:RuntimeError')
+        runtime.pipeline_args['report'](event + ':RuntimeError')
         raise KeyboardInterrupt
 
     runtime.on_spin = report_failure
     assert main() == 0
-    assert ('warning', 'endpoint_chime_failed:RuntimeError') in runtime.logs
+    assert ('warning', event + ':RuntimeError') in runtime.logs
 
 
 @pytest.mark.parametrize('predecode', [0.2, 1.0])
