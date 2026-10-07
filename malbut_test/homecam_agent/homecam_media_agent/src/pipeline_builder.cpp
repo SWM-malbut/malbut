@@ -138,9 +138,12 @@ std::string build_audio_capture_pipeline(
 
 std::string build_audio_playback_pipeline(const MediaConfig & config)
 {
+  // WebRTC delivers bare Opus packets without an OpusHead. GStreamer 1.20 opusdec
+  // refuses such caps unless channel-mapping-family=0 says they are plain mono/stereo.
   return
     "appsrc name=ptt_audio_source is-live=true block=false format=time "
-    "do-timestamp=true caps=audio/x-opus,rate=48000,channels=1 ! "
+    "do-timestamp=true caps=audio/x-opus,rate=48000,channels=1,"
+    "channel-mapping-family=0 ! "
     "queue max-size-time=200000000 leaky=downstream ! opusdec ! "
     "audioconvert ! audioresample ! alsasink device=" +
     quote_gst(config.audio_sink) + " sync=false";
