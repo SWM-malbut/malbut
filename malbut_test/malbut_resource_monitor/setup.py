@@ -6,7 +6,7 @@ setup(
     package_data={'malbut_resource_monitor': ['viewer.html', 'topics.json']},
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/malbut_resource_monitor']),
-        ('share/malbut_resource_monitor', ['package.xml', 'README.md']),
+        ('share/malbut_resource_monitor', ['package.xml', 'README.md', 'README_OPERATIONS.md']),
     ],
     install_requires=['setuptools'], zip_safe=True,
     tests_require=['pytest'],

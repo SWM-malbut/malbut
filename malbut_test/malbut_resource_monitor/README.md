@@ -1,213 +1,252 @@
-# 실기기 자원 측정 (SWM25-196)
+# Malbut Resource Monitor
 
-`malbut_test` 전용, 수집기와 별도 웹 뷰어. **측정 로그는 읽기 전용이며 회차 표시 이름만 편집**한다.
-응용 기능 내부에 측정 코드를 넣지 않는다.
-목적지 이동·사람 추적·순찰·수동 이동·AutoSLAM·위치 보정·음성을 켠 상태의 자원 변화와
-이미 존재하는 ROS 상태를 관측한다. Goal/취소, Service 호출, 속도 발행, 파라미터 변경은 하지 않는다.
+실로봇의 **전체 자원·프로세스 자원·ROS 상태를 수집하고, 저장된 로그를 웹에서 비교하는 측정 도구**입니다.
+`malbut_test`에만 포함되며, 응용 기능 안에 측정 코드를 넣지 않는 독립 패키지입니다.
 
-## 실행
+수집기는 로봇에서 관측값을 기록하고, 별도 뷰어는 그 기록을 읽어 보여 줍니다.
+Goal·취소·Service 요청·주행 명령·파라미터 변경을 보내지 않습니다.
+성능 측정값과 수집기 자체의 오류·미지원 진단을 구분합니다.
 
-배포 복사본이 `~/ros2_ws/src/malbut`에 있는 기존 절차 그대로:
+[운영 가이드](README_OPERATIONS.md) · [실기기 배포 구성](../README.md) ·
+[Bringup 설계](../malbut_bringup/README.md)
 
-```bash
-bash ~/ros2_ws/src/malbut/build.sh
-source ~/ros2_ws/install/malbut_test/local_setup.zsh
-# 기존 웹에서 Bringup을 켜거나 통합 launch 실행:
-ros2 launch malbut_bringup bringup.launch.py
-# 수집기 준비 → 모듈 시작 순서. 기능 Goal은 기존 웹/CLI에서 실행한다.
+## 수집·저장·시각화 구조
+
+```mermaid
+flowchart LR
+    L["Linux /proc · sysfs"]
+    T["tegrastats"]
+    J["기존 jtop 서비스"]
+    R["ROS Topic · Action 상태"]
+    C["resource_recorder"]
+    S["회차별 JSONL · metadata"]
+    V["resource_viewer"]
+    B["브라우저"]
+
+    L -->|CPU · RAM · Swap · 클럭 · 온도| C
+    T -->|GPU · EMC · 전력| C
+    J -.->|선택적 GPU 정보| C
+    R -->|수신 지표 · 상태 이벤트| C
+    C -->|표본 · 원본 · 수신 시각| S
+    S -->|저장 로그 조회| V
+    V -->|그래프 · 이벤트 · 다운로드| B
+    B -->|회차 표시 이름만 저장| V
+    V -->|viewer.json| S
 ```
 
-기본 수집에는 추가 라이브러리나 클라우드 연결이 필요 없다. Jetson의 기존 `tegrastats`가 PATH에
-있어야 GPU·EMC·전력을 수집한다. 없어도 CPU/RAM 수집은 가능하며 미지원 항목을 0으로 꾸미지 않는다.
-프로세스별 GPU 메모리는 선택 사항인 **jetson-stats(jtop) Python 패키지 + 실행 중인 jtop 서비스**가
-필요하다. 아래 GPU 항목을 참고한다.
+| 구성 | 역할 |
+| --- | --- |
+| [collector.py](malbut_resource_monitor/collector.py) | 수집 주기·종료·Linux/Jetson/ROS 수집 연결 |
+| [resources.py](malbut_resource_monitor/resources.py) | 장치·프로세스 자원, 실행 경로·launch 소속, tegrastats 원본·해석 |
+| [gpu.py](malbut_resource_monitor/gpu.py) | 기존 jtop 서비스의 읽기 전용 관측 |
+| [ros_observer.py](malbut_resource_monitor/ros_observer.py) | Topic 수신량, Action·미션·음성 상태 관측 |
+| [store.py](malbut_resource_monitor/store.py) | 회차 생성·JSONL 추가 기록·시각·메타데이터 |
+| [viewer.py](malbut_resource_monitor/viewer.py) · [viewer.html](malbut_resource_monitor/viewer.html) | 로그 조회 서버·페이지·그래프·회차 이름 |
 
-별도 터미널에서 로그 UI (신뢰하는 같은 Wi-Fi에서만 공개):
+뷰어는 ROS나 로봇 연결 없이도 가져온 로그 폴더를 열 수 있습니다.
+서비스 웹의 로봇 제어 화면과는 별도 프로그램이며, AWS 배포가 필요한 웹 앱이 아닙니다.
 
-```bash
-source ~/ros2_ws/install/malbut_test/local_setup.zsh
-ros2 run malbut_resource_monitor resource_viewer --host 0.0.0.0 --port 8766
+## Bringup과 수집기의 수명
+
+실기기 `bringup.launch.py`는 기본적으로 기록기를 먼저 시작합니다.
+첫 표본을 기록하고 준비 신호를 받으면 선택된 로봇 모듈을 실행합니다.
+
+```mermaid
+sequenceDiagram
+    participant Launch as 통합 Bringup
+    participant Recorder as 자원 수집기
+    participant Logs as 로그 폴더
+    participant Modules as 로봇 모듈
+
+    Launch->>Recorder: 기록기 시작
+    Recorder->>Logs: 회차·메타데이터·첫 표본 기록
+    Recorder-->>Launch: MALBUT_RESOURCE_MONITOR_READY
+    Launch->>Modules: 선택한 모듈 실행
+    loop 기본 1초 주기
+        Recorder->>Logs: 실제 자원 표본·ROS 관측 기록
+    end
+    Note over Launch,Recorder: 기록기 실패 시 로봇 실행은 유지
 ```
 
-Mac 브라우저에서 `http://로봇IP:8766` → 실행 회차 → 상단 페이지 선택.
-**전체 자원 / launch별 / 기능별 / 토픽 / 음성 대화 / 실행 기록 / 프로세스·원본**을 나눠 표시한다.
-페이지 주소(`#launch` 등), 브라우저 뒤로/앞으로 이동, 새로고침 후 페이지·선택 복원을 지원한다.
-자원 화면에서 Action을 선택하면 상태 변화 시점이 세로선으로 표시된다.
-**실행 기록**의 Goal 행을 누르면 전체 자원 페이지에서 해당 관측 구간을 본다.
-로봇 컴퓨터 전체 화면은 **함께 볼 지표**에서 여러 지표를 체크한다. 사용률(%)·메모리(MiB)·
-클럭(MHz)·온도(°C)·전력(mW)·수집 시간(ms/s)을 단위별 그래프로 나누며 시간축은 공유한다.
-단위 제목의 체크는 그룹 전체, **개별 지표 선택**은 코어/센서별 선택이다. 일부만 고르면
-그룹 체크가 부분 선택으로 표시된다. 선택은 회차·로그별로 새로고침 후에도 유지한다.
-전력 rail을 합산하거나 미지원 GPU 값을 0으로 채우지 않는다. 원본 단위·표본은 그대로이다.
-기능별 프로세스 화면에서는 기능 그룹을 체크해 함께 비교하고, 범례 체크로 개별 곡선을 숨긴다.
-체크 상태는 **그래프 표시 여부**이지 로봇 기능의 실행/정지 상태가 아니다.
-범례의 주 이름은 저장된 ROS 노드명 또는 실행 파일명에서 가져온다. PID는 보조 정보로 표시하며,
-같은 프로세스의 색·선 모양은 체크 전환·새로고침에도 유지한다.
-경로는 범례 툴팁과 **프로세스 / 원본** 페이지에 나온다.
-프로세스 이름이 없거나 `python3`처럼 식별이 불가능한 기록은 임의로 추정하지 않는다.
-그 프로세스가 아직 실행 중이면 로봇에서 `ps -p <PID> -o pid=,comm=,args=`로 확인할 수 있다.
-명령 인자에 키가 있다면 공유 전에 가린다. 이미 종료된 프로세스는 현재 `ps`로 복원할 수 없으며,
-PID가 재사용될 수도 있으므로 현재 프로세스의 이름을 과거 로그에 그대로 대입하면 안 된다.
+- 기록기가 먼저 종료되면 경고 후 로봇 모듈을 실행합니다.
+  10초 안에 준비 신호가 없을 때도 모듈 실행을 진행하며, 측정 시작은 보장하지 않습니다.
+- 실행 중 기록기 오류나 디스크 여유 256 MiB 미만은 **수집만 중단**시킵니다.
+  로봇 기능 종료·복구·재시작을 요청하지 않습니다.
+- 이 연결은 통합 Bringup에 있습니다. 개별 기능 launch의 수집은 별도로 실행해
+  해당 launch PID를 지정합니다. 뷰어는 launch를 실행하지 않습니다.
+- 수집기 준비는 모든 센서·GPU 값이 유효하다는 뜻이 아닙니다.
+  차이가 필요한 CPU 지표는 첫 표본에서 값이 없을 수 있습니다.
 
-실행 회차의 **회차 정보 / 이름 편집 → 이름 저장**으로 `거실 · 사람 추적 1차`처럼 이름을 붙일 수 있다.
-이름은 회차 폴더의 `viewer.json`에 별도 저장하므로 수집 중에도 원본 표본·메타데이터·폴더명은
-바뀌지 않는다. 다른 브라우저에서도 같은 이름이 보이며, 빈 이름을 저장하면 기본 날짜 표시로 돌아간다.
-2초마다 로그 변경 여부를 확인하고, 변경된 그래프·Action 상태·목록만 갱신한다.
-변경 없는 파일은 재전송하거나 그래프를 다시 그리지 않는다. 숨긴 탭에서는 자동 조회를 쉬며,
-연결 오류가 나면 기존 표시를 유지하고 재시도한다. **다시 읽기**로 즉시 조회할 수도 있다.
-선택한 페이지·회차·로그·launch/기능/곡선 체크·지표·시간 구간·Action, 펼친 설명과 화면 스크롤 위치는 같은 브라우저에
-저장되어 새로고침 후 복원된다. 새 회차가 생겨도 보고 있던 회차를 임의로 바꾸지 않는다.
-별도 웹 빌드나 AWS 배포 없이 위 로봇 빌드와 뷰어 실행만 하면 된다. 기본 바인딩은 localhost이며,
-인증 없는 로그 뷰어이므로 인터넷 공개/AWS 배포용이 아니다.
+실행 연결은 [launch_support.py](malbut_resource_monitor/launch_support.py),
+통합 인자는 [실기기 Bringup](../malbut_bringup/launch/bringup.launch.py)에 있습니다.
 
-### 음성 대화 확인
+## 무엇을 측정하는가
 
-**음성 대화** 페이지에서 사용자의 최종 STT 인식 문장,
-로봇이 TTS에 요청한 답변 문장, TTS 재생 상태를 수신 시각순으로 확인한다.
-최신 이벤트가 위에 나오며 기존 2초 자동 갱신·회차/시간 구간 선택을 그대로 사용한다.
-화면에는 구간 내 최신 300개 이벤트를 표시하며 전체는 JSONL로 저장할 수 있다.
+| 지표 | 출처 | 의미·단위 |
+| --- | --- | --- |
+| 전체·코어별 CPU | `/proc/stat` 표본 차이 | 전체 장치=100%, 코어별 사용률 |
+| 프로세스 CPU | `/proc/PID/stat` 실행시간 차이 | 코어 하나=100%. 여러 코어를 쓰면 100% 초과 가능 |
+| 전체 RAM·Swap | `/proc/meminfo` | RAM은 Total−Available, Swap은 Total−Free, MiB |
+| 프로세스 RAM·Swap | `/proc/PID/status` | RSS·VmSwap, MiB |
+| CPU 클럭·온도 | sysfs cpufreq·thermal | MHz·°C, 코어·센서별 |
+| GPU 사용률·클럭 | tegrastats, 선택적 jtop | 장치 사용률 %·클럭 MHz |
+| 프로세스 GPU 메모리 | jtop 프로세스 관측 | MiB. 프로세스 GPU 연산 사용률과 다름 |
+| 메모리 대역폭 관련 지표 | tegrastats EMC_FREQ | 현재 EMC 클럭 기준 사용률 %·클럭 MHz. GB/s가 아님 |
+| 전력 | tegrastats의 rail별 값 | 순간·평균 mW. Jetson 측정이며 모터 포함 로봇 전체 전력이 아님 |
+| Topic 수신 | raw CDR 메시지 | 수신 Hz·직렬화 바이트/s·마지막 수신 경과시간 |
+| 실행·음성 상태 | 기존 ROS 상태 Topic | Action UUID·상태 변화·미션 ID·STT/TTS 이벤트의 수신 시각 |
 
-`/malbut/speech/transcript`, `/malbut/speech/response`,
-`/malbut/speech/playback_status`를 수신만 한다. 음성 처리·Agent 코드는 변경하지 않는다.
-요청 문장이 실제로 재생되었다고 단정하지 않으며, 재생 상태는 별도 이벤트로 표시한다.
-선택 구간에 같은 `playback_id`의 요청이 있으면 재생 상태 행에도 그 요청 문장을 표시한다.
-요청이 구간 밖에 있거나 누락된 경우, 요청 ID가 비어 있거나 같은 ID의 문장이 서로 다르면
-상태만 표시한다. TTS가 생성한 ID를 추정하거나 STT와 답변을 시간순으로 임의 짝짓지 않는다.
-텍스트/상태는 best-effort, volatile, keep-last(50)으로 관측하므로 수신 누락은 가능하다.
-과거 회차에는 발화 본문이 없어서 복원할 수 없다. **업데이트한 수집기로 새 회차를 시작해야 한다.**
-원본 오디오는 녹음하지 않지만 **인식·답변 텍스트는 `speech.jsonl`에 저장**하므로
-대화 개인정보가 포함될 수 있다. 신뢰하는 LAN에서만 열고 로그 공유 시 확인한다.
+프로세스 RSS에는 공유 페이지가 포함되므로 합산해서 물리 RAM으로 해석하지 않습니다.
+전력 rail도 서로 범위가 겹칠 수 있어 합산하지 않습니다.
 
-로봇 없이 다른 PC에서 저장 로그를 보는 것도 가능하다 (Python 3.10+, ROS 불필요):
+### Jetson GPU의 관측 범위
 
-```bash
-cd malbut_test/malbut_resource_monitor
-python3 -m malbut_resource_monitor.viewer --root /가져온/resource_logs
+장치 GPU 사용률은 tegrastats에서, 프로세스 GPU 메모리는 선택적 jtop에서 가져옵니다.
+현재 수집기는 **Jetson의 프로세스별 GPU 연산 사용률(%)을 제공하지 않습니다**.
+장치 사용률을 PID별로 배분하거나 GPU 메모리를 사용률로 바꾸지 않습니다.
+
+jtop은 수집기 Python의 패키지와 접속 가능한 기존 서비스가 필요합니다.
+자동 설치하거나 클럭·팬·전력 설정을 바꾸지 않습니다.
+연결 실패·표본 만료·PID 미관측은 빈 값으로 남기고 원인과 표본 나이를 기록합니다.
+jtop과 CPU 표본은 별도 시점의 관측이므로 정확히 동시 측정된 값으로 취급하지 않습니다.
+
+## 프로세스 식별과 두 가지 분류
+
+개별 자원 측정의 기준은 ROS 노드명이 아니라 **PID + 프로세스 시작 tick**입니다.
+같은 PID가 재사용되어도 이전 프로세스의 표본과 구분합니다.
+
+수집 대상은 지정한 launch와 자손, 이미 추적 중인 같은 프로세스,
+별도로 실행된 Malbut 경로의 프로세스를 포함합니다.
+실행 파일·entrypoint·명시된 ROS 노드명은 메타데이터에 저장하지만
+전체 명령 인자와 환경변수는 저장하지 않습니다.
+
+| 보기 | 소속을 정하는 방법 |
+| --- | --- |
+| 기능별 | 실행 파일·ROS 이름 기반 표시 분류 |
+| launch별 | 자식 프로세스가 상속한 `MALBUT_MEASUREMENT_LAUNCH` 표시 |
+| 소속 미기록 | launch 표시가 없을 때. 이름으로 launch를 추정하지 않음 |
+| 측정기 | 수집기·측정 관련 프로세스의 별도 표시 |
+
+```mermaid
+flowchart LR
+    P["PID + 시작 tick"]
+    S["하나의 프로세스 표본"]
+    F["processes/ · 기능 분류"]
+    L["launches/ · 실제 launch 소속"]
+    M["metadata · 실행 경로"]
+
+    P -->|실행시간 · RSS · Swap| S
+    S -->|같은 표본| F
+    S -->|같은 표본| L
+    P -->|식별 정보| M
 ```
 
-수동 수집 / 순수 자원 측정 기준 실험:
+기능별·launch별 로그는 **같은 표본의 다른 보기**이므로 두 종류를 합산하지 않습니다.
+Nav2처럼 여러 ROS 노드가 하나의 컨테이너에서 실행되면 하나의 공유 프로세스로 측정합니다.
+planner·controller별 사용량을 임의로 나누지는 않습니다.
 
-```bash
-ros2 run malbut_resource_monitor resource_recorder --parent-pid <로봇-launch-PID>
-# ROS 구독 부하 없는 비교 측정:
-ros2 run malbut_resource_monitor resource_recorder --no-ros --parent-pid <로봇-launch-PID>
-```
+범례의 이름은 저장된 노드명·실행 파일명에서 가져오고 PID는 보조 정보로 표시합니다.
+이름을 알 수 없는 과거 기록을 현재 PID의 이름으로 덮어쓰지 않습니다.
 
-Bringup 자동 수집 기본 `resource_monitor:=true`, 저장 위치 변경 `resource_log_root:=/경로`.
-독립 수집기를 수동 실행할 때는 Bringup에 `resource_monitor:=false`를 줘 중복 수집을 피한다.
-자동 수집은 **통합 `bringup.launch.py`**에만 연결되어 있다. 개별 launch만 실행할 때는
-위 수동 수집 명령에 해당 launch PID를 지정한다. 뷰어에서는 launch 실행/정지를 하지 않는다.
-원하는 토픽 목록은 `--topics /경로/topics.json`으로 지정하는 절대 토픽명 JSON 배열이다.
-Bringup 수집기는 패키지에 포함된 `topics.json`을 쓴다. 토픽 리맵이 있다면 이 목록도 맞춘다.
+## 시간과 실행 이벤트
 
-### launch별 소속
+| 시간 값 | 기준 |
+| --- | --- |
+| `t` | 회차 시작 이후 monotonic 초 |
+| `wall_ns` | 표본·이벤트를 기록하는 시점의 Unix 나노초 |
+| `accepted_ros_ns` | Action 서버가 상태 메시지에 넣은 ROS 시각 |
+| `sample_window_s` | 실제 자원 표본 간격 |
+| `collection_duration_ms` · `schedule_lateness_ms` | 수집 소요·예정 주기 대비 지연 |
 
-실기기 복사본의 각 launch가 자식 프로세스에 `MALBUT_MEASUREMENT_LAUNCH` 표시를 상속한다.
-수집기는 `/proc/PID/environ`에서 이 표시만 읽으며 전체 환경변수는 저장하지 않는다.
-`robot`에는 공통 센서·Nav2·관리자, `tracking`에는 인식·사람 추적 등 실제 실행 소속이 기록된다.
-launch 실행 순서나 기능 로직은 바꾸지 않는다. launch/기능별 체크는 각각 독립적으로 저장한다.
+자원 주기는 기본 1초지만 계산에는 실제 경과시간을 사용합니다.
+늦어진 주기를 가짜 표본이나 밀린 샘플의 연속 기록으로 채우지 않습니다.
+ROS 시각과 monotonic·wall 시각을 서로 빼서 지연시간을 만들지 않습니다.
 
-업데이트 전 로그에는 launch 소속이 없으므로 **새로 수집해야 한다**. 별도 실행되어 표시가 없는
-프로세스는 `소속 미기록`, 수집기 자체는 `측정기`로 구분한다. 이름으로 소속을 추정하지 않는다.
-컨테이너 안의 여러 노드는 여전히 하나의 공유 프로세스다. launch 사용량으로 임의 분할하지 않는다.
+Action은 `/_action/status`를 구독해 UUID별 상태 변화를 기록합니다.
+**관측한 실행 구간**은 확인할 수 있지만, 실제 요청 전송·모터 시작·Service 완료 시각은
+이 상태 구독만으로 알 수 없습니다. 관측 전에 끝난 Goal은 과거 종료 상태의 첫 수신으로 표시합니다.
+관리자 목록에서 미션이 사라진 것은 `NO_LONGER_LISTED`로 기록하며 성공으로 바꾸지 않습니다.
 
-### GPU: 전체 사용률과 프로세스 메모리는 다름
+음성은 최종 STT 문장·TTS 요청 문장·재생 상태를 별도 이벤트로 기록합니다.
+같은 `playback_id`로 확인되는 요청과 상태만 연결하고,
+STT와 답변을 시간순으로 임의 짝짓거나 요청 문장이 실제로 재생됐다고 단정하지 않습니다.
+원본 오디오는 녹음하지 않지만 대화 텍스트는 저장합니다.
 
-- **전체 자원**: tegrastats GPU 사용률·클럭, jtop 연결 시 GPU 장치별 사용률·클럭.
-- **launch별 / 기능별 → GPU 메모리 (MiB) · jtop**: jtop에서 관측한 PID별 GPU 메모리.
-- Jetson Orin의 jtop은 **프로세스별 GPU 연산 사용률(%)을 제공하지 않는다**.
-  전체 사용률을 프로세스에 나눠 배분하거나 GPU 메모리를 사용률로 표시하지 않는다.
-- jtop 미설치·서비스 연결 실패·권한 부족·표본 만료·PID 미관측은 빈 값이며 0으로 채우지 않는다.
-  원인은 `system.jsonl`의 `jtop_error`, 연결/표본 나이는 `jtop_available`, `jtop_age_s`에서 확인한다.
-- 수집기 Python에서 `from jtop import jtop`이 가능하고 해당 사용자로 서비스에 접속 가능해야 한다.
-  기존 jtop 설치를 사용하며 수집기가 자동 설치하거나 권한·클럭·팬·전력 설정을 변경하지 않는다.
+## 회차별 로그 구조
 
-jtop은 별도 주기로 읽으므로 CPU 표본과 정확히 동시 측정한 값은 아니다. GPU 메모리는 jtop
-서비스의 관측값을 `/proc`의 PID+시작 tick과 함께 보관하고, 캐시된 값을 재사용된 PID에 적용하지 않는다.
-두 소스의 읽기는 원자적이지 않으며, 표본 간 매우 빠른 PID 재사용까지 증명할 수는 없다.
-서비스의 백그라운드 측정 부하도 존재한다. CPU·GPU 비용 비교 시 이를 고려한다.
-
-## 저장
-
-기본 `~/.ros/malbut/resource_logs/<UTC시각>-<고유번호>/`.
+기본 위치는 `~/.ros/malbut/resource_logs/<UTC시각>-<고유번호>/`입니다.
+회차마다 새 폴더를 만들고 관측 채널에 JSONL을 추가 기록합니다.
 
 ```text
-metadata.json          # 측정 기준, 호스트, 단위 설명, PID+시작 tick → 실행/스크립트 경로
-viewer.json            # 사용자가 저장한 회차 표시 이름 (원본 측정값과 분리)
-system.jsonl           # 장치 전체 자원, 코어별 CPU/클럭, 수집 시간/지연
-processes/*.jsonl      # 인식, 추적, 순찰, AutoSLAM, Nav2, 음성 등 기능 그룹별 PID 측정
-launches/*.jsonl       # 같은 PID 표본을 실제 launch 소속별로 저장 (두 종류 합산 금지)
-topics/*.jsonl         # 토픽별 수신 Hz / CDR 바이트 수 / 마지막 수신 경과시간
-actions/*.jsonl        # Action endpoint별 UUID / 상태 변화 / 수신 시각
-missions.jsonl        # 관리자 mission ID ↔ capability 및 상태 관측 (결과 추정 금지)
-phases/*.jsonl         # STT 입력/최종 transcript 도착, TTS 재생 상태 (발화 본문 저장 안 함)
-speech.jsonl           # STT 원문, TTS 요청 문장, 재생 상태 및 ID (오디오 녹음 없음)
-tegrastats.jsonl       # 원본 NVIDIA 측정 줄 (해석 결과 검증용)
-observer.jsonl        # 측정기 자체의 미지원/진단 알림 (기능 성능 지표 아님)
+<session>/
+├── metadata.json       # 기준·호스트·단위·채널·프로세스 식별/경로·종료 정보
+├── viewer.json         # 사용자가 저장한 회차 표시 이름
+├── system.jsonl        # 장치 전체·코어별 자원, 수집 시간·지연
+├── processes/*.jsonl   # 기능 분류별 프로세스 표본
+├── launches/*.jsonl    # 동일 표본의 launch별 보기
+├── topics/*.jsonl      # Topic별 실제 수신 지표
+├── actions/*.jsonl     # Action별 UUID·상태 변화·수신 시각
+├── missions.jsonl      # 관리자 미션 ID·기능·상태 관측
+├── phases/*.jsonl      # 음성 단계·ID·상태
+├── speech.jsonl        # STT 본문·TTS 요청·재생 상태
+├── tegrastats.jsonl    # NVIDIA 원본 측정 줄
+└── observer.jsonl      # 수집기 진단·미지원 기록
 ```
 
-모든 행의 `t`는 회차 시작 이후 **monotonic 초**, `wall_ns`는 수신 시점 Unix 나노초.
-ROS simulated time에 의존하지 않는다. Action의 `accepted_ros_ns`는 서버가 제공한 ROS 시각이며
-`wall_ns`와 섞어서 지연시간을 계산하지 않는다. 기본 자원 샘플 주기는 1초.
-실제 표본 간격 `sample_window_s`, 수집 소요 `collection_duration_ms`도 남긴다.
-지연됐을 때 가짜 표본을 채우거나 밀린 샘플을 몰아서 기록하지 않는다.
+모든 채널이 항상 파일로 존재하는 것은 아니며, 해당 기록이 들어올 때 생성됩니다.
+이전 회차를 지우지 않고 사용자 전용 권한으로 기록합니다.
+정상 종료 메타데이터가 없으면 수집 중인지 강제 종료됐는지 확정하지 않습니다.
 
-로그는 회차별 새 폴더에 추가 기록하며 이전 로그를 지우지 않는다. 정상 종료 메타데이터가 없으면
-수집 중/강제 종료를 구분할 수 없다고 표시한다. 디스크 여유가 256 MiB 미만이면 **수집만 중단**한다.
-파일은 사용자 전용 권한으로 만들고 전체 argv/env는 저장하지 않는다 (토큰 노출 방지).
+## 로그 뷰어
 
-## 지표 해석 — 측정하지 못한 것을 추정하지 않는다
+| 페이지 | 비교·확인 대상 |
+| --- | --- |
+| 전체 자원 | 여러 지표를 체크하고 %·MiB·MHz·°C·mW 등 같은 단위끼리 묶어 비교 |
+| launch별·기능별 | 그룹·프로세스 곡선 선택, 색·선 모양·이름·경로 확인 |
+| 토픽 | 수신 Hz·CDR 크기·마지막 수신 경과시간 |
+| 음성 대화 | STT 문장·TTS 요청·재생 상태 |
+| 실행 기록 | Goal별 관측 구간·최종 관측 상태, 자원 그래프의 상태 변화선 |
+| 프로세스 / 원본 | 실행 경로·식별 정보·원본 JSONL |
 
-| 항목 | 출처 / 의미 |
-|---|---|
-| 전체·코어별 CPU % | `/proc/stat` 두 표본 차이. 전체는 장치=100%, guest 중복 합산 안 함 |
-| 프로세스 CPU % | `/proc/PID/stat` 실행시간 차이 / 실제 경과시간. 코어 하나=100%, 멀티코어는 100% 초과 가능 |
-| 전체 RAM·Swap | `/proc/meminfo`, MiB. RAM 사용 = Total − Available |
-| 프로세스 RAM·Swap | `/proc/PID/status`, RSS 및 VmSwap, MiB. 공유 페이지 때문에 RSS 합산 금지 |
-| CPU 클럭·온도 | sysfs cpufreq(MHz) / thermal(°C). 코어/센서가 안 보이면 값 없음 |
-| GPU 사용률·클럭 | `tegrastats` GR3D_FREQ(%/MHz), 선택적 jtop GPU별 load/freq, **장치 전체** |
-| 프로세스 GPU 메모리 | jtop processes의 GPU 메모리(KiB)를 MiB로 변환. 프로세스별 GPU %는 계속 `null` |
-| 메모리 대역폭 | `tegrastats` EMC_FREQ, 현재 EMC 클럭에 대한 사용률(%) 및 클럭(MHz). GB/s로 환산하지 않음 |
-| 전력 | tegrastats 이름별 rail 순간/평균 mW. VDD_IN은 Jetson 입력, 모터 포함 로봇 전체 소비전력 아님. rail 합산 금지 |
-| Topic Hz·바이트 | 수집기가 실제 받은 메시지 수 / 측정 구간. raw CDR 길이, 네트워크 전송량이나 발행률 자체가 아님 |
+브라우저는 기본 2초 간격으로 변경을 확인하고 ETag를 사용해 변경 없는 응답을 재전송하지 않습니다.
+숨긴 탭에서는 조회를 쉬고, 연결 실패 때는 현재 표시를 유지한 채 재시도합니다.
+페이지·회차·시간 구간·체크 상태·스크롤은 같은 브라우저에 저장해 새로고침 후 복원합니다.
+회차 표시 이름은 `viewer.json`에 분리 저장하며 원본 표본·수집 메타데이터는 수정하지 않습니다.
+체크는 **그래프 표시 선택**이며 로봇 기능의 실행·정지 명령이 아닙니다.
 
-기본 토픽 구독은 `best_effort + volatile + keep_last(1)`. 영상/Depth 영상은 내용 저장 없이
-수신 수와 직렬화 크기만 센다. **추가 구독은 공짜가 아니다**. 원본 대형 PointCloud2는 기본 목록에서
-제외했다. `observer` 프로세스 그룹과 수집 소요시간을 함께 보고, 필요하면 `--no-ros` 회차와 비교한다.
-토픽이 없는 경우 `null`, 구독은 되었지만 해당 측정 구간에 수신이 없으면 `0 Hz`이다.
-이 값만으로 원래 publisher가 0 Hz였다고 단정하지 않는다.
+그래프는 실제 표본을 점과 연결선으로 표시하며 보간·평활화·누락값의 0 채우기를 하지 않습니다.
+구간 조회는 로그별 최근 50,000행까지, 음성 화면은 그중 최신 300개 이벤트를 표시합니다.
+잘림·손상 행은 알리고 원본 전체 JSONL을 내려받을 수 있습니다.
 
-기능 그룹은 **실행 파일/ROS 이름에 기반한 표시 분류**이다. 실제 수치는 프로세스별이며
-Nav2의 planner/controller/costmap 등을 내부 노드별 사용량으로 나누지 않는다.
-자원은 Bringup의 자손 프로세스와 별도로 실행된 Malbut 경로의 프로세스를 대상으로 한다.
-제조사 센서 자손은 `other_robot`에 포함된다. PID 재사용은 `/proc` 시작 tick으로 구분한다.
+뷰어는 기본 localhost 바인딩이며 인증 기능이 없습니다.
+LAN 공개는 신뢰하는 네트워크에서만 사용하고, 대화 텍스트 등 개인정보가 담긴 로그를 확인합니다.
 
-Action은 `/_action/status`의 ACCEPTED/EXECUTING/종료를 구독한다. 관측 전에 이미 종료된
-Goal은 “과거 종료 상태 첫 수신”으로 표시한다. **Goal 거부, 실제 요청 전송 시각, 모터 시작,
-서비스 완료 시각, 전체 STT→Agent→TTS 지연은 이 방식만으로 측정할 수 없다.**
-Action 수신 시각을 그 값들로 대신 표기하지 않는다. 통신 단절·수집 종료를 Goal 완료로 만들지 않는다.
-관리자 상태에서 mission이 사라져도 성공/실패는 알 수 없어 `NO_LONGER_LISTED`로만 기록한다.
+## 측정 부하와 값의 해석
 
-뷰어는 원본 표본을 연결해서 보여주며 보간·평활화·임의 0 채우기를 하지 않는다. 큰 로그는
-선택 구간의 최근 50,000행까지만 표시하고 **잘림을 명시**한다. 시간 구간을 좁히거나 원본 전체를
-다운로드할 수 있다. 이 도구는 기존 ROS 디버그 로그를 대체하거나 수정하지 않는다.
+일반 Topic은 `BEST_EFFORT / VOLATILE / depth=1`,
+음성 이벤트는 `BEST_EFFORT / VOLATILE / depth=50`,
+Action 상태는 `RELIABLE / TRANSIENT_LOCAL / depth=1`로 관측합니다.
 
-## 최소 검증
+Topic 수신 Hz는 수집기에서 실제 받은 비율이지 publisher의 발행률이나 네트워크 전송률 자체가 아닙니다.
+구독되지 않은 Topic은 값이 없고, 구독된 측정 구간에 수신이 없으면 0 Hz입니다.
+추가 구독에는 DDS 전달·CPU 비용이 있어 원본 대형 PointCloud2는 기본 목록에서 제외했습니다.
 
-```bash
-cd malbut_test/malbut_resource_monitor
-python3 -m pytest -q test/test_measurement.py test/test_gpu_launch.py
-# ROS Humble + malbut_interfaces를 source한 환경에서만:
-python3 -m pytest -q test/test_ros_observer.py
-# 선택 사항: Playwright + Chromium이 설치된 개발 환경에서만 (ROS 불필요):
-python3 -m pytest -q test/test_viewer_browser.py
-```
+수집기·tegrastats의 비용은 측정기 그룹과 수집 소요를 함께 봅니다.
+추가 구독으로 publisher에 생긴 비용까지 별도로 분리해 측정하는 것은 아닙니다.
+필요하면 ROS 관측을 끈 `--no-ros` 회차와 비교합니다.
+측정되지 않은 값과 만료된 GPU 표본은 빈 구간으로 남기며,
+수집 오류는 `observer.jsonl`의 진단이지 기능 성능 점수가 아닙니다.
 
-Jetson GPU/EMC/전력은 실제 장치에서 원본 tegrastats와 대조해야 한다.
-개발 PC/가짜 센서 테스트 통과를 실로봇 부하 검증으로 해석하지 않는다.
+## 코드·운영·검증 안내
 
-참고: [NVIDIA tegrastats](https://docs.nvidia.com/jetson/archives/r36.4.4/DeveloperGuide/AT/JetsonLinuxDevelopmentTools/TegrastatsUtility.html),
-[Linux proc](https://docs.kernel.org/filesystems/proc.html),
-[jtop API](https://rnext.it/jetson_stats/reference/jtop.html),
-[jtop 프로세스 측정](https://github.com/rbonghi/jetson_stats/blob/master/jtop/core/processes.py),
-[ROS 2 Action status](https://design.ros2.org/articles/actions.html).
+| 위치 | 내용 |
+| --- | --- |
+| [topics.json](malbut_resource_monitor/topics.json) | 기본 수신 지표 관측 목록 |
+| [운영 가이드](README_OPERATIONS.md) | 빌드·수집·LAN 뷰어 실행, 화면 사용법·GPU 준비·지표 해석 |
+| [test_measurement.py](test/test_measurement.py) | CPU 계산·원본 단위·누락값·프로세스 식별·저장·조회 검증 |
+| [test_gpu_launch.py](test/test_gpu_launch.py) | jtop 표본·PID 재사용·launch 소속 검증 |
+| [test_ros_observer.py](test/test_ros_observer.py) | 실제 ROS Topic·Action 상태의 수신 관측 검증 |
+| [test_viewer_browser.py](test/test_viewer_browser.py) · [test_viewer_speech.py](test/test_viewer_speech.py) | 페이지·선택 복원·갱신·범례·음성 연결 검증 |
+
+Jetson의 GPU·EMC·전력 값은 실제 장치의 tegrastats 원본과 대조합니다.
+이 도구의 로컬 검사와 실제 로봇 부하 측정은 구분합니다.

@@ -280,7 +280,7 @@ malbut/
 | 읽고 싶은 내용 | 문서 |
 | --- | --- |
 | 설치·빌드·시뮬레이션 실행 | [개발·시뮬레이션 가이드](docs/DEVELOPMENT.md) |
-| 실기기 구성·실행 | [Bringup 안내](malbut_bringup/README.md) · [실기기 적용본](malbut_test/README.md) |
+| 실기기 구성·실행 | [Bringup 설계](malbut_bringup/README.md) · [운영 가이드](malbut_bringup/README_OPERATIONS.md) · [실기기 적용본](malbut_test/README.md) |
 | ROS 기능 인터페이스 | [공용 인터페이스](malbut_interfaces/README.md) · [기능 등록](malbut_interfaces/capabilities) |
 | 대화와 사용자 기억 | [Agent 명세](malbut_agent_server/docs/malbut_agent.md) · [대화·기억 구현](malbut_agent_server/README.md) |
 | 사람 위치와 추적 정책 | [추적 설계](malbut_tracking/README.md) |

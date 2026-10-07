@@ -193,7 +193,7 @@ Bringup·새 평가 도구 테스트 74개를 다시 실행해 모두 통과함.
 기존 PR은 조정 옵션만 추가하고 기본값은 유지해, 업데이트만 한 로봇에는 스레드 조정이
 적용되지 않았다. 이어 일반 홈캠의 YOLO·Pose에도 GPU 선택과 스레드 제한을 적용했다.
 위 표의 측정 결과를 새로 측정한 것은 아니다.
-현재 설치·실행 절차는 [Bringup 안내](../../malbut_bringup/README.md#cloud-vlm-자동-실행)를 따른다.
+현재 설치·실행 절차는 [Bringup 안내](../../malbut_bringup/README_OPERATIONS.md#cloud-vlm-자동-실행)를 따른다.
 
 10월 1일 기본값 수정 검증:
 
