@@ -14,12 +14,19 @@ def play_endpoint_chime(device_index=-1):
     _play_chime((660,), 0.15, 2600, device_index)
 
 
-def _play_chime(frequencies, note_s, amplitude, device_index):
+def play_failure_chime(device_index=-1):
+    """Signal missing speech with two 90 ms beeps separated by 60 ms of silence."""
+    _play_chime((800, 800), 0.09, 2600, device_index, gap_s=0.06)
+
+
+def _play_chime(frequencies, note_s, amplitude, device_index, *, gap_s=0.0):
     import sounddevice as sd
 
     sample_rate = 24000
     samples = array('h')
     for frequency in frequencies:
+        if samples and gap_s:
+            samples.extend([0] * int(sample_rate * gap_s))
         count = int(sample_rate * note_s)
         for index in range(count):
             # Short fades prevent clicks at the start/end of each note.

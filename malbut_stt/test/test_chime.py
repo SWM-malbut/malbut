@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from malbut_stt.chime import play_endpoint_chime, play_wake_chime
+from malbut_stt.chime import play_endpoint_chime, play_failure_chime, play_wake_chime
 
 
 @pytest.fixture
@@ -50,6 +50,7 @@ def output(monkeypatch):
 @pytest.mark.parametrize('play,count,amplitude', [
     (play_wake_chime, 4320, 3900),
     (play_endpoint_chime, 3600, 2600),
+    (play_failure_chime, 5760, 2600),
 ])
 def test_chime_plays_bounded_pcm_and_drains_before_close(output, device, play, count, amplitude):
     play(device)
@@ -67,13 +68,19 @@ def test_chime_plays_bounded_pcm_and_drains_before_close(output, device, play, c
         # Captured before sharing the playback helper: preserve the old tone.
         assert hashlib.sha256(output.pcm).hexdigest() == (
             '77a89abed524cc3fb697fd5df9f59511c1f276f2636a176c217f6a97af39a6d8')
-    else:
+    elif play is play_endpoint_chime:
         # The endpoint acknowledgement is one lower note, not another wake pair.
         spectrum = np.abs(np.fft.rfft(np.asarray(pcm, dtype=float)))
         assert np.argmax(spectrum) * 24000 / len(pcm) == 660
+    else:
+        # Two matching 90 ms tones and a 60 ms silent gap make a double beep.
+        first, gap, second = pcm[:2160], pcm[2160:3600], pcm[3600:]
+        assert first == second and not any(gap)
+        spectrum = np.abs(np.fft.rfft(np.asarray(first, dtype=float)))
+        assert np.argmax(spectrum) * 24000 / len(first) == 800
 
 
-@pytest.mark.parametrize('play', [play_wake_chime, play_endpoint_chime])
+@pytest.mark.parametrize('play', [play_wake_chime, play_endpoint_chime, play_failure_chime])
 @pytest.mark.parametrize('failure,events', [
     ('open', ['open']),
     ('start', ['open', 'start', 'close']),
@@ -88,7 +95,7 @@ def test_audio_failures_propagate_and_opened_streams_are_closed(output, play, fa
     assert output.events == events
 
 
-@pytest.mark.parametrize('play', [play_wake_chime, play_endpoint_chime])
+@pytest.mark.parametrize('play', [play_wake_chime, play_endpoint_chime, play_failure_chime])
 def test_chime_does_not_return_before_output_drain(output, monkeypatch, play):
     entered, release, returned = Event(), Event(), Event()
     original_stop = output.stream_type.stop

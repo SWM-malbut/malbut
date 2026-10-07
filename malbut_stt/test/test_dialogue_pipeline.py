@@ -26,7 +26,8 @@ def wait_for(predicate):
 def harness():
     state = SimpleNamespace(
         now=0.0, transcripts=[], controls=[], candidates=[], reports=[],
-        wake_calls=[], command_calls=[], closed=[], allow_asr=Event(), entered_asr=Event(),
+        wake_calls=[], command_calls=[], failure_chimes=[], closed=[],
+        allow_asr=Event(), entered_asr=Event(),
     )
     state.allow_asr.set()
 
@@ -75,6 +76,7 @@ def harness():
         # Keep the one-frame onsets used by these session/race boundary fixtures.
         options.setdefault('settings', CaptureSettings(
             silence_timeout_s=2.0, min_speech_s=.02))
+        options.setdefault('on_failure', lambda: state.failure_chimes.append('failure'))
         pipeline = DialoguePipeline(
             recorder_factory=lambda: state.recorder,
             wake=SimpleNamespace(transcribe=wake),
@@ -152,7 +154,7 @@ def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
     pipeline.on_playback_status('answer', 'finished', request_id=first_id)
     assert not pipeline.session.active
     harness.now = 1.31
-    pipeline.wake.transcribe = lambda pcm, rate: '구독과 좋아요 부탁드려요'
+    pipeline.wake.transcribe = lambda pcm, rate: '오늘은 책을 읽었습니다'
     pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: 'not_wake' in harness.reports)
     assert len(harness.transcripts) == 1
@@ -545,6 +547,7 @@ def test_normal_tts_completion_ends_session_after_five_seconds(harness):
     pipeline.poll()
     assert not pipeline.session.active
     assert 'session_ended:input_timeout' in harness.reports
+    assert harness.failure_chimes == ['failure']
 
 
 def test_predeadline_queued_onset_is_processed_before_late_status_callback(harness):
@@ -603,7 +606,8 @@ def test_busy_utterance_tail_is_discarded_after_asr_failure(harness):
     assert not pipeline.session.active and pipeline.session.utterance_id is None
     pipeline.feed(VOICE + QUIET * 20)
     assert pipeline.jobs.empty() and harness.wake_calls == []
-    pipeline.on_playback_status('retry', 'failed', request_id=uid)
+    assert harness.failure_chimes == ['failure']
+    harness.now += .31
     pipeline.feed(QUIET * 130)
     wake_up(harness, pipeline)
     finish_command(pipeline)
@@ -637,14 +641,10 @@ def test_failed_command_closes_turn_and_requires_another_wake(harness, failure):
     assert pipeline.pending_addressee is None
     assert harness.transcripts == [] and harness.candidates == []
     assert harness.controls == []
-    assert statuses == [('', first, 'started')] + (
-        [('', first, 'failed')] if isinstance(failure, Exception) else [])
-    if isinstance(failure, Exception):
-        assert pipeline._reply_request_id == first
-        finish_command(pipeline)
-        assert pipeline.jobs.empty()
-        pipeline.on_playback_status('retry', 'failed', request_id=first)
+    assert statuses == [('', first, 'started')]
+    assert harness.failure_chimes == ['failure']
     assert pipeline._reply_request_id is None
+    harness.now += .31
     pipeline.wake.transcribe = lambda pcm, rate: '호출어 없는 말'
     pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: 'not_wake' in harness.reports)
@@ -661,7 +661,7 @@ def test_failed_command_closes_turn_and_requires_another_wake(harness, failure):
 
 
 @pytest.mark.parametrize('terminal', ['finished', 'failed', 'stopped'])
-def test_failed_command_gates_retry_before_notification_until_matching_terminal(harness, terminal):
+def test_failed_command_sound_guard_does_not_wait_for_agent_playback(harness, terminal):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(
         (*args, pipeline._input_blocked(harness.now))))
@@ -669,18 +669,23 @@ def test_failed_command_gates_retry_before_notification_until_matching_terminal(
     pipeline.feed(VOICE)
     uid, generation = pipeline.session.utterance_id, pipeline._generation
     pipeline._accept_result('command', generation, uid, None, 'ValueError')
-    assert statuses[-1] == ('', uid, 'failed', True)
+    assert statuses == [('', uid, 'started', False)]
+    assert harness.failure_chimes == ['failure']
+    assert pipeline._reply_request_id is None
     pipeline.on_playback_status('retry', terminal, interim=True, request_id=uid)
     pipeline.on_playback_status('other', terminal, request_id='other')
     assert pipeline._input_blocked(harness.now)
     pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
     pipeline.on_playback_status('retry-final', terminal, request_id=uid)
+    assert pipeline._input_blocked(harness.now) and pipeline.audio.empty()
+    harness.now += .31
     assert not pipeline._input_blocked(harness.now) and pipeline.audio.empty()
     wake_up_count = len(harness.wake_calls)
     pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: pipeline.session.active)
     pipeline._accept_result('command', generation, uid, '이전 결과', None)
     assert harness.transcripts == [] and len(harness.wake_calls) == wake_up_count + 1
+    assert harness.failure_chimes == ['failure']
 
 
 @pytest.mark.parametrize('text,error', [('', None), (None, 'ValueError')])
@@ -694,6 +699,7 @@ def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
     assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'failed')]
     assert pipeline.session_is_active('confirmation')
     assert pipeline._reply_request_id is None
+    assert harness.failure_chimes == []
     assert pipeline.stop_session('confirmation')
     assert not pipeline.session.active
 
@@ -708,21 +714,25 @@ def test_wake_without_command_times_out_after_chime_guard(harness):
     pipeline.poll()
     assert not pipeline.session.active and harness.transcripts == []
     assert harness.command_calls == []
+    assert harness.failure_chimes == ['failure']
 
 
-def test_missing_retry_notice_cannot_leave_input_blocked_forever(harness):
+def test_failed_command_unblocks_after_sound_without_an_agent_notice(harness):
     pipeline = harness.create()
     wake_up(harness, pipeline)
     pipeline.feed(VOICE)
     uid = pipeline.session.utterance_id
     pipeline._accept_result('command', pipeline._generation, uid, None, 'ValueError')
-    harness.now = 44.999
+    assert pipeline._reply_request_id is None
+    assert harness.failure_chimes == ['failure']
+    harness.now = .299
     pipeline.poll()
     assert pipeline._input_blocked(harness.now)
-    harness.now = 45.0
+    harness.now = .3
     pipeline.poll()
     assert not pipeline._input_blocked(harness.now) and not pipeline.session.active
-    assert 'retry_notice_timeout' in harness.reports
+    assert 'retry_notice_timeout' not in harness.reports
+    assert harness.failure_chimes == ['failure']
 
 
 def test_command_start_before_wake_timeout_survives_late_poll(harness):
@@ -784,7 +794,7 @@ def test_ordinary_input_status_ignores_empty_ids_and_busy_discard(harness):
 
 
 @pytest.mark.parametrize('failure', ['', RuntimeError('private model details')])
-def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(harness, failure):
+def test_failed_interruption_keeps_actual_pause_and_requires_another_wake(harness, failure):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
@@ -802,7 +812,7 @@ def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(
     pipeline.on_playback_status('p1', 'paused')
     pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: pipeline.session.utterance_id is None)
-    assert pipeline.session.active and pipeline.session.playback_state == 'paused'
+    assert not pipeline.session.active and pipeline.session.playback_state == 'paused'
     assert pipeline.session.playback_id == 'p1' and pipeline.session._control == 'pause'
     assert pipeline.session.deadline is None and not pipeline._busy
     assert pipeline.pending_addressee is None
@@ -810,7 +820,11 @@ def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(
     assert harness.candidates == [] and harness.transcripts == []
     # An ordinary retry notice would queue behind the still-paused answer.
     assert statuses == [('', first, 'started')]
+    assert harness.failure_chimes == ['failure']
     pipeline.transcriber.transcribe = original
+    harness.now += .31
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.candidates) == 1)
     second, pid, text = harness.candidates[0]
@@ -819,7 +833,7 @@ def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(
     pipeline.on_addressee(second, pid, 'addressed')
     assert harness.controls == [('p1', 'pause'), ('p1', 'stop')]
     assert harness.transcripts == [(second, '문장 1')]
-    assert len(harness.wake_calls) == 1
+    assert len(harness.wake_calls) == 2
 
 
 @pytest.mark.parametrize('stale', ['generation', 'utterance_id'])
@@ -1326,27 +1340,30 @@ def test_web_talk_does_not_release_unfinished_ordinary_reply(harness, reply_ends
     assert not pipeline._input_blocked(harness.now)
 
 
-@pytest.mark.parametrize('release_before_timeout', [True, False])
-def test_web_talk_preserves_retry_notice_timeout(harness, release_before_timeout):
+@pytest.mark.parametrize('release_before_expiry', [True, False])
+def test_web_talk_after_failed_command_never_waits_for_a_retry_notice(
+    harness, release_before_expiry,
+):
     pipeline = harness.create()
     wake_up(harness, pipeline)
     pipeline.feed(VOICE)
     uid = pipeline.session.utterance_id
     pipeline._accept_result('command', pipeline._generation, uid, None, 'ValueError')
-    deadline = pipeline._retry_notice_deadline
-    harness.now = 40.0
+    assert pipeline._reply_request_id is None
+    assert harness.failure_chimes == ['failure']
+    harness.now = .31
     assert pipeline.control_web_talk('web-1', True, 10.0)
-    assert pipeline._retry_notice_deadline == deadline
-    if release_before_timeout:
+    assert pipeline._reply_request_id is None
+    if release_before_expiry:
         assert pipeline.control_web_talk('web-1', False, 0.0)
-    harness.now = deadline
+    harness.now = 10.31
     pipeline.poll()
     assert pipeline._reply_request_id is None
-    assert pipeline._input_blocked(harness.now) is not release_before_timeout
-    if not release_before_timeout:
-        assert pipeline.control_web_talk('web-1', False, 0.0)
+    assert pipeline._input_blocked(harness.now) is not release_before_expiry
+    if not release_before_expiry:
         harness.now += 0.31
     assert not pipeline._input_blocked(harness.now)
+    assert harness.failure_chimes == ['failure']
 
 
 def test_web_talk_silences_current_and_requested_speech_until_it_ends(harness):
