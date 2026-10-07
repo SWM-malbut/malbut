@@ -93,6 +93,8 @@ type ConnectionCallbacks = {
 export type KvsConnection = {
   close: () => void;
   storageMode: boolean;
+  /** P2P only: put the microphone on the already negotiated audio sender, without a new offer. */
+  attachMicrophone?: (track: MediaStreamTrack) => Promise<void>;
 };
 
 let sdkPromise: Promise<KvsSdk> | null = null;
@@ -159,12 +161,16 @@ function connectKvsP2pViewer(input: {
   const queuedCandidates: RTCIceCandidateInit[] = [];
   const peer = new input.PeerConnection({ iceServers: input.config.iceServers });
   peer.addTransceiver("video", { direction: "recvonly" });
+  // Audio goes both ways from the start, so the guardian's microphone can join a
+  // live connection with replaceTrack instead of a new offer (a visible reconnect).
+  // No track means nothing is sent until then.
   const localAudioTrack = input.localAudioStream?.getAudioTracks()[0];
-  if (localAudioTrack && input.localAudioStream) {
-    peer.addTrack(localAudioTrack, input.localAudioStream);
-  } else {
-    peer.addTransceiver("audio", { direction: "recvonly" });
-  }
+  const audio = localAudioTrack && input.localAudioStream
+    ? peer.addTransceiver(localAudioTrack, {
+      direction: "sendrecv",
+      streams: [input.localAudioStream],
+    })
+    : peer.addTransceiver("audio", { direction: "sendrecv" });
 
   const signaling = new input.sdk.SignalingClient({
     channelARN: input.config.channelArn,
@@ -266,6 +272,10 @@ function connectKvsP2pViewer(input: {
 
   return {
     storageMode: false,
+    async attachMicrophone(track) {
+      if (closed) throw new Error("홈캠 연결이 닫혔어요.");
+      await audio.sender.replaceTrack(track);
+    },
     close() {
       closed = true;
       if (disconnectTimer !== null) window.clearTimeout(disconnectTimer);

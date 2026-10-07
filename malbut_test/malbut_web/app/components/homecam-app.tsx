@@ -12,6 +12,7 @@ import {
   TALK_LIMIT_MS,
   formatTalkRemaining,
   type LiveTalk,
+  type TalkEnded,
   type TalkHolder,
 } from "../homecam-talk";
 import {
@@ -228,7 +229,12 @@ function Viewer({
   const [talkWanted, setTalkWanted] = useState(false);
   const [talkHolder, setTalkHolder] = useState<TalkHolder | null>(null);
   const [talkStartedAt, setTalkStartedAt] = useState<number | null>(null);
-  const [talkTimedOut, setTalkTimedOut] = useState(false);
+  const [talkEnded, setTalkEnded] = useState<TalkEnded | null>(null);
+  // Why talking stopped, so an unexpected stop (page hidden, reconnect) can say so.
+  const talkStopReasonRef = useRef<"user" | "timeout" | null>(null);
+  const wasTalkingRef = useRef(false);
+  // One switch-on attempt at a time; switching off makes an older attempt stale.
+  const talkRunRef = useRef(0);
   const [speakerMuted, setSpeakerMuted] = useState(true);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [viewerClockMs, setViewerClockMs] = useState(() => Date.now());
@@ -893,8 +899,8 @@ function Viewer({
     releaseTalkLease,
   ]);
 
-  const prepareMicrophone = async () => {
-    if (microphonePending || state !== "live") return;
+  const prepareMicrophone = async (): Promise<"attached" | "reconnecting" | "failed"> => {
+    if (microphonePending || state !== "live") return "failed";
     setMicrophonePending(true);
     setMicrophoneNotice("");
 
@@ -908,7 +914,7 @@ function Viewer({
       }
       if (!viewerMountedRef.current) {
         stream.getTracks().forEach((track) => track.stop());
-        return;
+        return "failed";
       }
 
       const track = stream.getAudioTracks()[0];
@@ -917,12 +923,23 @@ function Viewer({
       microphoneRef.current = stream;
       setMicrophoneAvailable(true);
       setTalking(false);
+      const connection = connectionRef.current;
+      if (connection?.attachMicrophone && viewerStateRef.current === "live") {
+        try {
+          // The live connection already has a send-capable audio line: no reconnect.
+          await connection.attachMicrophone(track);
+          return "attached";
+        } catch {
+          // A closing connection: reconnect with the microphone in the offer instead.
+        }
+      }
       setError("");
       setState("connecting");
       setStorageMode(null);
       setMicrophoneNotice("마이크를 연결하기 위해 AWS 세션을 다시 연결하고 있습니다.");
       viewerGenerationRef.current += 1;
       setAttempt((value) => value + 1);
+      return "reconnecting";
     } catch (reason) {
       talkWantedRef.current = false;
       if (viewerMountedRef.current) {
@@ -933,12 +950,14 @@ function Viewer({
             : "이 기기 마이크 권한이 없어요. 브라우저 설정에서 마이크를 허용해 주세요.",
         );
       }
+      return "failed";
     } finally {
       if (viewerMountedRef.current) setMicrophonePending(false);
     }
   };
 
-  const startTalking = async () => {
+  /** "abandoned": the connection or switch changed under it, without its own notice. */
+  const startTalking = async (): Promise<"talking" | "failed" | "abandoned" | "skipped"> => {
     const track = microphoneRef.current?.getAudioTracks()[0];
     if (
       !track ||
@@ -947,7 +966,7 @@ function Viewer({
       talkLeasePending ||
       talking
     ) {
-      return;
+      return "skipped";
     }
     const talkGeneration = viewerGenerationRef.current;
     const talkClientId = viewerClientIdRef.current;
@@ -966,7 +985,7 @@ function Viewer({
         const readyDeadline = Date.now() + 10_000;
         let ready = false;
         while (!ready) {
-          if (!isCurrentTalk()) return;
+          if (!isCurrentTalk()) return "abandoned";
           const remainingMs = readyDeadline - Date.now();
           if (remainingMs <= 0) throw new Error("말벗이 말하기를 준비하지 못했어요. 잠시 뒤 다시 켜 주세요.");
           const requestedAt = performance.now();
@@ -1011,7 +1030,7 @@ function Viewer({
           }
           if (!isCurrentTalk()) {
             notifyTalkLeaseRelease(receivedLease);
-            return;
+            return "abandoned";
           }
           acquiredLease = receivedLease;
           talkLeaseRef.current = acquiredLease;
@@ -1020,7 +1039,7 @@ function Viewer({
             readyForMs <= 2500 && readyForMs > performance.now() - requestedAt;
           if (!ready) await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         }
-        if (!isCurrentTalk()) return;
+        if (!isCurrentTalk()) return "abandoned";
 
         const renewLease = async () => {
           const currentLease = talkLeaseRef.current;
@@ -1054,7 +1073,8 @@ function Viewer({
             } | null;
             if (renewal.status === 409 && renewalPayload?.code === "time_limit") {
               // The server's 3-minute limit: the same notice as this screen's own timer.
-              setTalkTimedOut(true);
+              talkStopReasonRef.current = "timeout";
+              setTalkEnded("timeout");
               throw new Error("");
             }
             if (renewal.ok && renewalPayload?.lease?.leaseId &&
@@ -1096,13 +1116,13 @@ function Viewer({
           viewerGenerationRef.current !== talkGeneration ||
           viewerClientIdRef.current !== talkClientId
         ) {
-          return;
+          return "abandoned";
         }
         releaseTalkLease();
         setMicrophoneNotice(
           reason instanceof Error ? reason.message : "말하기 권한을 받지 못했어요.",
         );
-        return;
+        return "failed";
       }
     }
 
@@ -1115,12 +1135,13 @@ function Viewer({
       } else {
         track.enabled = false;
       }
-      return;
+      return "abandoned";
     }
     track.enabled = true;
     setTalkLeasePending(false);
     setMicrophoneNotice("");
     setTalking(true);
+    return "talking";
   };
 
   const toggleSpeaker = async () => {
@@ -1157,9 +1178,25 @@ function Viewer({
   };
 
   // 현재 상태 › 마이크: on until switched off, the viewer leaves, or 3 minutes pass.
+  // One switch-on attempt. A start dropped by a connection change says so instead of
+  // leaving the switch silently off.
+  const runTalk = async () => {
+    const run = ++talkRunRef.current;
+    const outcome = await startTalking();
+    if (talkRunRef.current !== run || !viewerMountedRef.current) return;
+    talkWantedRef.current = false;
+    setTalkWanted(false);
+    if (outcome === "abandoned") {
+      releaseTalkLease();
+      setTalkEnded("dropped");
+    }
+  };
+
   const toggleTalk = async () => {
     if (talkWantedRef.current || talkIntentRef.current || talking || talkLeasePending) {
+      talkRunRef.current += 1;
       talkWantedRef.current = false;
+      talkStopReasonRef.current = "user";
       setTalkWanted(false);
       releaseTalkLease();
       return;
@@ -1167,26 +1204,29 @@ function Viewer({
     if (talkHolder || microphonePending || viewerStateRef.current !== "live") return;
     // Within the tap, so the browser lets the video play its sound.
     void turnSpeakerOn();
-    setTalkTimedOut(false);
+    setTalkEnded(null);
     setMicrophoneNotice("");
     talkWantedRef.current = true;
     setTalkWanted(true);
     if (!microphoneRef.current) {
-      // First use: ask for the microphone and reconnect so the offer carries it.
-      // The effect below starts talking once the new connection is live.
-      await prepareMicrophone();
-      return;
+      // First use: ask for the microphone and put it on the live connection. Only a
+      // connection that cannot take it reconnects; the effect below then starts talking.
+      const prepared = await prepareMicrophone();
+      if (prepared === "reconnecting") return;
+      if (prepared === "failed") {
+        talkWantedRef.current = false;
+        if (viewerMountedRef.current) setTalkWanted(false);
+        return;
+      }
     }
-    await startTalking();
-    talkWantedRef.current = false;
-    if (viewerMountedRef.current) setTalkWanted(false);
+    await runTalk();
   };
   const toggleTalkRef = useRef(toggleTalk);
-  const startTalkingRef = useRef(startTalking);
+  const runTalkRef = useRef(runTalk);
   const turnSpeakerOnRef = useRef(turnSpeakerOn);
   useEffect(() => {
     toggleTalkRef.current = toggleTalk;
-    startTalkingRef.current = startTalking;
+    runTalkRef.current = runTalk;
     turnSpeakerOnRef.current = turnSpeakerOn;
   });
 
@@ -1196,9 +1236,7 @@ function Viewer({
     void (async () => {
       // Reconnecting for the new microphone can mute the video again.
       await turnSpeakerOnRef.current();
-      await startTalkingRef.current();
-      talkWantedRef.current = false;
-      if (viewerMountedRef.current) setTalkWanted(false);
+      await runTalkRef.current();
     })();
   }, [state, microphoneAvailable]);
 
@@ -1219,11 +1257,30 @@ function Viewer({
     // 말벗 cannot hear anyone while this is on, so it never stays on unattended.
     const timer = window.setTimeout(() => {
       talkWantedRef.current = false;
+      talkStopReasonRef.current = "timeout";
       releaseTalkLease();
-      setTalkTimedOut(true);
+      setTalkEnded("timeout");
     }, TALK_LIMIT_MS);
     return () => window.clearTimeout(timer);
   }, [talking, releaseTalkLease]);
+
+  useEffect(() => {
+    if (talking) {
+      wasTalkingRef.current = true;
+      talkStopReasonRef.current = null;
+      return;
+    }
+    if (!wasTalkingRef.current) return;
+    wasTalkingRef.current = false;
+    const reason = talkStopReasonRef.current;
+    talkStopReasonRef.current = null;
+    // Not the switch or the 3-minute limit (page hidden, reconnect, lost lease): say so.
+    if (reason === null) {
+      window.queueMicrotask(() => {
+        if (viewerMountedRef.current) setTalkEnded((current) => current ?? "dropped");
+      });
+    }
+  }, [talking]);
 
   useEffect(() => {
     if (!deviceId || localDemoViewer || state !== "live" || talking || talkLeasePending) return;
@@ -1265,11 +1322,11 @@ function Viewer({
       available: state === "live",
       remainingMs: talkRemainingMs,
       holder: talkHolder,
-      timedOut: talkTimedOut,
+      ended: talkEnded,
       error: talkPhase === "off" ? microphoneNotice : "",
       toggle: () => void toggleTalkRef.current(),
     });
-  }, [onTalkChange, talkPhase, state, talkRemainingMs, talkHolder, talkTimedOut, microphoneNotice]);
+  }, [onTalkChange, talkPhase, state, talkRemainingMs, talkHolder, talkEnded, microphoneNotice]);
   useEffect(() => () => onTalkChange?.(null), [onTalkChange]);
 
   return (
