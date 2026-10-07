@@ -22,6 +22,11 @@ const HEARTBEAT_ONLINE_MS = 30_000;
 const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const TALK_LEASE_MS = 15_000;
+/**
+ * A guardian's microphone turns itself off 3 minutes after it starts. The server
+ * stops renewing 20 seconds later, so a stuck screen cannot keep 말벗 deaf.
+ */
+const TALK_MAX_MS = 200_000;
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const EVENT_CLIP_INCOMPLETE_MS = 3 * 60 * 1000;
 
@@ -1716,6 +1721,7 @@ export async function acquireTalkLease(input: {
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + TALK_LEASE_MS).toISOString();
+  const startedAfter = new Date(now.getTime() - TALK_MAX_MS).toISOString();
   const proposedLeaseId = crypto.randomUUID();
   const lease = await d1
     .prepare(
@@ -1739,6 +1745,10 @@ export async function acquireTalkLease(input: {
            WHEN talk_leases.expires_at <= ? THEN NULL
            ELSE talk_leases.ready_until
          END,
+         created_at = CASE
+           WHEN talk_leases.expires_at <= ? THEN excluded.created_at
+           ELSE talk_leases.created_at
+         END,
          expires_at = excluded.expires_at,
          updated_at = excluded.updated_at
        WHERE talk_leases.expires_at <= ?
@@ -1747,6 +1757,7 @@ export async function acquireTalkLease(input: {
             AND talk_leases.client_id = excluded.client_id
             AND CAST(? AS TEXT) IS NOT NULL
             AND talk_leases.lease_id = ?
+            AND talk_leases.created_at > ?
           )
        RETURNING lease_id, expires_at, CASE WHEN ready_until IS NULL THEN 0 ELSE
          GREATEST(0, LEAST(2500, FLOOR(EXTRACT(EPOCH FROM
@@ -1766,8 +1777,10 @@ export async function acquireTalkLease(input: {
       nowIso,
       nowIso,
       nowIso,
+      nowIso,
       input.existingLeaseId ?? null,
       input.existingLeaseId ?? null,
+      startedAfter,
     )
     .first<{ lease_id: string; expires_at: string; ready_for_ms: number }>();
   if (!lease) return null;
@@ -1780,6 +1793,32 @@ export async function acquireTalkLease(input: {
   });
   return { leaseId: lease.lease_id, expiresAt: lease.expires_at,
     ready: lease.ready_for_ms > 0, readyForMs: lease.ready_for_ms };
+}
+
+/**
+ * Who is talking through this 말벗 now, for another viewer. The caller's own
+ * lease (same person and screen) is not "someone else".
+ */
+export async function readTalkLeaseHolder(input: {
+  deviceId: string;
+  userId: string;
+  clientId?: string;
+}) {
+  await ensureHomecamSchema();
+  const lease = await getD1()
+    .prepare(
+      `SELECT lease_id, user_id, client_id FROM talk_leases
+       WHERE device_id = ? AND expires_at > CURRENT_TIMESTAMP`,
+    )
+    .bind(input.deviceId)
+    .first<{ lease_id: string; user_id: string; client_id: string }>();
+  if (!lease) return null;
+  const self = lease.user_id === input.userId;
+  if (self && lease.client_id === input.clientId) {
+    return { leaseId: lease.lease_id, mine: true as const };
+  }
+  const name = labelFor(await userLabels([lease.user_id]), lease.user_id) ?? "";
+  return { leaseId: lease.lease_id, mine: false as const, holder: { name, self } };
 }
 
 export async function syncTalkLease(

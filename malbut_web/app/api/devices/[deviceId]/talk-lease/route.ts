@@ -1,5 +1,6 @@
 import {
   acquireTalkLease,
+  readTalkLeaseHolder,
   releaseTalkLease,
   userCanViewDevice,
 } from "../../../../../db/homecam";
@@ -8,6 +9,25 @@ import { noStore } from "../../../../api-response";
 import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
+
+/** Who else is talking through this 말벗, so the microphone switch can wait. */
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ deviceId: string }> },
+) {
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const { deviceId } = await context.params;
+  if (!(await userCanViewDevice(deviceId, userId))) {
+    return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
+  }
+  const clientId = new URL(request.url).searchParams.get("clientId") ?? undefined;
+  if (clientId !== undefined && !isValidClientId(clientId)) {
+    return noStore({ error: "말하기 lease 형식을 확인해 주세요." }, 400);
+  }
+  const lease = await readTalkLeaseHolder({ deviceId, userId, clientId });
+  return noStore({ holder: lease && !lease.mine ? lease.holder : null }, 200);
+}
 
 export async function POST(
   request: Request,
@@ -43,8 +63,19 @@ export async function POST(
     existingLeaseId: payload.leaseId as string | undefined,
   });
   if (!lease) {
+    const current = await readTalkLeaseHolder({ deviceId, userId, clientId: payload.clientId });
+    if (current?.mine && current.leaseId === payload.leaseId) {
+      return noStore(
+        { error: "3분이 지나 마이크를 껐어요.", code: "time_limit" },
+        409,
+      );
+    }
     return noStore(
-      { error: "다른 보호자가 말하기 기능을 사용 중입니다." },
+      {
+        error: "다른 보호자가 말하는 중이에요.",
+        code: "busy",
+        holder: current && !current.mine ? current.holder : null,
+      },
       409,
       { "retry-after": "2" },
     );

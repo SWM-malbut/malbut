@@ -23,6 +23,7 @@ import {
 import { type HomecamTab, useHomecamAuth } from "./homecam-header";
 import { UiTabBar } from "./ui-tab-bar";
 import { DisplayNameForm } from "./display-name-form";
+import { talkNote, type LiveTalk } from "../homecam-talk";
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
@@ -93,6 +94,8 @@ type HomecamDashboardProps = {
   liveMediaReady?: boolean;
   /** 스피커 row of 현재 상태; null until the live viewer is open. */
   liveSpeaker?: LiveSpeaker | null;
+  /** 마이크 row of 현재 상태 (my voice to 말벗); null until the live viewer is open. */
+  liveTalk?: LiveTalk | null;
   onReleaseLive?: () => void;
   liveViewer?: (context: { device: HomecamDevice | null }) => React.ReactNode;
 };
@@ -490,6 +493,7 @@ export function HomecamDashboard({
   onOpenLive,
   liveMediaReady = false,
   liveSpeaker = null,
+  liveTalk = null,
   onReleaseLive,
   liveViewer,
 }: HomecamDashboardProps) {
@@ -592,6 +596,7 @@ export function HomecamDashboard({
     : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
   const liveViewerActive = Boolean(liveViewer);
   const livePipActive = tab !== "live" && liveViewerActive;
+  const talkNoteNow = liveTalk ? talkNote(liveTalk) : null;
 
   const moveLivePip = useCallback((clientX: number, clientY: number) => {
     const element = livePipRef.current;
@@ -1195,7 +1200,7 @@ export function HomecamDashboard({
               <div className="ui-chips">
                 <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.online ? "말벗 연결됨" : "말벗 오프라인"}</span>
                 <span className={selectedDevice?.p2pHealthy ? "is-ok" : ""}>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
-                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
+                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "말벗 마이크 켜짐" : "말벗 마이크 꺼짐"}</span>
               </div>
               <div className="ui-two-buttons">
                 <button type="button" className="ui-button is-strong" onClick={() => setTab("live")}>홈캠 열기</button>
@@ -1333,18 +1338,24 @@ export function HomecamDashboard({
                     <strong className={selectedDevice.cameraEnabled ? "is-good" : ""}>{selectedDevice.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
                   ))}
                 </div>
-                <div>
-                  <span className="ui-row-label">마이크<small>집 안 소리를 보호자에게 보내기</small></span>
-                  {selectedDevice && (isOwner ? (
+                {/* 마이크 = my voice to 말벗 (목업 20번), for every guardian. 말벗이 집 안 소리를
+                    보낼지는 설정 › 홈캠 설정 › 말벗 마이크. */}
+                <div className="ui-row-stack">
+                  <div className="ui-row-stack-head">
+                    <span className="ui-row-label">마이크<small>내 목소리를 말벗에게 보내기</small></span>
                     <Switch
-                      checked={selectedDevice.microphoneEnabled}
-                      disabled={Boolean(busy)}
+                      checked={Boolean(liveTalk && liveTalk.phase !== "off")}
+                      disabled={!liveTalk || (liveTalk.phase === "off" && (!liveTalk.available || Boolean(liveTalk.holder)))}
                       label="마이크"
-                      onChange={(value) => void updateSetting("microphoneEnabled", value)}
+                      onChange={() => liveTalk?.toggle()}
                     />
-                  ) : (
-                    <strong className={selectedDevice.microphoneEnabled ? "is-good" : ""}>{selectedDevice.microphoneEnabled ? "켜짐" : "꺼짐"}</strong>
-                  ))}
+                  </div>
+                  {talkNoteNow && (
+                    <div className={`ui-talk-note is-${talkNoteNow.tone}`} role="status">
+                      <strong>{talkNoteNow.title}</strong>
+                      <span>{talkNoteNow.text}</span>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span className="ui-row-label">스피커<small>이 기기에서 영상 소리 듣기</small></span>
@@ -1381,6 +1392,10 @@ export function HomecamDashboard({
                   </strong>
                 </div>
               </article>
+              <p className="ui-caption homecam-talk-caption">
+                마이크를 켜면 스피커도 같이 켜져 통화처럼 서로 말할 수 있어요. 마이크는 보호자 누구나 켤 수 있고,
+                한 번에 한 명만 쓸 수 있어요. 말벗이 집 안 소리를 보낼지는 설정 › 홈캠 설정 › 말벗 마이크에서 정해요(소유자).
+              </p>
 
               <article className="ui-card ui-incidents">
                 <div className="ui-card-head">
