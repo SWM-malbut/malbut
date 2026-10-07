@@ -47,7 +47,7 @@ class DialoguePipeline:
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
-                 stop_speech=None):
+                 stop_speech=None, on_failure=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -63,6 +63,7 @@ class DialoguePipeline:
         self._event_time = None
         self.on_wake = on_wake
         self.on_endpoint = on_endpoint
+        self.on_failure = on_failure
         self.on_partial = on_partial
         self.publish_input_status = publish_input_status
         self._stream_factory = getattr(transcriber, 'create_stream', None)
@@ -504,7 +505,7 @@ class DialoguePipeline:
         self._submit_endpoint()
         self._finish_ready_endpoint()
         if self.session.tick():
-            self._terminate('session_ended:input_timeout')
+            self._fail_command('session_ended:input_timeout')
         self._expire_command_wait(self.clock())
         if (self._retry_notice_deadline is not None
                 and self.clock() >= self._retry_notice_deadline):
@@ -513,7 +514,9 @@ class DialoguePipeline:
     def _expire_command_wait(self, captured_at):
         if (self._command_start_deadline is not None
                 and captured_at >= self._command_start_deadline):
-            self._terminate('session_ended:input_timeout')
+            self._fail_command('session_ended:input_timeout')
+            return True
+        return False
 
     def _input_blocked(self, captured_at):
         return (self._web_talk_blocked(captured_at) or self._reply_request_id is not None
@@ -544,9 +547,11 @@ class DialoguePipeline:
             self._event_time = None
 
     def _feed(self, pcm, busy_at_capture):
-        self._expire_command_wait(self._event_time)
+        if self._expire_command_wait(self._event_time):
+            return
         if self.session.tick():
-            self._terminate('session_ended:input_timeout')
+            self._fail_command('session_ended:input_timeout')
+            return
         if self._tail_stream is not None:
             self._tail_stream.feed(pcm)
             if not self._tail_stream.discarding:
@@ -693,6 +698,26 @@ class DialoguePipeline:
                    if kind == 'command' else event.pcm)
         self.jobs.put_nowait((kind, self._generation, uid, payload))
 
+    def _fail_command(self, reason):
+        """End an ordinary failed turn locally, without an Agent retry notice."""
+        # Close the generation before playing: duplicate and late inference can
+        # neither publish text nor repeat this cue. Gate even AEC capture.
+        self._chime_playing = True
+        try:
+            self._terminate(reason)
+            if self.on_failure is None:
+                self.report('failure_chime_unavailable')
+            else:
+                try:
+                    self.on_failure()
+                except Exception as error:
+                    self.report('failure_chime_failed:' + type(error).__name__)
+        finally:
+            self._chime_gate_until = self.clock() + 0.3
+            self._reset_audio()
+            self._chime_playing = False
+        self.report('waiting_for_wake')
+
     def _play_endpoint_chime(self):
         """Acknowledge capture completion without resetting its pending inference."""
         if self.on_endpoint is None or self.session.playback_state in ('playing', 'paused'):
@@ -783,19 +808,11 @@ class DialoguePipeline:
         if failure is not None:
             if kind == 'wake':
                 self._terminate(failure)
-            elif not self.session.session_id and self._utterance_playback_id is None:
-                # Empty input ends quietly. An actual decode error owns one
-                # correlated final notice, including failure before PLAYING.
-                self._terminate(failure)
-                if error_name is not None:
-                    self._reply_request_id = uid
-                    self._retry_notice_deadline = self.clock() + RETRY_NOTICE_TIMEOUT_SECONDS
-                    self._input_status('failed', uid)
+            elif not self.session.session_id:
+                self._fail_command(failure)
             else:
-                # A retry notice must not queue behind the paused answer whose
-                # addressee is still unknown; keep that existing recovery path.
-                if self.session.session_id or self._utterance_playback_id is None:
-                    self._input_status('failed', uid)
+                # Agent-owned confirmations retain their correlated failure policy.
+                self._input_status('failed', uid)
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
                 self.report(failure)

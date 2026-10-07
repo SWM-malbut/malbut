@@ -23,6 +23,7 @@ def pump(pipeline, predicate):
 @pytest.fixture
 def state():
     state = SimpleNamespace(final=[], partial=[], reports=[], calls=[], streams=[],
+                            statuses=[], failure_chimes=[],
                             release=Event(), entered=Event())
     state.release.set()
     state.reply = lambda pcm, final: '문을 열어 줘.'
@@ -47,6 +48,8 @@ def state():
         publish_transcript=lambda *args: state.final.append(args),
         publish_control=lambda *_: None, publish_interruption=lambda *_: None,
         report=state.reports.append, on_partial=lambda *args: state.partial.append(args),
+        publish_input_status=lambda *args: state.statuses.append(args),
+        on_failure=lambda: state.failure_chimes.append('failure'),
         endpoint_predecode_s=0.8,
     )
     pipeline.session.activate()
@@ -190,11 +193,15 @@ def test_new_session_does_not_receive_late_preview_or_reuse_old_stream(state):
 def test_latest_partial_failure_never_publishes_an_older_prefix_as_final(state):
     pipeline = state.pipeline
     pipeline.feed(VOICE * 100)
+    uid = pipeline.session.utterance_id
     pump(pipeline, lambda: bool(state.partial))
     state.reply = lambda pcm, final: ''
     pipeline.feed(VOICE * 100 + QUIET * 100)
     pump(pipeline, lambda: 'empty_transcript' in state.reports)
     assert state.final == [] and not pipeline.session.active
+    assert state.failure_chimes == ['failure']
+    assert state.statuses == [('', uid, 'started')]
+    assert pipeline._reply_request_id is None
 
 
 @pytest.mark.parametrize('decision', ['addressed', 'not_addressed'])

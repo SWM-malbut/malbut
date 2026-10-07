@@ -74,13 +74,16 @@ def test_early_snapshot_is_once_per_pause_and_revision_survives_reset():
 
 @pytest.fixture
 def run():
-    state = SimpleNamespace(now=0.0, transcripts=[], reports=[], controls=[])
+    state = SimpleNamespace(now=0.0, transcripts=[], reports=[], controls=[],
+                            statuses=[], failure_chimes=[])
     pipeline = DialoguePipeline(
         recorder_factory=lambda: None, wake=None, transcriber=None,
         is_speech=lambda frame, _: any(frame),
         publish_transcript=lambda uid, text: state.transcripts.append((uid, text)),
         publish_control=lambda pid, cmd: state.controls.append((pid, cmd)),
         publish_interruption=lambda *_: None, report=state.reports.append,
+        publish_input_status=lambda *args: state.statuses.append(args),
+        on_failure=lambda: state.failure_chimes.append('failure'),
         clock=lambda: state.now, input_has_aec=True,
         # Keep exact single-frame PCM boundaries independent of onset debounce.
         settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
@@ -440,6 +443,7 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     job = candidate(run)
     reply(run, job, None, 'RuntimeError')
     assert run.pipeline.session.active and run.transcripts == []
+    assert run.failure_chimes == []
     run.pipeline.feed(QUIET * 50)
     assert run.pipeline.session.active and run.pipeline._busy
     final_job = run.pipeline.jobs.get_nowait()
@@ -449,12 +453,18 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     assert 'transcription_failed:RuntimeError' in run.reports
     assert run.pipeline.jobs.empty()
     assert not run.pipeline.session.active
-    run.pipeline.on_playback_status('retry', 'failed', request_id=final_job[2])
+    assert run.failure_chimes == ['failure']
+    assert run.statuses == [('', final_job[2], 'started')]
+    assert run.pipeline._reply_request_id is None
+    run.now += .31
     run.pipeline._accept_result('wake', run.pipeline._generation, None, '제이크', None)
-    next_job = candidate(run)
+    run.pipeline.feed(VOICE + QUIET * 50)
+    next_job = run.pipeline.jobs.get_nowait()
+    assert next_job[0] == 'endpoint'
     assert next_job[2][0] != job[2][0]
     reply(run, next_job, '문을 닫아 주세요.')
     assert run.transcripts == [(next_job[2][0], '문을 닫아 주세요.')]
+    assert run.failure_chimes == ['failure']
 
 
 def test_report_includes_actual_audio_silence_and_candidate_wait(run):
