@@ -71,10 +71,10 @@ STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 
 `build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
 `bringup.launch.py` 하나가 로봇 전체와 STT·Agent·TTS를 기본으로 함께 실행한다.
 실행 모드는 없으며, 저장 지도 선택 여부만 실행 중에 바뀐다
-([실행 구성](malbut_bringup/README.md#실행-구성)).
+([실행 구성](malbut_bringup/README.md#실행-구조)).
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
 Cloud VLM도 설정 파일이 준비되면 센서 준비 후 함께 시작한다. 설정 경로와
-감지·전송 전 대기 조건은 [Bringup 안내](malbut_bringup/README.md#cloud-vlm-자동-실행)를 따른다.
+감지·전송 전 대기 조건은 [Bringup 안내](malbut_bringup/README_OPERATIONS.md#cloud-vlm-자동-실행)를 따른다.
 클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
 제조사 하드웨어 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.
@@ -141,7 +141,7 @@ CUDA 없는 CI나 센서 전용 빌드는
 packaged ABI 3 bridge`로 실패해 Bringup이 종료된다.
 
 실기기 비교에서 대용량 Depth 점군 수신과 TF 지연이 연결되어, costmap은 LiDAR만
-사용한다([Depth costmap을 쓰지 않는 이유](malbut_bringup/README.md#depth-costmap을-쓰지-않는-이유)).
+사용한다([Depth costmap을 쓰지 않는 이유](malbut_bringup/README_OPERATIONS.md#depth-costmap을-쓰지-않는-이유)).
 Depth costmap 플러그인은 소스만 `malbut_bringup/depth_costmap`에 남기고 기본 빌드에서
 뺐으므로 `ros-humble-depth-image-proc`은 필요 없다. RGB·Depth 영상과 사람 추적은 그대로다.
 Nav2 서버·Collision Monitor는 `navigation2`, 컴포넌트 컨테이너는 `rclcpp_components`에
@@ -318,7 +318,7 @@ ros2 action send_goal /malbut/mission/execute \
 
 수동 조작은 조이스틱이나 웹 조작 패드를 움직이면 시작되어(Nav2 AssistedTeleop)
 진행 중인 추적·순찰을 멈추고, 5초 동안 조작이 없으면 끝난다. 수동 조작 중에는
-추적·순찰 요청이 거부된다. 자세한 동작은 [수동 조작](malbut_bringup/README.md#수동-조작)을 따른다.
+추적·순찰 요청이 거부된다. 자세한 동작은 [수동 조작](malbut_bringup/README_OPERATIONS.md#수동-조작)을 따른다.
 
 관리자를 통해 실행한 모든 미션 취소:
 
@@ -392,7 +392,7 @@ Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_
 원본 점군 발행 OFF 인자는 우리가 시작하는 하드웨어에만 전달하며, 외부에서
 이미 실행 중인 제조사 카메라의 설정은 변경하지 않는다.
 드라이버의 `bins` 설정·수정은 로봇에서 별도로 적용한다. Malbut은 스캔을 재가공하지 않는다.
-점군 통신 제거의 실측 근거와 적용 확인은 [Bringup 설명](malbut_bringup/README.md#depth-점군-수신과-tf-지연)에 정리했다.
+점군 통신 제거의 실측 근거와 적용 확인은 [Bringup 설명](malbut_bringup/README_OPERATIONS.md#depth-costmap을-쓰지-않는-이유)에 정리했다.
 다른 검토한 복사본은 `nav2_params_file`, `slam_params_file`로 지정할 수 있다.
 Nav2는 제조사 navigation launch 대신 공식 Nav2 서버를 제조사와 같은 컴포넌트
 컨테이너 구성으로 Bringup이 직접 실행하므로(`malbut_bringup/nav2_stack.py`), 제조사

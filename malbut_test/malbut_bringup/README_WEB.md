@@ -50,7 +50,7 @@ ros2 run malbut_bringup robot_web_panel --ros-args \
   -p map_directory:="$HOME/.ros/malbut/maps"
 ```
 
-YOLO·OSNet 런타임·모델의 최초 준비는 [Bringup 안내](README.md#로봇에서-처음-준비)를
+YOLO·OSNet 런타임·모델의 최초 준비는 [Bringup 안내](README_OPERATIONS.md#로봇에서-처음-준비)를
 따른다. 파일이 없으면 시작 사전 검사에서 누락 경로와 준비 명령을 알려준다.
 웹에서 시작한 프로세스의 로그 경로도 상태에 표시한다. 자동 설치는 하지 않는다.
 

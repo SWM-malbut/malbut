@@ -55,7 +55,7 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/benchmark
   PATTERN "__pycache__" EXCLUDE
 )
-install(FILES README.md DESTINATION share/${PROJECT_NAME})
+install(FILES README.md README_OPERATIONS.md DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)

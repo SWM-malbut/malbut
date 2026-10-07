@@ -1,7 +1,7 @@
 # 개발·시뮬레이션 가이드
 
 기존 루트 README의 설치·빌드·실행 안내를 옮긴 문서입니다.
-시뮬레이션 개발 절차를 중심으로 하며, 실기기 적용은 [Bringup 안내](../malbut_bringup/README.md)를 기준으로 합니다.
+시뮬레이션 개발 절차를 중심으로 하며, 실기기 적용은 [Bringup 운영 가이드](../malbut_bringup/README_OPERATIONS.md)를 기준으로 합니다.
 프로젝트의 기능과 설계 개요는 [프로젝트 README](../README.md)에서 확인할 수 있습니다.
 
 ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 환경을 실행하기 위한 패키지입니다.
@@ -17,7 +17,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
   - 자율 순회: `malbut_roaming`
   - 지도 기반 카메라 순찰: `malbut_patrol`
 - 공통 ROS 인터페이스: `malbut_interfaces`
-- 실로봇 기동: `malbut_bringup` ([ROSOrin 실행 안내](../malbut_bringup/README.md))
+- 실로봇 기동: `malbut_bringup` ([ROSOrin 실행 안내](../malbut_bringup/README_OPERATIONS.md))
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 홈캠 웹·백엔드: `malbut_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
@@ -33,7 +33,7 @@ Fortress에서는 공식 패키지의 고정 메시 바퀴와 별도 원통 바�
 
 아래 설치·실행 안내는 시뮬레이션 개발 PC 기준이다. 실제 ROSOrin에서는
 기본 ROS/JetPack/제조사 workspace를 유지하고
-[실로봇 Bringup 안내](../malbut_bringup/README.md)를 따른다.
+[실로봇 Bringup 안내](../malbut_bringup/README_OPERATIONS.md)를 따른다.
 
 Ubuntu 설치, GPU 드라이버, 네트워크와 GitHub 계정 설정은 완료되어 있다고 가정합니다.
 

@@ -47,7 +47,7 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE
 )
-install(FILES README.md DESTINATION share/${PROJECT_NAME})
+install(FILES README.md README_OPERATIONS.md DESTINATION share/${PROJECT_NAME})
 
 # Unit tests live in the original package, not in this deployment copy.
 
