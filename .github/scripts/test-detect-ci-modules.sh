@@ -156,4 +156,5 @@ done
 assert_selection "Manual full suite" true,true,true,true,true --all
 python3 "$(dirname "$selector")/test-select-ci.py"
 python3 "$(dirname "$selector")/test-ci-workflow.py"
+python3 "$(dirname "$selector")/test-prefer-apt-fallbacks.py"
 printf '%s\n' 'CI selection checks passed.'

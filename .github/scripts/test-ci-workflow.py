@@ -79,6 +79,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
         self.assertEqual(len(calls), 1)
 
+    def test_both_dependency_jobs_prefer_fallbacks_before_apt_update(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for step, helper in (
+            ('Install ROS and package dependencies', '.github/scripts/prefer-apt-fallbacks.py'),
+            ('Configure ROS apt source', 'src/malbut/.github/scripts/prefer-apt-fallbacks.py'),
+        ):
+            with self.subTest(step=step):
+                body = workflow.split('- name: ' + step, 1)[1].split('\n      - ', 1)[0]
+                self.assertLess(body.index('sudo python3 ' + helper),
+                                body.index('sudo apt-get update'))
+                self.assertIn('Acquire::Retries "3";', body)
+                self.assertIn('Acquire::http::Timeout "30";', body)
+                self.assertIn('Acquire::https::Timeout "30";', body)
+
     def test_workflow_keeps_required_ros_tests_and_offline_dependencies(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('test/test_fall_runtime.py', workflow)
