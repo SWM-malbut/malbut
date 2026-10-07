@@ -110,6 +110,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('--ignore=homecam_agent/test/test_robot_launch.py', offline)
         self.assertNotIn('--execute', offline)
 
+    def test_agent_ros_step_runs_voice_device_and_resident_weather_contracts(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        body = workflow.split('- name: Run Agent ROS communication tests', 1)[1].split(
+            '\n      - ', 1)[0]
+        self.assertIn('python3 -m pytest -q -rs', body)
+        for name in ('test_ros_speech_missions.py', 'test_robot_device_ros.py',
+                     'test_resident_weather_query_ros.py'):
+            with self.subTest(name=name):
+                self.assertEqual(body.count('test/' + name), 1)
+                self.assertTrue((ROOT / 'malbut_agent_server/test' / name).is_file())
+
 
 if __name__ == '__main__':
     unittest.main()
