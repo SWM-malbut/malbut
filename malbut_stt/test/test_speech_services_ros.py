@@ -13,7 +13,7 @@ from malbut_interfaces.msg import (  # noqa: E402
     SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript,
 )
 from malbut_interfaces.srv import (  # noqa: E402
-    ClassifySpeechAddressee, ControlSpeechPlayback,
+    ClassifySpeechAddressee, ControlSpeechPlayback, ControlWebTalk,
 )
 from rclpy.node import Node  # noqa: E402
 
@@ -24,7 +24,8 @@ from malbut_stt import node as stt_node, wake  # noqa: E402
 def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, decision):
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
-                            decisions=[], statuses=[], input_statuses=[], closed=False)
+                            decisions=[], statuses=[], input_statuses=[], web_talk=[],
+                            closed=False)
 
     create_client = Node.create_client
 
@@ -44,6 +45,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             self.sent = False
             self.deadline = monotonic() + 8.0
             self.peer = None
+            self.web_future = None
+            self.web_active = True
 
         def start(self):
             self.peer = Node('speech_service_test_peer')
@@ -51,6 +54,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                                      '/malbut/speech/classify_addressee', self.classify)
             self.peer.create_service(ControlSpeechPlayback,
                                      '/malbut/speech/playback_control', self.control)
+            self.web_client = self.peer.create_client(
+                ControlWebTalk, '/malbut/speech/web_talk_control')
             self.status = self.peer.create_publisher(
                 SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
             self.peer.create_subscription(SpeechTranscript, '/malbut/speech/transcript',
@@ -68,6 +73,10 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             state.controls.append((request.playback_id, request.command))
             response.accepted = True
             return response
+
+        def control_web_talk(self, lease_id, active, ttl_s):
+            state.web_talk.append((lease_id, active, ttl_s))
+            return True
 
         def poll(self):
             assert monotonic() < self.deadline, 'ROS service round trip timed out'
@@ -94,8 +103,16 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                     self.status.publish(SpeechPlaybackStatus(
                         playback_id='playback-1', state=SpeechPlaybackStatus.PAUSED,
                         interim=True))
-                else:
-                    raise KeyboardInterrupt
+                elif self.web_future is None:
+                    self.web_future = self.web_client.call_async(ControlWebTalk.Request(
+                        lease_id='web-1', active=self.web_active,
+                        ttl_s=3.0 if self.web_active else 0.0))
+                elif self.web_future.done():
+                    assert self.web_future.result().accepted
+                    if not self.web_active:
+                        raise KeyboardInterrupt
+                    self.web_active = False
+                    self.web_future = None
 
         def on_addressee(self, uid, pid, result):
             state.decisions.append((uid, pid, result))
@@ -134,3 +151,5 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             for item in state.input_statuses] == [
         ('', 'missed-1', 'started'), ('', 'missed-1', 'failed')]
     assert state.closed and not rclpy.ok()
+    assert state.web_talk == [
+        ('startup-quarantine', True, 3.0), ('web-1', True, 3.0), ('web-1', False, 0.0)]

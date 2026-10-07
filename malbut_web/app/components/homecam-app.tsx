@@ -189,6 +189,7 @@ function Viewer({
   const viewerClientIdRef = useRef("");
   const viewerMountedRef = useRef(true);
   const talkIntentRef = useRef(false);
+  const talkAttemptRef = useRef(0);
   const talkLeaseRef = useRef<ViewerTalkLease | null>(null);
   const talkLeaseTimerRef = useRef<number | null>(null);
   const storageModeRef = useRef<boolean | null>(null);
@@ -269,6 +270,7 @@ function Viewer({
 
   const releaseTalkLease = useCallback((notifyServer = true, updateState = true) => {
     talkIntentRef.current = false;
+    talkAttemptRef.current += 1;
     const track = microphoneRef.current?.getAudioTracks()[0];
     if (track) track.enabled = false;
     if (talkLeaseTimerRef.current !== null) {
@@ -927,6 +929,7 @@ function Viewer({
     if (
       !track ||
       viewerStateRef.current !== "live" ||
+      talkIntentRef.current ||
       talkLeasePending ||
       talking
     ) {
@@ -936,48 +939,68 @@ function Viewer({
     const talkClientId = viewerClientIdRef.current;
     let acquiredLease: ViewerTalkLease | null = null;
     talkIntentRef.current = true;
+    const talkAttempt = ++talkAttemptRef.current;
+    const isCurrentTalk = () =>
+      talkAttemptRef.current === talkAttempt && talkIntentRef.current &&
+      viewerMountedRef.current && viewerStateRef.current === "live" &&
+      viewerGenerationRef.current === talkGeneration &&
+      viewerClientIdRef.current === talkClientId;
 
     if (deviceId) {
       setTalkLeasePending(true);
       try {
-        const response = await fetch(
-          `/api/devices/${encodeURIComponent(deviceId)}/talk-lease`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              clientId: talkClientId,
-            }),
-          },
-        );
-        const payload = (await response.json().catch(() => null)) as {
-          lease?: { leaseId?: string; expiresAt?: string };
-          error?: string;
-        } | null;
-        const leaseId = payload?.lease?.leaseId;
-        if (!response.ok || !leaseId) {
-          throw new Error(
-            response.status === 409
-              ? "다른 보호자가 말하고 있어요. 잠시 후 다시 눌러 주세요."
-              : payload?.error ?? "말하기 권한을 받지 못했습니다.",
+        const readyDeadline = Date.now() + 10_000;
+        let ready = false;
+        while (!ready) {
+          if (!isCurrentTalk()) return;
+          const remainingMs = readyDeadline - Date.now();
+          if (remainingMs <= 0) throw new Error("로봇의 말하기 준비를 확인하지 못했습니다. 다시 눌러 주세요.");
+          const requestedAt = performance.now();
+          const response = await fetch(
+            `/api/devices/${encodeURIComponent(deviceId)}/talk-lease`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              signal: AbortSignal.timeout(remainingMs),
+              body: JSON.stringify({
+                clientId: talkClientId,
+                ...(acquiredLease ? { leaseId: acquiredLease.leaseId } : {}),
+              }),
+            },
           );
+          const payload = (await response.json().catch(() => null)) as {
+            lease?: { leaseId?: string; expiresAt?: string; ready?: boolean; readyForMs?: number };
+            error?: string;
+          } | null;
+          const leaseId = payload?.lease?.leaseId;
+          if (!response.ok || !leaseId) {
+            throw new Error(
+              response.status === 409
+                ? "다른 보호자가 말하고 있어요. 잠시 후 다시 눌러 주세요."
+                : payload?.error ?? "말하기 권한을 받지 못했습니다.",
+            );
+          }
+          const receivedLease: ViewerTalkLease = {
+            leaseId,
+            clientId: talkClientId,
+            generation: talkGeneration,
+          };
+          if (acquiredLease && leaseId !== acquiredLease.leaseId) {
+            notifyTalkLeaseRelease(receivedLease);
+            throw new Error("말하기 권한이 만료되었습니다. 다시 눌러 주세요.");
+          }
+          if (!isCurrentTalk()) {
+            notifyTalkLeaseRelease(receivedLease);
+            return;
+          }
+          acquiredLease = receivedLease;
+          talkLeaseRef.current = acquiredLease;
+          const readyForMs = payload?.lease?.readyForMs;
+          ready = payload?.lease?.ready === true && typeof readyForMs === "number" &&
+            readyForMs <= 2500 && readyForMs > performance.now() - requestedAt;
+          if (!ready) await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         }
-        acquiredLease = {
-          leaseId,
-          clientId: talkClientId,
-          generation: talkGeneration,
-        };
-        if (
-          !talkIntentRef.current ||
-          !viewerMountedRef.current ||
-          viewerStateRef.current !== "live" ||
-          viewerGenerationRef.current !== talkGeneration ||
-          viewerClientIdRef.current !== talkClientId
-        ) {
-          notifyTalkLeaseRelease(acquiredLease);
-          return;
-        }
-        talkLeaseRef.current = acquiredLease;
+        if (!isCurrentTalk()) return;
 
         const renewLease = async () => {
           const currentLease = talkLeaseRef.current;
@@ -991,11 +1014,13 @@ function Viewer({
             return;
           }
           try {
+            const requestedAt = performance.now();
             const renewal = await fetch(
               `/api/devices/${encodeURIComponent(deviceId)}/talk-lease`,
               {
                 method: "POST",
                 headers: { "content-type": "application/json" },
+                signal: AbortSignal.timeout(5_000),
                 body: JSON.stringify({
                   leaseId: currentLease.leaseId,
                   clientId: currentLease.clientId,
@@ -1003,12 +1028,20 @@ function Viewer({
               },
             );
             const renewalPayload = (await renewal.json().catch(() => null)) as {
-              lease?: { leaseId?: string };
+              lease?: { leaseId?: string; ready?: boolean; readyForMs?: number };
               error?: string;
             } | null;
+            if (renewal.ok && renewalPayload?.lease?.leaseId &&
+                renewalPayload.lease.leaseId !== currentLease.leaseId) {
+              notifyTalkLeaseRelease({ ...currentLease, leaseId: renewalPayload.lease.leaseId });
+            }
             if (
               !renewal.ok ||
-              renewalPayload?.lease?.leaseId !== currentLease.leaseId
+              renewalPayload?.lease?.leaseId !== currentLease.leaseId ||
+              renewalPayload.lease.ready !== true ||
+              typeof renewalPayload.lease.readyForMs !== "number" ||
+              renewalPayload.lease.readyForMs > 2500 ||
+              !(renewalPayload.lease.readyForMs > performance.now() - requestedAt)
             ) {
               throw new Error(renewalPayload?.error ?? "말하기 권한을 갱신하지 못했습니다.");
             }
@@ -1033,13 +1066,13 @@ function Viewer({
         talkLeaseTimerRef.current = window.setTimeout(() => void renewLease(), 8_000);
       } catch (reason) {
         if (
+          talkAttemptRef.current !== talkAttempt ||
           viewerGenerationRef.current !== talkGeneration ||
           viewerClientIdRef.current !== talkClientId
         ) {
           return;
         }
-        talkIntentRef.current = false;
-        setTalkLeasePending(false);
+        releaseTalkLease();
         setMicrophoneNotice(
           reason instanceof Error ? reason.message : "말하기 권한을 받지 못했습니다.",
         );
@@ -1048,10 +1081,7 @@ function Viewer({
     }
 
     if (
-      !talkIntentRef.current ||
-      viewerGenerationRef.current !== talkGeneration ||
-      viewerClientIdRef.current !== talkClientId ||
-      viewerStateRef.current !== "live" ||
+      !isCurrentTalk() ||
       (deviceId && talkLeaseRef.current !== acquiredLease)
     ) {
       if (acquiredLease && talkLeaseRef.current === acquiredLease) {

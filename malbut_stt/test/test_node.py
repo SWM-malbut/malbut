@@ -189,6 +189,7 @@ def runtime(monkeypatch, tmp_path):
             self.capture_ready = Event()
 
         def start(self):
+            assert state.calls['web_talk'] == ('startup-quarantine', True, 3.0)
             self.phase = 'opening_microphone'
             fail(self.phase)
             state.pipeline_args['recorder_factory']()
@@ -237,6 +238,10 @@ def runtime(monkeypatch, tmp_path):
         def session_is_active(self, session_id):
             return bool(session_id and self.session.session_id == session_id)
 
+        def control_web_talk(self, lease_id, active, ttl_s):
+            state.calls['web_talk'] = (lease_id, active, ttl_s)
+            return state.accepted
+
         def close(self):
             state.closed.append('pipeline')
             if state.cleanup_failure:
@@ -250,6 +255,8 @@ def runtime(monkeypatch, tmp_path):
         }),
     )
     state.services = SimpleNamespace(
+        ControlWebTalk=SimpleNamespace(
+            Request=SimpleNamespace, Response=SimpleNamespace),
         ControlSpeechSession=SimpleNamespace(
             Request=SimpleNamespace, Response=SimpleNamespace),
         ClassifySpeechAddressee=SimpleNamespace(
@@ -403,6 +410,25 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+
+@pytest.mark.parametrize('accepted', [True, False])
+def test_web_talk_service_acknowledges_gate_and_clears_stale_classification(runtime, accepted):
+    runtime.accepted = accepted
+
+    def on_spin():
+        client = runtime.clients['/malbut/speech/classify_addressee']
+        future = client.futures[-1]
+        response = runtime.callbacks['/malbut/speech/web_talk_control'](
+            SimpleNamespace(lease_id='web-1', active=True, ttl_s=10.0),
+            SimpleNamespace())
+        assert response.accepted is accepted
+        assert runtime.calls['web_talk'] == ('web-1', True, 10.0)
+        assert future.cancelled is accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
 
 
 def test_proactive_session_service_reports_aec_and_correlates_transcript(runtime):

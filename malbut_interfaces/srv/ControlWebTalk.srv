@@ -1,0 +1,9 @@
+# 웹 말하기 권한 ID. 갱신과 종료는 같은 ID를 사용한다.
+string lease_id
+# true: STT 입력 차단/갱신, false: 일치하는 권한만 종료
+bool active
+# active=true일 때 0 < ttl_s <= 15. 갱신이 끊기면 자동 복구한다.
+float64 ttl_s
+---
+# true는 입력/대기 오디오와 이전 인식 결과 차단까지 적용했다는 뜻이다.
+bool accepted

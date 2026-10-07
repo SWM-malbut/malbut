@@ -23,6 +23,7 @@
 #include "homecam_media_agent/kvs_transport.hpp"
 #include "homecam_media_agent/pipeline_builder.hpp"
 #include "homecam_media_agent/session_client.hpp"
+#include "malbut_interfaces/srv/control_web_talk.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
@@ -40,6 +41,7 @@ namespace homecam_media_agent
 {
 
 using namespace std::chrono_literals;
+using WebTalkControl = malbut_interfaces::srv::ControlWebTalk;
 
 namespace
 {
@@ -166,6 +168,7 @@ public:
     session_client_ = std::make_unique<DeviceSessionClient>(
       trim_trailing_slashes(config_.backend_url), config_.device_id, token);
     desired_state_confirmed_ = config_.backend_url.empty();
+    web_talk_client_ = create_client<WebTalkControl>("/malbut/speech/web_talk_control");
     rcl_interfaces::msg::ParameterDescriptor readonly;
     readonly.read_only = true;
     const auto bridge_id = declare_parameter<std::string>("fall_bridge_runtime_id", "", readonly);
@@ -762,7 +765,7 @@ private:
   void push_ptt_audio(const EncodedFrame & frame)
   {
     std::lock_guard<std::mutex> lock(ptt_mutex_);
-    if (shutting_down_.load()) {
+    if (shutting_down_.load() || steady_now_ns() >= ptt_allowed_until_ns_.load()) {
       return;
     }
     if (ptt_playback_pipeline_ != nullptr &&
@@ -788,6 +791,12 @@ private:
     GST_BUFFER_PTS(buffer) =
       static_cast<GstClockTime>(std::max<std::int64_t>(
         frame.presentation_time_ns, 0));
+    // Device startup/allocation may outlast the permission checked on entry.
+    if (shutting_down_.load() || steady_now_ns() >= ptt_allowed_until_ns_.load()) {
+      gst_buffer_unref(buffer);
+      stop_ptt_playback_locked();
+      return;
+    }
     const auto flow = gst_app_src_push_buffer(GST_APP_SRC(ptt_source_), buffer);
     if (flow != GST_FLOW_OK) {
       RCLCPP_WARN_THROTTLE(
@@ -1970,6 +1979,7 @@ private:
     // Heartbeats keep flowing while KVS signaling is in progress, and their
     // desired state is collected at the 250 ms runtime cadence.
     collect_heartbeat_result();
+    maintain_web_talk();
 #if HOMECAM_HAVE_GSTREAMER
     maintain_gstreamer_pipelines();
 #endif
@@ -1980,6 +1990,7 @@ private:
   void publish_heartbeat()
   {
     collect_heartbeat_result();
+    maintain_web_talk();
     publish_storage_session_id();
     HeartbeatStatus status;
     status.device_id = config_.device_id;
@@ -2022,6 +2033,10 @@ private:
     if (fall_bridge_) {
       status.fall_settings_report = fall_bridge_->report_payload(steady_now_ns() / 1e9);
     }
+    if (!talk_lease_id_.empty()) {
+      status.talk_report = {{"leaseId", talk_lease_id_},
+        {"ready", steady_now_ns() + 500000000 < ptt_allowed_until_ns_.load()}};
+    }
 #if HOMECAM_HAVE_GSTREAMER
     const std::string local_state =
       pipeline_ == nullptr ? "waiting_for_camera" : "encoding_local";
@@ -2052,6 +2067,7 @@ private:
           std::launch::async,
           [client, status]() {
             HeartbeatOutcome outcome;
+            outcome.requested_at = steady_now_ns() / 1e9;
             try {
               outcome.success =
               client->post(status, &outcome.desired, &outcome.error, &outcome.failure_code);
@@ -2078,6 +2094,7 @@ private:
     std::string error;
     std::string failure_code{"server_transport_error"};
     double observed_at{0};
+    double requested_at{0};
   };
 
   void collect_heartbeat_result()
@@ -2106,6 +2123,84 @@ private:
       return;
     }
     apply_desired_settings(outcome.desired, false);
+    // A slow HTTPS response must not restart the server's remaining lease time.
+    const double until = outcome.requested_at + outcome.desired.talk_remaining_ms / 1000.0;
+    const auto id = until > steady_now_ns() / 1e9 ? outcome.desired.talk_lease_id : "";
+    if (id != talk_lease_id_) {
+      stop_web_talk_playback();
+      talk_next_control_at_ = 0;
+    }
+    talk_lease_id_ = id;
+    talk_lease_until_ = until;
+  }
+
+  void stop_web_talk_playback()
+  {
+    ptt_allowed_until_ns_.store(0);
+#if HOMECAM_HAVE_GSTREAMER
+    stop_ptt_playback();
+#endif
+  }
+
+  void maintain_web_talk()
+  {
+    const double now = steady_now_ns() / 1e9;
+    const bool active = !talk_lease_id_.empty() && now + 0.6 < talk_lease_until_ &&
+      media_generation_allows_io(active_transport_generation_.load(),
+      session_generation_.load(), media_permitted_.load());
+    if (!active || !web_talk_client_->service_is_ready() ||
+      steady_now_ns() >= ptt_allowed_until_ns_.load())
+    {
+      stop_web_talk_playback();
+    }
+    if (talk_future_.valid()) {
+      if (talk_future_.wait_for(0ms) == std::future_status::ready) {
+        bool accepted = false;
+        try {
+          accepted = talk_future_.get()->accepted;
+        } catch (const std::exception &) {
+          // A lost STT service must not leave the remote speaker enabled.
+        }
+        talk_future_ = {};
+        if (accepted && talk_request_active_ && active && web_talk_client_->service_is_ready() &&
+          talk_request_lease_ == talk_lease_id_ && now + 0.6 < talk_request_until_)
+        {
+          // Stop playback before STT's lease expires, including its buffered tail.
+          ptt_allowed_until_ns_.store(static_cast<std::int64_t>(
+              (std::min(talk_request_until_, talk_lease_until_) - 0.6) * 1e9));
+        } else {
+          stop_web_talk_playback();
+        }
+      } else if (now >= talk_request_at_ + 1.0) {
+        web_talk_client_->remove_pending_request(talk_request_id_);
+        talk_future_ = {};
+        stop_web_talk_playback();
+      } else {
+        return;
+      }
+    }
+    if ((active && now < talk_next_control_at_) ||
+      (!active && talk_controlled_lease_.empty()) || !web_talk_client_->service_is_ready())
+    {
+      return;
+    }
+    auto request = std::make_shared<WebTalkControl::Request>();
+    request->lease_id = active ? talk_lease_id_ : talk_controlled_lease_;
+    request->active = active;
+    request->ttl_s = active ? std::min(3.0, talk_lease_until_ - now) : 0.0;
+    try {
+      auto pending = web_talk_client_->async_send_request(request);
+      talk_request_id_ = pending.request_id;
+      talk_future_ = pending.share();
+      talk_request_lease_ = request->lease_id;
+      talk_request_active_ = active;
+      talk_request_at_ = now;
+      talk_request_until_ = now + request->ttl_s;
+      talk_controlled_lease_ = active ? talk_lease_id_ : "";
+      talk_next_control_at_ = now + 1.0;
+    } catch (const std::exception &) {
+      stop_web_talk_playback();
+    }
   }
 
   void apply_desired_settings(
@@ -2229,6 +2324,18 @@ private:
   std::unique_ptr<TransportSender> p2p_sender_;
   std::unique_ptr<TransportSender> storage_sender_;
   std::future<HeartbeatOutcome> heartbeat_future_;
+  rclcpp::Client<WebTalkControl>::SharedPtr web_talk_client_;
+  rclcpp::Client<WebTalkControl>::SharedFuture talk_future_;
+  std::int64_t talk_request_id_{0};
+  std::string talk_lease_id_;
+  double talk_lease_until_{0};
+  std::string talk_controlled_lease_;
+  std::string talk_request_lease_;
+  bool talk_request_active_{false};
+  double talk_request_at_{0};
+  double talk_request_until_{0};
+  double talk_next_control_at_{0};
+  std::atomic<std::int64_t> ptt_allowed_until_ns_{0};
   std::future<SessionOutcome> session_future_;
   std::future<StorageSessionOutcome> storage_session_future_;
   std::mutex transport_mutex_;

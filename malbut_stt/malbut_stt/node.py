@@ -27,6 +27,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
         from malbut_interfaces.srv import (
             ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
+            ControlWebTalk,
         )
         from std_msgs.msg import String
     except ImportError:
@@ -388,6 +389,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         node.create_service(
             ControlSpeechSession, '/malbut/speech/session_control', control_session)
+
+        def control_web_talk(request, response):
+            response.accepted = pipeline.control_web_talk(
+                request.lease_id, request.active, request.ttl_s)
+            if response.accepted and request.active:
+                clear_classification()
+            return response
+
+        node.create_service(
+            ControlWebTalk, '/malbut/speech/web_talk_control', control_web_talk)
+        # The media agent's previous 3 s lease may survive this STT process restart.
+        pipeline.control_web_talk('startup-quarantine', True, 3.0)
         pipeline.start()
         ready_publisher = None
         while rclpy.ok():

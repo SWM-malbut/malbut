@@ -19,6 +19,43 @@ using homecam_media_agent::is_valid_device_token;
 using homecam_media_agent::load_device_token;
 using homecam_media_agent::parse_desired_settings;
 
+TEST(Heartbeat, TalkLeaseRequiresBoundedServerAuthority)
+{
+  const std::string id = "123e4567-e89b-42d3-a456-426614174000";
+  nlohmann::json response = {{"desiredState", {
+        {"cameraEnabled", true}, {"microphoneEnabled", true},
+        {"monitoringEnabled", false}}}};
+  homecam_media_agent::DesiredDeviceSettings desired;
+  std::string error;
+  response["talkLease"] = {{"leaseId", id}, {"remainingMs", 15000}};
+  ASSERT_TRUE(parse_desired_settings(response.dump(), &desired, &error));
+  EXPECT_EQ(desired.talk_lease_id, id);
+  EXPECT_EQ(desired.talk_remaining_ms, 15000);
+  // Old servers, video-only viewers and malformed leases all revoke playback.
+  for (const auto & invalid : std::vector<nlohmann::json>{
+      nullptr, true, {{"leaseId", id}},
+      {{"leaseId", "invalid"}, {"remainingMs", 1000}},
+      {{"leaseId", id}, {"remainingMs", 0}},
+      {{"leaseId", id}, {"remainingMs", -1}},
+      {{"leaseId", id}, {"remainingMs", 15001}},
+      {{"leaseId", id}, {"remainingMs", 1.5}},
+      {{"leaseId", id}, {"remainingMs", true}},
+      {{"leaseId", id}, {"remainingMs", 1000}, {"extra", true}}})
+  {
+    response["talkLease"] = invalid;
+    ASSERT_TRUE(parse_desired_settings(response.dump(), &desired, &error));
+    EXPECT_TRUE(desired.talk_lease_id.empty());
+    EXPECT_EQ(desired.talk_remaining_ms, 0);
+  }
+  response.erase("talkLease");
+  ASSERT_TRUE(parse_desired_settings(response.dump(), &desired, &error));
+  EXPECT_TRUE(desired.talk_lease_id.empty());
+  HeartbeatStatus status;
+  status.talk_report = {{"leaseId", id}, {"ready", false}};
+  EXPECT_EQ(nlohmann::json::parse(heartbeat_to_json(status))["talkReport"],
+    *status.talk_report);
+}
+
 TEST(MediaConfig, AcceptsSafeSimulationDefaults)
 {
   MediaConfig config;
