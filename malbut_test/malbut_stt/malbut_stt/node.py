@@ -23,7 +23,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
         )
         from malbut_interfaces.msg import (
-            SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript,
+            SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
         )
         from malbut_interfaces.srv import (
             ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
@@ -176,6 +176,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             'pause': ControlSpeechPlayback.Request.PAUSE,
             'resume': ControlSpeechPlayback.Request.RESUME,
             'stop': ControlSpeechPlayback.Request.STOP,
+            'stop_all': ControlSpeechPlayback.Request.STOP_ALL,
         }
         addressee_decisions = {
             ClassifySpeechAddressee.Response.ADDRESSED: 'addressed',
@@ -225,7 +226,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 input_publisher.publish(SpeechInputStatus(
                     session_id=session_id, utterance_id=utterance_id, state=state))
 
-        def publish_control(playback_id, command):
+        def publish_control(playback_id, command, *, web_talk=False):
+            # Web talk stops do not follow the dialogue playback, so they are never stale.
             if requests_closed or not rclpy.ok():
                 return
             if not control_client.service_is_ready():
@@ -241,14 +243,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             except Exception as error:
                 node.get_logger().warning('playback_control_failed:' + type(error).__name__)
                 return
-            control_pending[future] = (playback_id, monotonic() + control_timeout)
+            control_pending[future] = (playback_id, monotonic() + control_timeout, web_talk)
 
             def control_done(done):
                 pending = control_pending.pop(done, None)
                 if pending is None or requests_closed or not rclpy.ok():
                     return
                 control_client.remove_pending_request(done)
-                if pending[0] != pipeline.session.playback_id:
+                if not pending[2] and pending[0] != pipeline.session.playback_id:
                     node.get_logger().warning('playback_control_response_stale')
                 elif monotonic() >= pending[1]:
                     node.get_logger().warning('playback_control_response_timeout')
@@ -319,8 +321,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     clear_classification()
                     node.get_logger().warning('addressee_service_response_timeout')
                     pipeline.on_addressee(uid, pid, 'unknown')
-            for future, (pid, deadline) in list(control_pending.items()):
-                if monotonic() >= deadline or pid != pipeline.session.playback_id:
+            for future, (pid, deadline, web_talk) in list(control_pending.items()):
+                if monotonic() >= deadline or (
+                        not web_talk and pid != pipeline.session.playback_id):
                     control_pending.pop(future)
                     remove_request(control_client, future)
                     node.get_logger().warning('playback_control_response_timeout'
@@ -348,6 +351,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             transcriber=transcriber,
             publish_transcript=publish,
             publish_control=publish_control,
+            stop_speech=lambda playback_id: publish_control(
+                playback_id, 'stop' if playback_id else 'stop_all', web_talk=True),
             publish_interruption=publish_interruption,
             publish_input_status=publish_input_status,
             diagnostics=diagnostics,
@@ -373,6 +378,15 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         node.create_subscription(
             SpeechPlaybackStatus, '/malbut/speech/playback_status', playback_status, qos,
+        )
+
+        def speech_request(message):
+            if rclpy.ok():
+                pipeline.on_speech_request(message.playback_id)
+
+        # Seeing each request with TTS lets a web talk cancel it before any sound.
+        node.create_subscription(
+            SpeechRequest, '/malbut/speech/response', speech_request, qos,
         )
 
         def control_session(request, response):
@@ -401,7 +415,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_service(
             ControlWebTalk, '/malbut/speech/web_talk_control', control_web_talk)
         # The media agent's previous 3 s lease may survive this STT process restart.
-        pipeline.control_web_talk('startup-quarantine', True, 3.0)
+        pipeline.control_web_talk('startup-quarantine', True, 3.0, quiet=False)
         pipeline.start()
         ready_publisher = None
         while rclpy.ok():

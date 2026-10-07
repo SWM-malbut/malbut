@@ -1347,3 +1347,49 @@ def test_web_talk_preserves_retry_notice_timeout(harness, release_before_timeout
         assert pipeline.control_web_talk('web-1', False, 0.0)
         harness.now += 0.31
     assert not pipeline._input_blocked(harness.now)
+
+
+def test_web_talk_silences_current_and_requested_speech_until_it_ends(harness):
+    stopped = []
+    pipeline = harness.create(stop_speech=stopped.append)
+    pipeline.on_speech_request('before')
+    assert stopped == []
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert stopped == ['']
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert stopped == ['']
+    pipeline.on_speech_request('answer')
+    pipeline.on_speech_request('')
+    pipeline.on_speech_request('x' * 201)
+    assert stopped == ['', 'answer']
+    pipeline.on_playback_status('raced', 'playing')
+    pipeline.on_playback_status('raced', 'stopped')
+    assert stopped == ['', 'answer', 'raced']
+    assert harness.reports.count('web_talk_speech_stopped') == 3
+    assert pipeline.control_web_talk('web-1', False, 0.0)
+    pipeline.on_speech_request('after')
+    pipeline.on_playback_status('after', 'playing')
+    assert stopped == ['', 'answer', 'raced']
+
+
+def test_expired_web_talk_no_longer_silences_speech(harness):
+    stopped = []
+    pipeline = harness.create(stop_speech=stopped.append)
+    assert pipeline.control_web_talk('web-1', True, 1.0)
+    harness.now = 1.01
+    pipeline.on_speech_request('late')
+    assert stopped == ['']
+    assert 'web_talk_expired' in harness.reports
+
+
+def test_startup_quarantine_gates_input_without_silencing_speech(harness):
+    stopped = []
+    pipeline = harness.create(stop_speech=stopped.append)
+    assert pipeline.control_web_talk('startup-quarantine', True, 3.0, quiet=False)
+    assert pipeline._input_blocked(harness.now)
+    pipeline.on_speech_request('greeting')
+    pipeline.on_playback_status('greeting', 'playing')
+    assert stopped == []
+    # A guardian lease that takes over the quarantine still silences the Agent.
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert stopped == ['']

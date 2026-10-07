@@ -4464,6 +4464,22 @@ a:focus-visible {
 .ui-rows strong.is-error { color: var(--ui-danger); }
 .ui-row-label { display: flex; flex-direction: column; gap: 0.125rem; }
 .ui-row-label small { font-size: 0.75rem; color: var(--ui-text-muted); }
+/* 홈캠 › 현재 상태 › 마이크 (목업 20번): the switch with its notice underneath. */
+.ui-rows > .ui-row-stack { flex-direction: column; align-items: stretch; gap: 0.625rem; padding: 0.625rem 0.875rem; }
+.ui-row-stack-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.ui-talk-note { display: flex; flex-direction: column; gap: 0.125rem; padding: 0.625rem 0.75rem; border-radius: 10px; color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+.ui-rows .ui-talk-note strong { font-size: 0.8125rem; font-weight: 700; color: inherit; }
+.ui-talk-note span { font-size: 0.75rem; line-height: 1.6; }
+.ui-talk-note.is-neutral { color: var(--ui-text); background: var(--ui-neutral-soft); }
+.ui-talk-note.is-danger { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.homecam-talk-caption { margin: 0; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1.6; }
+/* Top right like the mockup; the full-screen button keeps its place on the left. */
+.homecam-video-topbar > .homecam-video-talking {
+  order: 1; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px;
+  color: #ffffff; background: var(--ui-danger); font-size: 0.75rem; font-weight: 700; letter-spacing: 0;
+}
+.homecam-video-talking::before { content: ""; width: 6px; height: 6px; border-radius: 3px; background: currentColor; }
 /* 홈캠 화면 안의 실시간 영상(기존 영상 부품)을 새 디자인에 맞춤 */
 .ui-app .homecam-stream-shell.is-embedded { display: block; min-height: 0; padding: 0; background: transparent; color: var(--ui-text); }
 .ui-app .homecam-stream-shell.is-embedded > .homecam-header,

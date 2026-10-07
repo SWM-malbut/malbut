@@ -238,9 +238,13 @@ def runtime(monkeypatch, tmp_path):
         def session_is_active(self, session_id):
             return bool(session_id and self.session.session_id == session_id)
 
-        def control_web_talk(self, lease_id, active, ttl_s):
+        def control_web_talk(self, lease_id, active, ttl_s, *, quiet=True):
             state.calls['web_talk'] = (lease_id, active, ttl_s)
+            state.calls.setdefault('web_talk_quiet', []).append(quiet)
             return state.accepted
+
+        def on_speech_request(self, playback_id):
+            state.calls.setdefault('speech_requests', []).append(playback_id)
 
         def close(self):
             state.closed.append('pipeline')
@@ -250,6 +254,7 @@ def runtime(monkeypatch, tmp_path):
     state.messages = SimpleNamespace(
         SpeechInputStatus=type('SpeechInputStatus', (SimpleNamespace,), {}),
         SpeechTranscript=type('SpeechTranscript', (SimpleNamespace,), {}),
+        SpeechRequest=type('SpeechRequest', (SimpleNamespace,), {}),
         SpeechPlaybackStatus=type('SpeechPlaybackStatus', (SimpleNamespace,), {
             key.upper(): key for key in ('playing', 'paused', 'finished', 'failed', 'stopped')
         }),
@@ -267,7 +272,7 @@ def runtime(monkeypatch, tmp_path):
         ),
         ControlSpeechPlayback=SimpleNamespace(
             Request=type('ControlRequest', (SimpleNamespace,), {
-                'PAUSE': 'pause', 'RESUME': 'resume', 'STOP': 'stop',
+                'PAUSE': 'pause', 'RESUME': 'resume', 'STOP': 'stop', 'STOP_ALL': 'stop_all',
             }),
             Response=type('ControlResponse', (SimpleNamespace,), {}),
         ),
@@ -392,7 +397,10 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert [vars(msg) for _, msg in runtime.published] == [
         {'utterance_id': 'u1', 'text': '원문 그대로', 'session_id': ''},
     ]
-    assert set(runtime.calls['subscriptions']) == {'/malbut/speech/playback_status'}
+    assert set(runtime.calls['subscriptions']) == {
+        '/malbut/speech/playback_status', '/malbut/speech/response',
+    }
+    assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
         '/malbut/speech/playback_control', '/malbut/speech/classify_addressee',
     }
@@ -966,3 +974,29 @@ def test_control_requests_are_bounded_and_shutdown_removes_all_pending_waits(run
         for future in client.futures:
             future.finish()
     assert runtime.decisions == []
+
+
+def test_web_talk_speech_stops_reach_tts_without_dialogue_staleness(runtime):
+    def spin():
+        runtime.callbacks['/malbut/speech/response'](
+            runtime.messages.SpeechRequest(playback_id='answer-1', text='답변'))
+        assert runtime.calls['speech_requests'] == ['answer-1']
+        stop_speech = runtime.pipeline_args['stop_speech']
+        stop_speech('')
+        stop_speech('answer-1')
+        client = runtime.clients['/malbut/speech/playback_control']
+        assert [vars(request) for request in client.requests[-2:]] == [
+            {'playback_id': '', 'command': 'stop_all'},
+            {'playback_id': 'answer-1', 'command': 'stop'},
+        ]
+        # The dialogue playback moved on; web talk stops are still not stale.
+        runtime.pipeline.session.playback_id = 'other'
+        for future in client.futures[-2:]:
+            future.finish()
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert ('info', 'playback_control_accepted:stop_all') in runtime.logs
+    assert ('info', 'playback_control_accepted:stop') in runtime.logs
+    assert ('warning', 'playback_control_response_stale') not in runtime.logs
