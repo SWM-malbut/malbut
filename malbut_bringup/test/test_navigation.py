@@ -260,3 +260,14 @@ def test_space_documents_floor_is_what_the_preview_checks(robot):
     sync.dispatch({'id': PREVIEW_ID, 'operation': 'navigation_preview',
                    'payload': {'x': 5.0, 'y': 5.0}})
     assert '바닥' in sync.pending[PREVIEW_ID]['result']['error']
+
+
+def test_a_failed_plan_keeps_the_planners_reason_in_the_robot_log(robot):
+    """The owner reads a plain reason; the robot log says why Nav2 refused."""
+    sync, bridge, _path = robot
+    bridge.plan_path.side_effect = ValueError('Nav2 planner found no path')
+    sync.dispatch({'id': PREVIEW_ID, 'operation': 'navigation_preview',
+                   'payload': {'x': 1.0, 'y': 1.0}})
+    assert sync.pending[PREVIEW_ID]['result']['error'] == '그곳까지 가는 길을 찾지 못했어요.'
+    bridge.node.get_logger().warning.assert_called_with(
+        'Destination preview: Nav2 planner found no path')
