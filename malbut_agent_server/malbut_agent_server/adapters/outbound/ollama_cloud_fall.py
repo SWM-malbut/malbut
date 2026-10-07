@@ -104,6 +104,24 @@ An observed_fall finding must have kind motion_seen. Scene assessment must agree
 with findings as specified above. For normal_activity or unobservable use findings: [].
 Do not change a judgment or omit a concerning person merely to avoid giving locations.
 '''
+# Live robot only, appended after the frozen wording above. 2026-10-07 robot
+# false alarms: a controlled squat judged a fall, a person sitting on the floor
+# re-flagged for 23 minutes, a bag reported as a fallen person. Checked with 11
+# Cloud calls only (squat became normal, a close-up seated person stayed
+# suspected, two synthetic falls stayed falls, 6 of 7 bag scenes became
+# normal), so evaluation profiles do NOT include it.
+LIVE_RULES = '''
+Additional classification rules for this household robot:
+Controlled sitting or lying down is normal_activity: lowering slowly, using the hands,
+knees or furniture for support, or folding the legs. A sudden drop, legs giving way,
+falling backward or sideways, or a hard landing is a fall even if the person ends up sitting.
+A person already sitting upright on the floor who moves purposefully (using the hands,
+changing posture or handling objects) is normal_activity even if the descent was not seen.
+Lying still, slumping or struggling to get up remains suspected_fall.
+Report a person only when a human body part is visible. Bags, clothes, bedding, cushions,
+furniture, boxes, shadows and pets are not people.'''
+# No writing-style rule here: asking for noun-ending Korean turned the squat
+# back into observed_fall in 2 of 2 calls. The web shortens endings for display.
 
 
 def _region_box(region, box_format):
@@ -209,8 +227,11 @@ def parse_reply(body, request=None, *, box_format=LEGACY_BOX_FORMAT):
         raise CloudFallProviderError('cloud_invalid_response') from None
 
 
-def build_payload(request, *, model, box_format=LEGACY_BOX_FORMAT):
-    """Validate and strip image metadata without resizing or changing aspect."""
+def build_payload(request, *, model, box_format=LEGACY_BOX_FORMAT, live_rules=False):
+    """Validate and strip image metadata without resizing or changing aspect.
+
+    live_rules appends LIVE_RULES; evaluation replays keep the default (off).
+    """
     from PIL import Image, UnidentifiedImageError
 
     try:
@@ -266,13 +287,15 @@ def build_payload(request, *, model, box_format=LEGACY_BOX_FORMAT):
                         duration_s=round(window.requested_end - window.requested_start, 6),
                         history_incomplete=window.history_incomplete,
                         frames=samples, sensors=sensors, audio_included=False)
+        system = ((CROSSCHECK_NATIVE_SYSTEM_PROMPT if box_format == NATIVE_BOX_FORMAT
+                   else CROSSCHECK_SYSTEM_PROMPT) if request.purpose == 'crosscheck' else
+                  TARGET_SYSTEM_PROMPT if target is not None else SYSTEM_PROMPT)
+        if live_rules:
+            system += LIVE_RULES
         payload = dict(model=model, stream=False, think=False,
                        options={'temperature': 0, 'num_predict': (
                            2048 if request.purpose == 'crosscheck' else 512)},
-                       messages=[{'role': 'system', 'content': (
-                           (CROSSCHECK_NATIVE_SYSTEM_PROMPT if box_format == NATIVE_BOX_FORMAT
-                            else CROSSCHECK_SYSTEM_PROMPT) if request.purpose == 'crosscheck' else
-                           TARGET_SYSTEM_PROMPT if target is not None else SYSTEM_PROMPT)},
+                       messages=[{'role': 'system', 'content': system},
                                  {'role': 'user', 'content': USER_PREFIX + json.dumps(
                                      metadata, allow_nan=False, separators=(',', ':')),
                                   'images': images}])
@@ -320,7 +343,8 @@ class OllamaCloudFallProvider:
     async def analyze(self, request):
         if self._blocked:
             raise CloudFallProviderError(self._blocked)
-        body = build_payload(request, model=self.model, box_format=self.box_format)
+        body = build_payload(request, model=self.model, box_format=self.box_format,
+                             live_rules=True)
         # Explicit cancellation boundary before starting a network operation.
         await asyncio.sleep(0)
         return parse_reply(await self._post(body), request, box_format=self.box_format)

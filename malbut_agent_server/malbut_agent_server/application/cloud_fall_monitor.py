@@ -19,6 +19,9 @@ from malbut_agent_server.application.fall_people_recorder import FallPeopleRecor
 from malbut_agent_server.application.fall_normal_closure import (
     normal_closure_supported, normal_path_ready,
 )
+from malbut_agent_server.application.fall_scene_place import (
+    CASE_GAP_S, CameraMotionLog, near_on_map, same_place,
+)
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
 from malbut_agent_server.application.fall_pending_association import AssociationWait, PendingAssociation
 from malbut_agent_server.application.fall_cloud_association import (
@@ -63,7 +66,8 @@ class CloudFallMonitor:
                  clock: Callable[[], float] = time.monotonic,
                  wall_clock: Callable[[], float] = time.time,
                  clip_planner: Optional[FallClipPlanner] = None,
-                 people_recorder: Optional[FallPeopleRecorder] = None) -> None:
+                 people_recorder: Optional[FallPeopleRecorder] = None,
+                 place_locator=None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -110,6 +114,13 @@ class CloudFallMonitor:
         # boundary below; it is not enabled by a Cloud response or ROS command.
         self._discoveries = OrderedDict()
         self._association_wait = AssociationWait()
+        # A scene case is one continuing situation: same place in the home,
+        # no long silence. Map points come from the optional locator (AMCL +
+        # depth); image positions are the fallback. Bounded so active scene
+        # cases never take the person-case capacity.
+        self._place = place_locator
+        self._camera_motion = CameraMotionLog()
+        self.max_open_scene_cases = 3
 
     def _now(self) -> float:
         value = self._clock()
@@ -274,6 +285,9 @@ class CloudFallMonitor:
         if not all(values):
             self._cancel_analysis()
         if not enabled or not camera_enabled:
+            self._camera_motion.unknown(self._now())
+            if self._place is not None:
+                self._place.clear()
             self.buffer.clear()
             self._subject_evidence.clear()
             self._settled_subjects.clear()
@@ -371,6 +385,7 @@ class CloudFallMonitor:
         return True
 
     def invalidate_subject_input(self):
+        self._camera_motion.unknown(self._now())
         self._subject_evidence.active = True
         self._subject_evidence.clear()
         self._settled_subjects.clear()
@@ -392,9 +407,10 @@ class CloudFallMonitor:
                 or now - frame.observed_at > self.policy.max_person_observation_age_s):
             return False
         self._subject_evidence.append(frame)
+        self._camera_motion.observe(frame.observed_at, moving=frame.camera_moving)
         self._refresh_settled_subjects()
         self._people_call(self._people.observe, frame.observed_at, tuple(
-            (p.subject_key, p.box) for p in frame.subjects if p.box is not None))
+            (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
         for incident in self._incidents.values():
             if incident.state is IncidentState.RESOLVED:
                 continue
@@ -519,7 +535,7 @@ class CloudFallMonitor:
                 current.help_needed = None
                 self._emit('incident_updated', current, reason=display_reason)
             return current.incident_id
-        if len(self._incidents) >= self.policy.max_incidents:
+        if not self._make_room():
             self._emit('candidate_rejected', reason='incident_capacity')
             return None
         current = FallIncident(
@@ -1293,7 +1309,7 @@ class CloudFallMonitor:
         elif any(i.subject_key == key and i.subject_association_token == token
                  and i.state is IncidentState.RESOLVED for i in self._incidents.values()):
             return DiscoveryLinkResult('target_incident_closed')
-        elif len(self._incidents) >= self.policy.max_incidents:
+        elif not self._make_room():
             return DiscoveryLinkResult('incident_capacity')
         return self._attach_discovery(entry, key, token, observed_at, current)
 
@@ -1423,27 +1439,107 @@ class CloudFallMonitor:
     def _record_unidentified_scene(self, request, finding, *, analysis=None):
         """Start verification without Pose, reusing the completed Cloud result.
 
-        At most one open scene-level case queues a general question. This is
-        not person association: separate discoveries retain their own boxes,
-        timestamps and reasons. No geometry/appearance guess joins a Pose case.
+        A finding joins an open scene case only at the same place in the same
+        camera view; otherwise it opens its own case and question (bounded by
+        max_open_scene_cases). This is not person association: separate
+        discoveries retain their own boxes, timestamps and reasons. No
+        geometry/appearance guess joins a Pose case.
         """
         return self._record_unidentified_observation(
             tuple(f.captured_at for f in request.window.frames), finding, request=request,
             analysis=analysis)
 
+    def _make_room(self):
+        """Free a memory slot from finished history; the journal keeps every case.
+
+        Only resolved cases or scene cases quiet for CASE_GAP_S with no open
+        question, both last observed over CASE_GAP_S ago, are released.
+        """
+        if len(self._incidents) < self.policy.max_incidents:
+            return True
+        now = self._now()
+        settled = {iid for _, iid in self._settled_subjects.values()}
+        for iid, incident in self._incidents.items():
+            last = max(incident.last_observed_at, incident.scene_seen_until or 0.0)
+            finished = (incident.state is IncidentState.RESOLVED
+                        or (incident.subject_key is None
+                            and (incident.question_id is None or incident.answer is not None)))
+            if (finished and now - last > CASE_GAP_S and not incident.pending
+                    and iid != self._active_incident and iid not in settled
+                    and not incident.merged_into_incident_ids):
+                del self._incidents[iid]
+                self._questions.pop(iid, None)
+                self._association_wait.anchors.pop(iid, None)
+                for key in [k for k in self._clip_offsets
+                            if k == iid or (isinstance(k, tuple) and k[0] == iid)]:
+                    del self._clip_offsets[key]
+                return True
+        return False
+
+    def _map_points(self, times, finding):
+        if self._place is None:
+            return ()
+        points = []
+        for region in finding.regions:
+            if region.frame_index < len(times):
+                try:
+                    point = self._place.locate(times[region.frame_index], region.box)
+                except Exception:
+                    point = None  # Auxiliary: never stops fall handling.
+                if point is not None:
+                    points.append(point)
+        return tuple(dict.fromkeys(points))
+
+    def _scene_case_for(self, times, boxes, points, request_id):
+        """The open scene case this finding continues, or None for a new case."""
+        open_scenes = [i for i in self._incidents.values() if i.subject_key is None
+                       and i.state is not IncidentState.RESOLVED]
+        if request_id is not None:
+            for incident in open_scenes:
+                if incident.scene_request_id == request_id:
+                    return incident
+        # After CASE_GAP_S without findings the situation ended. The case stays
+        # open for its answer and history but takes no new findings.
+        active = [i for i in open_scenes if i.scene_seen_until is not None
+                  and times[0] - i.scene_seen_until <= CASE_GAP_S]
+        for incident in reversed(active):
+            if incident.scene_points and points:
+                same = near_on_map(incident.scene_points, points)
+            else:
+                same = (not self._camera_motion.moved_between(incident.scene_seen_from, times[-1])
+                        and same_place(incident.scene_boxes, boxes))
+            if same:
+                return incident
+        if active and (len(active) >= self.max_open_scene_cases or not self._make_room()):
+            # Full: keep the earlier single-case behaviour rather than dropping it.
+            return active[-1]
+        return None
+
     def _record_unidentified_observation(self, times, finding, *, request=None, analysis=None):
-        current = next((i for i in self._incidents.values() if i.subject_key is None
-                        and i.state is not IncidentState.RESOLVED), None)
+        boxes = tuple(dict.fromkeys(r.box for r in finding.regions))
+        points = self._map_points(times, finding)
+        current = self._scene_case_for(times, boxes, points,
+                                       request.request_id if request else None)
         end = times[-1]
         new = current is None
         if new:
-            if len(self._incidents) >= self.policy.max_incidents:
+            if not self._make_room():
                 return None
             current = FallIncident(
                 str(uuid4()), None, finding.kind, self._now(), end,
                 attempts=1, pending=False, candidate_sources=('cloud_crosscheck',),
                 auto_normal_blocked=True, normal_evidence_after=end)
             self._incidents[current.incident_id] = current
+        if boxes:
+            current.scene_boxes = boxes
+        if points:
+            current.scene_points = points
+        current.scene_seen_from = (times[0] if current.scene_seen_from is None
+                                   else max(current.scene_seen_from, times[0]))
+        current.scene_seen_until = (end if current.scene_seen_until is None
+                                    else max(current.scene_seen_until, end))
+        if request is not None:
+            current.scene_request_id = request.request_id
         # A changed Cloud label alone is not a new episode. Keep the room's
         # outstanding/completed/failed question, retaining the stronger finding
         # for decisions without restarting the same confirmation conversation.
@@ -1488,7 +1584,7 @@ class CloudFallMonitor:
         end = request.window.frames[-1].captured_at
         new = current is None
         if new:
-            if len(self._incidents) >= self.policy.max_incidents:
+            if not self._make_room():
                 return None
             # The verified result may take 20 seconds: retain its real capture
             # time, not a fabricated fresh timestamp passed through candidate().
