@@ -138,7 +138,9 @@ export function RealRobotMapManager({
   const madeFile = made.map_yaml ? made.map_yaml.split("/").at(-1) ?? "" : "";
   const done = autoslam?.state === "SUCCEEDED" && madeFile && maps.some((item) => item.id === madeFile) &&
     madeFile !== current ? madeFile : "";
-  const failed = autoslam && ["ABORTED", "REJECTED", "ERROR"].includes(autoslam.state);
+  // After a stop or failure the robot is on the empty default map until a map is chosen.
+  const failed = autoslam && ["ABORTED", "REJECTED", "ERROR"].includes(autoslam.state) && !current;
+  const stopped = autoslam?.state === "CANCELED" && !current;
   const progress = yamlFields(record(autoslam?.feedback).feedback_yaml);
 
   const canStart = isOwner && online && running && !switching && !mapping && !driveActive &&
@@ -174,7 +176,10 @@ export function RealRobotMapManager({
     text: `${shownName(done)}${made.known_area_m2 ? ` · 알아낸 면적 ${Math.round(Number(made.known_area_m2))}㎡` : ""}. 이 지도를 쓰려면 고르세요. 고르기 전까지는 빈 지도라 목적지 보내기·순찰을 쓸 수 없어요.`,
   } : failed ? {
     tone: "danger", title: "지도를 만들지 못했어요",
-    text: "말벗이 지도를 끝까지 그리지 못했어요. 그린 지도는 저장되지 않았어요. 다시 시작해 주세요.",
+    text: "그린 지도는 저장되지 않았어요. 지금은 빈 지도라, 다시 시작하거나 아래 목록에서 쓰던 지도를 골라 주세요.",
+  } : stopped ? {
+    tone: "neutral", title: "지도 만들기를 멈췄어요",
+    text: "그린 지도는 저장되지 않았어요. 지금은 빈 지도라, 아래 목록에서 쓰던 지도를 골라 주세요.",
   } : null;
   const sorted = [...maps].sort((left, right) => (right.savedAt ?? "").localeCompare(left.savedAt ?? ""));
 
