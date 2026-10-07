@@ -4722,6 +4722,46 @@ a:focus-visible {
 .ui-map-summary strong.is-accent { color: var(--ui-accent-strong); }
 .ui-map-sub .ui-card > .ui-hint { line-height: 1.6; }
 .ui-map-mapping { gap: 0.75rem; border: 2px solid var(--ui-accent); }
+/* 실로봇 지도 관리 (목업 18번) */
+.ui-map-summary strong { text-align: right; }
+.ui-map-mapping.is-real-robot > span:not(.ui-badge) { font-size: 0.875rem; }
+.ui-map-sync .ui-map-sync-action {
+  align-self: flex-start; margin-top: 0.375rem; min-height: 40px; padding: 0 1rem;
+  border: 1px solid currentColor; background: var(--ui-surface); color: inherit; font-weight: 700;
+}
+.ui-note.is-danger { color: var(--ui-danger); }
+.robot-saved-maps { padding: 0; gap: 0; }
+.robot-saved-maps > h2 { padding: 0.875rem 0.875rem 0.375rem; }
+.robot-saved-maps > .ui-caption { padding: 0.5rem 0.875rem 0.875rem; line-height: 1.6; }
+.robot-saved-map { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem 0.875rem; border-top: 1px solid var(--ui-divider); }
+.robot-saved-map-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.robot-saved-map-head > span:first-child { display: flex; flex-direction: column; gap: 2px; }
+.robot-saved-map-head strong { font-size: 0.9375rem; font-weight: 700; }
+.robot-saved-map-head small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.robot-saved-map-head .ui-badge { flex: none; }
+.robot-saved-map-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.robot-saved-map-actions .ui-button { min-height: 40px; padding: 0 0.875rem; }
+/* 지도 탭 › 직접 움직이기 (목업 19번) */
+.ui-map-drive { gap: 0.625rem; }
+.ui-map-drive-pad {
+  position: relative; align-self: center; width: 200px; height: 200px; border-radius: 50%;
+  background: var(--ui-neutral-soft); border: 1px solid var(--ui-control-border);
+  touch-action: none; user-select: none; cursor: grab;
+}
+.ui-map-drive-pad:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: 3px; }
+.ui-map-drive-pad.is-active { cursor: grabbing; }
+.ui-map-drive-pad.is-disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-map-drive-pad > span { position: absolute; font-size: 0.75rem; color: var(--ui-text-muted); pointer-events: none; }
+.ui-map-drive-pad > .is-front { left: 50%; top: 12px; transform: translateX(-50%); }
+.ui-map-drive-pad > .is-back { left: 50%; bottom: 12px; transform: translateX(-50%); }
+.ui-map-drive-pad > .is-left { top: 50%; left: 12px; transform: translateY(-50%); }
+.ui-map-drive-pad > .is-right { top: 50%; right: 12px; transform: translateY(-50%); }
+.ui-map-drive-pad > i {
+  position: absolute; left: calc(50% - 28px); top: calc(50% - 28px); width: 56px; height: 56px;
+  border-radius: 50%; background: var(--ui-strong); pointer-events: none; transition: transform 60ms linear;
+}
+.ui-map-drive-status { margin: 0; font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-map-drive-status.is-moving { color: var(--ui-accent-strong); }
 .ui-map-mapping h3 { font-size: 0.8125rem; font-weight: 500; color: var(--ui-text-muted); }
 .ui-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
 .ui-steps li { display: flex; align-items: center; gap: 0.625rem; font-size: 0.875rem; color: var(--ui-icon-muted); }

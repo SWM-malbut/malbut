@@ -161,12 +161,12 @@ export function ManagedRobotTools({ snapshot, isOwner, busy, sendCommand, drive,
 }
 
 /** A held joystick (pointer drag) or keyboard drive that stops on release. */
-function DrivePad({ drive, enabled, manualMode, robotState }: {
-  drive: Drive;
-  enabled: boolean;
-  manualMode: boolean;
-  robotState: string;
-}) {
+/**
+ * Held joystick and keyboard input: repeats the velocity while held, sends an explicit
+ * stop on release, and releases when the tab hides. Shared by the developer screen's pad
+ * and the map tab's 직접 움직이기 (SWM25-237).
+ */
+export function useManualDrive(drive: Drive, enabled: boolean) {
   const [stick, setStick] = useState<{ x: number; y: number } | null>(null);
   const [keys, setKeys] = useState<Set<string>>(() => new Set());
   const [strafe, setStrafe] = useState(false);
@@ -269,6 +269,23 @@ function DrivePad({ drive, enabled, manualMode, robotState }: {
     x: -Math.sign(strafe ? velocity.vy : velocity.wz) * (velocity.wz || velocity.vy ? 0.8 : 0),
     y: -Math.sign(velocity.vx) * (velocity.vx ? 0.8 : 0),
   };
+  const padProps = {
+    ref: padRef,
+    tabIndex: enabled ? 0 : -1,
+    onPointerDown: pointerDown, onPointerMove: pointerMove, onPointerUp: pointerUp,
+    onPointerCancel: pointerUp, onLostPointerCapture: () => setStick(null),
+    onKeyDown: keyDown, onKeyUp: keyUp, onBlur: () => setKeys(new Set()),
+  };
+  return { padProps, knob, active, sent, error, strafe, setStrafe };
+}
+
+function DrivePad({ drive, enabled, manualMode, robotState }: {
+  drive: Drive;
+  enabled: boolean;
+  manualMode: boolean;
+  robotState: string;
+}) {
+  const { padProps, knob, active, sent, error, strafe, setStrafe } = useManualDrive(drive, enabled);
   return (
     <div className="robot-map-panel-card managed-robot-controls">
       <h3>수동 조작</h3>
@@ -276,12 +293,9 @@ function DrivePad({ drive, enabled, manualMode, robotState }: {
         {manualMode ? "수동 조작 중(MANUAL)" : "자동(AUTONOMOUS)"}
         {robotState === "MOVING" ? " · 로봇이 명령을 받고 있습니다" : ""}
       </p>
-      <div ref={padRef} className={`managed-robot-joystick${enabled ? "" : " is-disabled"}${active ? " is-active" : ""}`}
-        role="application" tabIndex={enabled ? 0 : -1}
-        aria-label="수동 조작 패드: 누른 채 끌거나, 포커스한 뒤 방향키·WASD로 움직입니다"
-        onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
-        onPointerCancel={pointerUp} onLostPointerCapture={() => setStick(null)}
-        onKeyDown={keyDown} onKeyUp={keyUp} onBlur={() => setKeys(new Set())}>
+      <div {...padProps} className={`managed-robot-joystick${enabled ? "" : " is-disabled"}${active ? " is-active" : ""}`}
+        role="application"
+        aria-label="수동 조작 패드: 누른 채 끌거나, 포커스한 뒤 방향키·WASD로 움직입니다">
         <span className="managed-robot-joystick-axis is-vertical" aria-hidden="true" />
         <span className="managed-robot-joystick-axis is-horizontal" aria-hidden="true" />
         <span className="managed-robot-joystick-knob" aria-hidden="true"

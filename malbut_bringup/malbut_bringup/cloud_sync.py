@@ -22,7 +22,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import yaml
 
 from .navigation import NavigationError, Navigator
-from .patrol_mode import patrol_drive_mode
+from .drive_mode import FOLLOW_DISTANCE_M, robot_drive_mode
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
 )
@@ -178,9 +178,13 @@ def panel_command(operation, payload):
         # 지도 탭 › 방 순찰 시작, with the chosen thoroughness (보통 when none is sent).
         command = {'command': 'start', 'capability': 'patrol',
                    'arguments': {'thoroughness': payload.get('thoroughness', 1)}}
+    elif (operation == 'drive_mode_start' and payload == {'mode': 'person_following'}):
+        # 지도 탭 › 사람 따라가기: the person in front of the 말벗, at a fixed distance.
+        command = {'command': 'start', 'capability': 'follow_person', 'arguments': {
+            'target_mode': 0, 'target_person_id': '', 'desired_distance_m': FOLLOW_DISTANCE_M}}
     elif (operation == 'drive_mode_stop' and set(payload) == {'mode', 'sessionId'}
-            and payload['mode'] == 'patrol'):
-        # 중지: the session is the patrol's manager mission, wherever it was started.
+            and payload['mode'] in ('patrol', 'person_following')):
+        # 중지: the session is the drive's manager mission, wherever it was started.
         command = {'command': 'cancel_mission', 'mission_id': payload['sessionId']}
     elif operation == 'debug_mission_start' and set(payload) == {'capability', 'arguments'}:
         command = {'command': 'debug_start', **payload}
@@ -340,7 +344,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
                  'manager': 'ready' if servers.get('manager') else 'unavailable'},
         'target': {
             'runtime': runtime, 'requests': requests,
-            'maps': [{'id': item['id'], 'name': item['name']} for item in maps[:64]],
+            'maps': [{'id': item['id'], 'name': item['name'], 'savedAt': _saved_at(item)}
+                     for item in maps[:64]],
             'servers': {key: bool(servers.get(key)) for key in ('manager', 'autoslam')},
             'system': bounded_value(snapshot.get('system'), 4096),
             'tracking': bounded_value(snapshot.get('tracking'), 1024),
@@ -348,10 +353,11 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             'manual': bounded_value(snapshot.get('manual'), 512),
             **(navigation or {}),
         },
-        'driveMode': patrol_drive_mode(
-            snapshot.get('system'), snapshot.get('patrol'),
+        'driveMode': robot_drive_mode(
+            snapshot.get('system'), snapshot.get('patrol'), _json_object(snapshot.get('tracking')),
             ready=bool(mode == 'navigation' and runtime.get('ready') and pose
-                       and servers.get('manager'))),
+                       and servers.get('manager')),
+            can_follow=bool(servers.get('follow_person'))),
         'mapRevision': int(map_info.get('version', 0)),
         'observedAt': observed_at or datetime.now(timezone.utc).isoformat(),
     }
@@ -365,6 +371,23 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
         else:
             raise ValueError('Robot state exceeds its size limit')
     return result
+
+
+def _json_object(value):
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _saved_at(item):
+    """When a saved map was last written (made or remade), for the map tab's list."""
+    try:
+        stamp = Path(item['path']).stat().st_mtime
+    except (KeyError, OSError, TypeError):
+        return None
+    return datetime.fromtimestamp(stamp, timezone.utc).isoformat()
 
 
 def _without_path(state):
