@@ -608,6 +608,10 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
         pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
         assert coordinator['runtime_id'] == monitor['manager_runtime_id']
         assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
+        # Unmeasured RGB-D alignment: no depth for map places by default.
+        assert (monitor['depth_topic'], monitor['camera_info_topic'], monitor['global_frame']) == (
+            '', '', 'map')
+        assert 'depth_image_topic' not in pose
 
 
 def test_fall_starts_one_non_ros_uploader_with_shared_settings(launch_module, fall_config):
@@ -781,7 +785,40 @@ def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, e
     assert 'fall_only' not in params
 
 
+def test_one_switch_gives_fall_pose_and_map_places_the_aligned_depth(launch_module, fall_config):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), fall_depth_aligned_to_rgb='true',
+                       fall_camera_height_m='0.118', fall_camera_pitch_rad='0.05')
+    actions = module._setup(context)
+    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
+    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+    assert (pose['depth_image_topic'], pose['depth_camera_info_topic'],
+            pose['depth_aligned_to_rgb']) == (
+        '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info', True)
+    assert (pose['camera_height_m'], pose['camera_pitch_rad'], pose['depth_scale_m']) == (
+        0.118, 0.05, 0.0)
+    assert (monitor['depth_topic'], monitor['camera_info_topic']) == (
+        '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info')
+
+
+@pytest.mark.parametrize('switch', ['false', 'true'])
+def test_fall_approach_switch_starts_the_drive_node_and_tells_the_runtime(
+        launch_module, fall_config, switch):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), fall_approach=switch)
+    actions = module._setup(context)
+    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+    assert monitor['approach_enabled'] is (switch == 'true')
+    drivers = _nodes(actions, 'fall_approach')
+    assert len(drivers) == (switch == 'true')
+    if drivers:
+        params = _parameters(context, drivers[0])
+        assert (params['global_frame'], params['robot_frame']) == ('map', 'base_footprint')
+
+
 @pytest.mark.parametrize('changes', [
+    {'fall_camera_height_m': '0'}, {'fall_camera_height_m': 'tall'},
+    {'fall_camera_pitch_rad': '1.0'},
     {'fall_pose_execution_provider': 'invalid'}, {'fall_pose_intra_op_num_threads': '-1'},
     {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},
     {'fall_pose_model_path': '/missing/pose.onnx'},

@@ -192,6 +192,15 @@ def apply_decision(monitor, payload):
     data = bounded_object(payload)
     action = data.get('action')
     fields = {'incident_id', 'evidence_revision', 'action'}
+    if action in {'approach_result', 'return_result'}:
+        # The coordinator's drive near an uncertain suspicion, and the way back.
+        fields.update({'boot_id', 'question_id', 'outcome'})
+        if (set(data) != fields or data['boot_id'] != monitor.boot_id
+                or type(data['evidence_revision']) is not int or data['evidence_revision'] < 1
+                or not isinstance(data['outcome'], str)):
+            raise ValueError('invalid or stale approach decision')
+        values = {key: value for key, value in data.items() if key not in {'action', 'boot_id'}}
+        return getattr(monitor, action)(**values)
     if action in {'confirmation_result', 'confirmation_failed', 'dismiss_normal'}:
         fields.add('boot_id')
         if action != 'dismiss_normal':
@@ -251,6 +260,9 @@ def event_metadata(event):
                   notification_level=(event.notification_level.value
                                       if event.notification_level else None))
     result['confirmation_scope'] = event.confirmation_scope
+    if event.approach_target is not None:
+        result['approach_target'] = dict(x=event.approach_target[0], y=event.approach_target[1],
+                                         frame='map')
     if event.kind == 'incident_merged':
         result['merged_into_incident_ids'] = list(event.merged_into_incident_ids)
     if event.reply is not None:

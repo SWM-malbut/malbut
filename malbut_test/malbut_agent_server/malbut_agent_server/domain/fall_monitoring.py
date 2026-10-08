@@ -225,11 +225,14 @@ class SubjectPose:
     box: Optional[Tuple[float, float, float, float]]
     state: SubjectCheckState
     association_usable: bool
+    # Detector box score level for display only; None from an older detector.
+    strong: Optional[bool] = None
 
     def __post_init__(self):
         identifier(self.subject_key)
         if (not isinstance(self.state, SubjectCheckState)
-                or type(self.association_usable) is not bool):
+                or type(self.association_usable) is not bool
+                or (self.strong is not None and type(self.strong) is not bool)):
             raise ValueError('invalid subject pose')
         if self.box is not None and (
                 not isinstance(self.box, tuple) or len(self.box) != 4
@@ -247,11 +250,14 @@ class SubjectFrame:
     subjects: Tuple[SubjectPose, ...]
     max_gap_s: float
     camera_stationary: bool = False
+    # Explicitly reported movement; False also covers unknown motion.
+    camera_moving: bool = False
 
     def __post_init__(self):
         timestamp(self.observed_at)
         positive(self.max_gap_s, 'max_gap_s')
-        if type(self.camera_stationary) is not bool:
+        if (type(self.camera_stationary) is not bool or type(self.camera_moving) is not bool
+                or (self.camera_stationary and self.camera_moving)):
             raise ValueError('invalid camera motion observation')
         if (not isinstance(self.subjects, tuple) or len(self.subjects) > 256
                 or any(not isinstance(p, SubjectPose) for p in self.subjects)
@@ -552,6 +558,28 @@ class CloudDiscovery:
 
 
 @dataclass(frozen=True)
+class PersonCheckRequest:
+    """Frames taken after the robot drove near an uncertain suspicion."""
+
+    request_id: str
+    window: FrameWindow = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PersonCheckReply:
+    """Cloud's look from close range: only whether a human body is there."""
+
+    verdict: str
+    explanation: str
+
+    def __post_init__(self):
+        if (self.verdict not in ('person', 'not_person', 'unclear')
+                or not isinstance(self.explanation, str) or not self.explanation.strip()
+                or len(self.explanation) > 1000):
+            raise ValueError('invalid person check reply')
+
+
+@dataclass(frozen=True)
 class CloudFallReply:
     """Model observation, never an instruction to move or notify someone."""
 
@@ -595,7 +623,7 @@ class CloudAnalysisExplanation:
     def __post_init__(self):
         identifier(self.request_id)
         if (not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', self.request_id)
-                or self.purpose not in {'incident', 'crosscheck'}
+                or self.purpose not in {'incident', 'crosscheck', 'person_check'}
                 or not isinstance(self.assessment, VideoAssessment)
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):
@@ -632,6 +660,8 @@ class FallRuntimeEvent:
     confirmation_scope: str = 'subject'
     merged_into_incident_ids: Tuple[str, ...] = ()
     analysis: Optional[CloudAnalysisExplanation] = field(default=None, repr=False)
+    # Map point to look at from 1 m before asking (question_requested only).
+    approach_target: Optional[Tuple[float, float]] = None
 
 
 @dataclass
@@ -677,4 +707,14 @@ class FallIncident:
     unresolved_discovery_ids: Tuple[str, ...] = ()
     discovery_overflow: bool = False
     associated_incident_ids: Tuple[str, ...] = ()
+    # Scene cases only: where/when Cloud last placed this case, used to keep a
+    # finding at another place or after camera movement out of it. Not identity.
+    scene_boxes: Tuple[Tuple[float, float, float, float], ...] = ()
+    scene_points: Tuple[Tuple[float, float], ...] = ()  # map frame, metres
+    scene_seen_from: Optional[float] = None
+    scene_seen_until: Optional[float] = None
+    # Findings of one Cloud scan share its general room question.
+    scene_request_id: Optional[str] = None
+    # Not sure it is a person: drive near this map point before asking.
+    approach_target: Optional[Tuple[float, float]] = None
     merged_into_incident_ids: Tuple[str, ...] = ()

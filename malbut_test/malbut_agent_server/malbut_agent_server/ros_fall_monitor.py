@@ -14,6 +14,7 @@ from uuid import uuid4
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
 from malbut_agent_server.application.fall_detector_input import FallDetectorInput, ros_stamp
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
+from malbut_agent_server.application.fall_place_locator import FallPlaceLocator, FrameGeometry
 from malbut_agent_server.fall_runtime import (
     FallNodeSettings, apply_decision, event_metadata, parse_agent_reply,
     parse_subject_observation,
@@ -26,6 +27,9 @@ from malbut_agent_server.fall_control import (
 
 MISSION_STATE_TOPIC = '/malbut/state'
 MAPPING_CAPABILITY = 'autoslam'
+# Depth paired with an RGB frame; stored every 4th pixel to bound memory.
+DEPTH_MAX_STAMP_DELTA_S = 0.1
+DEPTH_STEP = 4
 
 
 def mapping_active(state):
@@ -37,28 +41,48 @@ def mapping_active(state):
 
 def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                      tracker_factory=None):
+    from collections import deque
+
     import cv2
     from cv_bridge import CvBridge, CvBridgeError
+    import numpy as np
     from rcl_interfaces.msg import ParameterDescriptor
     from rclpy.clock import Clock, ClockType
+    from rclpy.duration import Duration
     from rclpy.node import Node
     from rclpy.qos import (
         DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data,
     )
+    from rclpy.time import Time
     from malbut_interfaces.msg import FallRuntimeStatus, FallControlHeartbeat, SystemState
     from malbut_interfaces.srv import ApplyFallSettings
-    from sensor_msgs.msg import Image
+    from sensor_msgs.msg import CameraInfo, Image
     from std_msgs.msg import String
 
     class FallNode(Node):
         def __init__(self):
             super().__init__('malbut_cloud_fall_monitor')
+            # Scene cases compare map points when depth, intrinsics and the
+            # map pose (AMCL) exist; any missing piece falls back to the image.
+            depth_topic = self.declare_parameter(
+                'depth_topic', '', descriptor=ParameterDescriptor(read_only=True)).value
+            info_topic = self.declare_parameter(
+                'camera_info_topic', '', descriptor=ParameterDescriptor(read_only=True)).value
+            self._global_frame = self.declare_parameter(
+                'global_frame', 'map', descriptor=ParameterDescriptor(read_only=True)).value
+            self._projection_frame = self.declare_parameter(
+                'place_projection_frame', '',
+                descriptor=ParameterDescriptor(read_only=True)).value
+            self.place = FallPlaceLocator() if depth_topic and info_topic else None
+            approach = self.declare_parameter(
+                'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
             self.monitor = CloudFallMonitor(
                 device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
                 buffer=FallFrameBuffer(retention_s=settings.retention_s,
                                        max_bytes=settings.buffer_bytes,
                                        max_frames=settings.buffer_frames),
-                provider=provider, journal=journal, clock=clock)
+                provider=provider, journal=journal, clock=clock, place_locator=self.place)
+            self.monitor.approach_enabled = bool(approach)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(
@@ -103,12 +127,33 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 SystemState, MISSION_STATE_TOPIC, self.on_system_state,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                            reliability=ReliabilityPolicy.RELIABLE))
+            self._depths = deque(maxlen=10)
+            self._camera_info = None
+            self._tf_errors = ()
+            if self.place is not None:
+                from tf2_ros import Buffer, TransformException, TransformListener
+                self._tf_errors = (TransformException,)
+                self._tf = Buffer(cache_time=Duration(seconds=30))
+                self._tf_listener = TransformListener(self._tf, self)
+                self.create_subscription(Image, depth_topic, self._depths.append,
+                                         qos_profile_sensor_data)
+                self.create_subscription(CameraInfo, info_topic, self.on_camera_info,
+                                         qos_profile_sensor_data)
             self._status_clock = Clock(clock_type=ClockType.STEADY_TIME)
             self.create_timer(1.0, self.publish_status, clock=self._status_clock)
+
+        def on_camera_info(self, message):
+            k = message.k
+            if (message.width > 0 and message.height > 0 and k[0] > 0 and k[4] > 0
+                    and all(np.isfinite(k))):
+                self._camera_info = message
 
         def on_system_state(self, message):
             self.guarded('mission_state_invalid', self.control.set_mapping,
                          mapping_active(message))
+            self.monitor.set_running_missions(
+                mission.capability_id for mission in (*message.active_foreground_missions,
+                                                      *message.active_background_missions))
 
         def on_settings(self, request, response):
             result = self.control.apply_settings(**{
@@ -160,11 +205,50 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
             if not ok:
                 raise ValueError('JPEG encoding failed')
+            geometry = self.frame_geometry(message)
             accepted = self.inputs.rgb(bytes(encoded), capture=ros_stamp(
                 dict(sec=message.header.stamp.sec, nanosec=message.header.stamp.nanosec)),
-                frame_id=message.header.frame_id, source_now=self.source_now(), now=clock())
+                frame_id=message.header.frame_id, source_now=self.source_now(), now=clock(),
+                on_accepted=(None if geometry is None
+                             else lambda observed: self.place.add(observed, geometry)))
             if accepted:
                 self._last_processed_image = clock()
+
+        def frame_geometry(self, message):
+            """Aligned depth and the map pose of this RGB frame, or None (place unknown)."""
+            info = self._camera_info
+            if self.place is None or info is None or not self._depths:
+                return None
+
+            def seconds(stamp):
+                return stamp.sec + stamp.nanosec / 1e9
+            stamp = seconds(message.header.stamp)
+            depth = min(self._depths, key=lambda d: abs(seconds(d.header.stamp) - stamp))
+            if (abs(seconds(depth.header.stamp) - stamp) > DEPTH_MAX_STAMP_DELTA_S
+                    or depth.encoding.upper() not in ('16UC1', 'MONO16', '32FC1')):
+                return None
+            source = self._projection_frame or info.header.frame_id or depth.header.frame_id
+            if not source:
+                return None
+            try:
+                image = np.asarray(self._bridge.imgmsg_to_cv2(
+                    depth, desired_encoding='passthrough'))[::DEPTH_STEP, ::DEPTH_STEP]
+                if depth.encoding.upper() == '32FC1':
+                    image = np.clip(np.nan_to_num(image * 1000.0, nan=0.0, posinf=0.0,
+                                                  neginf=0.0), 0, 65535)
+                try:
+                    transform = self._tf.lookup_transform(
+                        self._global_frame, source, Time.from_msg(message.header.stamp))
+                except self._tf_errors:
+                    # The newest map pose: the frame arrived within a second.
+                    transform = self._tf.lookup_transform(self._global_frame, source, Time())
+                t, r = transform.transform.translation, transform.transform.rotation
+                return FrameGeometry(
+                    np.ascontiguousarray(image, dtype=np.uint16), info.k[0], info.k[4],
+                    info.k[2], info.k[5], info.width, info.height,
+                    (t.x, t.y, t.z), (r.x, r.y, r.z, r.w))
+            except (*self._tf_errors, CvBridgeError, ValueError, TypeError):
+                return None  # No map or depth: scene cases use image positions.
 
         def on_detector(self, kind, message):
             self.control.refresh()

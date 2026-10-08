@@ -5,6 +5,8 @@ from typing import Protocol
 from malbut_agent_server.domain.fall_monitoring import (
     CloudFallReply,
     CloudFallRequest,
+    PersonCheckReply,
+    PersonCheckRequest,
 )
 
 
@@ -32,4 +34,8 @@ class CloudFallProvider(Protocol):
         Implementations must be nonblocking and honor cancellation. Synchronous
         SDKs in background threads are NOT sufficient to abort an upload.
         """
+        ...
+
+    async def check_person(self, request: PersonCheckRequest) -> PersonCheckReply:
+        """One close-range look after the robot drove near the spot; same rules."""
         ...

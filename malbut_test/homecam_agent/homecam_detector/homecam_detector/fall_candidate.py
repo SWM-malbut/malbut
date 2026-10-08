@@ -297,6 +297,8 @@ class FallCandidateDetector:
             diagnostic = dict(targetTrackId=track.track_id, trackingState=track.state,
                               features=asdict(feature) if feature else None,
                               box=list(track.pose.box) if track.pose else None,
+                              # Display hint only: weak boxes also land on clothes or bedding.
+                              confidenceLevel=track.confidence_level if track.pose else None,
                               associationUsable=bool(
                                   feature and feature.usable and track.state == "tracked"
                                   and track.confidence_level == "strong"

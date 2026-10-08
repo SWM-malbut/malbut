@@ -11,10 +11,22 @@ from .fall_confirmation import FallConfirmationCoordinator
 
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
+FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
 
 
 class FallConfirmationLink:
-    """Serialize incident conversations and cancel superseded requests."""
+    """Serialize incident conversations and cancel superseded requests.
+
+    An uncertain suspicion first runs a `fall_approach` mission (drive 1 m in
+    front, facing it); a check that found no person drives back instead of
+    asking. These share the one-at-a-time queue with the conversations.
+    """
+
+    # Defaults for links built without __init__ (tests) and for the approach.
+    mode = 'confirm'
+    approach_timeout_s = 90.0  # 60 s drive limit plus Manager and planner slack.
+    return_job = return_future = return_handle = None
+    return_sent_at = 0.0
 
     def __init__(self, node, *, runtime_id='', goal_response_timeout_s=5.0,
                  result_timeout_s=610.0, server_loss_timeout_s=5.0,
@@ -137,16 +149,22 @@ class FallConfirmationLink:
         if self.goal_future is not None:
             expired = now - self.sent_at >= self.goal_response_timeout_s
         elif self.handle is not None:
-            if self.client.server_is_ready() and self.agent_presence.server_is_ready():
+            if self.client.server_is_ready() and (
+                    self.mode == 'approach' or self.agent_presence.server_is_ready()):
                 self.server_missing_since = None
             elif self.server_missing_since is None:
                 self.server_missing_since = now
+            limit = self.approach_timeout_s if self.mode == 'approach' else self.result_timeout_s
             expired = (
-                now - self.accepted_at >= self.result_timeout_s
+                now - self.accepted_at >= limit
                 or (self.server_missing_since is not None
                     and now - self.server_missing_since >= self.server_loss_timeout_s))
         if expired:
-            self.coordinator.fail(self.request)
+            if self.mode == 'approach':
+                # Not there in time: ask from wherever the robot is.
+                self.coordinator.approach_done(self.request, 'timeout', now)
+            else:
+                self.coordinator.fail(self.request)
             self._cancel_current()
             self._publish()
         return expired
@@ -155,6 +173,9 @@ class FallConfirmationLink:
         if self.coordinator.closed:
             return
         self._publish()
+        if self.return_job is not None:
+            self._expire_return()
+            return
         if (self.request is not None
                 and self.coordinator.requests.get(self.request.request_id) != self.request):
             terminal_scene = (self.request.subject_key is None and
@@ -170,7 +191,7 @@ class FallConfirmationLink:
             return
         state = self.manager_state
         if state is None or any(
-                mission.capability_id == 'fall_confirmation'
+                mission.capability_id in FALL_MISSIONS
                 for mission in (*state.active_foreground_missions,
                                 *state.active_background_missions,
                                 *state.pending_missions, *state.suspended_missions)):
@@ -178,23 +199,39 @@ class FallConfirmationLink:
             # run in the manager. Wait, then recover the Agent's cached result;
             # resubmitting immediately would preempt that same conversation.
             return
-        request = next(iter(self.coordinator.requests.values()), None)
-        if request is None:
+        work = self.coordinator.next_work(self.clock())
+        if work is None:
             return
-        self.request = request
+        kind, request = work
+        if kind == 'return':
+            self._send_return(request)
+            return
+        self.request, self.mode = request, kind
         self.sent_at = self.clock()
+        if kind == 'approach':
+            x, y = request.approach_target
+            capability, arguments = 'fall_approach', dict(
+                request_id=request.request_id, phase='approach', x=x, y=y, standoff_m=1.0)
+        else:
+            capability, arguments = 'fall_confirmation', dict(
+                request_id=request.request_id, situation_type='fall', summary=request.summary)
         try:
             future = self.client.send_goal_async(self.action_type.Goal(
-                capability_id='fall_confirmation',
-                arguments_yaml=json.dumps(dict(
-                    request_id=request.request_id, situation_type='fall',
-                    summary=request.summary), ensure_ascii=False)))
+                capability_id=capability,
+                arguments_yaml=json.dumps(arguments, ensure_ascii=False)))
             self.goal_future = future
             future.add_done_callback(lambda done: self._accepted(request, done))
         except Exception:
+            self._give_up(request)
+
+    def _give_up(self, request):
+        """A transport failure: a confirmation fails; an approach asks in place."""
+        if self.mode == 'approach':
+            self.coordinator.approach_done(request, 'failed', self.clock())
+        else:
             self.coordinator.fail(request)
-            self._cancel_current()
-            self._publish()
+        self._cancel_current()
+        self._publish()
 
     def _accepted(self, request, future):
         with self.lock:
@@ -204,9 +241,7 @@ class FallConfirmationLink:
                 handle = future.result()
             except Exception:
                 if self.request == request and self.goal_future is future:
-                    self.coordinator.fail(request)
-                    self._cancel_current()
-                    self._publish()
+                    self._give_up(request)
                 return
             if (self.request != request or self.coordinator.closed
                     or self.goal_future is not future
@@ -221,6 +256,12 @@ class FallConfirmationLink:
                 return
             self.goal_future = None
             if not handle.accepted:
+                if self.mode == 'approach':
+                    # No map, localization switching or a busy robot: ask here.
+                    self.coordinator.approach_done(request, 'rejected', self.clock())
+                    self.request = None
+                    self._publish()
+                    return
                 # Manager may still be preparing the robot. Keep
                 # this request queued; rejection is not the user's silence.
                 self.request = None
@@ -233,9 +274,7 @@ class FallConfirmationLink:
                 handle.get_result_async().add_done_callback(
                     lambda done: self._done(request, done))
             except Exception:
-                self.coordinator.fail(request)
-                self._cancel_current()
-                self._publish()
+                self._give_up(request)
 
     def _done(self, request, future):
         from action_msgs.msg import GoalStatus
@@ -247,7 +286,13 @@ class FallConfirmationLink:
                 return
             try:
                 response = future.result()
-                if (response.status == GoalStatus.STATUS_ABORTED
+                if self.mode == 'approach':
+                    outcome = 'failed'
+                    if response.status == GoalStatus.STATUS_SUCCEEDED:
+                        outcome = (yaml.safe_load(response.result.result_yaml) or {}).get(
+                            'outcome', 'failed')
+                    self.coordinator.approach_done(request, outcome, self.clock())
+                elif (response.status == GoalStatus.STATUS_ABORTED
                         and response.result.message == 'Downstream Action server rejected the goal'
                         and not response.result.result_yaml):
                     # Preserve the former direct-Action retry while Agent finishes
@@ -262,10 +307,72 @@ class FallConfirmationLink:
                         request, situation_assessment=result['situation_assessment'],
                         help_needed=result['help_needed'])
             except Exception:
-                self.coordinator.fail(request)
+                if self.mode == 'approach':
+                    self.coordinator.approach_done(request, 'failed', self.clock())
+                else:
+                    self.coordinator.fail(request)
             self.request = self.handle = self.goal_future = None
             self.accepted_at = self.server_missing_since = None
             self._drive()
+
+    # ------------------------------------------------------------ return trip
+
+    def _send_return(self, job):
+        self.return_job, self.return_sent_at = job, self.clock()
+        try:
+            future = self.client.send_goal_async(self.action_type.Goal(
+                capability_id='fall_approach', arguments_yaml=json.dumps(dict(
+                    request_id=job.question_id, phase='return', x=0.0, y=0.0, standoff_m=1.0))))
+            self.return_future = future
+            future.add_done_callback(lambda done: self._return_accepted(job, done))
+        except Exception:
+            self._finish_return(job, 'failed')
+
+    def _return_accepted(self, job, future):
+        with self.lock:
+            if self.return_job != job:
+                return
+            try:
+                handle = future.result()
+            except Exception:
+                return self._finish_return(job, 'failed')
+            if not handle.accepted:
+                return self._finish_return(job, 'failed')
+            self.return_handle, self.return_future = handle, None
+            try:
+                handle.get_result_async().add_done_callback(
+                    lambda done: self._return_done(job, done))
+            except Exception:
+                self._finish_return(job, 'failed')
+
+    def _return_done(self, job, future):
+        from action_msgs.msg import GoalStatus
+
+        with self.lock:
+            if self.return_job != job:
+                return
+            outcome = 'failed'
+            try:
+                response = future.result()
+                if response.status == GoalStatus.STATUS_SUCCEEDED:
+                    outcome = (yaml.safe_load(response.result.result_yaml) or {}).get(
+                        'outcome', 'failed')
+            except Exception:
+                pass
+            self._finish_return(job, outcome)
+
+    def _expire_return(self):
+        limit = (self.goal_response_timeout_s if self.return_handle is None
+                 else self.approach_timeout_s)
+        if self.clock() - self.return_sent_at >= limit:
+            self._cancel_handle(self.return_handle)
+            self._finish_return(self.return_job, 'failed')
+
+    def _finish_return(self, job, outcome):
+        self.coordinator.return_done(job, outcome)
+        self.return_job = self.return_future = self.return_handle = None
+        self._publish()
+        self._drive()
 
     def close(self):
         with self.lock:

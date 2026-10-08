@@ -23,6 +23,7 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-pil</exec_depend>
   <exec_depend>python3-aiohttp</exec_depend>

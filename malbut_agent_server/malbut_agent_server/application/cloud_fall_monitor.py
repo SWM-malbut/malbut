@@ -9,6 +9,7 @@ closure rule is automatic; other closure decisions remain explicit.
 import asyncio
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
+import math
 import time
 from typing import Callable, Optional
 from uuid import uuid4
@@ -18,6 +19,9 @@ from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_people_recorder import FallPeopleRecorder
 from malbut_agent_server.application.fall_normal_closure import (
     normal_closure_supported, normal_path_ready,
+)
+from malbut_agent_server.application.fall_scene_place import (
+    CASE_GAP_S, SAME_PLACE_M, CameraMotionLog, near_on_map, same_place,
 )
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
 from malbut_agent_server.application.fall_pending_association import AssociationWait, PendingAssociation
@@ -34,7 +38,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     NormalVideoCheck, SubjectCheckState, SubjectObservation, SubjectFrame,
     VideoAssessment, VoiceAnswer, identifier, timestamp,
     CandidateKind, CloudDiscovery, CloudDiscoveryLink, CloudPersonFinding, CloudPoseLink,
-    CloudAssociationReview, CloudAnalysisExplanation,
+    CloudAssociationReview, CloudAnalysisExplanation, PersonCheckReply, PersonCheckRequest,
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
@@ -49,6 +53,23 @@ RUNTIME_CLOUD_BLOCKS = frozenset({
 GUARD_FAILURES = RUNTIME_CLOUD_BLOCKS | {
     'monitoring_disabled', 'cloud_disconnected', 'cloud_permission_changed', 'worker_cancelled',
 }
+
+
+APPROACH_OUTCOMES = frozenset({'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejected'})
+# After arriving 1 m in front: Pose looks this long, then Cloud once.
+PERSON_POSE_WAIT_S = 3.0
+
+
+@dataclass
+class PersonCheck:
+    """Looking from close range after the robot drove near an uncertain suspicion."""
+
+    question_id: str
+    target: tuple
+    started: float
+    pose_deadline: float
+    cloud: bool = False
+    asked: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,7 +95,8 @@ class CloudFallMonitor:
                  clock: Callable[[], float] = time.monotonic,
                  wall_clock: Callable[[], float] = time.time,
                  clip_planner: Optional[FallClipPlanner] = None,
-                 people_recorder: Optional[FallPeopleRecorder] = None) -> None:
+                 people_recorder: Optional[FallPeopleRecorder] = None,
+                 place_locator=None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -121,6 +143,18 @@ class CloudFallMonitor:
         # boundary below; it is not enabled by a Cloud response or ROS command.
         self._discoveries = OrderedDict()
         self._association_wait = AssociationWait()
+        # A scene case is one continuing situation: same place in the home,
+        # no long silence. Map points come from the optional locator (AMCL +
+        # depth); image positions are the fallback. Bounded so active scene
+        # cases never take the person-case capacity.
+        self._place = place_locator
+        self._camera_motion = CameraMotionLog()
+        self.max_open_scene_cases = 3
+        # Drive near uncertain suspicions before asking (fall_approach). Off
+        # until verified on the robot; the ROS node sets it from a parameter.
+        self.approach_enabled = False
+        self._running_missions = ()
+        self._person_checks = {}
 
     def _now(self) -> float:
         value = self._clock()
@@ -281,6 +315,9 @@ class CloudFallMonitor:
         if not all(values):
             self._cancel_analysis()
         if not enabled or not camera_enabled:
+            self._camera_motion.unknown(self._now())
+            if self._place is not None:
+                self._place.clear()
             self.buffer.clear()
             self._subject_evidence.clear()
             self._settled_subjects.clear()
@@ -378,6 +415,7 @@ class CloudFallMonitor:
         return True
 
     def invalidate_subject_input(self):
+        self._camera_motion.unknown(self._now())
         self._subject_evidence.active = True
         self._subject_evidence.clear()
         self._settled_subjects.clear()
@@ -399,9 +437,10 @@ class CloudFallMonitor:
                 or now - frame.observed_at > self.policy.max_person_observation_age_s):
             return False
         self._subject_evidence.append(frame)
+        self._camera_motion.observe(frame.observed_at, moving=frame.camera_moving)
         self._refresh_settled_subjects()
         self._people_call(self._people.observe, frame.observed_at, tuple(
-            (p.subject_key, p.box) for p in frame.subjects if p.box is not None))
+            (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
         for incident in self._incidents.values():
             if incident.state is IncidentState.RESOLVED:
                 continue
@@ -526,7 +565,7 @@ class CloudFallMonitor:
                 current.help_needed = None
                 self._emit('incident_updated', current, reason=display_reason)
             return current.incident_id
-        if len(self._incidents) >= self.policy.max_incidents:
+        if not self._make_room():
             self._emit('candidate_rejected', reason='incident_capacity')
             return None
         current = FallIncident(
@@ -580,14 +619,160 @@ class CloudFallMonitor:
         incident.answer_question_played = False
         incident.situation_assessment = None
         incident.help_needed = None
+        incident.approach_target = self._approach_target(incident)
         if incident.video is not None:
             self._questions[incident_id] = replace(incident)
         self._emit('question_requested', incident,
                    question_id=incident.question_id, reply=incident.video,
                    reason=('prior_fall_observed' if incident.fall_seen and incident.video
                            and incident.video.assessment is VideoAssessment.NORMAL_ACTIVITY
-                           else None))
+                           else None),
+                   approach_target=incident.approach_target)
+        if incident.approach_target is not None:
+            running = self._running_missions
+            self._emit('approach_started', incident, question_id=incident.question_id,
+                       reason=('patrol_stopped' if 'patrol' in running
+                               else 'follow_stopped' if 'follow_person' in running else None))
         return incident.question_id
+
+    # ------------------------------------------------------------ approach
+
+    def set_running_missions(self, capability_ids):
+        """Manager missions now; recorded when a check interrupts one."""
+        self._running_missions = tuple(capability_ids)
+
+    def _approach_target(self, incident):
+        """A map point when a person is not certain there; None asks right away."""
+        if not self.approach_enabled or self._place is None:
+            return None
+        if incident.subject_key is None:
+            return incident.scene_points[-1] if incident.scene_points else None
+        latest = self._subject_evidence.latest(incident.subject_key)
+        if latest is None or latest[2].box is None:
+            return None
+        stamp, _, pose = latest
+        if pose.strong is True and pose.association_usable:
+            return None  # A clear Pose person: no need to look closer.
+        try:
+            return self._place.locate_near(stamp, pose.box)
+        except Exception:
+            return None  # Auxiliary: never stops the question.
+
+    def approach_result(self, *, incident_id, question_id, evidence_revision, outcome):
+        """The drive ended; on arrival look for a person before anyone is asked."""
+        if outcome not in APPROACH_OUTCOMES:
+            raise ValueError('invalid approach outcome')
+        incident = self._incidents.get(incident_id)
+        if (incident is None or incident.state is IncidentState.RESOLVED
+                or incident.question_id != question_id):
+            return False
+        target, incident.approach_target = incident.approach_target, None
+        self._emit('approach_completed', incident, question_id=question_id, reason=outcome)
+        if outcome == 'arrived' and target is not None:
+            now = self._now()
+            self._person_checks[incident_id] = PersonCheck(
+                question_id, target, now, now + PERSON_POSE_WAIT_S)
+            self._advance_person_checks()
+        return True
+
+    def return_result(self, *, incident_id, question_id, evidence_revision, outcome):
+        incident = self._incidents.get(incident_id)
+        if incident is None:
+            return False
+        self._emit('approach_returned', incident, question_id=question_id,
+                   reason='returned' if outcome == 'returned' else 'return_failed')
+        return True
+
+    def _pose_sees_person(self, check):
+        for stamp, poses in self._subject_evidence.frames_since(check.started):
+            for pose in poses:
+                if pose.strong is not True or not pose.association_usable or pose.box is None:
+                    continue
+                point = None
+                if self._place is not None:
+                    try:
+                        point = self._place.locate_near(stamp, pose.box)
+                    except Exception:
+                        point = None
+                if point is not None:
+                    if math.dist(point, check.target) <= SAME_PLACE_M:
+                        return True
+                elif 0.25 <= (pose.box[0] + pose.box[2]) / 2 <= 0.75:
+                    return True  # The robot faces the spot: a person in the middle.
+        return False
+
+    def _advance_person_checks(self):
+        now = self._now()
+        for iid, check in tuple(self._person_checks.items()):
+            incident = self._incidents.get(iid)
+            if (incident is None or incident.state is IncidentState.RESOLVED
+                    or incident.question_id != check.question_id):
+                del self._person_checks[iid]
+            elif check.cloud:
+                continue
+            elif self._pose_sees_person(check):
+                self._finish_person_check(iid, 'person')
+            elif now >= check.pose_deadline:
+                check.cloud = True  # run_once asks Cloud once.
+
+    async def _cloud_person_check(self, iid, check):
+        check.asked = True
+        now = self._now()
+        block = self._cloud_block(now)
+        window = None
+        if block is None:
+            try:
+                window = self.buffer.window(end=now, duration_s=2.0, max_images=3,
+                                            max_age_s=self.policy.max_frame_age_s)
+            except ValueError:
+                block = 'fresh_rgb_unavailable'
+        if block is not None:
+            self._finish_person_check(iid, 'person')  # Cannot look: ask.
+            return True
+        request = PersonCheckRequest(str(uuid4()), window)
+        self._calls.append(now)
+        epoch, reply = self._epoch, None
+        try:
+            self._task = asyncio.create_task(self._provider.check_person(request))
+            self._task.add_done_callback(self._consume_exception)
+            done, _ = await asyncio.wait({self._task}, timeout=self.policy.cloud_timeout_s)
+            if not done:
+                self._task.cancel()
+            elif self._epoch == epoch and not self._task.cancelled():
+                reply = self._task.result()
+        except asyncio.CancelledError:
+            if self._task is not None:
+                self._task.cancel()
+            raise
+        except Exception:
+            reply = None  # Unclear or failed: ask rather than close.
+        not_person = isinstance(reply, PersonCheckReply) and reply.verdict == 'not_person'
+        analysis = None
+        if isinstance(reply, PersonCheckReply):
+            seen = (VideoAssessment.NORMAL_ACTIVITY if not_person
+                    else VideoAssessment.SUSPECTED_FALL)
+            try:
+                analysis = CloudAnalysisExplanation(
+                    request.request_id, 'person_check', seen, reply.explanation)
+            except (ValueError, TypeError, UnicodeError):
+                analysis = None
+        self._finish_person_check(iid, 'not_a_person' if not_person else 'person', analysis)
+        return True
+
+    def _finish_person_check(self, iid, reason, analysis=None):
+        check = self._person_checks.pop(iid, None)
+        incident = self._incidents.get(iid)
+        if check is None or incident is None or incident.state is IncidentState.RESOLVED:
+            return
+        if reason == 'not_a_person':
+            if self._active_incident == iid:
+                reason = 'person'  # Its analysis is in flight: ask instead of closing.
+            else:
+                incident.pending = False
+        self._emit('person_check_completed', incident, question_id=check.question_id,
+                   reason=reason, analysis=analysis)
+        if reason == 'not_a_person':
+            self.resolve(iid, revision=incident.revision, reason='not_a_person')
 
     def _continue_confirmation(self, incident):
         """Reassess the latest evidence once an older question has finished."""
@@ -743,7 +928,8 @@ class CloudFallMonitor:
                 subject_key=incident.subject_key, evidence_revision=incident.revision,
                 confirmation_scope='scene' if incident.subject_key is None else 'subject',
                 reply=incident.video,
-                reason='prior_fall_observed' if normal and incident.fall_seen else None))
+                reason='prior_fall_observed' if normal and incident.fall_seen else None,
+                approach_target=current.approach_target))
         return tuple(events)
 
     def agent_reply(self, reply: AgentCheckReply) -> bool:
@@ -865,7 +1051,7 @@ class CloudFallMonitor:
     def resolve(self, incident_id: str, *, revision: int, reason: str) -> None:
         """Only a verified fusion/operator decision may call this boundary."""
         incident = self._incidents[incident_id]
-        if reason not in {'normal_verified', 'risk_cleared', 'response_completed'}:
+        if reason not in {'normal_verified', 'risk_cleared', 'response_completed', 'not_a_person'}:
             raise ValueError('verified closure reason required')
         if (revision != incident.revision or incident.pending
                 or self._active_incident == incident_id):
@@ -1118,6 +1304,8 @@ class CloudFallMonitor:
 
     def maintain_associations(self):
         """Local tick independent of in-flight Cloud calls and the scan interval."""
+        if not self._storage_failed and self._person_checks:
+            self._advance_person_checks()
         if (self._storage_failed or self._runtime_cloud_block is not None
                 or not all((self._enabled, self._camera, self._consent, self._connected))):
             return
@@ -1300,7 +1488,7 @@ class CloudFallMonitor:
         elif any(i.subject_key == key and i.subject_association_token == token
                  and i.state is IncidentState.RESOLVED for i in self._incidents.values()):
             return DiscoveryLinkResult('target_incident_closed')
-        elif len(self._incidents) >= self.policy.max_incidents:
+        elif not self._make_room():
             return DiscoveryLinkResult('incident_capacity')
         return self._attach_discovery(entry, key, token, observed_at, current)
 
@@ -1430,27 +1618,107 @@ class CloudFallMonitor:
     def _record_unidentified_scene(self, request, finding, *, analysis=None):
         """Start verification without Pose, reusing the completed Cloud result.
 
-        At most one open scene-level case queues a general question. This is
-        not person association: separate discoveries retain their own boxes,
-        timestamps and reasons. No geometry/appearance guess joins a Pose case.
+        A finding joins an open scene case only at the same place in the same
+        camera view; otherwise it opens its own case and question (bounded by
+        max_open_scene_cases). This is not person association: separate
+        discoveries retain their own boxes, timestamps and reasons. No
+        geometry/appearance guess joins a Pose case.
         """
         return self._record_unidentified_observation(
             tuple(f.captured_at for f in request.window.frames), finding, request=request,
             analysis=analysis)
 
+    def _make_room(self):
+        """Free a memory slot from finished history; the journal keeps every case.
+
+        Only resolved cases or scene cases quiet for CASE_GAP_S with no open
+        question, both last observed over CASE_GAP_S ago, are released.
+        """
+        if len(self._incidents) < self.policy.max_incidents:
+            return True
+        now = self._now()
+        settled = {iid for _, iid in self._settled_subjects.values()}
+        for iid, incident in self._incidents.items():
+            last = max(incident.last_observed_at, incident.scene_seen_until or 0.0)
+            finished = (incident.state is IncidentState.RESOLVED
+                        or (incident.subject_key is None
+                            and (incident.question_id is None or incident.answer is not None)))
+            if (finished and now - last > CASE_GAP_S and not incident.pending
+                    and iid != self._active_incident and iid not in settled
+                    and not incident.merged_into_incident_ids):
+                del self._incidents[iid]
+                self._questions.pop(iid, None)
+                self._association_wait.anchors.pop(iid, None)
+                for key in [k for k in self._clip_offsets
+                            if k == iid or (isinstance(k, tuple) and k[0] == iid)]:
+                    del self._clip_offsets[key]
+                return True
+        return False
+
+    def _map_points(self, times, finding):
+        if self._place is None:
+            return ()
+        points = []
+        for region in finding.regions:
+            if region.frame_index < len(times):
+                try:
+                    point = self._place.locate(times[region.frame_index], region.box)
+                except Exception:
+                    point = None  # Auxiliary: never stops fall handling.
+                if point is not None:
+                    points.append(point)
+        return tuple(dict.fromkeys(points))
+
+    def _scene_case_for(self, times, boxes, points, request_id):
+        """The open scene case this finding continues, or None for a new case."""
+        open_scenes = [i for i in self._incidents.values() if i.subject_key is None
+                       and i.state is not IncidentState.RESOLVED]
+        if request_id is not None:
+            for incident in open_scenes:
+                if incident.scene_request_id == request_id:
+                    return incident
+        # After CASE_GAP_S without findings the situation ended. The case stays
+        # open for its answer and history but takes no new findings.
+        active = [i for i in open_scenes if i.scene_seen_until is not None
+                  and times[0] - i.scene_seen_until <= CASE_GAP_S]
+        for incident in reversed(active):
+            if incident.scene_points and points:
+                same = near_on_map(incident.scene_points, points)
+            else:
+                same = (not self._camera_motion.moved_between(incident.scene_seen_from, times[-1])
+                        and same_place(incident.scene_boxes, boxes))
+            if same:
+                return incident
+        if active and (len(active) >= self.max_open_scene_cases or not self._make_room()):
+            # Full: keep the earlier single-case behaviour rather than dropping it.
+            return active[-1]
+        return None
+
     def _record_unidentified_observation(self, times, finding, *, request=None, analysis=None):
-        current = next((i for i in self._incidents.values() if i.subject_key is None
-                        and i.state is not IncidentState.RESOLVED), None)
+        boxes = tuple(dict.fromkeys(r.box for r in finding.regions))
+        points = self._map_points(times, finding)
+        current = self._scene_case_for(times, boxes, points,
+                                       request.request_id if request else None)
         end = times[-1]
         new = current is None
         if new:
-            if len(self._incidents) >= self.policy.max_incidents:
+            if not self._make_room():
                 return None
             current = FallIncident(
                 str(uuid4()), None, finding.kind, self._now(), end,
                 attempts=1, pending=False, candidate_sources=('cloud_crosscheck',),
                 auto_normal_blocked=True, normal_evidence_after=end)
             self._incidents[current.incident_id] = current
+        if boxes:
+            current.scene_boxes = boxes
+        if points:
+            current.scene_points = points
+        current.scene_seen_from = (times[0] if current.scene_seen_from is None
+                                   else max(current.scene_seen_from, times[0]))
+        current.scene_seen_until = (end if current.scene_seen_until is None
+                                    else max(current.scene_seen_until, end))
+        if request is not None:
+            current.scene_request_id = request.request_id
         # A changed Cloud label alone is not a new episode. Keep the room's
         # outstanding/completed/failed question, retaining the stronger finding
         # for decisions without restarting the same confirmation conversation.
@@ -1495,7 +1763,7 @@ class CloudFallMonitor:
         end = request.window.frames[-1].captured_at
         new = current is None
         if new:
-            if len(self._incidents) >= self.policy.max_incidents:
+            if not self._make_room():
                 return None
             # The verified result may take 20 seconds: retain its real capture
             # time, not a fabricated fresh timestamp passed through candidate().
@@ -1567,6 +1835,10 @@ class CloudFallMonitor:
         now = self._now()
         if not self._enabled or not self._camera:
             return False
+        looking = next(((iid, c) for iid, c in self._person_checks.items()
+                        if c.cloud and not c.asked), None)
+        if looking is not None:
+            return await self._cloud_person_check(*looking)
         # Local evidence/verification policy does not depend on the next scan
         # or on receiving another successful Cloud response.
         self.maintain_associations()

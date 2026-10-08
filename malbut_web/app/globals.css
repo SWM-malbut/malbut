@@ -4097,6 +4097,7 @@ a:focus-visible {
 .fall-badges .is-check { font-weight: 700; color: var(--ui-warn-text); background: var(--ui-warn-soft); }
 .fall-badges .is-ok { font-weight: 700; color: var(--ui-ok); background: var(--ui-ok-soft); }
 .fall-badges .is-report { font-weight: 700; color: var(--ui-report); background: var(--ui-report-soft); }
+.fall-badges .is-info { font-weight: 700; color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
 .fall-scene-state { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .fall-scene-state i { width: 8px; height: 8px; border-radius: 4px; }
 .fall-scene-state.is-ok { color: var(--ui-ok); } .fall-scene-state.is-ok i { background: var(--ui-ok); }
