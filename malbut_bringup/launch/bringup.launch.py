@@ -87,6 +87,8 @@ def _setup(context):
         'fall': ['fall_coordinator', 'malbut_fall_pose', 'malbut_cloud_fall_monitor'],
         'speech': ['malbut_stt', 'malbut_agent_communication', 'malbut_tts'],
     }
+    if value('manager') != 'true':
+        nodes['robot'].remove('system_manager')
     endpoints = {
         'robot': ['/malbut/mission/execute', '/navigate_to_pose', '/compute_path_to_pose',
                   '/follow_path', '/spin', '/wait', '/backup', '/assisted_teleop'],

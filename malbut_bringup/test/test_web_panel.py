@@ -236,6 +236,8 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.cancel_pending = set()
     bridge.runtime = None
     bridge.resident_voice_namespace = ''
+    bridge.resident_manager_namespace = ''
+    bridge.runtime_state_publisher = None
     bridge.teleop_inhibited = False
     bridge.teleop_generation = 0
     bridge.teleop_received = None
@@ -1396,3 +1398,64 @@ def test_timed_out_running_owner_call_can_complete_without_invalidating_future()
         for owner in owners:
             owner.join(2)
     assert queued[0].result() == 'started'
+
+
+def test_resident_manager_start_preserves_epoch_and_ignores_idle_services():
+    """The resident Manager owns services in standby without owning a robot group."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': 'STOPPED'}
+    bridge.runtime.last_selected_map.return_value = None
+    bridge.resident_manager_namespace = '/malbut/resident_manager_test'
+    bridge.node.get_node_names_and_namespaces.return_value = [
+        ('system_manager', bridge.resident_manager_namespace)]
+    bridge.node.count_publishers.return_value = 0
+    bridge.load_map.service_is_ready.return_value = True
+    bridge.start_mapping.service_is_ready.return_value = True
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 7}
+    bridge._start_runtime({'mode': 'mapping', '_movement_binding': ('manager', 7)})
+    bridge.runtime.start.assert_called_once_with(
+        'mapping', map_id=None, start_hardware=True, movement_binding=('manager', 7))
+    bridge.load_map.call_async.assert_not_called()
+    assert bridge.data.system['movement_epoch'] == 7
+    bridge.node.get_node_names_and_namespaces.return_value.append(('system_manager', '/'))
+    with pytest.raises(ValueError, match='system_manager'):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once()
+
+
+def test_resident_manager_state_survives_child_stop_but_sensors_do_not(monkeypatch):
+    """Standby retains live Manager epoch, never stopped child's pose/map evidence."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'STOPPED', 'message': '', 'runtime_id': 'child', 'map_path': ''}
+    bridge.resident_manager_namespace = '/malbut/resident_manager_test'
+    bridge.runtime_state_publisher = Mock()
+    bridge.runtime_state_message = SimpleNamespace
+    bridge.data.system = {'system_state': 1, 'movement_runtime_id': 'manager',
+                          'movement_epoch': 7}
+    bridge.data.tracking = 'old person'
+    bridge.localization = {'mode': 'LOCALIZATION', 'map': '/old/map.yaml'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge._refresh()
+    state = bridge.data.snapshot()
+    assert state['system']['movement_epoch'] == 7
+    assert state['tracking'] is None and state['runtime']['localization'] == {}
+    assert not state['runtime']['ready']
+    feed = json.loads(bridge.runtime_state_publisher.publish.call_args.args[0].data)
+    assert feed['state'] == 'STOPPED' and feed['runtime_id'] == 'child'
+    assert feed['observed_at'] > 0 and feed['map'] == ''
+
+
+def test_resident_shutdown_never_cancels_manager_weather_or_own_operation():
+    """Manager owns standby work; blanket CancelGoal would cancel shutdown itself."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_manager_namespace = '/malbut/resident_manager_test'
+    from malbut_bringup.web_panel import RUNTIME_ACTIONS
+    bridge.cancel_clients = {name: Mock() for name in RUNTIME_ACTIONS}
+    request_id = bridge.data.register({'capability': 'get_weather', 'arguments': {}})
+    bridge._cancel_runtime_actions()
+    bridge.cancel_clients['/malbut/mission/execute'].call_async.assert_not_called()
+    assert '/malbut/mission/execute' not in bridge.stopping_runtime['names']
+    assert bridge.data.requests[request_id]['state'] != 'CANCELING'

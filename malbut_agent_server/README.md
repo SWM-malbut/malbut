@@ -18,8 +18,11 @@ Agent의 기준 문서는 [Malbut Agent 명세](docs/malbut_agent.md)다.
 - 기존 소유자 위임으로 허용된 Homecam 설정·이벤트·녹화·낙상 기록 조회
 - 접수 및 최종 결과의 인증된 웹 링크 전달. 설정 저장과 실제 기기 적용은 구분한다.
 
-이 프로필의 날씨와 날씨 위치 변경은 상주 날씨 서비스의 기존 Action에
-연결하므로 자식 Manager가 대기 중이어도 사용할 수 있다.
+이 프로필의 모든 기능 요청은 상주 Manager의 `/malbut/mission/execute`를
+통한다. 날씨·지역 변경은 기존 capability를, 기기 운영은 `device_operation`을
+사용한다. Manager가 하위 날씨 서비스와 Cloud Bridge를 호출하므로 로봇 기능이
+꺼져 있어도 같은 실행 경로를 유지한다. Agent가 하위 Action에 직접 요청하거나
+Manager가 없을 때 우회하지 않는다. 전체 이동 정지도 Manager 서비스로 요청한다.
 
 LLM은 한 가지 목적의 도구만 선택한다. ROS 소유 실행기가 현재 상태를 읽고
 필요한 준비를 순서대로 수행한다. 선택한 지도나 이전 선택이 없으면 지도를

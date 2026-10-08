@@ -29,7 +29,7 @@ def _load(name):
     return module
 
 
-def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch):
+def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, launch_module):
     """Standby owns speech, with no hardware, navigation, or local HTTP port."""
     source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
     spec = importlib.util.spec_from_file_location('cloud_launch', source)
@@ -40,9 +40,16 @@ def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch):
                        token_file='/protected/device.token', map_directory='/maps')
     actions = module._setup(context)
     nodes = [action for action in actions if isinstance(action, Node)]
-    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert {node.node_executable for node in nodes} == {'robot_cloud_sync', 'system_manager'}
+    bridge = next(node for node in nodes if node.node_executable == 'robot_cloud_sync')
+    manager = next(node for node in nodes if node.node_executable == 'system_manager')
+    manager_parameters = evaluate_parameters(context, manager._Node__parameters)[0]
+    assert manager._ExecuteLocal__output == {'both': 'log'}
+    assert manager_parameters['resident_runtime'] is True
+    assert manager_parameters['initial_map'] == ''
     assert not _includes(actions)
-    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
+    parameters = evaluate_parameters(context, bridge._Node__parameters)[0]
+    assert parameters['resident_manager_namespace'].startswith('/malbut/resident_manager_')
     assert parameters['use_sim_time'] is False
     assert parameters['map_topic'] == '/map'
     assert parameters['token_file'] == '/protected/device.token'
@@ -60,12 +67,26 @@ def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch):
     # the nested LaunchService; otherwise an orphan can retain the voice lease.
     assert float(perform_substitutions(context, speech._ExecuteLocal__sigterm_timeout)) > 10
     assert parameters['resident_voice_namespace'].startswith('/malbut/resident_voice_')
-    # Failure belongs to the speech child LaunchService, not cloud's service.
+    # Bridge ownership failure tears down this launch; speech failure stays isolated.
     from launch.actions import RegisterEventHandler
-    assert not any(isinstance(action, RegisterEventHandler) for action in actions)
+    from launch.events.process import ProcessExited
+    handlers = [action.event_handler for action in actions
+                if isinstance(action, RegisterEventHandler)]
+    assert len(handlers) == 1
+    assert handlers[0].matches(ProcessExited(
+        action=bridge, returncode=2, name='robot_cloud_sync', cmd=[], cwd=None, env={}, pid=1))
+    assert not handlers[0].matches(ProcessExited(
+        action=speech, returncode=2, name='resident_speech', cmd=[], cwd=None, env={}, pid=2))
+    shutdown = list(handlers[0].handle(ProcessExited(
+        action=bridge, returncode=2, name='robot_cloud_sync',
+        cmd=[], cwd=None, env={}, pid=1), context))
+    from launch.actions import EmitEvent
+    from launch.events import Shutdown
+    assert len(shutdown) == 1 and isinstance(shutdown[0], EmitEvent)
+    assert isinstance(shutdown[0].event, Shutdown)
 
 
-def test_failed_microphone_keeps_cloud_control(monkeypatch):
+def test_failed_microphone_keeps_cloud_control(monkeypatch, launch_module):
     """An unavailable Pulse source prevents voice startup without killing cloud."""
     spec = importlib.util.spec_from_file_location(
         'cloud_launch', ROOT / 'malbut_bringup/launch/cloud.launch.py')
@@ -76,7 +97,7 @@ def test_failed_microphone_keeps_cloud_control(monkeypatch):
         raise RuntimeError('no microphone')
     monkeypatch.setattr(module, 'shared_xfm_source', fail)
     actions = module._setup(_context(module))
-    assert len([item for item in actions if isinstance(item, Node)]) == 1
+    assert len([item for item in actions if isinstance(item, Node)]) == 2
     assert not any(isinstance(item, ExecuteProcess) and not isinstance(item, Node)
                    for item in actions)
 
@@ -174,7 +195,7 @@ def _module_setup(name, context):
     return callback.execute(context)
 
 
-def test_cloud_only_profile_starts_outbound_bridge_without_speech():
+def test_cloud_only_profile_starts_outbound_bridge_without_speech(launch_module):
     """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
     source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
     spec = importlib.util.spec_from_file_location('cloud_launch', source)
@@ -185,9 +206,16 @@ def test_cloud_only_profile_starts_outbound_bridge_without_speech():
                        resident_voice='false')
     actions = module._setup(context)
     nodes = [action for action in actions if isinstance(action, Node)]
-    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert {node.node_executable for node in nodes} == {'robot_cloud_sync', 'system_manager'}
+    bridge = next(node for node in nodes if node.node_executable == 'robot_cloud_sync')
+    manager = next(node for node in nodes if node.node_executable == 'system_manager')
+    manager_parameters = evaluate_parameters(context, manager._Node__parameters)[0]
+    assert manager._ExecuteLocal__output == {'both': 'log'}
+    assert manager_parameters['resident_runtime'] is True
+    assert manager_parameters['initial_map'] == ''
     assert not _includes(actions)
-    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
+    parameters = evaluate_parameters(context, bridge._Node__parameters)[0]
+    assert parameters['resident_manager_namespace'].startswith('/malbut/resident_manager_')
     assert parameters['use_sim_time'] is False
     assert parameters['map_topic'] == '/map'
     assert parameters['token_file'] == '/protected/device.token'
@@ -916,3 +944,23 @@ def test_resident_child_inherits_shared_source_without_reselecting(
     homecam = _load('homecam')
     media = dict(_includes(homecam._setup(context))[0].launch_arguments)
     assert media['audio_source'] == 'pulse'
+
+
+def test_robot_child_can_use_resident_manager_without_duplicate(launch_module):
+    """Only the explicit resident profile skips its child's Manager process."""
+    actions = _core_actions(launch_module, _context(launch_module, manager='false'))
+    assert not _nodes(actions, 'system_manager')
+    direct = _core_actions(launch_module, _context(launch_module))
+    assert len(_nodes(direct, 'system_manager')) == 1
+
+
+def test_resident_child_observer_does_not_probe_root_manager(launch_module):
+    """Its required Action is absolute, while the resident node has a unique namespace."""
+    module = _load('bringup')
+    context = _context(module, manager='false', speech='false')
+    actions = module._setup(context)
+    observer = _nodes(actions, 'wait_for_robot')[0]
+    settings = _parameters(context, observer)
+    assert 'system_manager' not in settings['startup_nodes'].split(',')
+    assert '/malbut/mission/execute' in settings['required_actions'].split(',')
+    assert _included_modules(actions)['robot']['manager'] == 'false'

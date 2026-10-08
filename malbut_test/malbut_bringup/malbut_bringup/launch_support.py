@@ -28,6 +28,7 @@ def defaults():
     pose_python = pose_cache / 'runtime/bin/python'
     values = {
         'start_hardware': 'true',
+        'manager': 'true',
         'relocalization': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',

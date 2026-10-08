@@ -208,6 +208,19 @@ def test_default_unknown_map_is_not_a_saved_map_for_following(rig):
     assert '저장된 지도가 없어요' in rig.runner.jobs['follow-default']['message']
 
 
+def test_standby_does_not_preempt_its_own_manager_query_or_resident_weather(rig):
+    observed = status()
+    observed['system']['active_background_missions'] = [
+        {'mission_id': 'status-query', 'capability_id': 'device_operation'},
+        {'mission_id': 'weather', 'capability_id': 'get_weather'},
+        {'mission_id': 'weather-setting', 'capability_id': 'set_weather_location'},
+    ]
+    rig.runner.dispatch(proposal('standby', 'standby_robot'))
+    respond(rig, 'status', observed)
+    assert rig.device.stops == []
+    assert rig.device.calls[-1][1:3] == ('runtime_stop', {'confirmed_mission_ids': []})
+
+
 def test_unrelated_work_requires_bound_direct_confirmation(rig):
     rig.runner.dispatch(proposal('standby', 'standby_robot'))
     respond(rig, 'status', status(active=('web-drive',)))
@@ -538,6 +551,38 @@ def test_global_stop_waits_for_late_runtime_start_cancellation(rig):
     rig.device.observed[runtime_request] = {'done': True, 'code': 'canceled'}
     rig.runner.tick()
     assert rig.runner.jobs['stop']['state'] == 'succeeded'
+    assert rig.manager.calls == []
+
+
+@pytest.mark.parametrize('code', ['rejected', 'movement_epoch_changed'])
+def test_global_stop_completes_when_manager_never_dispatched_late_preparation(rig, code):
+    rig.runner.dispatch(proposal('follow', 'request_follow_person'))
+    respond(rig, 'status', status(ready=False))
+    runtime_request = rig.runner.jobs['follow']['pending_id']
+    rig.runner.dispatch(proposal('stop', 'stop_robot_movement'))
+    rig.device.stops[-1][2](dict(success=True, result={}))
+    rig.runner.tick()
+    assert rig.runner.jobs['stop']['state'] == 'running'
+    rig.device.observed[runtime_request] = {'done': True, 'code': code, 'not_dispatched': True}
+    rig.runner.tick()
+    assert rig.runner.jobs['stop']['state'] == 'succeeded'
+    assert rig.manager.calls == []
+
+
+@pytest.mark.parametrize('code', ['rejected', 'movement_epoch_changed', 'unknown', 'timeout', 'stop_unconfirmed'])
+def test_global_stop_does_not_assume_backend_failure_means_no_dispatch(rig, code):
+    rig.runner.dispatch(proposal('follow', 'request_follow_person'))
+    respond(rig, 'status', status(ready=False))
+    runtime_request = rig.runner.jobs['follow']['pending_id']
+    rig.runner.dispatch(proposal('stop', 'stop_robot_movement'))
+    rig.device.stops[-1][2](dict(success=True, result={}))
+    rig.runner.tick()
+    rig.device.observed[runtime_request] = {'done': True, 'code': code}
+    rig.runner.tick()
+    assert rig.runner.jobs['stop']['state'] == 'running'
+    rig.clock[0] += 31
+    rig.runner.tick()
+    assert rig.runner.jobs['stop']['state'] == 'unknown'
     assert rig.manager.calls == []
 
 

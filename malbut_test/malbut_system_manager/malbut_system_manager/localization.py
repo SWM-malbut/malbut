@@ -100,6 +100,7 @@ class LocalizationController:
         on_pose_ready: Callable[[bool], None] = lambda _: None,
         admission_lock=None,
         movement_state: Callable[[], tuple[str, int]] = lambda: ('', 0),
+        deferred_start: bool = False,
     ) -> None:
         self._node = node
         self._slam = slam
@@ -118,7 +119,11 @@ class LocalizationController:
         self._relocalize_result = None
         self._movement_lock = threading.RLock()
         # Reserve the initial transition before its startup timer can run.
-        self._transition_active = True
+        self._transition_active = not deferred_start
+        self._deferred_start = deferred_start
+        self._runtime_enabled = not deferred_start
+        self._runtime_generation = 0
+        self._standby_pending = False
         self._started = False
         self._stop_requested = False
         self.runtime_id = uuid4().hex
@@ -157,7 +162,8 @@ class LocalizationController:
                                 self._prepare_request, callback_group=group),
         ]
         self._monitor = node.create_timer(1.0, self._check_slam, callback_group=group)
-        self._set(LocalizationMode.SWITCHING, None, 'starting localization')
+        self._set(LocalizationMode.ERROR if deferred_start else LocalizationMode.SWITCHING,
+                  None, 'robot runtime is stopped' if deferred_start else 'starting localization')
 
     def start(self, initial_map: str) -> None:
         """Enter the launch-selected state; runs on an executor thread."""
@@ -174,6 +180,68 @@ class LocalizationController:
                 self._fail(str(error))
             finally:
                 self._transition_active = False
+
+    def activate_runtime(self, initial_map: str) -> bool:
+        """Reserve one fresh child initialization before scheduling its worker."""
+        with self._admission_lock:
+            if (self._standby_pending or self.stop_pending
+                    or not self._switch_lock.acquire(blocking=False)):
+                return False
+            self._runtime_generation += 1
+            generation = self._runtime_generation
+            self._runtime_enabled = True
+            binding = self._movement_state()
+            self._begin_transition()
+            self._set(LocalizationMode.SWITCHING, initial_map or self._default_map,
+                      'starting robot localization')
+        threading.Thread(target=self._start_runtime,
+                         args=(generation, binding, initial_map), daemon=True).start()
+        return True
+
+    def _start_runtime(self, generation, binding, initial_map):
+        try:
+            with self._admission_lock:
+                if generation != self._runtime_generation:
+                    return
+                if (not self._runtime_enabled or self._closing or self._stop_requested
+                        or binding != self._movement_state()):
+                    self._transition_active = False
+                    self._set(LocalizationMode.ERROR, None, 'localization startup was stopped')
+                    return
+                self._started = True
+                self._localization_started = False
+                self._loaded_map = None
+            try:
+                # Resident startup always uses a map. Only AutoSLAM starts SLAM.
+                self._to_localization(_map_file(initial_map or self._default_map))
+            except (LocalizationError, OSError) as error:
+                self._fail(str(error))
+            finally:
+                if generation == self._runtime_generation:
+                    self._transition_active = False
+        finally:
+            self._switch_lock.release()
+
+    def standby(self) -> None:
+        """Close admission immediately and stop owned SLAM after any switch exits."""
+        with self._admission_lock:
+            self._runtime_enabled = False
+            self._standby_pending = True
+            self.stop_movement()
+            self._set(LocalizationMode.ERROR, None, 'robot runtime is stopped')
+        threading.Thread(target=self._finish_standby, daemon=True).start()
+
+    def _finish_standby(self):
+        with self._switch_lock:
+            try:
+                self._slam.stop()
+            except LocalizationError as error:
+                self._node.get_logger().error(str(error))
+            self._started = False
+            self._localization_started = False
+            self._loaded_map = None
+            self._transition_active = False
+            self._standby_pending = False
 
     def close(self) -> None:
         """Stop the owned SLAM process during manager shutdown."""
@@ -238,6 +306,8 @@ class LocalizationController:
             return False, 'another localization switch is in progress'
         transition_started = False
         try:
+            if self._deferred_start and not self._runtime_enabled:
+                return False, 'robot runtime is stopped'
             if not self._started:
                 return False, 'initial localization startup is pending'
             target = (LocalizationMode.LOCALIZATION if map_path
@@ -309,14 +379,17 @@ class LocalizationController:
         self._publish(self._last_message)
 
     def _to_mapping(self) -> None:
+        self._require_runtime()
         self._set(LocalizationMode.SWITCHING, None, 'switching to mapping')
         if self._localization_started:
             # RESET also removes map_server's latched map and AMCL's map->odom.
             self._reset_localization()
+        self._require_runtime()
         self._slam.start()
         self._set(LocalizationMode.MAPPING, None, self._message(LocalizationMode.MAPPING))
 
     def _to_localization(self, map_path: str) -> None:
+        self._require_runtime()
         self._set(LocalizationMode.SWITCHING, map_path, 'switching to the saved map')
         self._slam.stop()
         if self._localization_started and self._loaded_map != map_path:
@@ -428,8 +501,10 @@ class LocalizationController:
             raise LocalizationError('localization lifecycle transition failed')
 
     def _call(self, client, request, label: str):
+        self._require_runtime()
         if not client.wait_for_service(timeout_sec=self._timeout_s):
             raise LocalizationError(f'{label} service is unavailable')
+        self._require_runtime()
         future = client.call_async(request)
         try:
             return self._wait(future, label, self._timeout_s)
@@ -437,11 +512,16 @@ class LocalizationController:
             client.remove_pending_request(future)
             raise
 
+    def _require_runtime(self):
+        if self._deferred_start and not self._runtime_enabled:
+            raise LocalizationError('robot runtime is stopped')
+
     def _wait(self, future, label: str, timeout_s: float):
         # Service handlers run on a reentrant group of a multithreaded executor,
         # so other executor threads complete this future while we wait.
         deadline = time.monotonic() + timeout_s
         while not future.done():
+            self._require_runtime()
             if self._closing:
                 raise LocalizationError('system manager is shutting down')
             if time.monotonic() >= deadline:
@@ -459,6 +539,8 @@ class LocalizationController:
         self._set(LocalizationMode.ERROR, self.map_path, message)
 
     def _set(self, mode: LocalizationMode, map_path: str | None, message: str) -> None:
+        if self._deferred_start and not self._runtime_enabled:
+            mode, map_path, message = LocalizationMode.ERROR, None, 'robot runtime is stopped'
         self.mode, self.map_path = mode, map_path
         if mode is not LocalizationMode.LOCALIZATION:
             self.pose_ready = False

@@ -138,6 +138,7 @@ def _setup(context):
             package='malbut_stt', executable='stt', output='screen',
             namespace=node_namespace,
             prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
+            respawn=True, respawn_delay=5.0,
             parameters=[stt_config, {
                 'stt_model_path': model, 'stt_library_path': library,
                 'device_index': input_device, 'cpp_threads': threads,
@@ -153,9 +154,9 @@ def _setup(context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:
             return []
         # A module-local failure must not shut down another module.
-        # Module-aware recovery is a separate follow-up.
+        recovery = '; restarting STT in 5 seconds' if event.action is stt else ''
         return [LogInfo(msg=f'Speech child stopped: {event.process_name} '
-                            f'(code {event.returncode}); other modules remain running')]
+                            f'(code {event.returncode}); other modules remain running{recovery}')]
 
     registrations = [
         RegisterEventHandler(OnProcessExit(target_action=preflight, on_exit=preflight_exited)),

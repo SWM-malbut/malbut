@@ -104,8 +104,10 @@ std::string build_video_pipeline(
       "/1 ! nvvidconv ! video/x-raw(memory:NVMM),format=I420,"
       "width=640,height=400,framerate=" +
       std::to_string(config.fps) + "/1";
+    // Late-joining viewers need periodic IDR frames, not just intra frames.
     encoder =
       "nvv4l2h264enc maxperf-enable=true insert-sps-pps=true iframeinterval=" +
+      std::to_string(config.fps * 2) + " idrinterval=" +
       std::to_string(config.fps * 2) + " bitrate=" +
       std::to_string(config.bitrate_kbps * 1000);
   }
