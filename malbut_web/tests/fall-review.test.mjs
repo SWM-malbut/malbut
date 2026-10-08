@@ -92,6 +92,49 @@ test("merged source keeps history and clips, but no duplicate check or robot rem
   });
 });
 
+test("robot not-a-person closure is 처리 완료 without reminders; a fall opinion reopens it", async () => {
+  await withRepo(async ({ events, review }) => {
+    const incidentId = randomUUID();
+    const steps = [
+      { eventKind: "incident_opened", assessment: "suspected_fall" },
+      { eventKind: "approach_started", assessment: "suspected_fall", reason: "patrol_stopped" },
+      { eventKind: "approach_completed", assessment: "suspected_fall", reason: "arrived" },
+      { eventKind: "person_check_completed", assessment: "suspected_fall", reason: "not_a_person",
+        analysis: { requestId: "check-1", purpose: "person_check", assessment: "normal_activity",
+          explanation: "가방과 옷가지만 보입니다." } },
+      { eventKind: "incident_resolved", state: "resolved", assessment: "suspected_fall", reason: "not_a_person" },
+      { eventKind: "approach_returned", state: "resolved", assessment: "suspected_fall", reason: "returned" },
+    ];
+    for (const [index, change] of steps.entries()) {
+      await events.storeFallEvent("robot-a", event({ incidentId, sequence: index + 1, occurredAt: at(index * 1000),
+        ...change }));
+    }
+    const other = event({ assessment: "suspected_fall" });
+    await events.storeFallEvent("robot-a", other);
+    const detail = await review.getFallIncidentDetail("robot-a", incidentId);
+    assert.equal(detail.category, "not_person");
+    assert.equal(detail.needsCheck, false);
+    assert.equal(detail.unacknowledged, false);
+    assert.equal(detail.reviewPending, false);
+    assert.deepEqual(detail.approach, { kind: "person_check_completed", reason: "not_a_person" });
+    assert.equal(detail.robotEvents.length, steps.length);
+    const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
+    assert.deepEqual(await ids("closed"), [incidentId]);
+    assert.deepEqual(await ids("check"), [other.incidentId]);
+    assert.deepEqual(await ids("normal"), []);
+    // Agreeing that it was nothing keeps it closed; seeing a fall reopens it for everyone.
+    assert.equal((await review.setFallOpinion("robot-a", incidentId, testUserId("owner@example.com"),
+      "normal", null)).reopened, false);
+    assert.equal((await review.setFallOpinion("robot-a", incidentId, testUserId("family@example.com"),
+      "fall", null)).reopened, true);
+    const reopened = await review.getFallIncidentDetail("robot-a", incidentId);
+    assert.equal(reopened.category, "check");
+    assert.ok(reopened.reopenedAt);
+    assert.deepEqual((await ids("check")).sort(), [incidentId, other.incidentId].sort());
+    assert.deepEqual(await ids("closed"), []);
+  });
+});
+
 test("clip contract is strict: wall-clock ranges only, no media or session IDs", () => {
   const { parseFallClip } = moduleLoader()("app/fall-clip-contract.ts");
   assert.ok(parseFallClip(clip()));

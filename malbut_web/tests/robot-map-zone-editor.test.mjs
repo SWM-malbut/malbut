@@ -249,6 +249,14 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
   assert.match(panel, /tone: "warn", title: `집의 \$\{percent\}%까지 살펴봤어요`/);
   assert.match(panel, /tone: "danger", title: "순찰이 멈췄어요"/);
   assert.match(panel, /tone: "neutral", title: "순찰을 중지했어요"/);
+  // 낙상 확인으로 멈춤(17번): 이유와 시각을 남기고, 스스로 다시 시작하지 않는다.
+  for (const copy of [
+    "낙상 의심을 확인하느라 순찰을 멈췄어요", "확인 결과: 사람 아님 · 원래 자리로 돌아왔어요",
+    "확인 결과: 사람 · 말벗이 그 자리에 있어요", "가까이 가지 못해 그 자리에서 물어봤어요", "확인 중이에요",
+    "순찰은 자동으로 다시 시작하지 않아요. 자세한 내용은 사건 기록에 있어요.", "순찰 다시 시작",
+  ]) assert.ok(panel.includes(copy), copy);
+  assert.match(panel, /tone: "warn", title: "낙상 의심을 확인하느라 순찰을 멈췄어요"/);
+  assert.match(panel, /fallCheckActive\(driveMode\) \|\| Boolean\(activeCommand\)/);
   assert.match(styles, /\.ui-map-sync\.is-warn \{[^}]*var\(--ui-warn-soft\)/);
   assert.match(styles, /\.ui-map-sync\.is-neutral \{[^}]*var\(--ui-neutral-soft\)/);
 });
