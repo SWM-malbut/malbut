@@ -105,7 +105,9 @@ def test_repeated_clicks_cannot_accumulate_voice_evidence_or_unbounded_idle_audi
     stream = collector()
     for _ in range(1000):
         assert stream.feed(VOICE + QUIET) == []
-        assert not stream.collector.started and not stream.collector.candidate_audio
+        assert not stream.collector.started
+        # One dropout may retain the first click, but the second gap clears it.
+        assert len(stream.collector.candidate_audio) <= 16 * len(VOICE)
         assert len(stream.collector.pre_roll) <= 15
         assert not stream.collector.audio and not stream.pending
 

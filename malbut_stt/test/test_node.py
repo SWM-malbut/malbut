@@ -22,7 +22,7 @@ def runtime(monkeypatch, tmp_path):
         shutdown_before_publish=False, callbacks={}, capture_available=True,
         parameters={'wake_model_path': str(model)},
         now=0.0, clients={}, on_spin=None, service_ready={}, service_failure={},
-        response_failure={}, accepted=True, decision='addressed', decisions=[],
+        response_failure={}, accepted=True, quiescent=True, decision='addressed', decisions=[],
     )
 
     def fail(phase):
@@ -80,6 +80,10 @@ def runtime(monkeypatch, tmp_path):
             self.cancelled = True
             self.finish()
 
+        def __await__(self):
+            yield self
+            return None if self.cancelled else self.result()
+
     class Client:
         def __init__(self, service_type, name):
             self.name = name
@@ -98,6 +102,9 @@ def runtime(monkeypatch, tmp_path):
             response = (self.service_type.Response(decision=state.decision)
                         if self.name.endswith('classify_addressee')
                         else self.service_type.Response(accepted=state.accepted))
+            if self.name.endswith(('cancel_request', 'cancel_playback_request')):
+                response.quiescent = (state.quiescent
+                                      if self.name.endswith('cancel_playback_request') else False)
             future = Future(response, state.response_failure.get(self.name))
             self.futures.append(future)
             return future
@@ -127,13 +134,14 @@ def runtime(monkeypatch, tmp_path):
             state.callbacks[topic] = callback
             state.calls.setdefault('subscriptions', {})[topic] = (message_type, qos)
 
-        def create_client(self, service_type, name):
+        def create_client(self, service_type, name, **kwargs):
             client = Client(service_type, name)
             state.clients[name] = client
             return client
 
-        def create_service(self, service_type, name, callback):
+        def create_service(self, service_type, name, callback, **kwargs):
             state.callbacks[name] = callback
+            state.calls.setdefault('service_options', {})[name] = kwargs
 
         def destroy_node(self):
             state.closed.append('node')
@@ -146,7 +154,7 @@ def runtime(monkeypatch, tmp_path):
         state.calls['wake'] = model_path
         state.calls['wake_options'] = options
         fail('initializing_wake')
-        return SimpleNamespace(model=object())
+        return SimpleNamespace(model=SimpleNamespace())
 
     def share_wake(transcriber):
         state.calls['wake_shared'] = transcriber
@@ -159,7 +167,7 @@ def runtime(monkeypatch, tmp_path):
         state.calls['local_stt'] = model_path
         state.calls['local_stt_options'] = options
         fail('initializing_stt')
-        return SimpleNamespace(model=object())
+        return SimpleNamespace(model=SimpleNamespace())
 
     def close_cpp():
         state.closed.append('cpp')
@@ -170,7 +178,7 @@ def runtime(monkeypatch, tmp_path):
         state.calls.setdefault('cpp_stt', []).append((Path(model_path), Path(library_path)))
         state.calls['cpp_stt_options'] = options
         fail('initializing_stt')
-        return SimpleNamespace(model=object(), close=close_cpp)
+        return SimpleNamespace(model=SimpleNamespace(), close=close_cpp)
 
     def create_vad(mode):
         state.calls['vad_mode'] = mode
@@ -187,6 +195,8 @@ def runtime(monkeypatch, tmp_path):
                 playback_id='p1', playback_state='playing', session_id='')
             self.polled = False
             self.capture_ready = Event()
+            self.web_lease = None
+            self.web_deadline = 0.0
 
         def start(self):
             assert state.calls['web_talk'] == ('startup-quarantine', True, 3.0)
@@ -242,25 +252,46 @@ def runtime(monkeypatch, tmp_path):
         def control_web_talk(self, lease_id, active, ttl_s, *, quiet=True):
             state.calls['web_talk'] = (lease_id, active, ttl_s)
             state.calls.setdefault('web_talk_quiet', []).append(quiet)
+            if state.accepted:
+                self.web_lease = lease_id if active else None
+                self.web_deadline = state.now + ttl_s if active else 0.0
             return state.accepted
 
-        def on_speech_request(self, playback_id):
+        def web_talk_is_active(self, lease_id):
+            return self.web_lease == lease_id and state.now < self.web_deadline
+
+        def on_speech_request(self, playback_id, *, request_id=''):
             state.calls.setdefault('speech_requests', []).append(playback_id)
+            state.calls['speech_request_id'] = request_id
+
+        def on_request_status(self, request_id, status, reason=''):
+            state.calls['request_status'] = (request_id, status, reason)
+
+        def on_request_quiescent(self, request_id):
+            state.calls.setdefault('quiescent_requests', []).append(request_id)
 
         def close(self):
             state.closed.append('pipeline')
             if state.cleanup_failure:
                 raise RuntimeError('private cleanup device details')
 
+        def prepare_shutdown(self):
+            if state.calls.get('cancel_on_shutdown'):
+                state.pipeline_args['cancel_request']('shutdown-request')
+
     state.messages = SimpleNamespace(
         SpeechInputStatus=type('SpeechInputStatus', (SimpleNamespace,), {}),
         SpeechTranscript=type('SpeechTranscript', (SimpleNamespace,), {}),
         SpeechRequest=type('SpeechRequest', (SimpleNamespace,), {}),
+        SpeechRequestStatus=type('SpeechRequestStatus', (SimpleNamespace,), {
+            key.upper(): key for key in ('accepted', 'rejected', 'failed', 'cancelled')
+        }),
         SpeechPlaybackStatus=type('SpeechPlaybackStatus', (SimpleNamespace,), {
             key.upper(): key for key in ('playing', 'paused', 'finished', 'failed', 'stopped')
         }),
     )
     state.services = SimpleNamespace(
+        CancelSpeechRequest=SimpleNamespace(Request=SimpleNamespace, Response=SimpleNamespace),
         ControlWebTalk=SimpleNamespace(
             Request=SimpleNamespace, Response=SimpleNamespace),
         ControlSpeechSession=SimpleNamespace(
@@ -282,6 +313,7 @@ def runtime(monkeypatch, tmp_path):
         'rclpy': SimpleNamespace(
             init=init, ok=lambda: state.ok, shutdown=shutdown, spin_once=spin_once),
         'rclpy.node': SimpleNamespace(Node=Node),
+        'rclpy.callback_groups': SimpleNamespace(ReentrantCallbackGroup=object),
         'rclpy.qos': SimpleNamespace(
             QoSProfile=SimpleNamespace,
             HistoryPolicy=SimpleNamespace(KEEP_LAST='keep_last'),
@@ -404,10 +436,13 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     ]
     assert set(runtime.calls['subscriptions']) == {
         '/malbut/speech/playback_status', '/malbut/speech/response',
+        '/malbut/speech/request_status',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
         '/malbut/speech/playback_control', '/malbut/speech/classify_addressee',
+        '/malbut/speech/cancel_request', '/malbut/speech/cancel_playback_request',
+        '/malbut/speech/playback_web_talk_control',
     }
 
     assert vars(runtime.clients['/malbut/speech/playback_control'].requests[0]) == {
@@ -432,11 +467,21 @@ def test_web_talk_service_acknowledges_gate_and_clears_stale_classification(runt
     def on_spin():
         client = runtime.clients['/malbut/speech/classify_addressee']
         future = client.futures[-1]
-        response = runtime.callbacks['/malbut/speech/web_talk_control'](
+        coroutine = runtime.callbacks['/malbut/speech/web_talk_control'](
             SimpleNamespace(lease_id='web-1', active=True, ttl_s=10.0),
             SimpleNamespace())
+        if accepted:
+            pending = coroutine.send(None)
+            assert pending is runtime.clients['/malbut/speech/playback_web_talk_control'].futures[-1]
+            pending.finish()
+        with pytest.raises(StopIteration) as completed:
+            coroutine.send(None)
+        response = completed.value.value
         assert response.accepted is accepted
         assert runtime.calls['web_talk'] == ('web-1', True, 10.0)
+        assert runtime.calls['web_talk_quiet'][-1] is False
+        assert not any(request.command == 'stop_all' for request in
+                       runtime.clients['/malbut/speech/playback_control'].requests)
         assert future.cancelled is accepted
         raise KeyboardInterrupt
 
@@ -561,7 +606,7 @@ def test_explicit_command_model_and_processed_microphone(runtime, tmp_path):
 
 
 @pytest.mark.parametrize('input_has_aec', [False, True])
-def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
+def test_robot_deployment_honors_input_aec_setting(runtime, input_has_aec):
     import malbut_stt.node as source_node
 
     path = Path(__file__).parents[2] / 'malbut_test/malbut_stt/malbut_stt/node.py'
@@ -573,7 +618,7 @@ def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
         robot_node[name] = getattr(source_node, name)
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
-    assert runtime.pipeline_args['input_has_aec'] is False
+    assert runtime.pipeline_args['input_has_aec'] is input_has_aec
     assert runtime.calls['endpoint_chimes'] == [-1]
     assert runtime.calls['failure_chimes'] == [-1]
 
@@ -987,8 +1032,9 @@ def test_control_requests_are_bounded_and_shutdown_removes_all_pending_waits(run
 def test_web_talk_speech_stops_reach_tts_without_dialogue_staleness(runtime):
     def spin():
         runtime.callbacks['/malbut/speech/response'](
-            runtime.messages.SpeechRequest(playback_id='answer-1', text='답변'))
+            runtime.messages.SpeechRequest(playback_id='answer-1', request_id='request-1', text='답변'))
         assert runtime.calls['speech_requests'] == ['answer-1']
+        assert runtime.calls['speech_request_id'] == 'request-1'
         stop_speech = runtime.pipeline_args['stop_speech']
         stop_speech('')
         stop_speech('answer-1')
@@ -1008,3 +1054,314 @@ def test_web_talk_speech_stops_reach_tts_without_dialogue_staleness(runtime):
     assert ('info', 'playback_control_accepted:stop_all') in runtime.logs
     assert ('info', 'playback_control_accepted:stop') in runtime.logs
     assert ('warning', 'playback_control_response_stale') not in runtime.logs
+
+
+def test_owner_heartbeat_only_after_capture_ready_and_once_per_second(runtime, capsys):
+    runtime.capture_available = False
+    steps = iter((0.5, 1.0, 1.5, 2.0, 3.0))
+
+    def spin():
+        runtime.now = next(steps, 4.0)
+        if runtime.now == 1.0:
+            runtime.capture_available = True
+        if runtime.now == 4.0:
+            raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert capsys.readouterr().out.splitlines() == [
+        'malbut_speech_capture_ready', 'malbut_speech_heartbeat',
+        'malbut_speech_heartbeat', 'malbut_speech_heartbeat']
+
+
+def test_request_status_and_deadlines_use_exact_request_ids(runtime):
+    runtime.parameters.update(stt_decode_timeout_s=12.0, request_receipt_timeout_s=3.0,
+                              reply_timeout_s=90.0)
+
+    def spin():
+        runtime.callbacks['/malbut/speech/request_status'](
+            runtime.messages.SpeechRequestStatus(request_id='u-exact', state='rejected',
+                                                 reason='busy'))
+        assert runtime.calls['request_status'] == ('u-exact', 'rejected', 'busy')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert runtime.pipeline_args['receipt_timeout_s'] == 3.0
+    assert runtime.pipeline_args['reply_timeout_s'] == 90.0
+    assert runtime.pipeline_args['inference_timeout_s'] == 17.0
+
+
+@pytest.mark.parametrize('parameter', ['request_receipt_timeout_s', 'reply_timeout_s',
+                                       'inference_timeout_s'])
+@pytest.mark.parametrize('value', [0, -1, True, float('nan'), float('inf')])
+def test_invalid_request_and_inference_deadlines_fail_before_loading(runtime, parameter, value):
+    runtime.parameters[parameter] = value
+    assert main() == 1
+    assert 'local_stt' not in runtime.calls
+
+
+def test_cancel_retries_unavailable_agent_and_tts_and_stops_after_acceptance(runtime):
+    names = ['/malbut/speech/cancel_request', '/malbut/speech/cancel_playback_request']
+    for name in names:
+        runtime.service_ready[name] = False
+    step = 0
+
+    def spin():
+        nonlocal step
+        step += 1
+        if step == 1:
+            runtime.pipeline_args['cancel_request']('request-original')
+            assert all(not runtime.clients[name].requests for name in names)
+            for name in names:
+                runtime.service_ready[name] = True
+            runtime.now = 1.0
+        else:
+            for name in names:
+                client = runtime.clients[name]
+                assert [r.request_id for r in client.requests] == ['request-original']
+                client.futures[0].finish()
+            raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+def test_cancel_tts_retries_nonquiet_ack_and_reports_only_exact_quiet_request(runtime):
+    runtime.quiescent = False
+    step = 0
+
+    def spin():
+        nonlocal step
+        step += 1
+        agent = runtime.clients['/malbut/speech/cancel_request']
+        tts = runtime.clients['/malbut/speech/cancel_playback_request']
+        if step == 1:
+            runtime.pipeline_args['cancel_request']('request-original')
+        elif step == 2:
+            agent.futures[0].finish()
+            tts.futures[0].finish()
+            assert runtime.calls.get('quiescent_requests', []) == []
+            runtime.now = 0.5
+            runtime.quiescent = True
+        else:
+            assert len(agent.requests) == 1
+            assert [r.request_id for r in tts.requests] == ['request-original', 'request-original']
+            tts.futures[1].finish()
+            assert runtime.calls['quiescent_requests'] == ['request-original']
+            tts.futures[0].response.quiescent = True
+            tts.futures[0].finish()  # An obsolete response must not notify again.
+            assert runtime.calls['quiescent_requests'] == ['request-original']
+            raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+def test_cancel_quiet_response_after_deadline_does_not_release_pipeline(runtime):
+    step = 0
+
+    def spin():
+        nonlocal step
+        step += 1
+        if step == 1:
+            runtime.pipeline_args['cancel_request']('request-original')
+        else:
+            runtime.now = 5.0
+            runtime.clients['/malbut/speech/cancel_playback_request'].futures[0].finish()
+            assert runtime.calls.get('quiescent_requests', []) == []
+            raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+@pytest.mark.parametrize('failure', ['unavailable', 'rejected', 'exception', 'expired', 'late'])
+def test_web_talk_never_acknowledges_without_timely_tts_quiet(runtime, failure):
+    name = '/malbut/speech/playback_web_talk_control'
+    step = 0
+    coroutine = None
+
+    def spin():
+        nonlocal step, coroutine
+        step += 1
+        client = runtime.clients[name]
+        if step == 1:
+            if failure == 'unavailable':
+                runtime.service_ready[name] = False
+            if failure == 'exception':
+                runtime.response_failure[name] = True
+            coroutine = runtime.callbacks['/malbut/speech/web_talk_control'](
+                SimpleNamespace(lease_id='web-1', active=True, ttl_s=2.0), SimpleNamespace())
+            if failure == 'unavailable':
+                with pytest.raises(StopIteration) as done:
+                    coroutine.send(None)
+                assert done.value.value.accepted is False
+                assert runtime.calls['web_talk'] == ('web-1', True, 2.0)
+                raise KeyboardInterrupt
+            future = coroutine.send(None)
+            assert client.requests[0].ttl_s == 2.0
+            if failure == 'expired':
+                runtime.now = 2.0
+                return  # Owner poll must expire the unresolved remote Future.
+            if failure == 'late':
+                runtime.now = 2.0  # Reject even before the next owner poll.
+            if failure == 'rejected':
+                future.response.accepted = False
+            future.finish()
+        else:
+            assert client.futures[0].cancelled
+        with pytest.raises(StopIteration) as done:
+            coroutine.send(None)
+        assert done.value.value.accepted is False
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert all('private service' not in text for _, text in runtime.logs)
+
+
+def test_web_release_invalidates_old_ack_and_reaches_tts(runtime):
+    def spin():
+        control = runtime.callbacks['/malbut/speech/web_talk_control']
+        active = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=3.0),
+                         SimpleNamespace())
+        active_future = active.send(None)
+        release = control(SimpleNamespace(lease_id='web-1', active=False, ttl_s=0.0),
+                          SimpleNamespace())
+        release_future = release.send(None)
+        client = runtime.clients['/malbut/speech/playback_web_talk_control']
+        assert [request.active for request in client.requests] == [True, False]
+        for coroutine, future, expected in ((active, active_future, False),
+                                             (release, release_future, True)):
+            future.finish()
+            with pytest.raises(StopIteration) as done:
+                coroutine.send(None)
+            assert done.value.value.accepted is expected
+        assert runtime.calls['service_options']['/malbut/speech/web_talk_control']['callback_group']
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+def test_same_web_lease_renewal_invalidates_old_ack_before_original_deadline(runtime):
+    def spin():
+        control = runtime.callbacks['/malbut/speech/web_talk_control']
+        older = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=2.0),
+                        SimpleNamespace())
+        older.send(None)
+        runtime.now = 1.0
+        newer = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=2.0),
+                        SimpleNamespace())
+        newer.send(None)
+        runtime.now = 1.5
+        for coroutine, expected in ((older, False), (newer, True)):
+            with pytest.raises(StopIteration) as done:
+                coroutine.send(None)
+            assert done.value.value.accepted is expected
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+@pytest.mark.parametrize('ack_at,newer_accepted', [(1.05, True), (1.2, False)])
+def test_old_web_ack_cannot_outlive_shortened_same_lease(runtime, ack_at, newer_accepted):
+    def spin():
+        control = runtime.callbacks['/malbut/speech/web_talk_control']
+        older = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=3.0),
+                        SimpleNamespace())
+        older.send(None)
+        runtime.now = 1.0
+        newer = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=0.1),
+                        SimpleNamespace())
+        newer.send(None)
+        runtime.now = ack_at
+        for coroutine, expected in ((older, False), (newer, newer_accepted)):
+            with pytest.raises(StopIteration) as done:
+                coroutine.send(None)
+            assert done.value.value.accepted is expected
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+def test_web_ack_requires_actual_local_gate_to_still_be_active(runtime):
+    def spin():
+        control = runtime.callbacks['/malbut/speech/web_talk_control']
+        pending = control(SimpleNamespace(lease_id='web-1', active=True, ttl_s=3.0),
+                          SimpleNamespace())
+        pending.send(None)
+        runtime.pipeline.control_web_talk('web-1', False, 0.0)
+        with pytest.raises(StopIteration) as done:
+            pending.send(None)
+        assert done.value.value.accepted is False
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+
+
+def test_cancel_queue_and_retry_lifetime_are_bounded(runtime):
+    names = ['/malbut/speech/cancel_request', '/malbut/speech/cancel_playback_request']
+    runtime.parameters['reply_timeout_s'] = 2.0
+    for name in names:
+        runtime.service_ready[name] = False
+    step = 0
+
+    def spin():
+        nonlocal step
+        step += 1
+        if step == 1:
+            for i in range(70):
+                runtime.pipeline_args['cancel_request'](f'request-{i}')
+            runtime.now = 2.0
+        elif step == 2:
+            for name in names:
+                runtime.service_ready[name] = True
+            runtime.now = 3.0
+        else:
+            assert all(not runtime.clients[name].requests for name in names)
+            raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert ('warning', 'request_cancel_queue_full') in runtime.logs
+    assert sum(text == 'request_cancel_timeout' for _, text in runtime.logs) == 128
+
+
+def test_startup_identity_logs_effective_settings_without_asset_paths(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_SOURCE_SHA', 'A' * 40)
+    runtime.parameters['input_has_aec'] = True
+    assert main() == 0
+    text = next(text for _, text in runtime.logs if text.startswith('stt_runtime_config '))
+    assert 'reported_source_revision=' + 'a' * 40 in text
+    assert 'source_revision_verification=unverified_build_label' in text
+    assert 'input_has_aec=True' in text and 'backend=faster_whisper' in text
+    assert 'runtime_source_fingerprint=' in text
+    assert runtime.parameters['wake_model_path'] not in text
+
+
+def test_shutdown_sends_request_tombstones_before_closing_ros_waits(runtime):
+    runtime.calls['cancel_on_shutdown'] = True
+    assert main() == 0
+    for name in ('cancel_request', 'cancel_playback_request'):
+        client = runtime.clients['/malbut/speech/' + name]
+        assert [request.request_id for request in client.requests] == ['shutdown-request']
+        assert client.futures[0].cancelled
+
+
+def test_confidence_logging_is_available_without_audio_diagnostics(runtime):
+    def spin():
+        runtime.pipeline_args['transcriber'].model.report_confidence(
+            'confidence_filter_summary', inspected_segments=2, scored_segments=0,
+            unavailable_segments=2, transcript='private conversation', pcm=b'private')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    text = next(text for _, text in runtime.logs if text.startswith('stt_confidence:'))
+    assert '"unavailable_segments": 2' in text
+    assert 'private' not in text and 'transcript' not in text and 'pcm' not in text

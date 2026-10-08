@@ -538,6 +538,7 @@ def test_capture_during_candidate_inference_remains_part_of_the_same_utterance(h
 def test_normal_tts_completion_ends_session_after_five_seconds(harness):
     pipeline = harness.create()
     wake_up(harness, pipeline)
+    pipeline.feed(QUIET)  # Establish the current capture boundary before listening.
     pipeline.on_playback_status('p1', 'playing')
     pipeline.on_playback_status('p1', 'finished')
     harness.now = 4.999
@@ -704,13 +705,17 @@ def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
     assert not pipeline.session.active
 
 
-def test_wake_without_command_times_out_after_chime_guard(harness):
-    pipeline = harness.create(on_wake=lambda: setattr(harness, 'now', 2.0))
+@pytest.mark.parametrize('aec', [False, True])
+def test_wake_without_command_times_out_after_chime_guard(harness, aec):
+    pipeline = harness.create(aec=aec, on_wake=lambda: setattr(harness, 'now', 2.0))
     wake_up(harness, pipeline)
-    harness.now = 7.299
+    harness.now = 2.0 if aec else 2.3
+    pipeline.feed(QUIET)  # A current, eligible input frame establishes readiness.
+    deadline = 7.0 if aec else 7.3
+    harness.now = deadline - .001
     pipeline.poll()
     assert pipeline.session.active
-    harness.now = 7.3
+    harness.now = deadline
     pipeline.poll()
     assert not pipeline.session.active and harness.transcripts == []
     assert harness.command_calls == []
@@ -749,6 +754,7 @@ def test_command_start_before_wake_timeout_survives_late_poll(harness):
 def test_unrelated_playback_cannot_erase_wake_listening_deadline(harness):
     pipeline = harness.create()
     wake_up(harness, pipeline)
+    pipeline.feed(QUIET)
     pipeline.on_playback_status('old-progress', 'playing', interim=True)
     pipeline.on_playback_status('old-progress', 'finished', interim=True)
     harness.now = 5.0
@@ -855,7 +861,9 @@ def test_stale_failure_cannot_discard_current_speech(harness, stale, failure):
     assert pipeline.session.active and pipeline.session.utterance_id == uid
     assert pipeline._capture_id == uid and pipeline._utterance_playback_id == 'p1'
     assert pipeline.session.interrupted_playback_id == 'p1'
-    assert harness.reports == reports
+    assert harness.reports[:-1] == reports
+    assert harness.reports[-1].startswith('speech_lifecycle:')
+    assert 'inference_discarded' in harness.reports[-1]
     assert harness.controls == [('p1', 'pause')]
     assert harness.transcripts == [] and harness.candidates == []
 
@@ -1137,7 +1145,7 @@ def test_wake_chime_and_queued_echo_are_excluded_before_command_capture(harness,
     wake_up(harness, pipeline)
     assert chimes == ['played'] and pipeline.audio.empty()
     pipeline.feed(VOICE)
-    assert not pipeline.command_stream.collector.started
+    assert pipeline.command_stream.collector.started is aec
     harness.now += 0.3
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
@@ -1155,6 +1163,37 @@ def test_failed_wake_chime_reports_failure_and_returns_to_wake(harness):
     assert not pipeline.session.active and not pipeline._chime_playing
     assert harness.transcripts == [] and not pipeline.command_stream.collector.audio
     assert all('private' not in report for report in harness.reports)
+
+
+@pytest.mark.parametrize('aec', [False, True])
+def test_ready_waits_for_fresh_capture_read_before_first_eighty_ms_of_speech(harness, aec):
+    pipeline = harness.create(
+        aec=aec, on_wake=lambda: setattr(harness, 'now', .18),
+        settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.08))
+    wait_for(lambda: harness.recorder.reads == 1)
+    pipeline._accept_result('wake', pipeline._generation, None, '제이크야', None)
+    harness.now = 1.0  # Even a delayed crossing read must not eat the five-second window.
+    pipeline.poll()
+    assert 'wake_input_ready' not in harness.reports
+    assert pipeline._command_start_deadline is None
+    pipeline.on_playback_status('external', 'playing')
+    pipeline.on_playback_status('external', 'finished')
+    assert pipeline._command_start_deadline is None
+    assert pipeline.session.deadline is None
+    harness.now = 2.0
+    # This read began before the cue/reset and must still be discarded.
+    harness.recorder.frames.put([0] * 512)
+    wait_for(lambda: harness.recorder.reads == 2)
+    pipeline.poll()
+    assert harness.reports.count('wake_input_ready') == 1
+    assert pipeline._command_start_deadline == 7.0
+    for size in (512, 512, 256):
+        reads = harness.recorder.reads
+        harness.recorder.frames.put([1] * size)
+        wait_for(lambda: harness.recorder.reads > reads)
+        pipeline.poll()
+    assert pipeline.session.utterance_id is not None
+    assert pipeline.command_stream.collector.audio == VOICE * 4
 
 
 def test_close_cancels_decode_before_joining_worker(harness):

@@ -689,6 +689,8 @@ flowchart LR
 | 구간 | 공개 ROS 계약 | 이번 구현의 처리 |
 | --- | --- | --- |
 | STT → Agent | `/malbut/speech/transcript`, `malbut_interfaces/msg/SpeechTranscript` | 기존 수신 기록·중복 판정 후 원문을 대화 처리에 전달 |
+| Agent → STT | `/malbut/speech/request_status`, `malbut_interfaces/msg/SpeechRequestStatus` | 접수·거절·실패·취소 상태; 음성 안내와 별개 |
+| STT → Agent | `/malbut/speech/cancel_request`, `malbut_interfaces/srv/CancelSpeechRequest` | 요청 ID 취소 예약과 늦은 발행·미실행 제안 차단 |
 | Agent ↔ Manager | `/malbut/mission/execute`, `malbut_interfaces/action/ExecuteMission` | 요청, 접수, 진행, 결과, 특정 Goal 취소 |
 | Agent → TTS | `/malbut/speech/response`, `malbut_interfaces/msg/SpeechRequest` | `text`에 대화 답변·질문·명령 안내 문장을 담아 발행 |
 
@@ -808,8 +810,14 @@ Manager에서 사용하는 형식이다. 자동 통신 시험은 해당 구성�
 - 대화 추론은 ROS callback과 분리한다. 모델 지연이 Manager의 Feedback·Result,
   개발 터미널의 조회·취소 처리를 막지 않게 한다.
 - 대화 처리 용량은 진행 중·대기 중·아직 발행하지 않은 응답을 합쳐 10개다.
-  가득 차면 새 발화 ID를 소비하기 전에 바쁨을 안내한다. 이미 접수한 ID는
+  가득 차거나 준비 전이면 새 발화 ID를 소비하기 전에 `rejected` 상태를 알리고
+  불필요한 바쁨 안내 음성을 만들지 않는다. 이미 접수한 ID는
   용량과 관계없이 중복 처리하지 않는다.
+- STT가 접수·전체 응답 제한시간을 넘기면 같은 요청을 Agent·TTS 양쪽에서 취소한다.
+  Agent는 취소 후 대기·진행 중·이미 drain된 응답과 아직 발행하지 않은 실행 제안을 막는다.
+  취소 예약은 최근 256개와 진행 중인 취소 요청을 보호한다. 취소 전에 이미 실행된
+  Manager 작업을 자동 rollback하지 않으며, 재전송하지 않는다. 상세 계약은
+  [음성 안정성 안내](../malbut_stt/docs/reliability.md)를 따른다.
 - 일반 모델 처리 실패는 오류를 안내한 뒤 다음 새 발화를 처리한다. 음성 워커는
   매 발화 전에 유휴 만료(기본 1시간)·닫힘·삭제를 확인하고 필요하면 새 세션을
   만든다. 이미 선택한 세션이 처리 중 바뀌거나 한도 오류가 나면 재시작 안내를 한다.

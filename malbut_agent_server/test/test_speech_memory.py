@@ -213,9 +213,11 @@ def _fake_ros(monkeypatch, spoken, logs):
         SpeechRequest=SpeechRequest,
         SpeechTranscript=SimpleNamespace,
         SpeechInputStatus=SimpleNamespace(STARTED='started', FAILED='failed'),
+        SpeechRequestStatus=SimpleNamespace,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ClassifySpeechAddressee=SimpleNamespace(Response=SimpleNamespace(UNKNOWN='unknown')),
+        CancelSpeechRequest=SimpleNamespace,
     ))
     monkeypatch.setattr(
         'malbut_agent_server.manager_client.ManagerClient',

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from math import isfinite
+import json
 import os
 import sys
 from time import monotonic
@@ -10,6 +11,7 @@ from typing import Optional, Sequence
 from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
 from malbut_stt.chime import play_endpoint_chime, play_failure_chime, play_wake_chime
 from malbut_stt.dialogue_pipeline import DialoguePipeline
+from malbut_stt.runtime_identity import reported_source_revision, runtime_source_fingerprint
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
@@ -19,14 +21,16 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     try:
         import rclpy
         from rclpy.node import Node
+        from rclpy.callback_groups import ReentrantCallbackGroup
         from rclpy.qos import (
             DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
         )
         from malbut_interfaces.msg import (
-            SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
+            SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechRequestStatus,
+            SpeechTranscript,
         )
         from malbut_interfaces.srv import (
-            ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
+            CancelSpeechRequest, ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
             ControlWebTalk,
         )
         from std_msgs.msg import String
@@ -73,6 +77,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         if (type(stt_decode_timeout_s) not in (int, float)
                 or not isfinite(stt_decode_timeout_s) or stt_decode_timeout_s <= 0):
             raise ValueError('stt_decode_timeout_s must be finite and positive')
+        receipt_timeout = parameter('request_receipt_timeout_s', 5.0)
+        reply_timeout = parameter('reply_timeout_s', 120.0)
+        inference_timeout = parameter('inference_timeout_s', stt_decode_timeout_s + 5.0)
+        for name, value in (('request_receipt_timeout_s', receipt_timeout),
+                            ('reply_timeout_s', reply_timeout),
+                            ('inference_timeout_s', inference_timeout)):
+            if type(value) not in (int, float) or not isfinite(value) or value <= 0:
+                raise ValueError(name + ' must be finite and positive')
         if (type(endpoint_predecode_s) not in (float, int)
                 or not isfinite(endpoint_predecode_s)
                 or not 0 < endpoint_predecode_s <= 1.0):
@@ -96,6 +108,23 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         if (type(control_timeout) not in (float, int) or not isfinite(control_timeout)
                 or control_timeout <= 0):
             raise ValueError('playback_control_timeout_s must be finite and positive')
+        try:
+            fingerprint = runtime_source_fingerprint()
+        except OSError:
+            fingerprint = 'unknown'
+        node.get_logger().info(
+            'stt_runtime_config'
+            f' reported_source_revision={reported_source_revision()}'
+            ' source_revision_verification=unverified_build_label'
+            f' runtime_source_fingerprint={fingerprint}'
+            f' backend={backend} device_index={device_index if type(device_index) is int else "invalid"}'
+            f' vad_mode={vad_mode}'
+            f' input_has_aec={input_has_aec} stt_decode_timeout_s={stt_decode_timeout_s:g}'
+            f' inference_timeout_s={inference_timeout:g}'
+            f' request_receipt_timeout_s={receipt_timeout:g} reply_timeout_s={reply_timeout:g}'
+            f' min_speech_s={settings.min_speech_s:g} pre_roll_s={settings.pre_roll_s:g}'
+            f' silence_timeout_s={settings.silence_timeout_s:g}'
+            f' endpoint_predecode_s={endpoint_predecode_s if settings.silence_timeout_s > 1.0 else "disabled"}')
         wake_path = Path(wake_model_path).expanduser()
         stt_path = Path(stt_model_path).expanduser()
         if backend == 'whisper_cpp':
@@ -145,6 +174,16 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             wake = LocalWakeRecognizer(wake_path, compute_type=compute_type)
             phase = 'initializing_stt'
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
+        def report_confidence(event, **scores):
+            # Decoder confidence metadata only; transcripts and PCM never enter
+            # this default diagnostic path.
+            numeric = {name: value for name, value in scores.items()
+                       if value is None or type(value) in (int, float, bool)}
+            node.get_logger().info('stt_confidence:' + json.dumps(
+                {'event': event, **numeric}, ensure_ascii=True, sort_keys=True))
+
+        transcriber.model.report_confidence = report_confidence
+        wake.model.report_confidence = report_confidence
         diagnostics = None
         diagnostic_directory = os.environ.get('MALBUT_STT_DIAGNOSTIC_DIR', '').strip()
         if diagnostic_directory:
@@ -172,6 +211,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         classify_client = node.create_client(
             ClassifySpeechAddressee, '/malbut/speech/classify_addressee',
         )
+        cancel_clients = [node.create_client(CancelSpeechRequest, name) for name in (
+            '/malbut/speech/cancel_request', '/malbut/speech/cancel_playback_request')]
+        web_group = ReentrantCallbackGroup()
+        web_client = node.create_client(
+            ControlWebTalk, '/malbut/speech/playback_web_talk_control', callback_group=web_group)
         control_commands = {
             'pause': ControlSpeechPlayback.Request.PAUSE,
             'resume': ControlSpeechPlayback.Request.RESUME,
@@ -190,7 +234,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             SpeechPlaybackStatus.FAILED: 'failed',
             SpeechPlaybackStatus.STOPPED: 'stopped',
         }
+        request_states = {
+            SpeechRequestStatus.ACCEPTED: 'accepted', SpeechRequestStatus.REJECTED: 'rejected',
+            SpeechRequestStatus.FAILED: 'failed', SpeechRequestStatus.CANCELLED: 'cancelled',
+        }
         control_pending = {}
+        cancel_pending = {}
+        web_pending = {}
+        web_generation = 0
         classify_pending = None
         requests_closed = False
 
@@ -213,6 +264,75 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             for future in list(control_pending):
                 control_pending.pop(future)
                 remove_request(control_client, future)
+            for (client, _), pending in list(cancel_pending.items()):
+                if pending['future'] is not None:
+                    remove_request(client, pending['future'])
+            cancel_pending.clear()
+            for future in list(web_pending):
+                web_pending.pop(future)
+                remove_request(web_client, future)
+
+        def cancel_request(request_id):
+            if requests_closed or not rclpy.ok() or not request_id:
+                return
+            for client in cancel_clients:
+                key = (client, request_id)
+                if key in cancel_pending:
+                    continue
+                if len(cancel_pending) >= 128:
+                    node.get_logger().warning('request_cancel_queue_full')
+                    continue
+                cancel_pending[key] = {
+                    'expires': monotonic() + reply_timeout, 'retry_at': monotonic(),
+                    'future': None, 'deadline': 0.0,
+                }
+
+        def poll_cancellations():
+            for key, pending in list(cancel_pending.items()):
+                client, request_id = key
+                now = monotonic()
+                future = pending['future']
+                if now >= pending['expires']:
+                    cancel_pending.pop(key)
+                    if future is not None:
+                        remove_request(client, future)
+                    node.get_logger().warning('request_cancel_timeout')
+                    continue
+                if future is not None and now >= pending['deadline']:
+                    pending['future'] = None
+                    remove_request(client, future)
+                    pending['retry_at'] = now + 0.5
+                if pending['future'] is not None or now < pending['retry_at']:
+                    continue
+                pending['retry_at'] = now + 0.5
+                if not client.service_is_ready():
+                    continue
+                try:
+                    future = client.call_async(CancelSpeechRequest.Request(request_id=request_id))
+                except Exception as error:
+                    node.get_logger().warning('request_cancel_failed:' + type(error).__name__)
+                    continue
+                pending['future'] = future
+                pending['deadline'] = min(now + control_timeout, pending['expires'])
+
+                def done_callback(done, key=key, pending=pending, client=client):
+                    if (requests_closed or not rclpy.ok()
+                            or cancel_pending.get(key) is not pending or pending['future'] is not done):
+                        return
+                    pending['future'] = None
+                    client.remove_pending_request(done)
+                    playback_cancel = client is cancel_clients[1]
+                    try:
+                        response = done.result()
+                        accepted = response.accepted and (not playback_cancel or response.quiescent)
+                    except Exception:
+                        accepted = False
+                    if accepted and monotonic() < pending['deadline']:
+                        cancel_pending.pop(key)
+                        if playback_cancel:
+                            pipeline.on_request_quiescent(key[1])
+
+                future.add_done_callback(done_callback)
 
         def publish(utterance_id, text):
             if rclpy.ok():
@@ -312,6 +432,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             future.add_done_callback(classification_done)
 
         def poll_requests():
+            poll_cancellations()
+            for future, (deadline, generation) in list(web_pending.items()):
+                if monotonic() >= deadline or generation != web_generation:
+                    web_pending.pop(future)
+                    remove_request(web_client, future)
             if classify_pending is not None:
                 _, uid, pid, deadline = classify_pending
                 current = pipeline.pending_addressee
@@ -355,6 +480,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 playback_id, 'stop' if playback_id else 'stop_all', web_talk=True),
             publish_interruption=publish_interruption,
             publish_input_status=publish_input_status,
+            cancel_request=cancel_request,
+            receipt_timeout_s=receipt_timeout,
+            reply_timeout_s=reply_timeout,
+            inference_timeout_s=inference_timeout,
             diagnostics=diagnostics,
             report=report,
             on_wake=lambda: play_wake_chime(wake_chime_device_index),
@@ -382,7 +511,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         def speech_request(message):
             if rclpy.ok():
-                pipeline.on_speech_request(message.playback_id)
+                pipeline.on_speech_request(message.playback_id, request_id=message.request_id)
+
+        def request_status(message):
+            if rclpy.ok():
+                state = request_states.get(message.state)
+                if state is None:
+                    node.get_logger().warning('invalid_request_status')
+                    return
+                pipeline.on_request_status(message.request_id, state, message.reason)
+
+        node.create_subscription(
+            SpeechRequestStatus, '/malbut/speech/request_status', request_status, qos)
 
         # Seeing each request with TTS lets a web talk cancel it before any sound.
         node.create_subscription(
@@ -405,19 +545,53 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_service(
             ControlSpeechSession, '/malbut/speech/session_control', control_session)
 
-        def control_web_talk(request, response):
-            response.accepted = pipeline.control_web_talk(
-                request.lease_id, request.active, request.ttl_s)
-            if response.accepted and request.active:
+        async def control_web_talk(request, response):
+            nonlocal web_generation
+            response.accepted = False
+            started_at = monotonic()
+            # The acknowledged TTS lease owns playback quiescence. A duplicate
+            # legacy STOP_ALL here could block TTS before that lease is handled.
+            accepted = pipeline.control_web_talk(
+                request.lease_id, request.active, request.ttl_s, quiet=False)
+            if not accepted:
+                return response
+            if request.active:
                 clear_classification()
+            # Even renewal of the same ID replaces the accepted lease lifetime;
+            # an older ACK cannot authorize a newer or already expired lease.
+            web_generation += 1
+            generation = web_generation
+            deadline = started_at + min(control_timeout, request.ttl_s if request.active
+                                        else control_timeout)
+            if (requests_closed or not rclpy.ok() or not web_client.service_is_ready()
+                    or len(web_pending) >= 8 or monotonic() >= deadline):
+                return response
+            future = None
+            try:
+                future = web_client.call_async(ControlWebTalk.Request(
+                    lease_id=request.lease_id, active=request.active,
+                    ttl_s=max(0.0, request.ttl_s - (monotonic() - started_at))))
+                web_pending[future] = (deadline, generation)
+                result = await future
+                response.accepted = bool(
+                    result is not None and result.accepted and not requests_closed
+                    and rclpy.ok() and monotonic() < deadline and generation == web_generation
+                    and (not request.active or pipeline.web_talk_is_active(request.lease_id)))
+            except Exception as error:
+                node.get_logger().warning('web_talk_playback_control_failed:' + type(error).__name__)
+            finally:
+                if future is not None and web_pending.pop(future, None) is not None:
+                    web_client.remove_pending_request(future)
             return response
 
         node.create_service(
-            ControlWebTalk, '/malbut/speech/web_talk_control', control_web_talk)
+            ControlWebTalk, '/malbut/speech/web_talk_control', control_web_talk,
+            callback_group=web_group)
         # The media agent's previous 3 s lease may survive this STT process restart.
         pipeline.control_web_talk('startup-quarantine', True, 3.0, quiet=False)
         pipeline.start()
         ready_publisher = None
+        heartbeat_at = 0.0
         while rclpy.ok():
             pipeline.poll()
             if ready_publisher is None and pipeline.capture_ready.is_set() and rclpy.ok():
@@ -430,6 +604,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 # Report actual input, not merely a started capture thread.
                 print('malbut_speech_capture_ready', flush=True)
             poll_requests()
+            if ready_publisher is not None and rclpy.ok() and monotonic() >= heartbeat_at:
+                print('malbut_speech_heartbeat', flush=True)
+                heartbeat_at = monotonic() + 1.0
             if rclpy.ok():
                 rclpy.spin_once(node, timeout_sec=0.02)
         return 0
@@ -448,6 +625,15 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         return 1
     finally:
         cleanup_failed = False
+        # Send request-ID tombstones before local waits are removed and before
+        # native/capture cleanup can block. Peer Agent/TTS processes stay alive.
+        if pipeline is not None:
+            try:
+                pipeline.prepare_shutdown()
+                poll_cancellations()
+            except Exception as error:
+                cleanup_failed = True
+                node.get_logger().error('STT prepare shutdown failed: ' + type(error).__name__)
         for cleanup in (close_requests, pipeline.close if pipeline is not None else None,
                         close_transcriber):
             if cleanup is None:

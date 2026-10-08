@@ -1,6 +1,7 @@
 """Offline checks for the ROS adapter's worker and executor boundary."""
 
 import sys
+from concurrent.futures import Future
 from threading import Thread, get_ident
 from types import ModuleType, SimpleNamespace
 
@@ -63,7 +64,7 @@ def fake_ros(monkeypatch):
                                    entities.published.append(
                                        (get_ident(), message)))
 
-        def create_service(self, service_type, name, callback):
+        def create_service(self, service_type, name, callback, **kwargs):
             entities.services.append((service_type, name, callback))
 
         def create_timer(self, interval, callback):
@@ -76,6 +77,16 @@ def fake_ros(monkeypatch):
     monkeypatch.setitem(sys.modules, 'rclpy', ModuleType('rclpy'))
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(
         Node=FakeNode,
+    ))
+    class RosFuture(Future):
+        def __await__(self):
+            if not self.done():
+                yield self
+            return self.result()
+
+    monkeypatch.setitem(sys.modules, 'rclpy.task', SimpleNamespace(Future=RosFuture))
+    monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
+        ReentrantCallbackGroup=type('ReentrantCallbackGroup', (), {}),
     ))
     monkeypatch.setitem(sys.modules, 'rclpy.qos', SimpleNamespace(
         DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),
@@ -91,6 +102,8 @@ def fake_ros(monkeypatch):
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ControlSpeechPlayback=type('ControlSpeechPlayback', (), {}),
+        ControlWebTalk=type('ControlWebTalk', (), {}),
+        CancelSpeechRequest=type('CancelSpeechRequest', (), {}),
     ))
     return entities
 

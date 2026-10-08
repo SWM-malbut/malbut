@@ -7,6 +7,7 @@ from threading import Lock
 from time import perf_counter
 from types import SimpleNamespace
 
+from malbut_stt.confidence import confidence_scores
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
@@ -37,6 +38,12 @@ def _load_library(path):
         raise ValueError('whisper.cpp requires rebuilding the packaged ABI 3 bridge') from error
     if library.mb_whisper_abi_version() != 3:
         raise ValueError('whisper.cpp requires rebuilding the packaged ABI 3 bridge')
+    # This additive getter is optional: existing ABI 3 deployments remain usable.
+    no_speech = getattr(library, 'mb_whisper_segment_no_speech_prob', None)
+    if no_speech is not None:
+        no_speech.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        no_speech.restype = ctypes.c_float
+    library._malbut_no_speech_prob = no_speech
     return library
 
 
@@ -85,10 +92,14 @@ class _CppModel:
             if result != 0:
                 raise RuntimeError(f'whisper.cpp decode failed with code {result}')
             for index in range(self.library.mb_whisper_segment_count(self.context)):
+                confidence = self.library._malbut_no_speech_prob
+                no_speech = confidence(self.context, index) if confidence is not None else None
+                no_speech, _ = confidence_scores(SimpleNamespace(no_speech_prob=no_speech))
                 self.last_segments.append(SimpleNamespace(
                     text=self.library.mb_whisper_segment_text(self.context, index).decode('utf-8'),
                     start=self.library.mb_whisper_segment_start(self.context, index) / 100,
                     end=self.library.mb_whisper_segment_end(self.context, index) / 100,
+                    no_speech_prob=no_speech,
                 ))
             # Copy the list while holding the lock. A later call or close must
             # not invalidate the iterator consumed by the wake/stream wrapper.
@@ -143,6 +154,8 @@ class CppWhisperTranscriber(LocalWhisperTranscriber):
                 'library_path': str(library_path), 'bridge_abi': 3,
                 'requested_use_gpu': bool(use_gpu), 'threads': n_threads,
                 'decode_timeout_s': decode_timeout_s,
+                'confidence_fields': (['no_speech_prob']
+                                      if library._malbut_no_speech_prob is not None else []),
                 'model_type': library.mb_whisper_model_type(context).decode(),
                 'model_ftype': library.mb_whisper_model_ftype(context),
                 'system_info': library.mb_whisper_system_info().decode(),

@@ -182,7 +182,7 @@ def test_playback_status_cannot_extend_independent_wake_deadline(run, playback_s
     p.on_playback_status('answer', playback_state)
     assert p._command_start_deadline == pytest.approx(5.0)
     if playback_state == 'finished':
-        assert p.session.deadline == pytest.approx(6.0)
+        assert p.session.deadline is None
     run.now = 4.99
     p.feed(QUIET * 250)
     assert p.session.active and run.chimes == []
@@ -276,20 +276,27 @@ def test_qualified_predeadline_capture_is_accepted_before_late_poll_timeout(run)
     assert run.transcripts == [(job[2], '네')] and run.chimes == []
 
 
-def test_command_start_deadline_follows_wake_chime_and_echo_tail(run):
+@pytest.mark.parametrize('aec', [False, True])
+def test_command_start_deadline_follows_wake_chime_and_echo_tail(run, aec):
     p = run.pipeline
+    p.input_has_aec = aec
 
     def wake_sound():
         run.now += .18
 
     p.on_wake = wake_sound
     wake_up(run)
-    assert p._chime_gate_until == pytest.approx(.48)
-    assert p._command_start_deadline == pytest.approx(5.48)
-    run.now = 5.479
+    ready = .18 if aec else .48
+    assert p._chime_gate_until == pytest.approx(ready)
+    if not aec:
+        assert p._command_start_deadline is None
+        run.now = ready
+        p.poll()
+    assert p._command_start_deadline == pytest.approx(5.0 + ready)
+    run.now = 5.0 + ready - .001
     p.poll()
     assert p.session.active and run.chimes == []
-    run.now = 5.48
+    run.now = 5.0 + ready
     p.poll()
     assert_local_failure(run)
 

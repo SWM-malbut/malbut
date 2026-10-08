@@ -70,6 +70,7 @@ inline int whisper_full_n_segments(whisper_context *) { return 1; }
 inline const char *whisper_full_get_segment_text(whisper_context *, int) { return "result"; }
 inline int64_t whisper_full_get_segment_t0(whisper_context *, int) { return 0; }
 inline int64_t whisper_full_get_segment_t1(whisper_context *, int) { return 100; }
+inline float whisper_full_get_segment_no_speech_prob(whisper_context *, int) { return 0.75f; }
 inline int whisper_model_ftype(whisper_context *) { return 1; }
 inline const char *whisper_model_type_readable(whisper_context *) { return "test"; }
 inline const char *whisper_print_system_info() { return "test backend"; }
@@ -138,3 +139,12 @@ def test_native_cancel_releases_decode_and_close_without_early_free(bridge):
             with pytest.raises(RuntimeError, match='cancelled'):
                 decode.result(timeout=1)
     assert control.test_freed() == initial_freed + 1
+
+
+def test_native_bridge_exposes_upstream_no_speech_without_approximate_logprob(bridge):
+    model, library, control = bridge
+    control.test_set_mode(0)
+    with CppWhisperTranscriber(model, library) as transcriber:
+        assert transcriber.transcribe(b'\x01\x00' * 1600, 16000) == 'result'
+        assert transcriber.model.last_segments[0].no_speech_prob == .75
+        assert getattr(transcriber.model.last_segments[0], 'avg_logprob', None) is None

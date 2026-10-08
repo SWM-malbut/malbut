@@ -113,7 +113,7 @@ def test_committed_follow_sent_once_on_owner_thread_and_cancel_does_not_wait(dia
 
 
 @pytest.mark.parametrize('invalidator', [
-    'suspend', 'close', 'expired', 'memory', 'new_turn', 'slow_snapshot',
+    'suspend', 'close', 'expired', 'memory', 'new_turn', 'slow_snapshot', 'cancel_request',
 ])
 def test_invalidated_proposal_never_reaches_manager(dialogue, invalidator):
     worker, manager, _, _, clock, runtimes = dialogue
@@ -122,6 +122,8 @@ def test_invalidated_proposal_never_reaches_manager(dialogue, invalidator):
     if invalidator == 'suspend':
         worker.suspend()
         worker.resume()
+    elif invalidator == 'cancel_request':
+        assert worker.cancel_request('follow')
     elif invalidator == 'close':
         worker.close()
     elif invalidator == 'expired':

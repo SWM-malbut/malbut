@@ -231,7 +231,7 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
         def create_subscription(self, *args):
             pass
 
-        def create_service(self, *args):
+        def create_service(self, *args, **kwargs):
             pass
 
         def create_timer(self, interval, callback):
@@ -246,6 +246,8 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
     std_messages.String = lambda data: SimpleNamespace(data=data)
     for name, module in {
         'rclpy': ModuleType('rclpy'), 'rclpy.node': SimpleNamespace(Node=FakeNode),
+        'rclpy.callback_groups': SimpleNamespace(ReentrantCallbackGroup=object),
+        'rclpy.task': SimpleNamespace(Future=object),
         'rclpy.qos': SimpleNamespace(
             DurabilityPolicy=SimpleNamespace(VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
             HistoryPolicy=SimpleNamespace(KEEP_LAST='keep_last'),
@@ -255,7 +257,8 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
         'malbut_interfaces': ModuleType('malbut_interfaces'),
         'malbut_interfaces.msg': SimpleNamespace(SpeechRequest=object,
                                                  SpeechPlaybackStatus=SimpleNamespace),
-        'malbut_interfaces.srv': SimpleNamespace(ControlSpeechPlayback=object),
+        'malbut_interfaces.srv': SimpleNamespace(
+            ControlSpeechPlayback=object, ControlWebTalk=object, CancelSpeechRequest=object),
         'malbut_tts.backends': SimpleNamespace(create_synthesizer=lambda *a, **k: synthesizer),
         'malbut_tts.audio': SimpleNamespace(StreamingPlayer=object),
         'malbut_tts.runtime': SimpleNamespace(SpeechRuntime=lambda *a, **k: SimpleNamespace(

@@ -24,29 +24,36 @@ flowchart LR
 | 방향 | 방식 | 이름 | `malbut_interfaces` 타입 |
 |---|---|---|---|
 | STT → Agent | Topic | `/malbut/speech/transcript` | `msg/SpeechTranscript` |
+| Agent → STT | Topic | `/malbut/speech/request_status` | `msg/SpeechRequestStatus` |
+| STT → Agent / TTS | Service | `/malbut/speech/cancel_request`, `/malbut/speech/cancel_playback_request` | `srv/CancelSpeechRequest` |
+| STT → TTS | Service | `/malbut/speech/playback_web_talk_control` | `srv/ControlWebTalk` |
 | STT → Agent 요청·응답 | Service | `/malbut/speech/classify_addressee` | `srv/ClassifySpeechAddressee` |
 | STT → TTS 요청·응답 | Service | `/malbut/speech/playback_control` | `srv/ControlSpeechPlayback` |
 | TTS → STT | Topic | `/malbut/speech/playback_status` | `msg/SpeechPlaybackStatus` |
 
 - 필드·상수 원본: [ROS 메시지](../malbut_interfaces/msg), [ROS 서비스](../malbut_interfaces/srv)
 - 사용 명세: [STT 명세](docs/stt_agent.md)
+- 제한시간·진단·AEC 정책·검증 한계: [음성 안정성 안내](docs/reliability.md)
 - Topic QoS: `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`. Service는 ROS 기본 Service QoS를 사용합니다.
 
 STT는 발화마다 UUID를 새로 생성합니다. 같은 문장을 다시 말해도 새 ID를
 사용하며, 전사 결과의 앞뒤 공백을 제거하되 요약이나 명령 변환은 하지 않습니다.
 중간 인식 결과·오류 문장·빈 원문은 발행하지 않습니다.
 
-호출어와 명령 수집은 기본적으로 VAD가 20ms 프레임 4개(80ms)를 연속해서
+호출어와 명령 수집은 기본적으로 VAD가 20ms 프레임 4개(80ms)를
 음성으로 판정해야 발화로 시작합니다. 짧은 클릭·잡음 후보는 인식기에 보내지
-않으며 발화 ID, 시작·실패 알림, 수신음을 만들지 않습니다. 중간에 비음성
-프레임이 끼면 연속 판정을 처음부터 셉니다. 시작을 확인하는 동안 첫 음성과
+않으며 발화 ID, 시작·실패 알림, 수신음을 만들지 않습니다. 자격 판정 중 비음성
+한 프레임(20ms)은 허용하지만 두 번째 비음성 프레임이나 busy 경계에서는 처음부터
+셉니다. 음량 문턱은 추가하지 않았습니다. 시작을 확인하는 동안 첫 음성과
 그 이전 pre-roll은 보존합니다. 정상적으로 다시 말한 같은 문장은 각각 전달합니다.
 이 조건을 통과하는 지속적인 잡음이나 모델 오인식까지 제거하는 보장은 없으며,
 실제 마이크에서 짧은 응답과 잡음을 함께 확인해야 합니다.
 
 `waiting_for_wake`에서 호출어만 부르고 쉽니다. 종료 무음 0.4초·최대 발화 6초로
 수집하며, 공백·구두점을 제외한 전체 전사가 `제이크` 또는 `제이크야`이면
-통과합니다. 호출어와 명령을 한 문장으로 이어 말하는 방식은 지원하지 않습니다.
+통과합니다. `제이크야, 지금 몇 시야?`처럼 선두 호출어와 명령을 한 발화로 말해도
+명령 부분을 한 번 전달합니다. 이름에 조사나 다른 글자가 붙거나 문장 중간에 등장하면
+호출로 인정하지 않습니다. 결합 발화에도 6초 한도가 적용되며 초과한 문장을 잘라 실행하지 않습니다.
 `wake_detected` 뒤에는 호출어 없이 말합니다. ROS 노드는 기본 0.8초 무음에서
 후보 전사를 시작하고, 명확한 한국어 종결 표현이면 1초 무음 이후 발화를 확정합니다.
 따라서 실제 조기 확정은 1초 무음과 후보 추론 완료 중 늦은 시점입니다.
@@ -75,14 +82,20 @@ MLX 선택 경로와 한 문장 실행기는 기존 전사 방식을 사용합�
 `stopped`에 도달하면 호출어 대기로 돌아갑니다. 재생 전 실패도 포함하며,
 중간 안내나 다른 요청의 종료는 입력 차단을 해제하지 않습니다. 재생 후 호출어
 없는 5초 후속 발화 대기는 열지 않습니다. Agent 주도 확인 세션의 정책은 유지합니다.
+별도 접수 상태가 기본 5초 안에 오지 않거나 전사 전달부터 전체 120초 안에 최종 상태가
+오지 않으면 해당 요청 ID를 취소하고 답변 대기를 끝냅니다. 실제 다른 재생·웹 통화·효과음
+차단까지 임의로 해제하지 않으며, 늦은 응답은 취소 ID로 걸러냅니다.
 
 호출어 인정 뒤에는 알림음과 잔향 차단이 끝난 시점부터 `start_timeout_s`(기본 5초)
 안에 발화 시작이 확인되어야 합니다. 무발화·최종 빈 전사·인식 오류는 Agent에
 전사·`FAILED`를 보내지 않고 로컬 이중 비프(90ms 두 번, 중간 무음 60ms) 한 번 후
 호출어 대기로 돌아갑니다. 비프 재생 중과 종료 후 300ms 동안 AEC 여부와 관계없이
 입력과 대기 오디오를 버립니다. 중복·늦은 결과는 비프나 전사를 반복하지 않습니다.
-정상 전사의 답변 대기, 확인 세션, 웹 말하기 정책은 유지합니다. 기존 VAD를 통과한
-비어 있지 않은 Whisper 환각의 별도 품질 판정은 없어 이 변경만으로 차단하지는 못합니다.
+확인 세션은 별도 무응답 정책을 유지합니다. 모델이 진짜 `no_speech_prob`와 `avg_logprob`를
+함께 제공하면 `>0.6` 및 `<-1.0`을 동시에 만족한 구간만 제외합니다. 정상 구간과 시간 정보는
+보존하며, 점수가 없거나 잘못됐으면 무음으로 단정하지 않습니다. cpp는 공개 API상 정확한
+평균 logprob를 제공하지 않아 이 추가 필터가 작동하지 않을 수 있습니다. 문구 블랙리스트는
+없으며 이 변경만으로 실제 무음 환각을 해결했다고 볼 수 없습니다.
 
 ### STT 재현 기록 (기본 OFF)
 
@@ -123,15 +136,15 @@ ROS 노드는 호출 성공음과 발화 종료 수신음을 같은 로컬 출�
 호출음은 180ms 상승 2음, 수신음은 더 작은 150ms 단음입니다. 수신음은 발화 종료를
 확정했을 때 한 번만 재생하며, 중간 인식·종료 미확정 상태의 쉼·폐기된 입력에는 재생하지 않습니다.
 이는 음성 수집 완료 표시이며 내용 이해나 명령 실행의 성공을 뜻하지 않습니다.
-재생 중과 종료 후 0.3초의 마이크 입력은 잔향 유입을 막기 위해 제외합니다. TTS가
+효과음 재생 중 입력을 버립니다. 호출음 뒤에는 AEC 선언 입력만 추가 300ms guard를
+생략하고 새 capture 경계에서 청취를 엽니다. 비AEC 입력과 수신음·실패음 뒤에는
+기존 300ms 잔향 guard를 유지합니다. 실제 수음 개방은 `input_ready` 진단으로 구분합니다. TTS가
 재생·일시정지 상태이면 수신음을 생략하고, 수신음 출력 실패도 전사 전달을 막지 않습니다.
 수신음 재생은 동기식이므로 최종 전사 전달에는 PCM 재생 150ms와 장치 처리 시간이 추가됩니다.
 TTS 재생·중단·재개는 별도로 실행한 TTS 노드와 위 Topic·Service로 연결합니다.
-이 `malbut_test` 배포본의 ROS STT 노드는 끼어들기를 임시로 꺼 둡니다.
-`input_has_aec=true`로 실행해도 파이프라인에는 `false`를 적용합니다.
-재생 종료 뒤 0.3초 동안 잔여 입력을 비운 후 다음 발화를 듣습니다.
-
-일반 구현은 `input_has_aec=false`가 기본이며, 이때는 TTS 재생 중 마이크 입력을 버리고
+단독 노드·speech launch의 `input_has_aec=false` 기본값은 유지합니다. 로봇 bringup과
+cloud 실행은 AEC 선언을 기본 true로 전달하며, 명시 false로 끌 수 있습니다.
+실제 하드웨어 AEC는 검증하지 않았습니다. false일 때는 TTS 재생 중 마이크 입력을 버리고
 `barge_in_requires_aec`를 기록하므로 끼어들기가 비활성입니다. `true`는 선택한
 마이크가 이미 에코 제거된 입력을 제공한다는 설정이며, AEC를 구현하거나 켜는
 옵션이 아닙니다. 최종 전사·대상 판정 처리 중 추가 발화는 종료 무음까지 버립니다.
@@ -139,9 +152,10 @@ TTS 재생·중단·재개는 별도로 실행한 TTS 노드와 위 Topic·Servi
 실패하거나 비어 있으면 Agent에 보내지 않고 위 실패 비프 후 새 호출어를 기다립니다.
 이때 TTS의 대상을 추정하여 자동으로 재개하거나 중지하지 않습니다.
 
-Agent의 `received` 로그와 SQLite 기록으로 실제 일반 전사 접수를 확인합니다. 늦게 시작한 Agent에
-과거 발화를 재생하거나, 중단 중 유실된 발화를 자동 복구하는 기능은 없습니다.
-이 Topic에는 STT→Agent의 별도 접수 응답이나 애플리케이션 재전송 기능이 없습니다.
+Agent의 `SpeechRequestStatus.accepted`는 처리 대기열 접수이며 TTS 완료나 로봇 실행 성공이
+아닙니다. 준비 전·포화·취소된 요청은 원문을 재전송하거나 오류 안내 음성을 만들지 않고
+상태로 구분합니다. 취소 ID는 Agent와 TTS 양쪽에 전달하여 늦은 발행·재생을 막습니다.
+이미 진행 중인 외부 모델 호출 자체가 취소된다는 보장은 없습니다.
 
 ## 노트북에서 먼저 시험하기 (ROS 불필요)
 
@@ -565,8 +579,9 @@ ros2 run malbut_stt stt --ros-args \
   -p device_index:=0
 ```
 
-`waiting_for_wake`가 나오면 호출어만 부르고, `wake_detected` 뒤 호출 성공음이 끝나면 문장을 말합니다.
-호출음은 선택한 출력 장치에서 로컬 PCM으로 재생하며, 재생 중과 종료 후 0.3초의 입력은 버립니다.
+`waiting_for_wake`에서는 호출어만 부르거나 6초 안의 호출어+명령을 함께 말합니다.
+호출어만 말한 경우 `input_ready`가 실제 청취 개방 경계입니다. 호출음 재생 중 입력은
+버리며, 비AEC 입력에는 종료 뒤 300ms 잔향 guard가 추가됩니다.
 `transcribing`은 로컬 음성 인식 중입니다. Agent에 같은 ID와 원문을 포함한
 `status: received`가 나오는지 확인합니다.
 종료는 각 터미널에서 `Ctrl+C`로 합니다.
@@ -580,20 +595,23 @@ ros2 run malbut_stt stt --ros-args \
 | `stt_model_path` | 빈 문자열 | 문장 전사 모델 디렉터리 또는 `whisper_cpp` 모델 파일; 비어 있으면 `wake_model_path` 사용 |
 | `input_has_aec` | `false` | 선택한 마이크가 이미 AEC 처리된 입력을 제공하는지 여부 |
 | `playback_control_timeout_s` | `5.0` | 재생 제어 Service의 접수 응답을 기다리는 시간; 실제 재생 완료 후 대화 대기와 별개 |
+| `request_receipt_timeout_s` | `5.0` | 일반 전사 전달 후 Agent 접수 증거를 기다리는 시간 |
+| `reply_timeout_s` | `120.0` | 일반 전사 전달부터 최종 응답 종료까지 전체 한도; 접수 후 새로 연장하지 않음 |
+| `inference_timeout_s` | `stt_decode_timeout_s + 5.0` | owner poll이 감시하는 각 ASR 작업의 실제 시간 한도; 기본 35초 |
 | `device_index` | `0` | sounddevice 목록의 장치 번호; 현재 로봇의 XFM 입력. `-1`을 명시하면 시스템 기본 입력 |
 | `wake_chime_device_index` | `-1` | 호출 성공음 출력 장치; 통합 speech launch에서는 TTS와 같은 출력 번호 사용 |
 | `stt_decode_timeout_s` | `30.0` | `whisper_cpp`의 호출어·부분·최종 전사 각각에 적용하는 협력적 취소 제한시간 |
 | `vad_mode` | `2` | WebRTC VAD의 음성 판단 모드, `0`~`3` |
-| `start_timeout_s` | `5.0` | 무음 수집 창; 발화가 없으면 새 창으로 이어서 대기 |
+| `start_timeout_s` | `5.0` | 일반 호출 후 청취가 열린 뒤 유효한 발화 시작을 기다리는 실제 시간; 초과 시 로컬 실패음 |
 | `silence_timeout_s` | `2.0` | 문장 종료 판단이 불확실할 때 기다리는 무음 시간 |
 | `endpoint_predecode_s` | `0.8` | 후보 전사를 시작하는 무음 시간; 완성 문장도 1초 무음 전에 확정하지 않음 |
 | `max_utterance_s` | `0.0` | 기본은 전체 발화 시간 제한 없음; 양수로 명시한 경우에만 해당 시간 제한 적용 |
 | `max_buffer_s` | `60.0` | 미처리·겹침 확인용 PCM 보관 상한; 확정한 앞부분은 비우므로 발화 전체 길이와 무관 |
 | `pre_roll_s` | `0.3` | 발화 시작 직전 보존할 소리 |
-| `min_speech_s` | `0.08` | 발화 시작에 필요한 연속 VAD 음성 시간; 20ms 단위로 올림, 양수이며 `pre_roll_s` 이하 |
+| `min_speech_s` | `0.08` | 발화 시작에 필요한 VAD 음성 시간; 20ms 단위로 올림, 한 비음성 프레임 허용, 양수이며 `pre_roll_s` 이하 |
 
 위 수집 parameter는 명령에 적용합니다. 호출어는 시작 대기 5초·종료 무음 0.4초·
-최대 발화 6초·시작 직전 소리 0.3초·최소 연속 음성 0.08초로 고정합니다. WebRTC VAD 입력은 20ms PCM16
+최대 발화 6초·시작 직전 소리 0.3초·최소 음성 증거 0.08초로 고정합니다. WebRTC VAD 입력은 20ms PCM16
 mono이며 마이크가 16kHz가 아니면 실행을 중단합니다. 문장 전사는 지정한 로컬
 Whisper 모델과 한국어 설정을 사용하며 호출어용 이름 힌트를 넣지 않습니다.
 parameter는 시작 시 읽습니다. 값을 바꾸려면 새 `-p` 인자로 재실행합니다.

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import math
 
+from malbut_stt.confidence import filter_segments
+
 
 @dataclass(frozen=True)
 class _Segment:
@@ -55,8 +57,24 @@ class IncrementalWhisperStream:
             audio, language='ko', beam_size=1, condition_on_previous_text=False,
             initial_prompt=None,
         )
-        decoded = []
-        for segment in segments:
+        decoded, rejected_spans = [], []
+
+        def remember_rejected_span(segment):
+            # A deliberately excluded tail is accounted for, not a decoder
+            # omission. Its valid timing may explain coverage, never trim PCM.
+            try:
+                start, end = offset + segment.start, offset + segment.end
+                valid = (not isinstance(segment.start, bool)
+                         and not isinstance(segment.end, bool)
+                         and math.isfinite(start + end) and offset <= start <= end
+                         and end <= duration + 0.04)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                return
+            if valid:
+                rejected_spans.append((min(start, duration), min(end, duration)))
+
+        for segment in filter_segments(segments, self.model,
+                                       on_rejected=remember_rejected_span):
             if not segment.text.strip():
                 continue
             start, end = offset + segment.start, offset + segment.end
@@ -69,7 +87,7 @@ class IncrementalWhisperStream:
                 min(start, duration) if valid else offset,
                 min(end, duration) if valid else duration, segment.text, valid,
             ))
-        return decoded
+        return decoded, rejected_spans
 
     def transcribe(self, pcm: bytes, sample_rate: int, *, final: bool = False,
                    speech_end_s: float | None = None,
@@ -117,21 +135,28 @@ class IncrementalWhisperStream:
             return ''
         if audio_start_samples + len(pcm) // 2 <= self._offset_samples:
             raise ValueError('snapshot does not include the retained audio window')
-        decoded = self._decode(pcm, self._offset_samples, audio_start_samples)
+        decoded, rejected_spans = self._decode(pcm, self._offset_samples, audio_start_samples)
         if not decoded:
             self._previous = []
             return ''
 
-        def missing_tail(result):
+        def missing_tail(result, rejected):
             # Native segment times have some slack. VAD identifies actual
             # unaccounted speech; direct callers without that hint tolerate
             # the normal three-second endpoint silence before recovering.
             end = max(segment.end for segment in result)
+            slack = 3.0 if speech_end_s is None else 0.8
+            # Only connected, valid rejected spans explain a deliberately
+            # removed tail. A gap larger than existing slack remains missing.
+            for start, rejected_end in sorted(rejected):
+                if start > end + slack:
+                    break
+                end = max(end, rejected_end)
             gap = max(0.0, (duration if speech_end_s is None else speech_end_s) - end)
             self.last_metrics['tail_gap_s'] = gap
-            return gap > (3.0 if speech_end_s is None else 0.8)
+            return gap > slack
 
-        uncovered_tail = missing_tail(decoded)
+        uncovered_tail = missing_tail(decoded, rejected_spans)
         invalid_timing = any(not segment.timing_valid for segment in decoded)
 
         retained = [segment for segment in self._committed if segment.end > offset + 0.01]
@@ -147,7 +172,8 @@ class IncrementalWhisperStream:
             # Re-decode before mutating state: a failed recovery must not
             # erase the last valid prefix or pretend it is a final answer.
             if self._offset_samples > audio_start_samples:
-                decoded = self._decode(pcm, audio_start_samples, audio_start_samples)
+                decoded, rejected_spans = self._decode(pcm, audio_start_samples,
+                                                        audio_start_samples)
             self.last_metrics.update(
                 input_window_s=duration - audio_start_s, fallback_full=True,
                 fallback_reason=('missing_tail' if uncovered_tail else
@@ -156,7 +182,7 @@ class IncrementalWhisperStream:
             if not decoded:
                 self._previous = []
                 return ''
-            uncovered_tail = missing_tail(decoded)
+            uncovered_tail = missing_tail(decoded, rejected_spans)
 
         if speech_end_s is not None and uncovered_tail:
             # Never let a provisional endpoint result containing only old

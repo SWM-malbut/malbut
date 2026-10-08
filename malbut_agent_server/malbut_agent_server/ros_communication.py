@@ -1,7 +1,7 @@
 """ROS speech dialogue with independent Manager communication."""
 
 import argparse
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import replace
 import json
 import math
@@ -39,6 +39,9 @@ from malbut_agent_server.ros_situation import (
 RESPONSE_TOPIC = '/malbut/speech/response'
 INPUT_STATUS_TOPIC = '/malbut/speech/input_status'
 ADDRESSEE_SERVICE = '/malbut/speech/classify_addressee'
+REQUEST_STATUS_TOPIC = '/malbut/speech/request_status'
+CANCEL_REQUEST_SERVICE = '/malbut/speech/cancel_request'
+MAX_REQUEST_STATUSES = 256
 MAX_PENDING_ADDRESSEE_REQUESTS = 128
 MAX_COMMAND_BYTES = 65536
 DEFAULT_CONVERSATION_DB = '~/.local/state/malbut/speech-dialogue.sqlite3'
@@ -55,8 +58,10 @@ def create_communication_node(
     enable_device_operations=False,
 ):
     """Compose communication on one owning thread with a single executor."""
-    from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
-    from malbut_interfaces.srv import ClassifySpeechAddressee
+    from malbut_interfaces.msg import (
+        SpeechInputStatus, SpeechRequest, SpeechRequestStatus, SpeechTranscript,
+    )
+    from malbut_interfaces.srv import CancelSpeechRequest, ClassifySpeechAddressee
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
     from rclpy.qos import (
@@ -82,6 +87,8 @@ def create_communication_node(
             self._speech_ready = False
             self._input_utterance_id = None
             self._seen_input_ids = deque(maxlen=128)
+            self._request_states = OrderedDict()
+            self._pending_speech_requests = set()
             self._addressee_waiters = {}
             self._addressee_callbacks = 0
             self.weather_query = None
@@ -95,6 +102,9 @@ def create_communication_node(
                 self._speech_qos = qos
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
+                )
+                self._request_status = self.create_publisher(
+                    SpeechRequestStatus, REQUEST_STATUS_TOPIC, qos,
                 )
                 if settings.provider == 'openai':
                     # How the OpenAI key is doing, for key_sync to tell the web.
@@ -169,6 +179,11 @@ def create_communication_node(
                     **({'missions': self.speech_missions}
                        if self.speech_missions is not None else {}),
                 )
+                # Cancellation must also reserve an ID while model/DB startup is pending.
+                self.create_service(
+                    CancelSpeechRequest, CANCEL_REQUEST_SERVICE, self._cancel_request,
+                    callback_group=ReentrantCallbackGroup(),
+                )
                 self.situation = SituationActionServer(
                     self,
                     situation_factory or build_situation_factory(settings),
@@ -209,6 +224,9 @@ def create_communication_node(
                 return False
             if self._closing or not self.context.ok():
                 return False
+            if self._request_states.get(request_id, ('', ''))[0] in (
+                    'rejected', 'failed', 'cancelled'):
+                return False
             if self.situation is not None and self.situation.active:
                 return False
             self._speech.publish(SpeechRequest(
@@ -216,6 +234,34 @@ def create_communication_node(
                 playback_id=str(uuid4()), request_id=request_id,
             ))
             return True
+
+        def _publish_request_status(self, request_id, state, reason=''):
+            """Publish lifecycle diagnostics without synthesizing a spoken error."""
+            if (not isinstance(request_id, str) or not request_id.strip()
+                    or len(request_id) > MAX_SPEECH_ID_LENGTH):
+                return
+            try:
+                request_id.encode('utf-8')
+            except UnicodeEncodeError:
+                return
+            self._request_states[request_id] = (state, reason)
+            if state != 'accepted':
+                self._pending_speech_requests.discard(request_id)
+            self._request_states.move_to_end(request_id)
+            while len(self._request_states) > MAX_REQUEST_STATUSES:
+                self._request_states.popitem(last=False)
+            self._request_status.publish(SpeechRequestStatus(
+                request_id=request_id, state=state, reason=reason))
+
+        def _cancel_request(self, request, response):
+            response.accepted = bool(
+                not self._closing and self.dialogue is not None
+                and self.dialogue.cancel_request(request.request_id))
+            if response.accepted:
+                if self._input_utterance_id == request.request_id:
+                    self._input_utterance_id = None
+                self._publish_request_status(request.request_id, 'cancelled', 'requested')
+            return response
 
         def _receive_input_status(self, message):
             if self._closing or message.session_id:
@@ -243,14 +289,23 @@ def create_communication_node(
             if self._closing:
                 return
             if self.situation is not None and self.situation.active:
-                self.situation.transcript(message)
+                if getattr(message, 'session_id', ''):
+                    self.situation.transcript(message)
+                else:
+                    self._publish_request_status(message.utterance_id, 'rejected', 'confirmation_active')
                 return
             if getattr(message, 'session_id', ''):
                 # A late answer from an ended confirmation is not ordinary chat.
                 return
             utterance_id, text = message.utterance_id, message.text
+            known = self._request_states.get(utterance_id) if isinstance(utterance_id, str) else None
+            if known is not None and known[0] == 'cancelled':
+                self._publish_request_status(utterance_id, *known)
+                return
             try:
                 validate_dialogue_input(utterance_id, text)
+                if len(utterance_id) > MAX_SPEECH_ID_LENGTH:
+                    raise ValueError('request ID too long')
                 # Transcript and status Topics may be delivered in either order.
                 if utterance_id == self._input_utterance_id:
                     self._input_utterance_id = None
@@ -259,45 +314,46 @@ def create_communication_node(
                 previous = self._receipts.lookup(utterance_id, text)
             except SpeechInputTooLongError as error:
                 self.get_logger().warning(f'speech_dialogue invalid input: {error}')
-                self.say('한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.',
-                         request_id=utterance_id)
+                self._publish_request_status(utterance_id, 'rejected', 'text_too_long')
                 return
             except ValueError:
                 self.get_logger().warning('speech_dialogue invalid input')
+                self._publish_request_status(utterance_id, 'rejected', 'invalid_input')
                 return
             except sqlite3.Error:
                 self.get_logger().error('speech_dialogue receipt unavailable')
-                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
+                self._publish_request_status(utterance_id, 'rejected', 'receipt_unavailable')
                 return
             if previous is not None:
                 receive_transcript(
                     self._receipts, utterance_id, text, self.get_logger(),
                 )
+                if previous == 'duplicate' and known is not None:
+                    self._publish_request_status(utterance_id, *known)
+                else:
+                    self._publish_request_status(utterance_id, 'rejected', previous)
                 return
-            if self.dialogue.startup_error:
+            if self.dialogue.startup_error or not self.dialogue.ready:
                 self.get_logger().error('speech_dialogue startup failed')
-                self.say('대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.',
-                         request_id=utterance_id)
+                self._publish_request_status(utterance_id, 'rejected', 'not_ready')
                 return
             if not self.dialogue.has_capacity():
                 self.get_logger().warning('speech_dialogue busy; not accepted')
-                self.say('앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.',
-                         request_id=utterance_id)
+                self._publish_request_status(utterance_id, 'rejected', 'busy')
                 return
             outcome = receive_transcript(
                 self._receipts, utterance_id, text, self.get_logger(),
             )
             if outcome == 'storage_error':
-                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
+                self._publish_request_status(utterance_id, 'rejected', 'receipt_unavailable')
                 return
-            if outcome == 'received' and not self.dialogue.submit(
-                utterance_id, text,
-            ):
-                self.get_logger().error('speech_dialogue submission failed')
-                self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
+            if outcome == 'received':
+                if self.dialogue.submit(utterance_id, text):
+                    self._pending_speech_requests.add(utterance_id)
+                    self._publish_request_status(utterance_id, 'accepted')
+                else:
+                    self.get_logger().error('speech_dialogue submission failed')
+                    self._publish_request_status(utterance_id, 'failed', 'submission_failed')
 
         async def _classify_addressee(self, request, response):
             """Yield to the executor while the dialogue worker classifies."""
@@ -354,6 +410,8 @@ def create_communication_node(
                 self.speech_missions.preempt_preparations()
             self._input_utterance_id = None
             self.dialogue.suspend()
+            for request_id in tuple(self._pending_speech_requests):
+                self._publish_request_status(request_id, 'cancelled', 'confirmation_preempted')
             for waiters in self._addressee_waiters.values():
                 for future in waiters:
                     if not future.done():
@@ -374,14 +432,24 @@ def create_communication_node(
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
                     continue
+                if response.get('kind') == 'cancelled':
+                    self._publish_request_status(
+                        response['utterance_id'], 'cancelled', 'worker_cancelled')
+                    continue
                 published = self.dialogue.publish_reply(
                     response, lambda text: self.say(
                         text, interim=response.get('kind') == 'progress',
                         request_id=response.get('utterance_id', '')))
                 if published is not None:
+                    if response.get('kind') != 'progress':
+                        self._pending_speech_requests.discard(response.get('utterance_id'))
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,
                     }, ensure_ascii=False))
+                elif response.get('kind') != 'progress':
+                    uid = response.get('utterance_id', '')
+                    if self._request_states.get(uid, ('', ''))[0] == 'accepted':
+                        self._publish_request_status(uid, 'failed', 'publication_discarded')
 
         def _operation_notice(self, event):
             self.get_logger().info(json.dumps(

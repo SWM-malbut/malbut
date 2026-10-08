@@ -124,6 +124,16 @@ def test_pcm_samples_all_segments_and_serial_wake_sharing_are_preserved(runtime)
     assert runtime.events[4:] == ['sync', 'decode', 'sync'] * 3
 
 
+def test_mlx_preserves_real_confidence_fields_and_only_drops_joint_negative_span(runtime):
+    transcriber = MlxWhisperTranscriber(runtime.path)
+    transcriber.model.decode = lambda *_args, **_kwargs: {'segments': [
+        {'text': '앞 ', 'no_speech_prob': .1, 'avg_logprob': -.1},
+        {'text': '삭제할 임의 문장 ', 'no_speech_prob': .9, 'avg_logprob': -2.0},
+        {'text': '뒤', 'no_speech_prob': .9, 'avg_logprob': -.1},
+    ]}
+    assert transcriber.transcribe(b'\x01\x00' * 1600, 16000) == '앞 뒤'
+
+
 @pytest.mark.parametrize('pcm', [b'', bytes(640), bytes(64000)])
 def test_zero_pcm_skips_numpy_and_mlx_decode(runtime, monkeypatch, pcm):
     transcriber = MlxWhisperTranscriber(runtime.path)

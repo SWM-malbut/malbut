@@ -21,7 +21,7 @@ def child(tmp_path):
     attempts = tmp_path / 'attempts'
     script = tmp_path / 'child.py'
 
-    def start(body, *, ready=False, timeout=2.0, delays=(0.02, 0.03)):
+    def start(body, *, ready=False, timeout=2.0, delays=(0.02, 0.03), heartbeat=None):
         script.write_text(
             'import os, pathlib, resource, signal, subprocess, sys, time\n'
             'resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n'
@@ -35,7 +35,8 @@ def child(tmp_path):
             sys.executable, '-c',
             'from malbut_bringup.speech_process import run; import sys; '
             f'sys.exit(run(sys.argv[1:], {timeout!r}, wait_for_ready={ready!r}, '
-            f'retry_delays={delays!r}))', sys.executable, str(script),
+            f'retry_delays={delays!r}, heartbeat_timeout_s={heartbeat!r}))',
+            sys.executable, str(script),
         ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
 
     yield start, attempts
@@ -144,6 +145,66 @@ def test_ready_runtime_outlives_startup_deadline(child):
     assert code == 0
     assert len(attempts.read_text().splitlines()) == 1
     assert 'speech_startup_timeout' not in output
+
+
+def test_owner_heartbeats_keep_runtime_alive_beyond_startup_deadline(child):
+    start, attempts = child
+    code, output = finish(start(
+        'print("malbut_speech_capture_ready", flush=True)\n'
+        'for _ in range(15):\n'
+        '    print("malbut_speech_heartbeat", flush=True)\n'
+        '    time.sleep(0.04)\n', ready=True, timeout=0.4, heartbeat=0.25))
+    assert code == 0
+    assert len(attempts.read_text().splitlines()) == 1
+    assert output == 'malbut_speech_capture_ready\n'
+
+
+@pytest.mark.parametrize('line', [
+    '', 'prefix malbut_speech_heartbeat', 'malbut_speech_heartbeat suffix',
+    'malbut_speech_capture_ready',
+])
+def test_inexact_heartbeats_and_repeated_ready_do_not_hide_stalled_owner(child, line):
+    start, attempts = child
+    code, output = finish(start(
+        'print("malbut_speech_capture_ready", flush=True)\n'
+        f'for _ in range(30):\n    print({line!r}, flush=True)\n    time.sleep(0.04)\n',
+        ready=True, heartbeat=0.2))
+    assert code == 124
+    assert 'speech_runtime_heartbeat_timeout' in output
+    assert len(attempts.read_text().splitlines()) == 1
+    assert_stopped(int(attempts.read_text().strip()))
+
+
+def test_runtime_watchdog_reaps_stalled_child_descendant_and_preserves_peer(child, tmp_path):
+    start, attempts = child
+    descendant = tmp_path / 'runtime-descendant'
+    peer = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    try:
+        code, output = finish(start(
+            'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+            'p = subprocess.Popen([sys.executable, "-c", '
+            '"import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"])\n'
+            f'pathlib.Path({str(descendant)!r}).write_text(str(p.pid))\n'
+            'print("malbut_speech_capture_ready", flush=True)\n'
+            'print("malbut_speech_heartbeat", flush=True)\n'
+            'time.sleep(30)\n', ready=True, heartbeat=0.2))
+        assert code == 124
+        assert 'speech_runtime_heartbeat_timeout' in output
+        assert_stopped(int(attempts.read_text().strip()))
+        assert_stopped(int(descendant.read_text()))
+        assert peer.poll() is None
+    finally:
+        peer.terminate()
+        peer.wait(timeout=3)
+
+
+@pytest.mark.parametrize('timeout,ready', [(0, True), (-1, True), (float('inf'), True),
+                                          (float('nan'), True), (True, True), (1, False)])
+def test_invalid_heartbeat_configuration_is_rejected_before_launch(timeout, ready):
+    from malbut_bringup.speech_process import run
+
+    with pytest.raises(ValueError, match='invalid speech process configuration'):
+        run(['not-a-real-executable'], 1, wait_for_ready=ready, heartbeat_timeout_s=timeout)
 
 
 @pytest.mark.parametrize('line', ['', 'prefix malbut_speech_capture_ready',

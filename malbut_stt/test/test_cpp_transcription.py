@@ -133,6 +133,31 @@ def test_exact_silence_is_empty_without_native_inference(native):
     assert native.calls == []
 
 
+def test_optional_native_no_speech_score_is_preserved_without_inventing_logprob(native):
+    native.library.mb_whisper_segment_no_speech_prob = Function(lambda _ctx, _index: .95)
+    with engine(native) as transcriber:
+        assert transcriber.transcribe(b'\x01\x00' * 1600, 16000) == '제이크야.'
+        segment = transcriber.model.last_segments[0]
+        assert segment.no_speech_prob == .95
+        assert getattr(segment, 'avg_logprob', None) is None
+        assert transcriber.metadata['confidence_fields'] == ['no_speech_prob']
+
+
+def test_older_abi_three_bridge_keeps_text_when_optional_confidence_is_unavailable(native):
+    with engine(native) as transcriber:
+        assert transcriber.transcribe(b'\x01\x00' * 1600, 16000) == '제이크야.'
+        assert transcriber.metadata['confidence_fields'] == []
+        assert getattr(transcriber.model.last_segments[0], 'no_speech_prob', None) is None
+
+
+@pytest.mark.parametrize('score', [float('nan'), float('inf'), -0.1, 1.1])
+def test_invalid_native_no_speech_score_is_unknown_and_does_not_erase_text(native, score):
+    native.library.mb_whisper_segment_no_speech_prob = Function(lambda _ctx, _index: score)
+    with engine(native) as transcriber:
+        assert transcriber.transcribe(b'\x01\x00' * 1600, 16000) == '제이크야.'
+        assert transcriber.model.last_segments[0].no_speech_prob is None
+
+
 def test_native_failure_does_not_expose_stale_segments(native):
     with engine(native) as transcriber:
         assert transcriber.transcribe(b'\x01\x00' * 320, 16000) == '제이크야.'

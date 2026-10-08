@@ -5,6 +5,8 @@ from pathlib import Path
 import wave
 from typing import Any
 
+from malbut_stt.confidence import filter_segments
+
 
 class LocalWhisperTranscriber:
     """Reuse a downloaded Whisper model without runtime downloads or API calls."""
@@ -50,7 +52,7 @@ class LocalWhisperTranscriber:
             audio, language='ko', beam_size=1, condition_on_previous_text=False,
             initial_prompt=initial_prompt,
         )
-        return ''.join(segment.text for segment in segments).strip()
+        return ''.join(segment.text for segment in filter_segments(segments, self.model)).strip()
 
 
 class OpenAITranscriber:

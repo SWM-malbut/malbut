@@ -137,7 +137,8 @@ def _setup(context):
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             namespace=node_namespace,
-            prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
+            prefix=shlex.join([*supervised, '--wait-for-ready',
+                               '--heartbeat-timeout-s', '10.0', '--', python]),
             respawn=True, respawn_delay=5.0,
             parameters=[stt_config, {
                 'stt_model_path': model, 'stt_library_path': library,

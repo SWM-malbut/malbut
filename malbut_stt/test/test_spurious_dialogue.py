@@ -142,11 +142,11 @@ def test_separate_real_identical_utterances_are_each_accepted(dialogue):
     assert run.wake_chimes == ['wake', 'wake']
 
 
-def test_quiet_gap_requires_a_new_consecutive_onset(dialogue):
-    """Separate 60 ms bursts cannot pool their voiced frames across silence."""
+def test_two_quiet_frames_require_a_fresh_onset(dialogue):
+    """A 40 ms gap separates bursts; one uncertain frame can be preserved."""
     run = dialogue()
     run.feed(VOICE * 3)
-    run.feed(QUIET)
+    run.feed(QUIET * 2)
     run.feed(VOICE * 3)
     assert run.statuses == run.calls == []
     assert run.pipeline.session.utterance_id is None

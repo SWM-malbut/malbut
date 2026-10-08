@@ -4,12 +4,16 @@ import argparse
 import json
 from queue import Empty, Queue
 import sys
+from time import monotonic
 from typing import Optional, Sequence
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
 STATUS_TOPIC = '/malbut/speech/playback_status'
 CONTROL_SERVICE = '/malbut/speech/playback_control'
+WEB_TALK_SERVICE = '/malbut/speech/playback_web_talk_control'
+CANCEL_REQUEST_SERVICE = '/malbut/speech/cancel_playback_request'
+WEB_TALK_STOP_TIMEOUT_S = 5.0
 # How the OpenAI key is doing, for key_sync to tell the web (std_msgs/String JSON).
 KEY_HEALTH_TOPIC = '/malbut/keys/health'
 
@@ -17,8 +21,10 @@ KEY_HEALTH_TOPIC = '/malbut/keys/health'
 def create_tts_node(runtime_factory=None):
     """Create a TTS node, optionally injecting runtime_factory(on_status)."""
     from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest
-    from malbut_interfaces.srv import ControlSpeechPlayback
+    from malbut_interfaces.srv import CancelSpeechRequest, ControlSpeechPlayback, ControlWebTalk
+    from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
+    from rclpy.task import Future
     from rclpy.qos import (
         DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
     )
@@ -33,6 +39,8 @@ def create_tts_node(runtime_factory=None):
             self._statuses = Queue()
             self._key_health = Queue()
             self._key_health_publisher = None
+            self._quiet_controls = {}
+            self._quiet_generation = 0
             try:
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'openai')
@@ -65,6 +73,15 @@ def create_tts_node(runtime_factory=None):
                 )
                 self.create_service(
                     ControlSpeechPlayback, CONTROL_SERVICE, self._control,
+                )
+                self.create_service(
+                    CancelSpeechRequest, CANCEL_REQUEST_SERVICE, self._cancel_request,
+                )
+                # A quiet request may await device cleanup. Reentrant service
+                # callbacks permit renewals/releases while the timer resolves it.
+                self.create_service(
+                    ControlWebTalk, WEB_TALK_SERVICE, self._control_web_talk,
+                    callback_group=ReentrantCallbackGroup(),
                 )
                 self.create_timer(0.01, self._publish_statuses)
             except Exception:
@@ -168,11 +185,66 @@ def create_tts_node(runtime_factory=None):
             )
             return response
 
+        def _cancel_request(self, request, response):
+            response.accepted = (
+                not self._closing and self._runtime.cancel_request(request.request_id))
+            response.quiescent = bool(
+                response.accepted and self._runtime.request_is_quiescent(request.request_id))
+            return response
+
+        async def _control_web_talk(self, request, response):
+            began = monotonic()
+            response.accepted = False
+            if self._closing or not self._runtime.control_web_talk(
+                    request.lease_id, request.active, request.ttl_s):
+                return response
+            # A renewal can shorten the current TTL. Every accepted operation
+            # invalidates older ACKs, even when it retains the same lease ID.
+            self._quiet_generation += 1
+            if not request.active:
+                self._poll_quiet_controls()
+                response.accepted = True
+                return response
+            # Bound pending service futures separately from the persistent lease.
+            # A rejected ACK does not reopen admission before lease expiry.
+            if len(self._quiet_controls) >= 32:
+                return response
+            future = Future()
+            deadline = began + min(request.ttl_s, WEB_TALK_STOP_TIMEOUT_S)
+            generation = self._quiet_generation
+            self._quiet_controls[future] = (
+                request.lease_id, generation, deadline)
+            self._poll_quiet_controls()
+            accepted = await future
+            response.accepted = bool(
+                accepted and not self._closing
+                and generation == self._quiet_generation
+                and monotonic() < deadline
+                and self._runtime.web_talk_status(request.lease_id) == 'quiet')
+            return response
+
+        def _poll_quiet_controls(self):
+            for future, (lease_id, generation, deadline) in list(self._quiet_controls.items()):
+                if future.done():
+                    self._quiet_controls.pop(future, None)
+                    continue
+                if (self._closing or generation != self._quiet_generation
+                        or monotonic() >= deadline):
+                    accepted = False
+                else:
+                    state = self._runtime.web_talk_status(lease_id)
+                    if state == 'pending':
+                        continue
+                    accepted = state == 'quiet'
+                self._quiet_controls.pop(future, None)
+                future.set_result(accepted)
+
         def _queue_status(self, playback_id, state, interim, request_id):
             if not self._closing:
                 self._statuses.put((playback_id, state, interim, request_id))
 
         def _publish_statuses(self):
+            self._poll_quiet_controls()
             while not self._closing:
                 try:
                     playback_id, state, interim, request_id = self._statuses.get_nowait()
@@ -188,6 +260,7 @@ def create_tts_node(runtime_factory=None):
             if self._closing:
                 return False
             self._closing = True
+            self._poll_quiet_controls()
             try:
                 if self._runtime is not None:
                     self._runtime.close()

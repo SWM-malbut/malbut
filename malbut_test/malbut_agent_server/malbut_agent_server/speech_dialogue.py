@@ -27,6 +27,7 @@ MEMORY_CHANGED_RESPONSE = (
     '기억 정보가 변경되어 이전 답변을 전달하지 않았어요. 다시 말씀해 주세요.'
 )
 MAX_INTERRUPTION_IDS = 128
+MAX_CANCELLED_REQUEST_IDS = 256
 MAX_SPEECH_ID_LENGTH = 256
 ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
 NEW_CONVERSATION_REQUESTS = frozenset({
@@ -117,12 +118,14 @@ class DialogueWorker:
         self._pending = deque()
         self._results = deque()
         self._interruptions = OrderedDict()
+        self._cancelled_requests = OrderedDict()
         self._outstanding = 0
         self._closing = False
         self._stopped = False
         self._ready = False
         self._startup_error: Optional[str] = None
         self._active_progress = None
+        self._active_utterance_id = None
         self._suspended = False
         self._generation = 0
         self._running = False
@@ -160,7 +163,7 @@ class DialogueWorker:
         """Queue an original utterance without waiting for model inference."""
         validate_dialogue_input(utterance_id, text)
         with self._condition:
-            if not self.has_capacity():
+            if not self.has_capacity() or utterance_id in self._cancelled_requests:
                 return False
             self._outstanding += 1
             progress = RequestProgress(
@@ -168,6 +171,45 @@ class DialogueWorker:
             )
             self._pending.append((utterance_id, text, None, progress))
             self._condition.notify()
+            return True
+
+    def cancel_request(self, utterance_id):
+        """Fence this request, including a late transcript or already drained reply."""
+        if (not isinstance(utterance_id, str) or not utterance_id.strip()
+                or len(utterance_id) > MAX_SPEECH_ID_LENGTH):
+            return False
+        try:
+            utterance_id.encode('utf-8')
+        except UnicodeEncodeError:
+            return False
+        with self._condition:
+            if self._closing:
+                return False
+            self._cancelled_requests[utterance_id] = None
+            self._cancelled_requests.move_to_end(utterance_id)
+            while len(self._cancelled_requests) > MAX_CANCELLED_REQUEST_IDS:
+                # A stalled active request must stay fenced even after many cancels.
+                if next(iter(self._cancelled_requests)) == self._active_utterance_id:
+                    self._cancelled_requests.move_to_end(self._active_utterance_id)
+                self._cancelled_requests.popitem(last=False)
+            kept = deque()
+            for uid, text, playback_id, progress in self._pending:
+                if uid == utterance_id and playback_id is None:
+                    progress.finish()
+                    self._outstanding -= 1
+                else:
+                    kept.append((uid, text, playback_id, progress))
+            self._pending = kept
+            kept = deque()
+            for reply in self._results:
+                if reply['utterance_id'] == utterance_id and reply['kind'] != 'addressee':
+                    self._outstanding -= reply['kind'] != 'progress'
+                else:
+                    kept.append(reply)
+            self._results = kept
+            if self._active_utterance_id == utterance_id and self._active_progress is not None:
+                self._active_progress.finish()
+            self._condition.notify_all()
             return True
 
     def submit_interruption(self, utterance_id, playback_id, text) -> bool:
@@ -228,10 +270,11 @@ class DialogueWorker:
         """Check again immediately before publishing while stores are open."""
         with self._condition:
             if (self._closing or self._stopped or self._suspended
+                    or reply.get('utterance_id') in self._cancelled_requests
                     or getattr(reply, '_generation', self._generation)
                     != self._generation):
                 return None
-            if reply.get('kind') == 'addressee':
+            if reply.get('kind') in ('addressee', 'cancelled'):
                 return None
             if reply.get('kind') == 'progress':
                 return dict(reply) if reply._progress.publish(publish, reply['text']) else None
@@ -347,12 +390,14 @@ class DialogueWorker:
                     generation = self._generation
                     self._running = True
                     self._active_progress = progress
+                    self._active_utterance_id = utterance_id
                 if playback_id is not None:
                     reply = self._classify_interruption(
                         runtime, conversation_id, utterance_id, playback_id, text,
                     )
                     with self._condition:
                         self._running = False
+                        self._active_utterance_id = None
                         if not self._closing and generation != self._generation:
                             self._outstanding -= 1
                         elif not self._closing:
@@ -409,7 +454,7 @@ class DialogueWorker:
                             getattr(result, 'memory_validator', None),
                         )
                 except CancelledError:
-                    reply = None
+                    reply = self._reply(utterance_id, conversation_id, '', 'cancelled')
                 except (ConversationNotFoundError, ConversationStateError):
                     reply = self._reply(
                         utterance_id, conversation_id,
@@ -428,13 +473,16 @@ class DialogueWorker:
                     progress.finish()
                 with self._condition:
                     self._active_progress = None
+                    self._active_utterance_id = None
                     self._running = False
                     if not self._closing:
-                        if reply is None or generation != self._generation:
+                        if (reply is None or generation != self._generation
+                                or utterance_id in self._cancelled_requests):
                             self._outstanding -= 1
                         else:
                             reply._generation = generation
-                            reply['text'] = progress.final_text(reply['text'])
+                            if reply['kind'] != 'cancelled':
+                                reply['text'] = progress.final_text(reply['text'])
                             self._results.append(reply)
         finally:
             with self._condition:

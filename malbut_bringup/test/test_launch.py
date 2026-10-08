@@ -29,7 +29,8 @@ def _load(name):
     return module
 
 
-def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, launch_module):
+@pytest.mark.parametrize('aec', [None, 'true', 'false'])
+def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, launch_module, aec):
     """Standby owns speech, with no hardware, navigation, or local HTTP port."""
     source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
     spec = importlib.util.spec_from_file_location('cloud_launch', source)
@@ -37,7 +38,8 @@ def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, lau
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, 'shared_xfm_source', lambda _: 'xfm-source')
     context = _context(module, backend_url='https://robot.example.com',
-                       token_file='/protected/device.token', map_directory='/maps')
+                       token_file='/protected/device.token', map_directory='/maps',
+                       **({} if aec is None else {'input_has_aec': aec}))
     actions = module._setup(context)
     nodes = [action for action in actions if isinstance(action, Node)]
     assert {node.node_executable for node in nodes} == {'robot_cloud_sync', 'system_manager'}
@@ -62,6 +64,7 @@ def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, lau
     assert command[1:3] == ['-m', 'malbut_bringup.resident_voice']
     from ros2launch.api.api import parse_launch_arguments
     arguments = dict(parse_launch_arguments(command[3:]))
+    assert arguments['input_has_aec'] == (aec or 'true')
     assert 'navigation_targets' not in arguments
     # Reap children using their default INT/TERM deadlines before killing
     # the nested LaunchService; otherwise an orphan can retain the voice lease.
@@ -474,9 +477,11 @@ def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():
         assert (source / name).read_bytes() == (deployed / name).read_bytes()
 
 
-def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_module, fall_config):
+@pytest.mark.parametrize('aec', [None, 'true', 'false'])
+def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_module, fall_config, aec):
     module = _load('bringup')
-    context = _context(module, fall_monitor='true', fall_config=str(fall_config))
+    context = _context(module, fall_monitor='true', fall_config=str(fall_config),
+                       **({} if aec is None else {'speech_input_has_aec': aec}))
     actions = module._setup(context)
     includes = _included_modules(actions)
     assert set(includes) == {
@@ -490,6 +495,7 @@ def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_modul
     assert not any(type(item).__name__ in ('TimerAction', 'RegisterEventHandler')
                    for item in actions)
     assert 'control_server' not in includes['speech']
+    assert includes['speech']['input_has_aec'] == (aec or 'true')
     assert all(item['use_sim_time'] == 'false' for item in includes.values())
     assert context.locals.malbut_modular_bringup
 

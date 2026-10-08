@@ -65,6 +65,24 @@ can reuse the context. Whisper's abort and encoder callbacks enforce this
 cooperatively: a GPU kernel or driver that never returns cannot be interrupted
 by this deadline and still requires the process supervisor's shutdown boundary.
 
+The bridge also provides an optional ABI 3 getter for upstream segment
+`no_speech_prob`. Older ABI 3 libraries without this getter remain usable;
+`confidence_fields` in the adapter metadata reports whether it is available.
+The public upstream API does not provide the decoder's `avg_logprobs`. The
+adapter does not substitute a token-average approximation or reject speech
+from `no_speech_prob` alone. Whisper's existing internal joint no-speech filter
+therefore remains the confidence filter for this backend.
+
+For backends that provide both actual segment `no_speech_prob` and
+`avg_logprob`, local text, wake recognition, and incremental decoding exclude
+only segments with `no_speech_prob > 0.6` and `avg_logprob < -1.0`. Other
+segments keep their original text, order, and timestamps. Missing, non-finite,
+or out-of-range scores are treated as unknown and do not suppress text. The
+opt-in transcription diagnostics record score-only
+`confidence_segment_rejected` and `confidence_filter_summary` events, including
+how many segments lack usable scores. These mock-tested boundaries do not
+establish real-microphone hallucination rates or recognition quality.
+
 ## Same-audio performance replay
 
 Run an existing mono 16 kHz PCM16 WAV through the actual VAD, incremental decode,

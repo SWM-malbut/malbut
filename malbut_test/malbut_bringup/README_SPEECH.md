@@ -163,11 +163,15 @@ ros2 launch malbut_bringup bringup.launch.py \
 | `speech_input_device` | `0`; XFM 마이크, 웹 동시 실행 시 공유 입력. 다른 값은 sounddevice 장치 번호 |
 | `speech_output_device` | `-1`; TTS와 호출 성공음이 함께 사용하는 시스템 기본 출력 |
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
-| `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
+| `speech_input_has_aec` | `true`; 로봇 Bringup의 TTS 중 barge-in 허용. 명시적 `false`로 끌 수 있음 |
 | `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
 | `speech_preflight_timeout_s` | `120.0`; 실제 STT 시작 제한시간. 단독 점검에도 사용하며 재시도 대기 포함 |
 | `speech_peer_timeout_s` | `30.0`; ROS 연결 대기 제한시간 |
 
+Cloud 상주 음성도 `input_has_aec:=true`가 기본이며 `input_has_aec:=false`로 끌 수 있다.
+단독 `speech.launch.py`, STT 노드와 `jetson.yaml`의 기본값은 `false`다.
+상위 launch 인자가 YAML과 노드 기본값보다 우선하며 배포 복사본도 같은 값을 따른다.
+이 기본값은 barge-in 정책을 켜는 설정이며 물리적 AEC 동작이나 현장 검증 완료를 뜻하지 않는다.
 AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다. STT의 나머지 endpoint
 설정은 `malbut_stt/config/jetson.yaml`을 사용한다. 다른 STT/TTS가 같은 마이크·출력
 장치를 사용 중이면 먼저 정리한다. 통합 Bringup과 별도 음성 launch를 중복 실행하지 않는다.
@@ -215,9 +219,33 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 기존 `control_server`, `peer_timeout_s` 인자는 구 호출 호환용으로 받지만 일반 실행의
 외부 준비 검사에 사용하지 않는다. 모델 초기화 제한시간 `preflight_timeout_s`는 유지한다.
 STT 시작 중 확인된 CUDA 메모리 부족에 대한 기존 5초·10초 대기/최대 3회 시도는
-음성 프로세스 내부에서 유지한다. 실패 소진·모델 오류·음성 노드 종료는 로그로
-보고하며 다른 모듈을 종료하지 않는다. 자동 복구 기능을 새로 추가하지 않는다.
-Ctrl+C 또는 웹 Bringup 종료는 소유한 음성 프로세스와 진행 중인 대기도 정리한다.
+음성 프로세스 내부에서 유지한다. 일반 실행에서 STT가 초기화 실패·마이크 오류 등으로
+종료되면 기존 자식 프로세스를 정리한 뒤 5초 후 STT만 다시 시작한다. 재시작할 때마다
+초기화 제한시간을 새로 적용하며, 실패가 계속되면 같은 간격으로 재시도한다.
+Agent·TTS 등 다른 모듈은 계속 실행하며 자동 재시작 대상에는 포함하지 않는다.
+음성을 소유한 launch를 종료하면 실행 중인 STT와 재시작 대기도 함께 종료한다.
+Cloud의 상주 음성은 웹 Bringup과 별도이므로 웹 Bringup 종료만으로 중단되지 않는다.
+실제 입력을 받은 뒤 STT 주 실행 루프가 1초 간격 heartbeat를 보낸다. 감독 프로세스는
+10초 동안 heartbeat가 없으면 해당 STT와 소유한 자식 프로세스에만 종료를 요청하고,
+1초 내 종료하지 않으면 강제 종료한다. 이후 기존 5초 STT 재시작 정책을 적용한다.
+heartbeat는 감독 프로세스가 소비하므로 반복 로그를 만들지 않는다. 추론 worker가 멈추고
+주 실행 루프는 살아 있는 경우에는 별도 `inference_timeout_s`가 이를 감지한다.
+기본값은 네이티브 decode 제한 30초에 5초 여유를 더한 35초이며, 마지막 정리까지 멈추면
+heartbeat 감독이 프로세스를 종료한다. USB/PulseAudio 장애 자체를 해결하는 기능은 아니다.
+실제 마이크 입력 이후에만 다시 ready가 된다.
+
+전사 요청은 발행 시점부터 Agent 접수 5초(`request_receipt_timeout_s`), 전체 답변
+120초(`reply_timeout_s`) 제한을 적용한다. 접수 응답은 전체 답변 제한을 연장하지 않는다.
+기한 초과/거절 시 동일 request ID를 Agent와 TTS에 취소하여 늦게 도착하는 응답을 막는다.
+취소 서비스가 아직 없으면 제한된 큐에서 최대 `reply_timeout_s` 동안 재시도한다.
+웹 대화 시작은 STT 입력 차단을 먼저 적용하고 TTS의 실제 재생 정리 응답을 원 lease TTL
+및 `playback_control_timeout_s`(기본 5초) 안에 받아야 성공으로 응답한다.
+
+시작 로그 `stt_runtime_config`에는 backend, AEC와 주요 시간 설정 및 설치된 STT Python
+파일들의 `runtime_source_fingerprint`가 포함된다. `MALBUT_SOURCE_SHA`의 정확한 40자리
+SHA는 `reported_source_revision`으로만 기록하며 검증되지 않은 빌드 라벨이다.
+미지정/잘못된 값은 `unknown`이며 현재 Git HEAD를 실제 배포 버전으로 추정하지 않는다.
+이 로그에는 모델 경로, API 키, 음성 원문, PCM을 넣지 않는다.
 단독 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하며,
 `preflight_only:=true`는 실제 음성 노드를 시작하지 않고 종료한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.

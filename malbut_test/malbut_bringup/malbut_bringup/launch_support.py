@@ -66,7 +66,7 @@ def defaults():
         'speech_input_device': '0',
         'speech_output_device': '-1',
         'stt_cpp_threads': '6',
-        'speech_input_has_aec': 'false',
+        'speech_input_has_aec': 'true',
         'speech_agent_provider': 'openai',
         'speech_agent_user_id': 'speech-development-user',
         'speech_agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',

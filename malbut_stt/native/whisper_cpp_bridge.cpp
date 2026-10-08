@@ -114,6 +114,12 @@ int64_t mb_whisper_segment_end(void * context, int index) {
     return whisper_full_get_segment_t1(unwrap(context), index);
 }
 
+// Optional ABI 3 extension. The public upstream API has no decoder avg_logprobs
+// getter; a token-average approximation must not masquerade as that score.
+float mb_whisper_segment_no_speech_prob(void * context, int index) {
+    return whisper_full_get_segment_no_speech_prob(unwrap(context), index);
+}
+
 int mb_whisper_model_ftype(void * context) {
     return whisper_model_ftype(unwrap(context));
 }

@@ -89,6 +89,41 @@ def test_already_drained_answer_cannot_reappear_after_confirmation():
         worker.close()
 
 
+def test_cancel_request_discards_running_queued_and_already_drained_results():
+    release = threading.Event()
+
+    def respond(request, history):
+        if request.utterance == 'running':
+            assert release.wait(5)
+        return AgentDecision(type='message', message=request.utterance, confidence=1.0)
+
+    provider = FixedProvider(respond)
+    worker = DialogueWorker(RuntimeFactory(provider), 'speaker', capacity=3)
+    try:
+        assert worker.submit('running-id', 'running')
+        assert provider.entered.wait(5)
+        assert worker.submit('queued-id', 'queued')
+        assert worker.cancel_request('running-id')
+        # Keep a stalled active request fenced while the bounded history rotates.
+        for index in range(257):
+            assert worker.cancel_request('expired-' + str(index))
+        assert len(worker._cancelled_requests) == 256
+        assert worker.cancel_request('queued-id')
+        assert not worker.submit('queued-id', 'late')
+        assert worker.submit('next-id', 'next')
+        release.set()
+        replies = collect(worker, 1)
+        assert [r['utterance_id'] for r in replies] == ['next-id']
+        assert [r[0].utterance for r in provider.calls] == ['running', 'next']
+        assert worker.cancel_request('next-id')
+        published = []
+        assert worker.publish_reply(replies[0], lambda text: published.append(text) or True) is None
+        assert published == [] and worker.has_capacity()
+    finally:
+        release.set()
+        worker.close()
+
+
 class FixedProvider:
     """Use real context construction with controllable model responses."""
 
@@ -169,8 +204,9 @@ def test_cancellation_discards_queued_notices_and_releases_capacity():
     worker = DialogueWorker(factory, 'user', capacity=1)
     try:
         assert worker.submit('canceled', '취소할 요청')
-        wait_until(lambda: factory.provider.entered.is_set() and worker.has_capacity())
-        assert worker.drain() == []
+        reply = collect(worker, 1)[0]
+        assert reply['kind'] == 'cancelled' and reply['text'] == ''
+        assert worker.has_capacity()
         assert worker.submit('next', '다음 요청')
         reply = collect(worker, 1)[0]
         assert reply['kind'] == 'answer' and '다음 요청' in reply['text']

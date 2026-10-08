@@ -5,5 +5,7 @@ bool active
 # active=true일 때 0 < ttl_s <= 15. 갱신이 끊기면 자동 복구한다.
 float64 ttl_s
 ---
-# true는 입력/대기 오디오와 이전 인식 결과 차단까지 적용했다는 뜻이다.
+# STT web_talk_control: 입력/대기 오디오·이전 결과 차단과 TTS quiet 확인 완료.
+# TTS playback_web_talk_control: lease 적용 및 실제 재생 작업 정리까지 확인 완료.
+# active=false는 해당 lease의 해제 접수이며 별도 재생 완료를 뜻하지 않는다.
 bool accepted

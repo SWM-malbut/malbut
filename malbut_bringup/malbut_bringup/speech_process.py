@@ -12,6 +12,7 @@ import time
 
 
 READY = b'malbut_speech_capture_ready'
+HEARTBEAT = b'malbut_speech_heartbeat'
 CUDA_OOM = re.compile(
     rb'cudaMalloc[^\n]{0,160}(?:out of memory|cudaErrorMemoryAllocation)'
     rb'|CUDA error:\s*out of memory|CUDA_ERROR_OUT_OF_MEMORY', re.IGNORECASE)
@@ -34,11 +35,16 @@ def _stop(process, signum=signal.SIGTERM):
     process.wait()
 
 
-def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 10.0)):
+def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 10.0),
+        heartbeat_timeout_s=None):
     """Forward output and retry only diagnosed CUDA OOM before the startup deadline."""
     if (not command or not math.isfinite(startup_timeout_s) or startup_timeout_s <= 0
             or len(retry_delays) > 2
-            or any(not math.isfinite(delay) or delay < 0 for delay in retry_delays)):
+            or any(not math.isfinite(delay) or delay < 0 for delay in retry_delays)
+            or (heartbeat_timeout_s is not None and (
+                type(heartbeat_timeout_s) not in (int, float)
+                or not math.isfinite(heartbeat_timeout_s) or heartbeat_timeout_s <= 0
+                or not wait_for_ready))):
         raise ValueError('invalid speech process configuration')
     interrupted = 0
     process = None
@@ -70,6 +76,39 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
                 env={**os.environ, 'PYTHONUNBUFFERED': '1'})
             ready = oom = finished = False
             pending = tail = b''
+            long_line = False
+            heartbeat_deadline = None
+
+            def forward(data):
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+
+            def consume(chunk):
+                nonlocal pending, long_line, ready, heartbeat_deadline
+                lines = (pending + chunk).split(b'\n')
+                pending = lines.pop()
+                for line in lines:
+                    marker = line.rstrip(b'\r') if not long_line else b''
+                    now = time.monotonic()
+                    if marker == HEARTBEAT:
+                        if ready and heartbeat_timeout_s is not None:
+                            heartbeat_deadline = now + heartbeat_timeout_s
+                    elif marker == READY and wait_for_ready:
+                        if not ready and now < deadline:
+                            ready = True
+                            if heartbeat_timeout_s is not None:
+                                heartbeat_deadline = now + heartbeat_timeout_s
+                            forward(line + b'\n')
+                    else:
+                        forward(line + b'\n')
+                    long_line = False
+                # Stream long log lines without retaining unbounded output or
+                # recognizing a truncated suffix as a control marker.
+                if len(pending) > 8192:
+                    forward(pending)
+                    pending = b''
+                    long_line = True
+
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 while selector.get_map() or process.poll() is None:
@@ -80,25 +119,22 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
                         print('speech_startup_timeout', flush=True)
                         _stop(process)
                         return 124
+                    if heartbeat_deadline is not None and time.monotonic() >= heartbeat_deadline:
+                        print('speech_runtime_heartbeat_timeout', flush=True)
+                        _stop(process)
+                        return 124
                     for key, _ in selector.select(timeout=0.05):
                         chunk = os.read(key.fd, 32768)
                         if not chunk:
                             selector.unregister(key.fileobj)
+                            if pending:
+                                forward(pending)
+                                pending = b''
                             continue
-                        sys.stdout.buffer.write(chunk)
-                        sys.stdout.buffer.flush()
                         combined = tail + chunk
                         oom = oom or bool(CUDA_OOM.search(combined))
                         tail = combined[-8192:]
-                        lines = (pending + chunk).split(b'\n')
-                        pending = lines.pop()
-                        if (wait_for_ready and time.monotonic() < deadline
-                                and any(line.rstrip(b'\r') == READY for line in lines)):
-                            ready = True
-                        # Bound a child's partial line too; never mistake a truncated
-                        # suffix of a long log line for the exact readiness marker.
-                        if len(pending) > 8192:
-                            pending = b'\0' + pending[-8192:]
+                        consume(chunk)
                     if process.poll() is not None and not finished:
                         _stop(process)
                         finished = True
@@ -128,11 +164,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--startup-timeout-s', type=float, default=120.0)
     parser.add_argument('--wait-for-ready', action='store_true')
+    parser.add_argument('--heartbeat-timeout-s', type=float, default=None)
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     try:
-        return run(command, args.startup_timeout_s, wait_for_ready=args.wait_for_ready)
+        return run(command, args.startup_timeout_s, wait_for_ready=args.wait_for_ready,
+                   heartbeat_timeout_s=args.heartbeat_timeout_s)
     except (ValueError, OSError) as error:
         print(f'speech_process_failed: {type(error).__name__}', file=sys.stderr, flush=True)
         return 2

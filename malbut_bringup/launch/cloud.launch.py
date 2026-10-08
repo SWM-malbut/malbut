@@ -107,7 +107,7 @@ def generate_launch_description():
         'stt_library_path': os.environ.get(
             'MALBUT_STT_LIBRARY_PATH', str(build / 'bin/libmalbut_whisper.so')),
         'input_device': '0', 'output_device': '-1', 'cpp_threads': '6',
-        'input_has_aec': 'false', 'agent_provider': 'openai',
+        'input_has_aec': 'true', 'agent_provider': 'openai',
         'agent_user_id': 'speech-development-user',
         'agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
         'navigation_targets': '', 'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',

@@ -55,7 +55,10 @@ class _MlxModelAdapter:
             )
         finally:
             self.mx.synchronize()
-        return (SimpleNamespace(text=segment['text']) for segment in result['segments']), None
+        return (SimpleNamespace(
+            text=segment['text'], no_speech_prob=segment.get('no_speech_prob'),
+            avg_logprob=segment.get('avg_logprob'),
+        ) for segment in result['segments']), None
 
 
 class MlxWhisperTranscriber(LocalWhisperTranscriber):

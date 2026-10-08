@@ -176,6 +176,18 @@ sequenceDiagram
 - 중지 요청을 받으면 해당 요청의 음성 변환과 재생을 중단하고 남은 음성을 폐기한 뒤 stopped 상태를 전달한다.
 - 아직 재생하지 않은 대기 요청도 지정된 `playback_id`의 중지 요청으로 제거할 수 있다.
 - `ControlSpeechPlayback.STOP_ALL`은 `playback_id` 없이 현재 재생과 대기열을 모두 중단한다. Agent는 이상 상황 질문 생성에 앞서 기존 대화를 즉시 중단할 때 사용한다.
+- STOP/STOP_ALL과 확인 질문 선점의 장치 정지는 비동기로 실행하여 ROS executor를
+  막지 않는다. 접수 응답과 실제 정리 완료는 별개다.
+- `/malbut/speech/cancel_playback_request`는 `CancelSpeechRequest`로 같은 request ID의
+  현재·대기 재생만 취소한다. 아직 도착하지 않은 interim/final도 취소 예약하며 최근
+  256개와 진행 중인 취소 요청을 보호한다. 다른 요청의 재생을 함께 중단하지 않는다.
+  응답의 `quiescent`는 이 취소 요청의 실제 작업 정리 확인이다. accepted와 별개이며,
+  matching active·pending·stop이 남거나 출력 정리가 실패하면 false를 반환한다.
+- `/malbut/speech/playback_web_talk_control`은 `ControlWebTalk` lease를 먼저 설치해 새
+  음성을 거절하고 현재·대기 재생을 정리한다. active/player 정리와 비동기 stop이 모두
+  끝났을 때만 quiet ACK를 보내며 기본 5초와 TTL 중 짧은 시간 안에 확인한다. 동일 ID
+  갱신도 이전 ACK를 무효화한다. stop/close 실패 뒤에는 재시작 전까지 quiet 성공을
+  만들지 않는다. 이는 일반 playback `failed` 상태만으로 물리 정지를 단정하는 것과 다르다.
 - 유효한 `playback_id`의 `STOP`이 음성 요청보다 먼저 도착하면 `accepted=true`로 예약 취소를 접수한다. 동일 ID의 요청이 뒤늦게 도착해도 합성·재생하지 않고 `stopped`를 전달한다. 예약 취소와 완료 ID는 최근 256개만 보관하며, 최근 완료 ID에 대한 중지는 `accepted=false`다. 발행자는 매 재생에 새로운 ID를 사용한다.
 - 중지된 요청에서 이후 생성된 음성도 재생하지 않으며, 해당 요청은 다시 재개하지 않는다. 다른 대기 요청은 유지한다.
 - 각 재생 상태는 요청을 접수한 시점이 아니라 실제로 해당 상태가 된 뒤 전달한다.

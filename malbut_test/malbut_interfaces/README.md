@@ -12,9 +12,12 @@
 | FallCoordinator → Manager → FallCoordinator | Action `/malbut/mission/execute` | [ExecuteMission](action/ExecuteMission.action) | `fall_confirmation` capability로 확인을 요청하고 하위 Action의 최종 결과를 받음 |
 | Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 등록된 capability를 실행해 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요 여부를 받음 |
 | Agent → STT → Agent | Service `/malbut/speech/session_control` | [ControlSpeechSession](srv/ControlSpeechSession.srv) | 호출어 없는 청취 세션의 시작·종료·생존 조회 |
-| 홈캠 미디어 → STT → 홈캠 미디어 | Service `/malbut/speech/web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 웹 말하기 중 입력 차단·갱신·종료. 입력 및 이전 인식 결과 차단 후 접수 응답 |
+| 홈캠 미디어 → STT → 홈캠 미디어 | Service `/malbut/speech/web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 입력 차단·TTS quiet lease 및 실제 작업 정리 확인 후 승인 |
+| STT → TTS | Service `/malbut/speech/playback_web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 웹 lease 동안 새 TTS 요청 차단과 현재·대기 출력 정리 |
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
+| Agent → STT | Topic `/malbut/speech/request_status` | [SpeechRequestStatus](msg/SpeechRequestStatus.msg) | 원래 발화 ID의 접수·거절·실패·취소, 원문·음성 안내 없음 |
+| STT → Agent / TTS | Service `/malbut/speech/cancel_request`, `/malbut/speech/cancel_playback_request` | [CancelSpeechRequest](srv/CancelSpeechRequest.srv) | 요청 ID별 취소 예약과 늦은 발행·재생 억제; 접수와 물리 정지는 별개 |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |
 | Agent → TTS | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화와 재생 ID, 요청 ID, 중간 안내 여부 |
 | Agent·STT → TTS → 호출자 | Service `/malbut/speech/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 개별 재생 제어·전체 중단과 접수 여부 |
@@ -22,16 +25,20 @@
 
 `SpeechInputStatus`의 빈 `session_id`는 일반 대화이며, `STARTED`·`FAILED` 모두
 비어 있지 않은 `utterance_id`를 사용한다. 빈 최종 인식 결과는 전사나 `FAILED` 없이
-호출어 대기로 돌아간다. 최종 인식 중 예외가 발생하면 같은 발화 ID의 `FAILED`를
-전달하고 실패 안내를 기다리는 동안 새 입력을 차단한다. Agent는 최신 `STARTED`와
-일치하는 `FAILED`에만 한 번, 추가 대화 판단 LLM 호출이나 대화 메모리 기록 없이
-“잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.”를 기존 `SpeechRequest`로 발행한다.
-이 안내는 원래 `utterance_id`를 `request_id`로 사용하고 항상 `interim=false`다.
-같은 요청의 최종 `finished`·`failed`·`stopped`가 도착하면 `playing` 이전의 종료라도
-호출어 대기로 돌아간다. 실패 안내 대기 시작 후 45초 동안 같은 요청의 최종 종료가
-없으면 이 안내의 입력 차단만 해제하며, 실제 재생 중 입력 차단과 잔향 차단은 유지한다.
-안내 뒤에는 호출어 없는 후속 발화를 받지 않는다. 오래된 발화·중복 실패·확인 세션
-상태는 이 일반 대화 안내에서 제외한다. 기존 필드와 타입은 그대로 사용한다.
+호출어 대기로 돌아간다. 현재 STT의 일반 최종 인식 예외·무응답도 `FAILED`를 보내지
+않고 로컬 이중 비프를 사용한다. 운영 진단을 사용자 오류 안내 음성으로 바꾸지 않는다.
+Agent에 남아 있는 일반 `FAILED` 안내 처리는 기존 발행자 호환 경로이며 현재 STT의
+발화 종료 진단 계약으로 사용하지 않는다. 확인 세션의 `FAILED`는 별도 정책을 유지한다.
+
+일반 전사는 `/malbut/speech/request_status`의 `accepted`로 실제 Agent 처리 접수를
+확인한다. 거절·실패·취소 상태는 원문 없이 같은 request ID로 알린다. STT는 기본 5초
+접수 deadline과 전달 시점부터 기본 120초 전체 deadline을 관리한다. 늦은 접수·중간
+안내가 전체 한도를 늘리지 않으며, 초과하면 Agent와 TTS에 ID별 취소를 요청한다.
+취소 예약은 최근 256개 ID를 보존하고 진행 중인 취소 요청은 완료 전 보호한다.
+실제 다른 재생·웹 통화·효과음 차단까지 임의 해제하지 않는다.
+`CancelSpeechRequest.quiescent`는 TTS에서만 해당 취소 요청의 재생·정리가 끝났음을
+확인한다. Agent는 false를 반환한다. STT는 accepted만으로 raw gate를 열지 않으며,
+종료 토픽이 유실돼도 TTS의 quiescent 확인과 잔향 guard 후 해당 요청의 차단만 해제한다.
 
 호출어 감지 뒤 알림음의 잔향 차단이 끝난 시점부터 `start_timeout_s`(기본 5초) 안에
 유효한 발화 시작이 없으면 전사나 안내 음성 없이 호출어 대기로 돌아간다.

@@ -99,6 +99,11 @@ def node(monkeypatch, tmp_path, request):
         def __init__(self, *_args):
             self.requests = []
             self.results = []
+            self.cancelled = []
+
+        def cancel_request(self, uid):
+            self.cancelled.append(uid)
+            return True
 
         def submit_interruption(self, uid, pid, text):
             validate_interruption_input(uid, pid, text)
@@ -143,9 +148,11 @@ def node(monkeypatch, tmp_path, request):
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
         SpeechRequest=SpeechRequest, SpeechTranscript=SimpleNamespace,
         SpeechInputStatus=SpeechInputStatus,
+        SpeechRequestStatus=SimpleNamespace,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ClassifySpeechAddressee=SimpleNamespace(Response=Response),
+        CancelSpeechRequest=SimpleNamespace,
     ))
     monkeypatch.setattr(ros_communication, 'DialogueWorker', Worker)
     monkeypatch.setattr(ros_communication, 'SituationActionServer',
@@ -168,9 +175,113 @@ def request(uid='uid', pid='pid', text='  원문\n'):
     return SimpleNamespace(utterance_id=uid, playback_id=pid, text=text)
 
 
+def test_request_receipt_follows_admission_without_extra_speech(node):
+    node._receive_speech(request(uid='turn', text='안녕'))
+    statuses = node.sent['/malbut/speech/request_status']
+    assert [(s.request_id, s.state, s.reason) for s in statuses] == [
+        ('turn', 'accepted', '')]
+    assert node.dialogue.requests == [('turn', '안녕')]
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+
+def test_request_rejection_is_silent_and_does_not_consume_receipt(node):
+    node.dialogue.accept = False
+    node._receive_speech(request(uid='busy', text='안녕'))
+    status = node.sent['/malbut/speech/request_status'][-1]
+    assert (status.request_id, status.state, status.reason) == ('busy', 'rejected', 'busy')
+    assert node._receipts.lookup('busy', '안녕') is None
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+
+@pytest.mark.parametrize('node', [False], indirect=True)
+def test_cancel_reservation_is_available_before_agent_ready_and_rejects_late_transcript(node):
+    _, cancel, _ = node.services['/malbut/speech/cancel_request']
+    assert cancel(SimpleNamespace(request_id='lost'), SimpleNamespace()).accepted
+    node.dialogue.ready = True
+    node._drain_dialogue()
+    node._receive_speech(request(uid='lost', text='late transcript'))
+    assert node.dialogue.requests == []
+    assert node._receipts.lookup('lost', 'late transcript') is None
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    assert node.sent['/malbut/speech/request_status'][-1].state == 'cancelled'
+
+
 def result(uid='uid', pid='pid', decision='addressed'):
     return {'kind': 'addressee', 'utterance_id': uid,
             'playback_id': pid, 'decision': decision}
+
+
+@pytest.mark.parametrize('node', [False], indirect=True)
+def test_volatile_startup_loss_recovers_and_cancellation_fences_late_agent_output(node):
+    """Join real STT deadlines to Agent admission while its subscription is absent."""
+    from malbut_stt.dialogue_pipeline import DialoguePipeline
+
+    now = [0.0]
+    events = []
+
+    def publish(uid, text):
+        subscriber = node.subscriptions.get(ros_communication.TRANSCRIPT_TOPIC)
+        if subscriber is not None:
+            subscriber[0](request(uid=uid, text=text))
+
+    def cancel(uid):
+        assert node._cancel_request(
+            SimpleNamespace(request_id=uid), SimpleNamespace()).accepted
+
+    pipeline = DialoguePipeline(
+        recorder_factory=None, wake=None, transcriber=SimpleNamespace(),
+        is_speech=lambda *_: False, publish_transcript=publish,
+        publish_control=lambda *_: None, publish_interruption=lambda *_: None,
+        report=events.append, cancel_request=cancel, clock=lambda: now[0])
+    # VOLATILE DDS does not retain this publication for the later subscriber.
+    pipeline._publish_transcript('lost', 'first')
+    assert node.dialogue.requests == []
+    assert pipeline._reply_request_id == 'lost'
+    now[0] = 5.0
+    pipeline.poll()
+    assert pipeline._reply_request_id is None
+    assert node.dialogue.cancelled == ['lost']
+    assert any('receipt_timeout' in event for event in events)
+
+    node.dialogue.ready = True
+    node._drain_dialogue()
+    publish('lost', 'late')
+    assert node.dialogue.requests == []
+    # This also models a result already drained by an earlier executor callback.
+    node.dialogue.results = [dict(kind='answer', utterance_id='lost', text='obsolete')]
+    node._drain_dialogue()
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+    pipeline._publish_transcript('new', 'next')
+    status = node.sent[ros_communication.REQUEST_STATUS_TOPIC][-1]
+    pipeline.on_request_status(status.request_id, status.state, status.reason)
+    assert node.dialogue.requests == [('new', 'next')]
+    assert pipeline._reply_receipt_deadline is None
+    assert pipeline._reply_deadline == 125.0
+
+
+def test_confirmation_only_cancels_ordinary_requests_awaiting_publication(node):
+    node._receive_speech(request(uid='finished', text='first'))
+    node.dialogue.results = [dict(kind='answer', utterance_id='finished', text='done')]
+    node._drain_dialogue()
+    # Duplicate delivery can repeat the receipt but cannot resurrect pending work.
+    node._receive_speech(request(uid='finished', text='first'))
+    node._receive_speech(request(uid='pending', text='second'))
+    node._begin_situation()
+    cancelled = [s.request_id for s in node.sent[ros_communication.REQUEST_STATUS_TOPIC]
+                 if s.state == 'cancelled']
+    assert cancelled == ['pending']
+
+
+def test_provider_cancellation_is_a_silent_terminal_status(node):
+    node._receive_speech(request(uid='cancelled', text='first'))
+    node.dialogue.results = [dict(kind='cancelled', utterance_id='cancelled', text='')]
+    node._drain_dialogue()
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    statuses = node.sent[ros_communication.REQUEST_STATUS_TOPIC]
+    assert [(s.request_id, s.state, s.reason) for s in statuses] == [
+        ('cancelled', 'accepted', ''), ('cancelled', 'cancelled', 'worker_cancelled')]
+    assert node._pending_speech_requests == set()
 
 
 def test_speech_requests_have_distinct_playback_ids_and_preserve_content(node):
@@ -202,15 +313,18 @@ def test_speech_requests_have_distinct_playback_ids_and_preserve_content(node):
 @pytest.mark.parametrize('node', [False], indirect=True)
 def test_speech_endpoints_wait_for_worker_initialization(node):
     """A peer probe must not admit STT while the dialogue DB is still opening."""
-    assert node.subscriptions == node.services == {}
+    assert node.subscriptions == {}
+    assert set(node.services) == {ros_communication.CANCEL_REQUEST_SERVICE}
     node._drain_dialogue()
-    assert node.subscriptions == node.services == {}
+    assert node.subscriptions == {}
+    assert set(node.services) == {ros_communication.CANCEL_REQUEST_SERVICE}
     node.dialogue.ready = True
     node._drain_dialogue()
     assert set(node.subscriptions) == {
         ros_communication.TRANSCRIPT_TOPIC, '/malbut/speech/input_status',
     }
-    assert set(node.services) == {ros_communication.ADDRESSEE_SERVICE}
+    assert set(node.services) == {
+        ros_communication.ADDRESSEE_SERVICE, ros_communication.CANCEL_REQUEST_SERVICE}
 
 
 @pytest.mark.parametrize('node', [False], indirect=True)
@@ -219,7 +333,8 @@ def test_failed_initialization_never_advertises_speech_endpoints(node):
     node.dialogue.startup_error = 'DatabaseError'
     with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
         node._drain_dialogue()
-    assert node.subscriptions == node.services == {}
+    assert node.subscriptions == {}
+    assert set(node.services) == {ros_communication.CANCEL_REQUEST_SERVICE}
 
 
 def input_status(node, uid, state, session_id=''):
@@ -393,7 +508,7 @@ def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
     assert [(message.text, message.request_type) for message in messages] == [
         (original, SpeechRequest.DIALOGUE),
     ]
-    assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
+    assert node.sent[ros_communication.REQUEST_STATUS_TOPIC] == []
     assert messages[0].request_id == 'normal'
 
 
@@ -414,19 +529,19 @@ def test_progress_and_final_replies_share_request_id_but_not_playback_id(node):
     assert len({message.playback_id for message in messages}) == 5
 
 
-def test_overlong_final_speech_is_rejected_with_notice_without_receipt(node):
+def test_overlong_final_speech_is_rejected_silently_without_receipt(node):
     text = '가' * 16001
     node._receive_speech(SimpleNamespace(utterance_id='too-long', text=text))
     assert node._receipts.lookup('too-long', text) is None
-    messages = node.sent[ros_communication.RESPONSE_TOPIC]
-    assert len(messages) == 1 and '16000' in messages[0].text
-    assert messages[0].request_id == 'too-long'
-    assert messages[0].interim is False
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    statuses = node.sent[ros_communication.REQUEST_STATUS_TOPIC]
+    assert [(s.request_id, s.state, s.reason) for s in statuses] == [
+        ('too-long', 'rejected', 'text_too_long')]
     assert node.dialogue.requests == []
 
 
 @pytest.mark.parametrize('failure', ['startup', 'capacity', 'submit', 'lookup', 'store'])
-def test_rejected_speech_sends_correlated_final_notice(node, monkeypatch, failure):
+def test_rejected_speech_sends_correlated_silent_terminal_status(node, monkeypatch, failure):
     """Every failed new turn can release STT's matching response wait."""
     def storage_error(*_args):
         raise sqlite3.OperationalError('receipt unavailable')
@@ -444,11 +559,17 @@ def test_rejected_speech_sends_correlated_final_notice(node, monkeypatch, failur
 
     node._receive_speech(request(uid='rejected', text='안녕'))
 
-    messages = node.sent[ros_communication.RESPONSE_TOPIC]
-    assert len(messages) == 1
-    assert messages[0].request_id == 'rejected'
-    assert messages[0].request_type == SpeechRequest.DIALOGUE
-    assert messages[0].interim is False
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    expected = {
+        'startup': ('rejected', 'not_ready'),
+        'capacity': ('rejected', 'busy'),
+        'submit': ('failed', 'submission_failed'),
+        'lookup': ('rejected', 'receipt_unavailable'),
+        'store': ('rejected', 'receipt_unavailable'),
+    }
+    statuses = node.sent[ros_communication.REQUEST_STATUS_TOPIC]
+    assert [(s.request_id, s.state, s.reason) for s in statuses] == [
+        ('rejected', *expected[failure])]
     assert node.dialogue.requests == []
 
 

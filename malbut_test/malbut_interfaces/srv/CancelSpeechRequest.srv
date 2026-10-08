@@ -1,0 +1,10 @@
+# Cancel this ordinary utterance ID at its Agent or TTS owner.
+# Agent fences queued/in-flight publication; TTS fences pending/late playback.
+# A valid unseen ID reserves cancellation; recent 256 IDs are retained.
+string request_id
+---
+# Acceptance records cancellation, not physical TTS playback completion.
+bool accepted
+# TTS only: this cancelled request has no remaining playback/cleanup work.
+# Agent leaves false. Unknown/failed cleanup must never report quiescent=true.
+bool quiescent

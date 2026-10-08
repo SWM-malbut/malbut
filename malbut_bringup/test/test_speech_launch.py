@@ -91,12 +91,14 @@ def test_all_speech_nodes_start_without_external_control_or_peer_gates(speech, c
     assert not any(isinstance(item, TimerAction) for item in actions)
 
 
-def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
+@pytest.mark.parametrize('aec', [None, 'true', 'false'])
+def test_audio_and_identity_settings_reach_the_correct_nodes(speech, aec):
     context = _context(
-        speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',
+        speech, input_device='2', output_device='3', cpp_threads='4',
         agent_provider='mock', agent_user_id='trial-user',
         agent_conversation_db='/trial records/session.sqlite3',
-        navigation_targets='/maps/targets.yaml', preflight_timeout_s='25')
+        navigation_targets='/maps/targets.yaml', preflight_timeout_s='25',
+        **({} if aec is None else {'input_has_aec': aec}))
     actions = speech._setup(context)
     agent, tts, weather, stt, key_sync = [item for item in actions if isinstance(item, Node)]
     assert weather.node_package == 'malbut_agent_server'
@@ -115,12 +117,13 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     assert params == {
         'stt_model_path': speech.assets['stt_model_path'],
         'stt_library_path': speech.assets['stt_library_path'],
-        'device_index': 2, 'cpp_threads': 4, 'input_has_aec': True,
+        'device_index': 2, 'cpp_threads': 4, 'input_has_aec': aec == 'true',
         'wake_chime_device_index': 3,
     }
     assert shlex.split(perform_substitutions(context, stt.process_description.prefix)) == [
         sys.executable, '-m', 'malbut_bringup.speech_process',
-        '--startup-timeout-s', '25.0', '--wait-for-ready', '--', sys.executable]
+        '--startup-timeout-s', '25.0', '--wait-for-ready',
+        '--heartbeat-timeout-s', '10.0', '--', sys.executable]
 
 
 def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):

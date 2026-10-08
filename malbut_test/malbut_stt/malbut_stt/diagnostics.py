@@ -10,6 +10,8 @@ import time
 from uuid import uuid4
 import wave
 
+from malbut_stt.confidence import confidence_scores
+
 
 _RESULT_BYTES = 65536
 
@@ -132,7 +134,11 @@ class TranscriptionDiagnostics:
         if record is None or record['segments_truncated']:
             return
         try:
-            value = segment._asdict() if hasattr(segment, '_asdict') else vars(segment)
+            value = dict(segment._asdict() if hasattr(segment, '_asdict') else vars(segment))
+            # Unknown confidence remains unknown; NaN/Inf must not disable evidence capture.
+            for name, score in zip(('no_speech_prob', 'avg_logprob'), confidence_scores(segment)):
+                if name in value:
+                    value[name] = score
             # Reserve space for an error even when a lazy decoder yields then fails.
             if len(_json(record)) + len(_json(value)) > _RESULT_BYTES - 8192:
                 record['segments_truncated'] = True
@@ -166,6 +172,13 @@ class _DiagnosticModel:
 
     def __getattr__(self, name):
         return getattr(self._model, name)
+
+    def report_confidence(self, event, **metadata):
+        """Record score-only filtering decisions in the current decode/job context."""
+        self._diagnostics.event(event, **metadata)
+        report = getattr(self._model, 'report_confidence', None)
+        if callable(report):
+            report(event, **metadata)
 
     def transcribe(self, audio, *args, **options):
         record = self._diagnostics._begin(audio, options)

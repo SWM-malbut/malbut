@@ -17,6 +17,7 @@ CONFIRMATION = 2
 TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
 MAX_RETIRED_PLAYBACK_IDS = 256
 MAX_FINALIZED_REQUEST_IDS = 256
+MAX_CANCELLED_REQUEST_IDS = 256
 
 
 @dataclass
@@ -33,6 +34,8 @@ class _Request:
     state: str = 'generating'
     command: Optional[str] = None
     control_error: Optional[Exception] = None
+    stop_started: bool = False
+    stop_pending: bool = False
 
 
 class SpeechRuntime:
@@ -61,6 +64,11 @@ class SpeechRuntime:
         self._pending = []
         self._retired_ids = OrderedDict()
         self._finalized_request_ids = OrderedDict()
+        self._cancelled_request_ids = OrderedDict()
+        self._web_talk_lease_id = None
+        self._web_talk_deadline = None
+        self._output_cleanup_failed = False
+        self._stop_pending = 0
         self._sequence = 0
         self._active = None
         self._closed = False
@@ -100,7 +108,6 @@ class SpeechRuntime:
         # Confirmation questions retain their existing preemption policy.
         correlated_id = request_id if request_type != CONFIRMATION else ''
         superseded = []
-        previous = None
         with self._condition:
             if self._closed:
                 return None
@@ -124,6 +131,13 @@ class SpeechRuntime:
                 validate, request_type=request_type, interim=interim,
                 request_id=correlated_id,
             )
+            self._expire_web_talk_locked(now)
+            if (self._web_talk_lease_id is not None
+                    or correlated_id in self._cancelled_request_ids):
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+                return request.playback_id
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
                 request.state = 'stopped'
@@ -148,9 +162,9 @@ class SpeechRuntime:
                             correlated_id and not interim
                             and active.request_id == correlated_id
                             and active.interim and active.state == 'generating'):
-                        previous = active
-                        previous.cancel.set()
-                        previous.command = 'stop'
+                        active.cancel.set()
+                        active.command = 'stop'
+                        self._stop_player_async(active)
                 if correlated_id and not interim:
                     self._finalized_request_ids[correlated_id] = None
                     self._finalized_request_ids.move_to_end(correlated_id)
@@ -167,8 +181,6 @@ class SpeechRuntime:
                 self._sequence += 1
             self._condition.notify_all()
         self._fail_waiting(expired, 'expired')
-        if previous is not None and previous.player is not None:
-            self._stop_player(previous)
         if rejected:
             self._fail_waiting([request], 'full')
         return request.playback_id
@@ -203,6 +215,127 @@ class SpeechRuntime:
                     self._condition.wait(timeout=timeout)
                     continue
             self._fail_waiting(expired, 'expired')
+
+    def cancel_request(self, request_id):
+        """Fence late DDS replies and stop only this ordinary request's audio."""
+        if (not isinstance(request_id, str) or not request_id.strip()
+                or len(request_id) > 256):
+            return False
+        with self._condition:
+            if self._closed:
+                return False
+            self._cancelled_request_ids[request_id] = None
+            self._cancelled_request_ids.move_to_end(request_id)
+            while len(self._cancelled_request_ids) > MAX_CANCELLED_REQUEST_IDS:
+                # A wedged cancelled generator must stay fenced even while
+                # many later IDs cycle through the bounded receipt history.
+                active_id = self._active.request_id if self._active is not None else ''
+                oldest = next(key for key in self._cancelled_request_ids if key != active_id)
+                self._cancelled_request_ids.pop(oldest)
+            pending = [entry[2] for entry in self._pending
+                       if entry[2].request_id == request_id]
+            self._pending = [entry for entry in self._pending
+                             if entry[2].request_id != request_id]
+            heapq.heapify(self._pending)
+            for request in pending:
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+            active = self._active
+            if (active is not None and active.request_id == request_id
+                    and active.state not in TERMINAL_STATES):
+                active.cancel.set()
+                active.command = 'stop'
+                self._stop_player_async(active)
+            self._condition.notify_all()
+        return True
+
+    def request_is_quiescent(self, request_id):
+        """Confirm a cancellation fence and completed cleanup without a topic ACK."""
+        with self._condition:
+            if (self._closed or not isinstance(request_id, str)
+                    or request_id not in self._cancelled_request_ids
+                    or self._output_cleanup_failed or self._stop_pending):
+                return False
+            return (
+                (self._active is None or self._active.request_id != request_id)
+                and not any(entry[2].request_id == request_id for entry in self._pending))
+
+    def _expire_web_talk_locked(self, now):
+        if self._web_talk_deadline is not None and now >= self._web_talk_deadline:
+            self._web_talk_lease_id = self._web_talk_deadline = None
+
+    def control_web_talk(self, lease_id, active, ttl_s):
+        """Install admission fencing before asynchronously stopping the device.
+
+        This is lease acceptance, not a quiet ACK. The ROS adapter must wait
+        for web_talk_status() == 'quiet' before allowing browser audio.
+        """
+        if (not isinstance(lease_id, str) or not lease_id.strip()
+                or len(lease_id) > 200 or type(active) is not bool):
+            return False
+        if active and (isinstance(ttl_s, bool)
+                       or not isinstance(ttl_s, (int, float))
+                       or not math.isfinite(ttl_s) or not 0 < ttl_s <= 15):
+            return False
+        with self._condition:
+            if self._closed:
+                return False
+            now = self._clock()
+            self._expire_web_talk_locked(now)
+            if not active:
+                if self._web_talk_lease_id != lease_id:
+                    return False
+                self._web_talk_lease_id = self._web_talk_deadline = None
+                self._condition.notify_all()
+                return True
+            self._web_talk_lease_id = lease_id
+            self._web_talk_deadline = now + ttl_s
+            pending = [entry[2] for entry in self._pending]
+            self._pending.clear()
+            for request in pending:
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+            request = self._active
+            if request is not None and request.state not in TERMINAL_STATES:
+                request.cancel.set()
+                request.command = 'stop'
+                self._stop_player_async(request)
+            self._condition.notify_all()
+        return True
+
+    def web_talk_status(self, lease_id):
+        """Report actual quiescence; an uncertain device close requires restart."""
+        with self._condition:
+            self._expire_web_talk_locked(self._clock())
+            if (self._closed or self._web_talk_lease_id is None
+                    or self._web_talk_lease_id != lease_id):
+                return 'rejected'
+            if self._output_cleanup_failed:
+                return 'failed'
+            if self._active is not None or self._pending or self._stop_pending:
+                return 'pending'
+            return 'quiet'
+
+    def _stop_player_async(self, request):
+        """Keep service admission bounded even if a device ignores stop."""
+        with self._condition:
+            if request.player is None or request.stop_started:
+                return
+            request.stop_started = request.stop_pending = True
+            self._stop_pending += 1
+
+        def stop():
+            try:
+                self._stop_player(request)
+            finally:
+                with self._condition:
+                    request.stop_pending = False
+                    self._stop_pending -= 1
+                    self._condition.notify_all()
+
+        Thread(target=stop, name='tts-stop', daemon=True).start()
 
     def control(self, playback_id, command):
         """Control a request, including a bounded STOP reservation before receipt."""
@@ -241,6 +374,7 @@ class SpeechRuntime:
             if command == 'stop':
                 request.cancel.set()
                 request.command = command
+                self._stop_player_async(request)
             elif (command == 'pause' and request.state == 'playing'
                   and request.command is None and player is not None):
                 request.command = command
@@ -252,8 +386,6 @@ class SpeechRuntime:
         # Device control may wait for its owner thread; do not hold the
         # runtime condition while that thread reports a playback state.
         if command == 'stop':
-            if player is not None:
-                self._stop_player(request)
             return True
         accepted = getattr(player, command)()
         if not accepted:
@@ -273,15 +405,12 @@ class SpeechRuntime:
             if request is not None and request.state not in TERMINAL_STATES:
                 request.cancel.set()
                 request.command = 'stop'
-            else:
-                request = None
+                self._stop_player_async(request)
             self._condition.notify_all()
         for item in pending:
             item.cancel.set()
             item.state = 'stopped'
             self._report_status(item, 'stopped')
-        if request is not None and request.player is not None:
-            self._stop_player(request)
         return True
 
     def _stop_player(self, request):
@@ -290,6 +419,7 @@ class SpeechRuntime:
         except Exception as error:
             with self._condition:
                 request.control_error = error
+                self._output_cleanup_failed = True
             self._logger.error(f'tts_control_failed: {error}')
 
     def close(self):
@@ -363,6 +493,7 @@ class SpeechRuntime:
             self._play(request)
             with self._condition:
                 self._active = None
+                self._condition.notify_all()
 
     def _play(self, request):
         player = None
@@ -422,9 +553,12 @@ class SpeechRuntime:
                     except Exception as error:
                         cleanup_failed = True
                         state = 'failed'
+                        with self._condition:
+                            self._output_cleanup_failed = True
                         self._logger.error(f'tts_cleanup_failed: {error}')
             # A stop racing the final drain wins over normal completion.
             with self._condition:
+                self._condition.wait_for(lambda: not request.stop_pending)
                 if cleanup_failed or request.control_error is not None:
                     state = 'failed'
                 elif request.cancel.is_set():

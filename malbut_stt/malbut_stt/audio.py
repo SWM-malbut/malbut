@@ -79,6 +79,7 @@ class UtteranceCollector:
         self.speech_frames = 0
         self.silent_frames = 0
         self.candidate_frames = 0
+        self._candidate_gap_frames = 0
         self.candidate_audio = bytearray()
         self._candidate_start_blocked = False
         self.start_blocked = False
@@ -120,13 +121,22 @@ class UtteranceCollector:
                         self.revision += self.candidate_frames
                         self.audio.extend(self.candidate_audio)
                         self.pre_roll.clear()
-                        self.speech_frames = self.candidate_frames
+                        self.speech_frames = self.candidate_frames + self._candidate_gap_frames
                         self.start_blocked = self._candidate_start_blocked
                         self.candidate_audio.clear()
                         self.candidate_frames = 0
+                        self._candidate_gap_frames = 0
                         self._candidate_start_blocked = False
+                elif (self.candidate_frames and not self._candidate_gap_frames
+                      and not self._candidate_start_blocked and not frame_blocked):
+                    # One uncertain 20 ms frame must not erase a short onset.
+                    # Still require all voiced evidence within one bounded
+                    # candidate; a second gap or any busy gap resets it.
+                    self._candidate_gap_frames = 1
+                    self.candidate_audio.extend(frame)
                 else:
                     self.candidate_frames = 0
+                    self._candidate_gap_frames = 0
                     self.candidate_audio.clear()
                     self._candidate_start_blocked = False
                 # Let an onset crossing the idle-window boundary finish its
@@ -156,6 +166,7 @@ class UtteranceCollector:
                 self.pre_roll.clear()
                 self.candidate_audio.clear()
                 self.candidate_frames = 0
+                self._candidate_gap_frames = 0
                 self._candidate_start_blocked = False
                 self.audio.clear()
                 return self.result

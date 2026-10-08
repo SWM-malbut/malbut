@@ -1,22 +1,26 @@
 """Keep continuous capture and local inference outside serialized dialogue events."""
 
 import math
+import json
 from collections import OrderedDict
 from contextlib import nullcontext
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
+from uuid import uuid4
 
 from malbut_stt.audio import CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
-from malbut_stt.wake import is_wake_phrase
+from malbut_stt.wake import split_wake_command
 
 
 MAX_RETIRED_SESSION_IDS = 256
+MAX_RETIRED_REQUEST_IDS = 256
+RETIRED_REQUEST_TTL_SECONDS = 300.0
 MICROPHONE_TIMEOUT_SECONDS = 5.0
 RETRY_NOTICE_TIMEOUT_SECONDS = 45.0
 
@@ -47,7 +51,14 @@ class DialoguePipeline:
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
-                 stop_speech=None, on_failure=None):
+                 stop_speech=None, on_failure=None, on_lifecycle=None,
+                 cancel_request=None, receipt_timeout_s=5.0, reply_timeout_s=120.0,
+                 inference_timeout_s=35.0):
+        for name, value in (('receipt_timeout_s', receipt_timeout_s),
+                            ('reply_timeout_s', reply_timeout_s),
+                            ('inference_timeout_s', inference_timeout_s)):
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(name + ' must be finite and positive')
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -56,6 +67,11 @@ class DialoguePipeline:
         self.publish_control = publish_control
         # stop_speech(playback_id) drops Agent speech; an empty ID drops all of it.
         self.stop_speech = stop_speech
+        self.cancel_request = cancel_request
+        self.on_lifecycle = on_lifecycle
+        self.receipt_timeout_s = receipt_timeout_s
+        self.reply_timeout_s = reply_timeout_s
+        self.inference_timeout_s = inference_timeout_s
         self._report = report
         self.diagnostics = diagnostics
         self._diagnostic_error_reported = False
@@ -107,14 +123,27 @@ class DialoguePipeline:
         self.phase = 'idle'
         self._started = False
         self._closed = False
+        self._shutdown_prepared = False
         self._generation = 0
         self._audio_generation = 0
+        self._capture_open_generation = None
         self._busy = False
         self._capture_id = None
         self._discard_capture = False
         self._utterance_playback_id = None
         self._pending = None
         self._reply_request_id = None
+        self._reply_receipt_deadline = None
+        self._reply_deadline = None
+        self._reply_playback_ids = set()
+        self._retired_request_ids = OrderedDict()
+        self._quiescent_request_ids = OrderedDict()
+        self._obsolete_playback_ids = {}
+        self._playback_request_id = None
+        self._utterance_lifecycle = None
+        self._last_gate_reason = None
+        self._wake_ready_pending = False
+        self._inference_started_at = None
         self._retry_notice_deadline = None
         self._command_start_deadline = None
         self._web_talk_lease_id = None
@@ -155,6 +184,140 @@ class DialoguePipeline:
             if self.diagnostics.error and not self._diagnostic_error_reported:
                 self._diagnostic_error_reported = True
                 self._report('diagnostics_stopped')
+
+    def _lifecycle(self, event, **metadata):
+        """Emit identifiers and outcomes only, independently of Agent input events."""
+        record = dict(event=event, clock=self.clock(), generation=self._generation, **metadata)
+        self.report('speech_lifecycle:' + json.dumps(record, sort_keys=True))
+        if self.on_lifecycle is not None:
+            try:
+                self.on_lifecycle(record)
+            except Exception as error:
+                self._report('lifecycle_diagnostic_failed:' + type(error).__name__)
+
+    def _start_utterance_lifecycle(self, uid, *, source='microphone'):
+        self._utterance_lifecycle = (uid, self.session.session_id, self._generation)
+        self._lifecycle('utterance_started', utterance_id=uid,
+                        session_id=self.session.session_id, source=source)
+
+    def _finish_utterance_lifecycle(self, reason):
+        if self._utterance_lifecycle is not None:
+            uid, session_id, generation = self._utterance_lifecycle
+            self._utterance_lifecycle = None
+            self._lifecycle('utterance_terminal', utterance_id=uid,
+                            session_id=session_id, utterance_generation=generation,
+                            reason=reason)
+
+    def _request_is_retired(self, request_id):
+        return self._request_in_history(self._retired_request_ids, request_id)
+
+    def _request_in_history(self, history, request_id):
+        if not isinstance(request_id, str):
+            return False
+        now = self.clock()
+        while history:
+            uid, expires = next(iter(history.items()))
+            if expires > now:
+                break
+            history.pop(uid)
+        return request_id in history
+
+    def on_request_quiescent(self, request_id):
+        """Accept TTS proof that this cancelled request cannot still produce sound."""
+        if self.stopping.is_set() or not isinstance(request_id, str) or not request_id.strip():
+            return False
+        if self._request_in_history(self._quiescent_request_ids, request_id):
+            return True
+        if request_id == self._reply_request_id:
+            return False
+        stopped_current = (request_id == self._playback_request_id
+                           and self.session.playback_state in ('playing', 'paused'))
+        obsolete = [pid for pid, uid in self._obsolete_playback_ids.items() if uid == request_id]
+        if not (self._request_is_retired(request_id) or obsolete):
+            return False
+        self._quiescent_request_ids[request_id] = self.clock() + RETIRED_REQUEST_TTL_SECONDS
+        while len(self._quiescent_request_ids) > MAX_RETIRED_REQUEST_IDS:
+            self._quiescent_request_ids.popitem(last=False)
+        for pid in obsolete:
+            self._obsolete_playback_ids.pop(pid)
+        if stopped_current:
+            # A request-specific physical quiescence ACK is equivalent to a
+            # lost STOPPED event for its own playback, never a global stop.
+            self.session.on_playback_status(self.session.playback_id, 'stopped')
+            self._playback_request_id = None
+            if not self.input_has_aec:
+                self._raw_playback_gate = False
+        if not self.input_has_aec and (stopped_current or obsolete):
+            self._raw_gate_until = max(self._raw_gate_until, self.clock() + 0.3)
+            self._reset_audio()
+        self._lifecycle('request_quiescent', request_id=request_id)
+        return True
+
+    def _finish_reply(self, reason, *, cancel=False):
+        uid = self._reply_request_id
+        if uid is None:
+            return
+        playback_ids = self._reply_playback_ids
+        self._reply_request_id = None
+        self._reply_receipt_deadline = self._reply_deadline = None
+        self._reply_playback_ids = set()
+        self._retired_request_ids[uid] = self.clock() + RETIRED_REQUEST_TTL_SECONDS
+        self._retired_request_ids.move_to_end(uid)
+        while len(self._retired_request_ids) > MAX_RETIRED_REQUEST_IDS:
+            self._retired_request_ids.popitem(last=False)
+        self._lifecycle('request_terminal', request_id=uid, reason=reason)
+        if cancel:
+            if self.cancel_request is not None:
+                try:
+                    self.cancel_request(uid)
+                except Exception as error:
+                    self.report('request_cancel_failed:' + type(error).__name__)
+            for playback_id in playback_ids:
+                self._stop_obsolete_speech(playback_id)
+        # Keep web, chime and actual unrelated playback gates intact.
+        self._reset_audio()
+        if (cancel and not self.input_has_aec and self._raw_playback_gate
+                and self.session.playback_id in playback_ids):
+            self._lifecycle('request_recovery_blocked', request_id=uid,
+                            reason='awaiting_playback_stop')
+            self.report('request_recovery_blocked:awaiting_playback_stop')
+        self.report('waiting_for_wake' if not self._input_blocked(self.clock())
+                    else 'waiting_for_input_gate:' + self._input_gate_reason(self.clock()))
+
+    def _stop_obsolete_speech(self, playback_id):
+        if not isinstance(playback_id, str) or not playback_id.strip() or len(playback_id) > 200:
+            return
+        try:
+            if self.stop_speech is not None:
+                self.stop_speech(playback_id)
+            else:
+                self.publish_control(playback_id, 'stop')
+        except Exception as error:
+            self.report('obsolete_speech_stop_failed:' + type(error).__name__)
+
+    def _expire_reply(self):
+        if self._reply_request_id is None:
+            return
+        now = self.clock()
+        if self._reply_deadline is not None and now >= self._reply_deadline:
+            self._finish_reply('reply_timeout', cancel=True)
+        elif self._reply_receipt_deadline is not None and now >= self._reply_receipt_deadline:
+            self._finish_reply('receipt_timeout', cancel=True)
+
+    def on_request_status(self, request_id, state, reason=''):
+        """Correlate Agent receipt/terminal status without extending total wait."""
+        if self.stopping.is_set():
+            return
+        self._expire_reply()
+        if request_id != self._reply_request_id or self._reply_request_id is None:
+            return
+        if state == 'accepted':
+            if self._reply_receipt_deadline is not None:
+                self._reply_receipt_deadline = None
+                self._lifecycle('request_accepted', request_id=request_id)
+        elif state in ('rejected', 'failed', 'cancelled'):
+            # Remote free-form reason is deliberately excluded from local diagnostics.
+            self._finish_reply('agent_' + state, cancel=True)
 
     def start(self):
         """Open one microphone and start the bounded capture and inference workers."""
@@ -238,12 +401,8 @@ class DialoguePipeline:
         if not was_active:
             if self.session.session_id:
                 self._input_status('failed', '')
-            reply_request_id = self._reply_request_id
-            retry_notice_deadline = self._retry_notice_deadline
-            self._terminate('web_talk_started')
             # A web call cannot complete an already accepted ordinary request.
-            self._reply_request_id = reply_request_id
-            self._retry_notice_deadline = retry_notice_deadline
+            self._terminate('web_talk_started', preserve_reply=True)
             self._tail_stream = None
             self._drain(self.results)
         if quiet and not self._web_talk_quiet:
@@ -252,10 +411,26 @@ class DialoguePipeline:
             self._stop_speech('')
         return True
 
-    def on_speech_request(self, playback_id):
+    def web_talk_is_active(self, lease_id):
+        """Check the current lease at acknowledgement time, including renewed TTL."""
+        self._expire_web_talk()
+        return bool(not self.stopping.is_set() and lease_id is not None
+                    and self._web_talk_lease_id == lease_id
+                    and self.clock() < self._web_talk_deadline)
+
+    def on_speech_request(self, playback_id, *, request_id=''):
         """Cancel Agent speech requested during a web talk before it is played."""
         if self.stopping.is_set():
             return
+        self._expire_reply()
+        if request_id and (self._request_is_retired(request_id)
+                           or self._request_in_history(self._quiescent_request_ids, request_id)):
+            self._stop_obsolete_speech(playback_id)
+            return
+        if request_id and request_id == self._reply_request_id:
+            self.on_request_status(request_id, 'accepted')
+            if len(self._reply_playback_ids) < 64:
+                self._reply_playback_ids.add(playback_id)
         self._expire_web_talk()
         if (self._web_talk_quiet and isinstance(playback_id, str)
                 and playback_id.strip() and len(playback_id) <= 200):
@@ -304,12 +479,26 @@ class DialoguePipeline:
                 self.session.session_id, uid, state)
 
     def _publish_transcript(self, utterance_id, text):
+        lifecycle, self._utterance_lifecycle = self._utterance_lifecycle, None
         if not self.session.session_id:
             # One wake accepts one ordinary request, including during reply generation.
             self._terminate('waiting_for_reply')
             self._reply_request_id = utterance_id
+            self._reply_receipt_deadline = self.clock() + self.receipt_timeout_s
+            self._reply_deadline = self.clock() + self.reply_timeout_s
+            self._reply_playback_ids = set()
             self._tail_stream = None
-        self.publish_transcript(utterance_id, text)
+            self._lifecycle('request_published', request_id=utterance_id,
+                            receipt_deadline=self._reply_receipt_deadline,
+                            reply_deadline=self._reply_deadline)
+        self._utterance_lifecycle = lifecycle
+        try:
+            self.publish_transcript(utterance_id, text)
+        except Exception:
+            self._finish_utterance_lifecycle('publish_failed')
+            self._finish_reply('publish_failed', cancel=True)
+            raise
+        self._finish_utterance_lifecycle('published')
 
     def _capture(self):
         try:
@@ -317,6 +506,10 @@ class DialoguePipeline:
                 generation = self._audio_generation
                 blocked = self._input_blocked(self.clock())
                 busy = self._busy or self._pending is not None
+                # The owner announces readiness only once a fresh read has
+                # started after all cue/gate resets. A crossing read is still
+                # discarded; no ADC timestamp is guessed to retain its tail.
+                self._capture_open_generation = generation if not blocked else None
                 try:
                     samples = self.recorder.read()
                 except MicrophoneOverflow:
@@ -367,6 +560,7 @@ class DialoguePipeline:
             with context:
                 error_detail = None
                 try:
+                    self._inference_started_at = monotonic()
                     # A reset can cancel a preview before the worker picks it up.
                     # Still return through results so endpoint ownership is released.
                     if generation != self._generation:
@@ -386,6 +580,7 @@ class DialoguePipeline:
                     if self.diagnostics is not None:
                         error_detail = str(error)[:2048]
                 finally:
+                    self._inference_started_at = None
                     pcm = None
                     if self.diagnostics is not None:
                         self.diagnostics.event('inference_result', text=text,
@@ -424,7 +619,10 @@ class DialoguePipeline:
         self._endpoint_final = None
         self._drain(self.audio)
 
-    def _terminate(self, reason):
+    def _terminate(self, reason, *, preserve_reply=False):
+        self._finish_utterance_lifecycle(reason)
+        if not preserve_reply:
+            self._finish_reply(reason, cancel=True)
         if self.session.session_id and reason.startswith((
                 'utterance_discarded:', 'transcription_queue_full',
                 'audio_queue_overflow')):
@@ -449,10 +647,10 @@ class DialoguePipeline:
         if callable(cancel):
             cancel()
         self._pending = None
-        self._reply_request_id = None
         self._retry_notice_deadline = None
         self._command_start_deadline = None
         self._utterance_playback_id = None
+        self._wake_ready_pending = False
         self._reset_audio()
         self._tail_stream = tail
         self.report(reason)
@@ -462,9 +660,17 @@ class DialoguePipeline:
         if self.stopping.is_set():
             return
         self._expire_web_talk()
+        self._expire_reply()
+        inference_started_at = self._inference_started_at
+        if (inference_started_at is not None
+                and monotonic() - inference_started_at >= self.inference_timeout_s):
+            self._finish_utterance_lifecycle('inference_timeout')
+            self.phase = 'transcribing'
+            raise RuntimeError('inference deadline exceeded')
         if self.capture_error is None and self._capture_timed_out():
             self.capture_error = RuntimeError('microphone input timeout')
         if self.capture_error is not None:
+            self._finish_utterance_lifecycle('microphone_failed:' + type(self.capture_error).__name__)
             self.phase = 'reading_microphone'
             raise self.capture_error
         if self._pending is not None and self.clock() >= self._pending[3]:
@@ -494,6 +700,7 @@ class DialoguePipeline:
             except Empty:
                 break
             if generation == self._audio_generation:
+                self._capture_open_generation = generation
                 self.feed(pcm, captured_at=captured_at, busy_at_capture=busy)
         if result is not None:
             if result[0] in ('endpoint', 'partial'):
@@ -510,6 +717,7 @@ class DialoguePipeline:
         if (self._retry_notice_deadline is not None
                 and self.clock() >= self._retry_notice_deadline):
             self._terminate('retry_notice_timeout')
+        self._report_input_gate(self.clock())
 
     def _expire_command_wait(self, captured_at):
         if (self._command_start_deadline is not None
@@ -519,12 +727,33 @@ class DialoguePipeline:
         return False
 
     def _input_blocked(self, captured_at):
-        return (self._web_talk_blocked(captured_at) or self._reply_request_id is not None
-                or self._chime_playing or captured_at < self._chime_gate_until) or (
-            not self.input_has_aec and (
-                self._raw_playback_gate or captured_at < self._raw_gate_until
-            )
-        )
+        return self._input_gate_reason(captured_at) is not None
+
+    def _input_gate_reason(self, captured_at):
+        if self._web_talk_blocked(captured_at):
+            return 'web_talk'
+        if self._reply_request_id is not None:
+            return 'reply_pending'
+        if self._chime_playing or captured_at < self._chime_gate_until:
+            return 'chime'
+        if not self.input_has_aec and (
+                self._raw_playback_gate or self._obsolete_playback_ids
+                or captured_at < self._raw_gate_until):
+            return 'raw_playback'
+        return None
+
+    def _report_input_gate(self, captured_at):
+        reason = self._input_gate_reason(captured_at)
+        if reason != self._last_gate_reason:
+            self._last_gate_reason = reason
+            self._lifecycle('input_gate', reason=reason or 'open')
+        if (reason is None and self._wake_ready_pending and self.session.active
+                and self.session.utterance_id is None
+                and (not self._started or self._capture_open_generation == self._audio_generation)):
+            self._wake_ready_pending = False
+            self._command_start_deadline = self.clock() + self.command_stream.settings.start_timeout_s
+            self.report('wake_input_ready')
+            self._lifecycle('input_ready', source='wake')
 
     def _publish_control(self, playback_id, command):
         if command == 'pause' and (
@@ -537,7 +766,12 @@ class DialoguePipeline:
     def feed(self, pcm, *, captured_at=None, busy_at_capture=False):
         """Consume captured PCM on the owner thread; the microphone remains open."""
         self._expire_web_talk()
+        if captured_at is None and not self._input_blocked(self.clock()):
+            # Explicit owner-thread PCM injection is itself evidence of a
+            # current, eligible capture boundary (the hardware path tags time).
+            self._capture_open_generation = self._audio_generation
         captured_at = self.clock() if captured_at is None else captured_at
+        self._report_input_gate(captured_at)
         if self.stopping.is_set() or self._input_blocked(captured_at):
             return
         self._event_time = captured_at
@@ -565,10 +799,14 @@ class DialoguePipeline:
                                          or self._pending is not None)
                 if self._discard_capture:
                     self.report('speech_discarded:busy')
+                    self._lifecycle('utterance_terminal', utterance_id=str(uuid4()),
+                                    session_id=self.session.session_id,
+                                    reason='busy', source='discarded_candidate')
                     continue
                 if self.session.active:
                     self._command_start_deadline = None
                     self._capture_id = self.session.user_speech_started()
+                    self._start_utterance_lifecycle(self._capture_id)
                     self._input_status('started', self._capture_id)
                     self._endpoint_result = None
                     self._stream = (self._stream_factory() if callable(self._stream_factory)
@@ -748,6 +986,8 @@ class DialoguePipeline:
             self._endpoint_requested_at = None
             self.report(f'endpoint_checked:wait_s={elapsed:.3f}')
         if generation != self._generation:
+            self._lifecycle('inference_discarded', utterance_id=uid,
+                            reason='stale_generation', inference_generation=generation)
             return
         if self._endpoint_final == key:
             self._endpoint_final = None
@@ -797,8 +1037,12 @@ class DialoguePipeline:
 
     def _accept_result(self, kind, generation, uid, text, error_name, retained_start_s=0.0):
         if generation != self._generation:
+            self._lifecycle('inference_discarded', utterance_id=uid,
+                            reason='stale_generation', inference_generation=generation)
             return
         if kind != 'wake' and (not self.session.active or uid != self.session.utterance_id):
+            self._lifecycle('inference_discarded', utterance_id=uid,
+                            reason='stale_utterance', inference_generation=generation)
             return
         failure = (
             'transcription_failed:' + error_name if error_name is not None
@@ -812,16 +1056,28 @@ class DialoguePipeline:
                 self._fail_command(failure)
             else:
                 # Agent-owned confirmations retain their correlated failure policy.
+                self._finish_utterance_lifecycle(failure)
                 self._input_status('failed', uid)
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
                 self.report(failure)
             return
         if kind == 'wake':
-            if is_wake_phrase(text):
+            command = split_wake_command(text)
+            if command is not None:
                 self.session.activate()
                 self._reset_audio()
                 self.report('wake_detected')
+                if command:
+                    # The wake decode already contains the complete captured command.
+                    # Preserve its suffix exactly and do not decode that PCM again.
+                    uid = self.session.user_speech_started()
+                    self._start_utterance_lifecycle(uid, source='wake_command')
+                    self._input_status('started', uid)
+                    self._utterance_playback_id = self.session.interrupted_playback_id
+                    self._play_endpoint_chime()
+                    self._accept_result('command', self._generation, uid, command, None)
+                    return
                 if self.on_wake is None:
                     self.report('wake_chime_unavailable')
                 else:
@@ -833,15 +1089,13 @@ class DialoguePipeline:
                     except Exception as error:
                         self._terminate('wake_chime_failed:' + type(error).__name__)
                     finally:
-                        self._chime_gate_until = self.clock() + 0.3
+                        self._chime_gate_until = self.clock() + (0.0 if self.input_has_aec else 0.3)
                         self._reset_audio()
                         self._chime_playing = False
                 if self.session.active:
-                    self._command_start_deadline = (
-                        max(self.clock(), self._chime_gate_until)
-                        + self.command_stream.settings.start_timeout_s)
-                    if self.diagnostics is not None:
-                        self.report('wake_input_ready')
+                    self._command_start_deadline = None
+                    self._wake_ready_pending = True
+                    self._report_input_gate(self.clock())
             else:
                 self.report('not_wake')
             return
@@ -862,13 +1116,68 @@ class DialoguePipeline:
         if self.stopping.is_set():
             return
         self.poll()
+        if request_id and self._request_in_history(self._quiescent_request_ids, request_id):
+            # TTS has already installed a tombstone and acknowledged physical
+            # silence. Delayed topic events cannot reintroduce this old sound.
+            if state in ('playing', 'paused'):
+                self._stop_obsolete_speech(playback_id)
+            return
+        if request_id and (self._request_is_retired(request_id)
+                           or self._obsolete_playback_ids.get(playback_id) == request_id):
+            if state in ('playing', 'paused'):
+                if (not self.input_has_aec and isinstance(playback_id, str)
+                        and playback_id.strip() and len(playback_id) <= 200
+                        and playback_id not in self._obsolete_playback_ids):
+                    # A cancellation can race a previously unseen PLAYING event.
+                    # Track its actual sound separately, without attaching an old
+                    # request to the new conversation or unlocking a new reply.
+                    if len(self._obsolete_playback_ids) >= MAX_RETIRED_REQUEST_IDS:
+                        raise RuntimeError('obsolete playback tracking overflow')
+                    self._obsolete_playback_ids[playback_id] = request_id
+                    if self.session.utterance_id is not None:
+                        self._terminate('utterance_discarded:obsolete_playback_without_aec',
+                                        preserve_reply=True)
+                    else:
+                        self._reset_audio()
+                self._stop_obsolete_speech(playback_id)
+            elif state in ('finished', 'failed', 'stopped'):
+                stopped_obsolete = self._obsolete_playback_ids.get(playback_id) == request_id
+                if stopped_obsolete:
+                    self._obsolete_playback_ids.pop(playback_id)
+                stopped_current = (
+                    playback_id == self.session.playback_id
+                    and self.session.playback_state in ('playing', 'paused'))
+                if stopped_current:
+                    # Only actual cessation of this exact old playback can
+                    # release its gate; never overwrite a newer playback.
+                    self.session.on_playback_status(playback_id, state, interim=interim)
+                    self._playback_request_id = None
+                    if not self.input_has_aec:
+                        self._raw_playback_gate = False
+                if not self.input_has_aec and (stopped_obsolete or stopped_current):
+                    self._raw_gate_until = self.clock() + 0.3
+                    self._reset_audio()
+            return
+        if request_id and request_id == self._reply_request_id:
+            if state in ('playing', 'paused'):
+                self.on_request_status(request_id, 'accepted')
+                if len(self._reply_playback_ids) < 64:
+                    self._reply_playback_ids.add(playback_id)
+            elif state in ('finished', 'failed', 'stopped'):
+                self._reply_playback_ids.discard(playback_id)
         if (self._web_talk_quiet and state in ('playing', 'paused')
                 and isinstance(playback_id, str) and playback_id.strip()):
             # A request that raced the web talk start is stopped as soon as it sounds.
             self._stop_speech(playback_id)
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
+        if self._wake_ready_pending or self._command_start_deadline is not None:
+            # Wake listening owns a five-second window from actual readiness;
+            # unrelated playback must not create an earlier competing deadline.
+            self.session.deadline = None
         current = (self.session.playback_id, self.session.playback_state)
+        if previous != current and current[0] == playback_id:
+            self._playback_request_id = request_id if current[1] in ('playing', 'paused') else None
         if previous != current and not self.input_has_aec:
             if current[1] in ('playing', 'paused') and self.session.utterance_id is not None:
                 self._terminate('utterance_discarded:playback_without_aec')
@@ -885,7 +1194,7 @@ class DialoguePipeline:
         if (self._reply_request_id is not None and request_id == self._reply_request_id
                 and not interim and state in ('finished', 'failed', 'stopped')):
             # Failed synthesis can terminate before PLAYING; progress cannot unlock input.
-            self._terminate('waiting_for_wake')
+            self._finish_reply('playback_' + state)
 
     def on_addressee(self, utterance_id, playback_id, decision):
         """Accept exactly one matching decision before the held candidate expires."""
@@ -901,16 +1210,27 @@ class DialoguePipeline:
             self._terminate('addressee_unknown:agent')
         elif decision in ('addressed', 'not_addressed'):
             self._pending = None
+            if decision == 'not_addressed':
+                self._finish_utterance_lifecycle('not_addressed')
             self.session.finish_utterance(uid, text, addressed=decision == 'addressed')
         else:
             self.report('invalid_addressee_decision')
+
+    def prepare_shutdown(self):
+        """Publish bounded request cancellation before potentially blocking cleanup."""
+        if self._shutdown_prepared:
+            return
+        self._shutdown_prepared = True
+        self._finish_utterance_lifecycle('shutdown')
+        self._finish_reply('shutdown', cancel=True)
+        self.stopping.set()
 
     def close(self):
         """Stop capture before deletion and suppress any late local inference result."""
         if self._closed:
             return
         self._closed = True
-        self.stopping.set()
+        self.prepare_shutdown()
         cancel = getattr(self.transcriber, 'cancel', None)
         if callable(cancel):
             cancel()
