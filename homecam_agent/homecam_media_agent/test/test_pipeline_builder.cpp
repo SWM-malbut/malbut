@@ -56,6 +56,24 @@ TEST(PipelineBuilder, BuildsX264AndJetsonPipelines)
   EXPECT_NE(jetson.find("kvs_video_sink"), std::string::npos);
 }
 
+TEST(PipelineBuilder, JetsonIdrIntervalFollowsConfiguredFrameRate)
+{
+  const auto format = video_format_from_ros("bgr8", 640, 400);
+  for (const int fps : {5, 15, 30}) {
+    SCOPED_TRACE(fps);
+    MediaConfig config;
+    config.encoder = "nvv4l2h264enc";
+    config.fps = fps;
+    const auto pipeline = build_video_pipeline(config, format, false);
+    const auto interval = std::to_string(fps * 2);
+    EXPECT_NE(
+      pipeline.find("iframeinterval=" + interval + " idrinterval=" + interval),
+      std::string::npos);
+    EXPECT_NE(pipeline.find("insert-sps-pps=true"), std::string::npos);
+    EXPECT_NE(pipeline.find("h264parse config-interval=-1"), std::string::npos);
+  }
+}
+
 TEST(PipelineBuilder, UsesSilenceWhenMicrophoneIsPrivate)
 {
   MediaConfig config;
