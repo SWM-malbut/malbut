@@ -100,3 +100,12 @@ class FallPlaceLocator:
     def locate(self, captured_at, box):
         geometry = self._frames.get(captured_at)
         return map_point(geometry, box) if geometry is not None else None
+
+    def locate_near(self, observed_at, box, *, tolerance_s=0.25):
+        """Pose runs on its own frames: use the nearest RGB geometry within tolerance."""
+        if not self._frames:
+            return None
+        stamp = min(self._frames, key=lambda t: abs(t - observed_at))
+        if abs(stamp - observed_at) > tolerance_s:
+            return None
+        return map_point(self._frames[stamp], box)

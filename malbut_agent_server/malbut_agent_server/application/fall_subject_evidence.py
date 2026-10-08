@@ -67,6 +67,11 @@ class FallSubjectEvidence:
         entry = self._frames.get(observed_at, {}).get(subject_key)
         return entry[0] if entry is not None else None
 
+    def frames_since(self, observed_at):
+        """Measured subjects in frames at or after this time, oldest first."""
+        return tuple((stamp, tuple(pose for _, pose in entries.values()))
+                     for stamp, entries in self._frames.items() if stamp >= observed_at)
+
     def at(self, observed_at):
         """Exact measured sample only; never backfill with a nearby Pose box."""
         return tuple((key, token, pose) for key, (token, pose) in

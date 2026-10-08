@@ -801,6 +801,21 @@ def test_one_switch_gives_fall_pose_and_map_places_the_aligned_depth(launch_modu
         '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info')
 
 
+@pytest.mark.parametrize('switch', ['false', 'true'])
+def test_fall_approach_switch_starts_the_drive_node_and_tells_the_runtime(
+        launch_module, fall_config, switch):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), fall_approach=switch)
+    actions = module._setup(context)
+    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+    assert monitor['approach_enabled'] is (switch == 'true')
+    drivers = _nodes(actions, 'fall_approach')
+    assert len(drivers) == (switch == 'true')
+    if drivers:
+        params = _parameters(context, drivers[0])
+        assert (params['global_frame'], params['robot_frame']) == ('map', 'base_footprint')
+
+
 @pytest.mark.parametrize('changes', [
     {'fall_camera_height_m': '0'}, {'fall_camera_height_m': 'tall'},
     {'fall_camera_pitch_rad': '1.0'},

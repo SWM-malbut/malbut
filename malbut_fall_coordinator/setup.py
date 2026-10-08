@@ -22,5 +22,6 @@ setup(
     tests_require=['pytest'],
     entry_points={'console_scripts': [
         'fall_coordinator = malbut_fall_coordinator.node:main',
+        'fall_approach = malbut_fall_coordinator.fall_approach_node:main',
     ]},
 )

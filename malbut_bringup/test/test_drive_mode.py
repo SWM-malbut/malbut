@@ -199,3 +199,86 @@ def test_the_upload_offers_following_only_while_its_server_is_up():
         snapshot['servers'] = {'manager': True, 'autoslam': True, 'follow_person': up}
         assert state_payload(snapshot, info, [])['driveMode']['detail'][
             'available_modes'] == offered
+
+
+# ---------------------------------------------------------------- fall check stops a patrol
+
+from datetime import datetime, timezone  # noqa: E402
+
+from malbut_bringup.drive_mode import PatrolFallStops  # noqa: E402
+
+T0 = datetime(2026, 10, 8, 1, 0, 0, tzinfo=timezone.utc)
+
+
+def _fall(capability='fall_approach', where='pending_missions'):
+    return {where: [{'mission_id': COMMAND_ID, 'capability_id': capability, 'mode': 0,
+                     'priority': 3, 'state': 0}]}
+
+
+def _approach(phase, outcome, seconds=5):
+    return {'request_id': 'q', 'phase': phase, 'outcome': outcome,
+            'at': T0.replace(second=seconds).isoformat()}
+
+
+CANCELED = dict(state='idle', detail='Patrol canceled')
+
+
+def _stopped_by_fall(stops):
+    assert stops.observe(_system(), _status(), None) is None
+    return stops.observe(_fall(), _status(**CANCELED), None)
+
+
+def test_a_patrol_stopped_by_a_fall_check_says_so_and_does_not_resume():
+    stops = PatrolFallStops(clock=lambda: T0)
+    stop = _stopped_by_fall(stops)
+    assert stop == {'stopped_at': T0.isoformat(), 'fall_result': 'pending', 'returned': False}
+    mode = robot_drive_mode(_fall(), _status(**CANCELED), None, ready=True, can_follow=False,
+                            fall_stop=stop)
+    result = mode['detail']['last_patrol']
+    assert result['outcome'] == 'fall_check' and result['fall_result'] == 'pending'
+    assert mode['detail']['fall_check_active'] is True
+    stops.observe(_fall('fall_approach', 'active_foreground_missions'), _status(**CANCELED),
+                  _approach('approach', 'arrived'))
+    stop = stops.observe({}, _status(**CANCELED), _approach('return', 'returned', 40))
+    assert stop['fall_result'] == 'not_a_person' and stop['returned'] is True
+    mode = robot_drive_mode({}, _status(**CANCELED), None, ready=True, can_follow=False,
+                            fall_stop=stop)
+    assert mode['mode'] == 'idle' and mode['detail']['fall_check_active'] is False
+    assert mode['detail']['available_modes'] == ['patrol']  # Restart is the user's choice.
+
+
+@pytest.mark.parametrize('steps,expected', [
+    ([(_fall('fall_confirmation', 'active_foreground_missions'), None)], 'pending'),
+    ([({}, None)], 'asked'),
+    ([(_fall('fall_approach', 'active_foreground_missions'), _approach('approach', 'no_path'))],
+     'unreachable'),
+    ([(_fall('fall_approach', 'active_foreground_missions'), _approach('approach', 'arrived')),
+      (_fall('fall_confirmation', 'active_foreground_missions'),
+       _approach('approach', 'arrived'))],
+     'person'),
+])
+def test_the_check_result_follows_the_fall_missions(steps, expected):
+    stops = PatrolFallStops(clock=lambda: T0)
+    _stopped_by_fall(stops)
+    for system, approach in steps:
+        stop = stops.observe(system, _status(**CANCELED), approach)
+    assert stop['fall_result'] == expected
+
+
+def test_a_users_stop_or_an_old_stop_is_not_blamed_on_a_fall():
+    stops = PatrolFallStops(clock=lambda: T0)
+    assert stops.observe(_system(), _status(), None) is None
+    assert stops.observe({}, _status(**CANCELED), None) is None  # The user pressed 중지.
+    assert stops.observe(_fall(), _status(**CANCELED), None) is None  # Fall later, while idle.
+    mode = robot_drive_mode(_fall(), _status(**CANCELED), None, ready=True, can_follow=False,
+                            fall_stop=None)
+    assert mode['detail']['last_patrol']['outcome'] == 'stopped'
+
+
+def test_a_new_patrol_clears_the_fall_reason_and_old_results_are_ignored():
+    stops = PatrolFallStops(clock=lambda: T0)
+    _stopped_by_fall(stops)
+    earlier = dict(_approach('return', 'returned'), at='2026-10-08T00:59:55+00:00')
+    assert stops.observe({}, _status(**CANCELED), earlier)['fall_result'] == 'asked'
+    assert stops.observe(_system(), _status(), None) is None
+    assert stops.stop is None

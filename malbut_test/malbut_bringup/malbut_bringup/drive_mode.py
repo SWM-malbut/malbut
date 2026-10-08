@@ -10,6 +10,7 @@ patrol or a person following in progress with its mission ID as the session, or 
 with the last patrol's result. The real robot cannot pause either, only stop it.
 """
 
+from datetime import datetime, timezone
 import math
 import re
 
@@ -30,6 +31,9 @@ _PHASES = ('planning', 'navigating', 'observing', 'stopping')
 _PARTIAL = 'No usable untried viewpoint remains'
 _WAITING = 'Waiting for a patrol goal'
 MAX_ROOM_NAMES = 32
+# A fall check takes the wheels (URGENT): the patrol ends and never resumes itself.
+FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
+_UNREACHED = ('no_map', 'no_path', 'timeout', 'failed')
 
 
 def drive_mission(system):
@@ -73,7 +77,79 @@ def last_patrol(status):
             'inaccessible_rooms': _rooms(status.get('inaccessible_rooms'))}
 
 
-def robot_drive_mode(system, patrol, tracking, *, ready, can_follow):
+def fall_check_active(system):
+    """Report whether a fall check runs or waits, so a new patrol would be refused."""
+    return any(isinstance(mission, dict) and mission.get('capability_id') in FALL_MISSIONS
+               for key in _MISSION_LISTS for mission in (system or {}).get(key) or [])
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+class PatrolFallStops:
+    """
+    Remember that the last patrol stopped for a fall check, and how the check ended.
+
+    The patrol node cannot tell a user stop from a preemption; the Manager's
+    mission list can: a fall mission was running or waiting when it ended.
+    """
+
+    def __init__(self, clock=_now):
+        self._clock = clock
+        self._was_running = False
+        self._arrived = False
+        self._since = None
+        self.stop = None
+
+    def observe(self, system, patrol, approach):
+        running = bool(drive_mission(system)) or (
+            isinstance(patrol, dict) and patrol.get('state') in _PHASES)
+        active = fall_check_active(system)
+        result = last_patrol(patrol) if isinstance(patrol, dict) else None
+        if running:
+            if not self._was_running:
+                self.stop = None  # A new patrol: the old reason no longer applies.
+            self._was_running = True
+            return None
+        if self._was_running and result and result['outcome'] == 'stopped' and active:
+            self._since = self._clock()
+            self._arrived = False
+            self.stop = {'stopped_at': self._since.isoformat(timespec='seconds'),
+                         'fall_result': 'pending', 'returned': False}
+        if result is not None:
+            self._was_running = False
+        if self.stop is None:
+            return None
+        self._update(system, approach, active)
+        return dict(self.stop)
+
+    def _update(self, system, approach, active):
+        if isinstance(approach, dict) and self._after(approach.get('at')):
+            phase, outcome = approach.get('phase'), approach.get('outcome')
+            if phase == 'approach' and outcome == 'arrived':
+                self._arrived = True
+            elif phase == 'approach' and outcome in _UNREACHED:
+                self.stop['fall_result'] = 'unreachable'
+            elif phase == 'return':
+                self.stop.update(fall_result='not_a_person', returned=outcome == 'returned')
+        if self.stop['fall_result'] != 'pending':
+            return
+        confirming = any(isinstance(m, dict) and m.get('capability_id') == 'fall_confirmation'
+                         for key in _MISSION_LISTS for m in (system or {}).get(key) or [])
+        if self._arrived and confirming:
+            self.stop['fall_result'] = 'person'
+        elif not active and not self._arrived:
+            self.stop['fall_result'] = 'asked'  # No drive: asked from where it stood.
+
+    def _after(self, value):
+        try:
+            return datetime.fromisoformat(str(value)) >= self._since.replace(microsecond=0)
+        except (TypeError, ValueError):
+            return False
+
+
+def robot_drive_mode(system, patrol, tracking, *, ready, can_follow, fall_stop=None):
     """
     Return the drive mode for the state upload.
 
@@ -94,10 +170,15 @@ def robot_drive_mode(system, patrol, tracking, *, ready, can_follow):
         'can_pause': False,
         'thoroughness_levels': list(THOROUGHNESS_LEVELS),
         'follow_distance_m': FOLLOW_DISTANCE_M,
+        'fall_check_active': fall_check_active(system),
     }
     if mission is None:
         result = last_patrol(patrol) if patrol else None
         if result is not None:
+            if result['outcome'] == 'stopped' and isinstance(fall_stop, dict):
+                result.update(outcome='fall_check', stopped_at=fall_stop.get('stopped_at'),
+                              fall_result=fall_stop.get('fall_result'),
+                              returned=fall_stop.get('returned') is True)
             detail['last_patrol'] = result
         return {'mode': 'idle', 'state': 'idle', 'sessionId': None, 'message': None,
                 'detail': detail}

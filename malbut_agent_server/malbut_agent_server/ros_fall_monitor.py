@@ -74,12 +74,15 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 'place_projection_frame', '',
                 descriptor=ParameterDescriptor(read_only=True)).value
             self.place = FallPlaceLocator() if depth_topic and info_topic else None
+            approach = self.declare_parameter(
+                'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
             self.monitor = CloudFallMonitor(
                 device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
                 buffer=FallFrameBuffer(retention_s=settings.retention_s,
                                        max_bytes=settings.buffer_bytes,
                                        max_frames=settings.buffer_frames),
                 provider=provider, journal=journal, clock=clock, place_locator=self.place)
+            self.monitor.approach_enabled = bool(approach)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(
@@ -148,6 +151,9 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
         def on_system_state(self, message):
             self.guarded('mission_state_invalid', self.control.set_mapping,
                          mapping_active(message))
+            self.monitor.set_running_missions(
+                mission.capability_id for mission in (*message.active_foreground_missions,
+                                                      *message.active_background_missions))
 
         def on_settings(self, request, response):
             result = self.control.apply_settings(**{

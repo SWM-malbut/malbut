@@ -1,0 +1,38 @@
+schema_version: 1
+
+capability:
+  id: fall_approach
+  title: 낙상 의심 장소 확인하러 가기
+  description: 사람인지 확실하지 않은 낙상 의심 장소 1 m 앞까지 금지 구역을 피해 가서 바라보거나, 확인 뒤 원래 자리로 돌아간다.
+
+command:
+  kind: ACTION
+  name: /malbut/falls/approach
+  type: malbut_interfaces/action/FallApproach
+
+input:
+  fields:
+    request_id:
+      type: string
+      description: 낙상 코디네이터의 확인 요청 식별자(질문 ID)
+    phase:
+      type: string
+      description: approach(가기) 또는 return(돌아가기)
+    x:
+      type: float64
+      description: 의심 장소의 지도 x 좌표(m)
+      default: 0.0
+    y:
+      type: float64
+      description: 의심 장소의 지도 y 좌표(m)
+      default: 0.0
+    standoff_m:
+      type: float64
+      description: 의심 장소 앞에서 멈출 거리(m)
+      default: 1.0
+
+execution:
+  mode: FOREGROUND
+  priority: URGENT
+  resources: [BASE]
+  map_requirement: SELECTED

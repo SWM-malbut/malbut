@@ -21,6 +21,7 @@ import uuid
 
 import yaml
 
+from .drive_mode import PatrolFallStops
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zones import (
@@ -53,6 +54,7 @@ TELEOP_MAX_HOLD_S = 2.0
 ZONES_STATE_TOPIC = '/malbut/zones/state'
 # Room patrol's stage, coverage and last result, whoever started it (지도 탭 자율주행).
 PATROL_STATUS_TOPIC = '/patrol/status'
+FALL_APPROACH_STATUS_TOPIC = '/malbut/falls/approach/status'
 MISSION_ACTION = '/malbut/mission/execute'
 MAX_ZONE_REQUEST_BYTES = 64 * 1024
 # RViz's 2D Pose Estimate spread: 0.5 m and about 15 degrees.
@@ -339,6 +341,10 @@ class PanelData:
         self.voice = {'ready': False, 'mode': 'unavailable'}
         self.zones = None
         self.patrol = None
+        # Why the last patrol stopped when a fall check took the wheels.
+        self.fall_approach = None
+        self.patrol_fall_stops = PatrolFallStops()
+        self.patrol_fall = None
         self.manual = {'state': 'IDLE', 'message': ''}
         self.frames = {}
         self.encoded = (None, b'')
@@ -415,7 +421,7 @@ class PanelData:
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
                 'recent_results': self.recent_results,
                 'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
-                'patrol': self.patrol,
+                'patrol': self.patrol, 'patrol_fall': self.patrol_fall,
                 'voice': self.voice, 'tracking_observed_at': self.tracking_observed_at,
                 'observations': {'person': self.person_observation},
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
@@ -545,6 +551,9 @@ class RosBridge:
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 String, PATROL_STATUS_TOPIC, self._patrol,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, FALL_APPROACH_STATUS_TOPIC, self._fall_approach,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 OccupancyGrid, self.topics['map_topic'], self._map,
@@ -763,6 +772,22 @@ class RosBridge:
         if isinstance(state, dict) and len(message.data) <= 16 * 1024:
             with self.data.lock:
                 self.data.patrol = state
+                self._observe_fall_stop()
+
+    def _fall_approach(self, message):
+        try:
+            state = json.loads(message.data)
+        except ValueError:
+            return
+        if isinstance(state, dict) and len(message.data) <= 4096:
+            with self.data.lock:
+                self.data.fall_approach = state
+                self._observe_fall_stop()
+
+    def _observe_fall_stop(self):
+        data = self.data
+        data.patrol_fall = data.patrol_fall_stops.observe(
+            data.system, data.patrol, data.fall_approach)
 
     def _zones(self, message):
         try:
@@ -966,6 +991,7 @@ class RosBridge:
     def _system(self, message):
         with self.data.lock:
             self.data.system = self.to_dict(message)
+            self._observe_fall_stop()
 
     def _tracking(self, message):
         with self.data.lock:
