@@ -48,6 +48,16 @@ def test_a_start_with_the_last_map_shows_loading_then_a_good_match_is_ok():
     assert not retry
 
 
+def test_the_resident_managers_standby_state_is_still_loading():
+    check = MapCheck()
+    check.started('home.yaml')
+    standby = _localization('ERROR', None, 'robot runtime is stopped')
+    view, _ = _update(check, localization=standby, saved=False)
+    assert view['phase'] == 'loading'
+    view, _ = _update(check, localization=_localization())
+    assert view['phase'] == 'ok' and view['auto']
+
+
 def test_a_poor_match_searches_once_more_then_warns():
     check = MapCheck()
     check.started('home.yaml')
@@ -91,6 +101,11 @@ def test_no_retry_over_the_users_mission_or_a_lost_request():
     patrol = {'active_foreground_missions': [{'capability_id': 'patrol'}]}
     view, retry = _update(check, localization=_localization(message=FOUND_LOW), system=patrol)
     assert not retry and view['phase'] == 'low'
+    check = MapCheck()
+    query = {'active_background_missions': [{'capability_id': 'device_operation'}],
+             'pending_missions': [{'capability_id': 'get_weather'}]}
+    _, retry = _update(check, localization=_localization(message=FOUND_LOW), system=query)
+    assert retry, 'status and weather queries do not hold the base'
     check = MapCheck()
     localization = _localization(message='saved map loaded; pose not found (global search '
                                  'matched only 40% of the scan)', pose_ready=False)

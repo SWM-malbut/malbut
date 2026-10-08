@@ -20,6 +20,10 @@ MATCH_MIN = 0.75
 # The retry is a manager mission; it shows up there shortly after it is sent.
 RETRY_APPEAR_S = 10.0
 PERCENT = re.compile(r'(\d{1,3})% of the scan')
+# A resident Manager keeps this state while Bringup is off; it is not a result.
+STANDBY = 'robot runtime is stopped'
+# Background work the resident Manager runs; it does not hold the base.
+BACKGROUND = frozenset({'device_operation', 'get_weather', 'set_weather_location'})
 
 
 def message_match(message):
@@ -49,7 +53,9 @@ def _relocalizing(system):
 
 
 def _busy(system):
-    return bool(system.get('active_foreground_missions') or system.get('pending_missions'))
+    return bool(system.get('active_foreground_missions')) or any(
+        not isinstance(item, dict) or item.get('capability_id') not in BACKGROUND
+        for item in system.get('pending_missions') or [])
 
 
 class MapCheck:
@@ -88,6 +94,8 @@ class MapCheck:
             self.reset()
             return {'phase': None}, False
         mode = localization.get('mode')
+        if mode == 'ERROR' and localization.get('message') == STANDBY:
+            mode = None
         name = Path(localization['map']).name if localization.get('map') else None
         if mode in (None, 'SWITCHING'):
             loading = (self.auto_map is not None and not self.settled
