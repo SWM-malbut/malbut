@@ -57,7 +57,8 @@ def _setup(context):
                  'control_server:=none', 'manager_commands:=true',
                  'device_operations:=true',
                  f'node_namespace:={namespace}', *arguments],
-            name='resident_speech', output='screen', additional_env=environment,
+            # Keep both streams in launch logs without echoing stderr to the terminal.
+            name='resident_speech', output={'both': 'log'}, additional_env=environment,
             # The child LaunchService needs its own 5s INT + 5s TERM window
             # to reap speech workers before this outer launch terminates it.
             sigterm_timeout='20',
