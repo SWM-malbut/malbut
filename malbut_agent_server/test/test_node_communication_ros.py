@@ -15,7 +15,9 @@ yaml = pytest.importorskip('yaml')
 
 from action_msgs.msg import GoalStatus  # noqa: E402
 from malbut_interfaces.action import ExecuteMission, FollowPerson  # noqa: E402
-from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript  # noqa: E402
+from malbut_interfaces.msg import (  # noqa: E402
+    SpeechInputStatus, SpeechRequest, SpeechRequestStatus, SpeechTranscript,
+)
 from rclpy.action import (  # noqa: E402
     ActionClient, ActionServer, CancelResponse, GoalResponse,
 )
@@ -208,6 +210,7 @@ def communication(tmp_path, monkeypatch):
     received = []
     events = []
     receipts = []
+    request_statuses = []
     providers = []
     original_receive = tts_receiver.receive_text
     original_receipt = SpeechReceiptStore.receive
@@ -297,12 +300,19 @@ def communication(tmp_path, monkeypatch):
         monkeypatch.setattr(agent.dialogue, 'close', close_dialogue)
         tts = tts_receiver.create_receiver_node()
         sender = Node('communication_test_sender')
+        sender.create_subscription(
+            SpeechRequestStatus, '/malbut/speech/request_status',
+            request_statuses.append, 10,
+        )
         nodes.extend([tts, sender])
         for node in nodes:
             executor.add_node(node)
         thread.start()
         _wait_until(lambda: agent.count_subscribers(
             '/malbut/speech/response',
+        ) == 1)
+        _wait_until(lambda: agent.count_subscribers(
+            '/malbut/speech/request_status',
         ) == 1)
         for get_endpoints in (
             agent.get_publishers_info_by_topic,
@@ -320,6 +330,7 @@ def communication(tmp_path, monkeypatch):
             agent=agent, follow=follow, events=events,
             speech=received, sender=sender, db=tmp_path / 'speech.sqlite3',
             receipts=receipts,
+            request_statuses=request_statuses,
             stop_agent=agent_stop.set, agent_thread=agent_thread,
             dialogue_closing=closing,
         )
@@ -697,9 +708,11 @@ def test_busy_dialogue_keeps_new_receipt_available_for_retry(communication):
         _publish_transcript(graph, f'queued-{index}', f'대화 {index}')
     _wait_until(lambda: graph.receipts == ['received'] * 10)
     _publish_transcript(graph, 'queued-10', '대화 10')
-    _wait_until(lambda: graph.speech == [
-        '앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.',
-    ])
+    _wait_until(lambda: any(
+        (status.request_id, status.state, status.reason) == ('queued-10', 'rejected', 'busy')
+        for status in graph.request_statuses
+    ))
+    assert graph.speech == []
     _publish_transcript(graph, 'queued-0', '대화 0')
     _wait_until(lambda: graph.receipts == ['received'] * 10 + ['duplicate'])
     with sqlite3.connect(graph.db) as connection:

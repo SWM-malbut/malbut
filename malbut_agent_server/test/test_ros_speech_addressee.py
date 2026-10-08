@@ -284,6 +284,45 @@ def test_provider_cancellation_is_a_silent_terminal_status(node):
     assert node._pending_speech_requests == set()
 
 
+@pytest.mark.parametrize('text,outcome', [('first', 'duplicate'), ('different', 'conflict')])
+def test_cancelled_redelivery_preserves_receipt_observation_without_work(
+    node, monkeypatch, text, outcome,
+):
+    node._receive_speech(request(uid='cancelled', text='first'))
+    node._cancel_request(SimpleNamespace(request_id='cancelled'), SimpleNamespace())
+    observed = []
+    original = node._receipts.receive
+
+    def receive(uid, value):
+        result = original(uid, value)
+        observed.append(result)
+        return result
+
+    monkeypatch.setattr(node._receipts, 'receive', receive)
+    node._receive_speech(request(uid='cancelled', text=text))
+    assert observed == [outcome]
+    assert node.dialogue.requests == [('cancelled', 'first')]
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    assert node.sent[ros_communication.REQUEST_STATUS_TOPIC][-1].state == 'cancelled'
+    assert node._receipts.lookup('cancelled', 'first') == 'duplicate'
+
+
+@pytest.mark.parametrize('error', [ValueError('invalid'), sqlite3.OperationalError('closed')])
+def test_cancelled_redelivery_lookup_error_cannot_replace_terminal_state(
+    node, monkeypatch, error,
+):
+    node._cancel_request(SimpleNamespace(request_id='cancelled'), SimpleNamespace())
+
+    def lookup(*_args):
+        raise error
+
+    monkeypatch.setattr(node._receipts, 'lookup', lookup)
+    node._receive_speech(request(uid='cancelled', text='late'))
+    assert node.dialogue.requests == []
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    assert node.sent[ros_communication.REQUEST_STATUS_TOPIC][-1].state == 'cancelled'
+
+
 def test_speech_requests_have_distinct_playback_ids_and_preserve_content(node):
     """Observers can join repeated text to its own TTS playback statuses."""
     text = '  별말씀을요.\n'

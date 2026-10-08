@@ -139,7 +139,8 @@ def create_communication_node(
                         device_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
                         self.create_subscription(
                             String, '/malbut/manager/device_state',
-                            lambda message: self.speech_missions.observe_device_state(message.data),
+                            lambda message: self.speech_missions.observe_device_state(
+                                message.data),
                             device_qos,
                         )
                     if navigation_targets is not None:
@@ -292,14 +293,28 @@ def create_communication_node(
                 if getattr(message, 'session_id', ''):
                     self.situation.transcript(message)
                 else:
-                    self._publish_request_status(message.utterance_id, 'rejected', 'confirmation_active')
+                    self._publish_request_status(
+                        message.utterance_id, 'rejected', 'confirmation_active')
                 return
             if getattr(message, 'session_id', ''):
                 # A late answer from an ended confirmation is not ordinary chat.
                 return
             utterance_id, text = message.utterance_id, message.text
-            known = self._request_states.get(utterance_id) if isinstance(utterance_id, str) else None
+            known = (
+                self._request_states.get(utterance_id)
+                if isinstance(utterance_id, str) else None
+            )
             if known is not None and known[0] == 'cancelled':
+                try:
+                    validate_dialogue_input(utterance_id, text)
+                    # Preserve duplicate/conflict observations without admitting
+                    # a late first delivery reserved by cancellation.
+                    if self._receipts.lookup(utterance_id, text) is not None:
+                        receive_transcript(
+                            self._receipts, utterance_id, text, self.get_logger(),
+                        )
+                except (ValueError, sqlite3.Error):
+                    self.get_logger().warning('cancelled speech receipt unavailable')
                 self._publish_request_status(utterance_id, *known)
                 return
             try:
@@ -461,7 +476,8 @@ def create_communication_node(
             operation_event = False
             if self.speech_missions is not None:
                 operation_event = self.speech_missions.handle(event)
-                operation_event = operation_event and isinstance(self.speech_missions, RobotOperations)
+                operation_event = operation_event and isinstance(
+                    self.speech_missions, RobotOperations)
             self.get_logger().info(json.dumps(
                 {'event': 'mission_event', **event}, ensure_ascii=False,
             ))
