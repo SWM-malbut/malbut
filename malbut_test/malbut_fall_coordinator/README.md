@@ -34,3 +34,29 @@ VLM 분석·사건 상태·저장·업로드는 기존 `malbut_agent_server` 런
 
 `fall_confirmation.yaml`만 일반 Capability로 등록한다. 동의 설정 변경 Service는
 Agent가 임의로 호출할 수 있도록 Manifest에 노출하지 않는다.
+
+## 다가가 확인하기 (2026-10-08)
+
+사람인지 확실하지 않은 낙상 의심(Cloud만 찾았거나 Pose 박스가 약함)은 묻기 전에 먼저 가까이 가서 본다.
+런타임이 `question_requested`에 `approach_target{x, y, frame: map}`을 붙였을 때만이다(런치 `fall_approach`,
+기본 꺼짐. 지도 좌표가 필요해 깊이 스위치 `fall_depth_aligned_to_rgb`도 켜져 있어야 한다).
+
+```
+approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역을 피해 1 m 앞, 의심 장소를 바라봄
+  ├ 못 감(no_map·no_path·timeout·failed, Manager 거부=rejected) → approach_result → 그 자리에서 fall_confirmation
+  └ arrived → approach_result → 런타임이 가까이서 확인(Pose 3초, 없으면 Cloud 1회) → person_check_completed
+       ├ person(애매·실패 포함) → fall_confirmation(같은 질문 ID)
+       ├ not_a_person → 질문 없음. 런타임이 사건을 not_a_person으로 종료 → fall_approach(phase=return) → return_result
+       └ 15초 안에 답 없음 → 그 자리에서 fall_confirmation
+```
+
+- 다가가기 노드 `fall_approach`(이 패키지): `/malbut/falls/approach` `FallApproach` 액션 서버.
+  ComputePathToPose(GridBased, keepout 반영) → 1 m 원에서 자름(사람 따라가기 `path_to_standoff`와 같은 규칙인
+  `standoff_route`. tracking 패키지에 의존하지 않아 Agent CI에 감지기 빌드가 끌려오지 않음) →
+  FollowPath → Spin으로 바라봄. 이동 60초 상한. 시작 위치를 질문 ID별로 저장해 return에서 돌아간다.
+  결과는 `/malbut/falls/approach/status`(래치 JSON)에도 낸다(웹 순찰 카드의 "낙상 확인으로 멈춤").
+- 능력 `fall_approach.yaml`: URGENT, `[BASE]`, `map_requirement: SELECTED`. 지도가 없거나 위치 전환 중이면
+  Manager가 거부하고 코디네이터는 그 자리에서 묻는다.
+- 멈춘 순찰·따라가기는 자동으로 다시 시작하지 않는다(기존 규칙). 웹 순찰 카드가 멈춘 이유와 결과를 보여 준다.
+- 결정(코디네이터 → 런타임): `approach_result`, `return_result` = `boot_id, incident_id, question_id,
+  evidence_revision, outcome`.

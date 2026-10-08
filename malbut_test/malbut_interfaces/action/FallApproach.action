@@ -1,0 +1,23 @@
+# Drive near an uncertain fall suspicion to look closely, or back afterwards.
+# The fall coordinator owns the sequence; no question or alert happens here.
+string APPROACH=approach
+string RETURN=return
+string request_id
+string phase
+# Map frame point of the suspicion (approach only).
+float64 x
+float64 y
+# Stop this far from the point, facing it (approach only).
+float64 standoff_m 1.0
+---
+string ARRIVED=arrived
+string RETURNED=returned
+string NO_MAP=no_map
+string NO_PATH=no_path
+string TIMEOUT=timeout
+string FAILED=failed
+string outcome
+string detail
+---
+# PLANNING, DRIVING, TURNING
+string phase

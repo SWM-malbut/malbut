@@ -38,6 +38,19 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   꺼져 있으면 대상 미확인 사건은 화면 위치로 같은 자리를 판단한다.
 실기 확인 전에는 켜지 않는다: 정렬, 카메라 높이, 같은 물건을 두 위치에서 찍은 지도 좌표 차이를 먼저 확인한다.
 
+2026-10-08 다가가 확인하기(런치 `fall_approach`, 기본 꺼짐, 깊이 스위치 필요):
+- 질문할 때 사람이 확실하지 않으면(대상 미확인 사건이거나, 대상 Pose가 약하거나 관절로 잴 수 없음)
+  지도 좌표를 `approach_target`으로 붙이고 `approach_started`(reason `patrol_stopped`/`follow_stopped`/null)를 남긴다.
+  확실한 Pose 사람이거나 지도 좌표가 없으면 지금처럼 바로 묻는다.
+- 코디네이터의 `approach_result`를 `approach_completed`(reason = outcome)로 남긴다. `arrived`면 3초 동안
+  새 Pose에서 확실한 사람(0.45 이상 + 관절)이 목표 1 m 안(지도 좌표가 없으면 화면 가운데 절반)에 보이는지 본다.
+  없으면 Cloud에 가까이서 찍은 RGB 3장으로 "사람 몸인가"만 한 번 묻는다(`check_person`, 전용 지시문).
+- `person_check_completed`(reason `person`/`not_a_person`, Cloud 설명은 analysis purpose `person_check`).
+  사람·애매·실패·Cloud 차단은 `person`(묻기). `not_a_person`이면 사건을 `incident_resolved`(reason `not_a_person`)로
+  닫는다. 그 사건의 분석이 진행 중이면 닫지 않고 묻는다.
+- `return_result`는 `approach_returned`(reason `returned`/`return_failed`)로 남긴다.
+- 웹은 이 이벤트들과 `not_a_person` 종료를 받아야 하므로 웹을 먼저 배포한다.
+
 실시간 영상 추적은 **선택 기능이며 기본 OFF**다. `tracking: null` 또는 필드 생략이면
 기존 동작을 유지한다. GPU·모델을 자동 설치하거나 CPU로 대신 실행하지 않는다.
 켜려면 실제 런타임 JSON의 `tracking`을 다음 객체로 바꾼다. 아래 경로는 예시다.

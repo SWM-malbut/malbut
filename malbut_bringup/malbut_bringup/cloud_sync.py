@@ -372,7 +372,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             snapshot.get('system'), snapshot.get('patrol'), _json_object(snapshot.get('tracking')),
             ready=bool(mode == 'navigation' and runtime.get('ready') and pose
                        and servers.get('manager')),
-            can_follow=bool(servers.get('follow_person'))),
+            can_follow=bool(servers.get('follow_person')),
+            fall_stop=snapshot.get('patrol_fall')),
         'mapRevision': int(map_info.get('version', 0)),
         'observedAt': observed_at or datetime.now(timezone.utc).isoformat(),
     }

@@ -50,6 +50,9 @@ def defaults():
         # Floor to optical centre: URDF camera_z 0.0919 above base_link + 0.028.
         'fall_camera_height_m': '0.12',
         'fall_camera_pitch_rad': '0.0',
+        # Drive 1 m in front of an uncertain suspicion before asking. Needs the
+        # depth switch for map points; off until checked on the robot.
+        'fall_approach': 'false',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',

@@ -21,7 +21,7 @@ ARGUMENTS = [
     'fall_pose_execution_provider', 'fall_pose_intra_op_num_threads',
     'fall_pose_opencv_num_threads', 'fall_pose_allow_spinning', 'rgb_topic', 'odom_topic',
     'depth_topic', 'global_frame', 'fall_depth_aligned_to_rgb', 'fall_depth_camera_info_topic',
-    'fall_camera_height_m', 'fall_camera_pitch_rad',
+    'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_approach', 'robot_frame',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
 ]
 
@@ -68,6 +68,7 @@ def _setup(context):
         if not 0.0 < camera_height < 1.0 or not -0.5 < camera_pitch < 0.5:
             raise RuntimeError('Invalid fall camera height or pitch')
         depth_info = value('fall_depth_camera_info_topic')
+        approach_on = value('fall_approach') == 'true'
         # All or nothing: the detector refuses depth topics that are not aligned.
         pose_depth = {
             'depth_image_topic': value('depth_topic'), 'depth_camera_info_topic': depth_info,
@@ -101,13 +102,20 @@ def _setup(context):
                          # scene cases compare image positions.
                          'depth_topic': value('depth_topic') if depth_on else '',
                          'camera_info_topic': depth_info if depth_on else '',
-                         'global_frame': value('global_frame')}],
+                         'global_frame': value('global_frame'),
+                         'approach_enabled': approach_on}],
             remappings=[(fall_image_topic, value('rgb_topic'))],
         )
 
     if fall_inputs is None:
         return [LogInfo(msg='Fall module disabled: no configured fall runtime.')]
     actions = [fall_coordinator, fall_monitor, fall_pose]
+    if approach_on:
+        actions.append(Node(
+            package='malbut_fall_coordinator', executable='fall_approach', name='fall_approach',
+            output='screen', parameters=[{
+                'use_sim_time': False, 'global_frame': value('global_frame'),
+                'robot_frame': value('robot_frame')}]))
     try:
         upload_args = prepare_fall_upload(fall_config, context.environment)
     except RuntimeError as error:
