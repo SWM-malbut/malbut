@@ -43,6 +43,17 @@ from malbut_agent_server.domain.fall_monitoring import (
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
 
+RUNTIME_CLOUD_BLOCKS = frozenset({
+    'waiting_settings', 'disabled', 'camera_off', 'mapping', 'control_unavailable',
+    'runtime_error', 'cloud_consent_missing', 'settings_pending',
+    'server_settings_unavailable', 'server_settings_stale',
+})
+# Consent, connection and settings stop Cloud on purpose: such a failure is
+# neither sent again nor turned into a question.
+GUARD_FAILURES = RUNTIME_CLOUD_BLOCKS | {
+    'monitoring_disabled', 'cloud_disconnected', 'cloud_permission_changed', 'worker_cancelled',
+}
+
 
 APPROACH_OUTCOMES = frozenset({'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejected'})
 # After arriving 1 m in front: Pose looks this long, then Cloud once.
@@ -272,11 +283,7 @@ class CloudFallMonitor:
 
     def set_cloud_block(self, reason):
         """Suspend transmission, retaining incidents but not an offline request queue."""
-        if reason is not None and reason not in {
-            'waiting_settings', 'disabled', 'camera_off', 'mapping', 'control_unavailable',
-            'runtime_error', 'cloud_consent_missing', 'settings_pending',
-            'server_settings_unavailable', 'server_settings_stale',
-        }:
+        if reason is not None and reason not in RUNTIME_CLOUD_BLOCKS:
             raise ValueError('invalid runtime Cloud block')
         if reason == self._runtime_cloud_block:
             return
@@ -2000,9 +2007,30 @@ class CloudFallMonitor:
             incident.subject_observation = None
             self._active_incident = None
             self._emit('analysis_unavailable', incident, reason=reason)
+            self._retry_or_ask(incident, reason)
             self._decision_needed(incident)
         else:
             self._emit('crosscheck_skipped', reason=reason)
+
+    def _retry_or_ask(self, incident, reason):
+        """A Pose case nobody was asked about: send it again, then ask anyway.
+
+        The retries use the existing recheck budget and interval. When every
+        attempt failed, the video could not be judged; the person is asked on
+        the Pose evidence rather than left without a question.
+        """
+        if (reason in GUARD_FAILURES or incident.subject_key is None
+                or incident.question_id is not None or incident.answer is not None
+                or incident.state in (IncidentState.RESOLVED, IncidentState.HELP_REQUIRED)):
+            return
+        if incident.rechecks < self.policy.max_rechecks:
+            incident.pending = True  # next_attempt_at already spaces the retry.
+            return
+        incident.video = CloudFallReply(VideoAssessment.UNOBSERVABLE,
+                                        '영상 분석 실패: 자세 감지 근거로 확인')
+        incident.video_revision = incident.revision
+        incident.auto_normal_blocked = True
+        self.ask_question(incident.incident_id)
 
     @staticmethod
     def _consume_exception(task: asyncio.Task) -> None:
