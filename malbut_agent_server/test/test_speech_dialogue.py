@@ -204,8 +204,16 @@ def test_cancellation_discards_queued_notices_and_releases_capacity():
     worker = DialogueWorker(factory, 'user', capacity=1)
     try:
         assert worker.submit('canceled', '취소할 요청')
-        reply = collect(worker, 1)[0]
-        assert reply['kind'] == 'cancelled' and reply['text'] == ''
+
+        def cancellation_queued():
+            with worker._condition:
+                return any(reply['kind'] == 'cancelled' for reply in worker._results)
+
+        # Leave notices queued until cancellation finishes; draining earlier
+        # may legitimately observe progress from the still-running request.
+        wait_until(cancellation_queued)
+        replies = collect(worker, 1)
+        assert [(reply['kind'], reply['text']) for reply in replies] == [('cancelled', '')]
         assert worker.has_capacity()
         assert worker.submit('next', '다음 요청')
         reply = collect(worker, 1)[0]
