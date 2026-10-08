@@ -191,7 +191,8 @@ def test_only_stt_restarts_with_a_bounded_delay(speech):
 
 @pytest.mark.parametrize('phase', [
     'startup', 'runtime_clean', 'runtime_failed', 'shutdown_running', 'shutdown_backoff'])
-def test_real_stt_recovery_preserves_peers_and_honors_shutdown(speech, monkeypatch, tmp_path, phase):
+def test_real_stt_recovery_preserves_peers_and_honors_shutdown(
+        speech, monkeypatch, tmp_path, phase):
     """Run the actual nodes/prefix; replace only their hardware-dependent executables."""
     attempts = tmp_path / 'attempts'
     child = tmp_path / 'child.py'
