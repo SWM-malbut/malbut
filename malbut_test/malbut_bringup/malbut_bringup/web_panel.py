@@ -481,8 +481,16 @@ class RosBridge:
             'map_directory', str(Path.home() / '.ros/malbut/maps')).value)
         self.resident_voice_namespace = self.node.declare_parameter(
             'resident_voice_namespace', '').value
+        self.resident_manager_namespace = self.node.declare_parameter(
+            'resident_manager_namespace', '').value
+        self.runtime_state_publisher = (self.node.create_publisher(
+            String, '/malbut/runtime/state', QoSProfile(
+                depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            if self.resident_manager_namespace else None)
+        self.runtime_state_message = String
         self.runtime = (RuntimeSupervisor(
-            self.catalog, resident_voice=bool(self.resident_voice_namespace))
+            self.catalog, resident_voice=bool(self.resident_voice_namespace),
+            resident_manager=bool(self.resident_manager_namespace))
             if self.node.declare_parameter(
             'manage_bringup', True).value else None)
         self.runtime_message = ''
@@ -584,7 +592,7 @@ class RosBridge:
         if payload['command'] == 'teleop':
             with self.data.lock:
                 payload['_teleop_generation'] = self.teleop_generation
-        if (self.resident_voice_namespace
+        if ((self.resident_manager_namespace or self.resident_voice_namespace)
                 and payload['command'] in ('start', 'debug_start', 'bringup_start')):
             with self.data.lock:
                 system = self.data.system or {}
@@ -638,6 +646,8 @@ class RosBridge:
             'state': 'STOPPED', 'mode': None, 'map': None, 'log_path': None,
             'message': 'Embedded viewer: start a standalone web panel to control Bringup',
         })
+        self._publish_runtime(status)
+        status.pop('map_path', None)
         status['enabled'] = self.runtime is not None
         # The running mode is the manager's localization, not the start request.
         mode = LOCALIZATION_MODES.get(self.localization.get('mode'))
@@ -646,11 +656,12 @@ class RosBridge:
             status['map'] = (Path(self.localization['map']).name
                              if mode == 'navigation' and self.localization.get('map') else None)
         if self.runtime and status['state'] not in ('STARTING', 'RUNNING'):
-            # The manager that published these is gone with the owned Bringup;
-            # retained topics would otherwise keep showing its last state.
+            # Robot observations expire with its group. A resident Manager's
+            # mission state and movement epoch remain current in standby.
             self.localization = {}
             with self.data.lock:
-                self.data.system = None
+                if not self.resident_manager_namespace:
+                    self.data.system = None
                 self.data.tracking = None
                 self.data.tracking_observed_at = None
                 self.data.person_observation = None
@@ -711,6 +722,16 @@ class RosBridge:
             self.startup_progress = {}
         with self.data.lock:
             self.data.runtime = status
+
+    def _publish_runtime(self, status):
+        if self.runtime_state_publisher is not None:
+            self.runtime_state_publisher.publish(self.runtime_state_message(data=json.dumps({
+                'state': status['state'], 'mode': status.get('mode'),
+                'map': status.get('map_path', ''),
+                'runtime_id': status.get('runtime_id', ''), 'observed_at': time.time(),
+                'movement_runtime_id': status.get('movement_runtime_id', ''),
+                'movement_epoch': status.get('movement_epoch', 0),
+            })))
 
     def _map(self, message):
         try:
@@ -826,7 +847,10 @@ class RosBridge:
     def _start_runtime(self, payload):
         if self.stopping_runtime is not None:
             raise ValueError('Wait for Bringup shutdown to finish')
-        if self.load_map.service_is_ready() and self.start_mapping.service_is_ready():
+        child_running = (not self.resident_manager_namespace or self.runtime
+                         and self.runtime.snapshot()['state'] == 'RUNNING')
+        if (child_running and self.load_map.service_is_ready()
+                and self.start_mapping.service_is_ready()):
             # Bringup is already running: switch localization, never relaunch.
             return self._switch_localization(payload)
         if self.runtime is None:
@@ -844,6 +868,10 @@ class RosBridge:
                 owners = [namespace for node, namespace in nodes if node == name]
                 if owners == [self.resident_voice_namespace]:
                     conflicts.discard(name)
+        if self.resident_manager_namespace:
+            owners = [namespace for node, namespace in nodes if node == 'system_manager']
+            if owners == [self.resident_manager_namespace]:
+                conflicts.discard('system_manager')
         if os.environ.get('HOMECAM_BACKEND_URL', '').strip():
             conflicts.update(names.intersection({'homecam_media_agent'}))
         if conflicts or self.node.count_publishers(self.topics['map_topic']):
@@ -857,8 +885,10 @@ class RosBridge:
                 'controller', 'odom_publisher', 'ros_robot_controller',
                 'robot_state_publisher', 'aurora930_node', 'LD19'}):
             raise ValueError('Existing hardware nodes are not ready; do not launch duplicates')
+        binding = ({'movement_binding': payload.get('_movement_binding')}
+                   if self.resident_manager_namespace else {})
         self.runtime.start(payload['mode'], map_id=payload.get('map'),
-                           start_hardware=not bool(scan))
+                           start_hardware=not bool(scan), **binding)
         self.runtime_message = ''
         self.tf_buffer.clear()
         self.action_status.clear()
@@ -871,7 +901,8 @@ class RosBridge:
             self.data.map_cache.clear()
             self.data.map_active = False
             self.data.robot_pose = None
-            self.data.system = None
+            if not self.resident_manager_namespace:
+                self.data.system = None
             self.data.tracking = None
             self.data.frames.clear()
 
@@ -881,7 +912,7 @@ class RosBridge:
             # AutoSLAM owns SLAM startup; do not start it from a mode button.
             self.runtime_message = 'Bringup is running; request AutoSLAM to create a map'
             return
-        if self.resident_voice_namespace:
+        if self.resident_manager_namespace or self.resident_voice_namespace:
             runtime_id, epoch = payload.get('_movement_binding', (None, None))
             if (not runtime_id or type(epoch) is not int
                     or not self.prepare_localization.service_is_ready()):
@@ -906,7 +937,7 @@ class RosBridge:
         except Exception as error:
             self.runtime_message = f'Localization switch failed: {error}'
             return
-        if self.resident_voice_namespace:
+        if self.resident_manager_namespace or self.resident_voice_namespace:
             ok, message = response.success, response.message
         else:
             # The manager's localization message tells whether the pose was found.
@@ -924,7 +955,7 @@ class RosBridge:
         if self.stopping_runtime is not None:
             return
         self.runtime_stop_error = None
-        if self.resident_voice_namespace:
+        if self.resident_manager_namespace or self.resident_voice_namespace:
             if not self.stop_movement.service_is_ready():
                 self.runtime_message = (
                     'Manager movement stop unconfirmed; Bringup kept running')
@@ -946,7 +977,8 @@ class RosBridge:
         if not self.resident_voice_namespace:
             self.speech_ready = False
         self.cancel_owned()
-        names = RUNTIME_ACTIONS
+        names = tuple(name for name in RUNTIME_ACTIONS
+                      if not self.resident_manager_namespace or name != MISSION_ACTION)
         self.stopping_runtime = {
             'since': time.monotonic(), 'names': names,
             'futures': {name: self.cancel_clients[name].call_async(self.cancel_request())
@@ -1005,6 +1037,8 @@ class RosBridge:
                    for state in self.action_status.get(name, {}).values()):
                 return
             if any(item['state'] not in TERMINAL
+                   and not (self.resident_manager_namespace and item.get('capability') in {
+                       'device_operation', 'get_weather', 'set_weather_location'})
                    for item in self.data.snapshot()['requests']):
                 return
             self.runtime.stop()
@@ -1155,7 +1189,7 @@ class RosBridge:
             elif payload['command'] == 'cancel' and 'request_id' in payload:
                 self.cancel_one(payload['request_id'])
             elif payload['command'] == 'cancel':
-                if self.resident_voice_namespace:
+                if self.resident_manager_namespace or self.resident_voice_namespace:
                     self._movement_stop(None)
                     if self.stop_movement.service_is_ready():
                         self.stop_movement.call_async(self.stop_movement_request(
@@ -1237,7 +1271,8 @@ class RosBridge:
         if capability == 'autoslam' and not self.clients['autoslam'].server_is_ready():
             raise ValueError('AutoSLAM 서버가 없습니다. Bringup 준비를 확인하세요')
         route = 'manager' if self.clients['manager'].server_is_ready() else 'autoslam'
-        if self.resident_voice_namespace and route != 'manager':
+        if ((self.resident_manager_namespace or self.resident_voice_namespace)
+                and route != 'manager'):
             raise ValueError('Integrated robot operations require the system manager')
         raw = payload['command'] == 'debug_start'
         if route == 'autoslam' and (raw or capability != 'autoslam'):
@@ -1263,7 +1298,7 @@ class RosBridge:
             goal.capability_id = capability
             goal.arguments_yaml = json.dumps(payload['arguments'] if raw else mission_arguments(
                 capability, payload['arguments']))
-            if self.resident_voice_namespace:
+            if self.resident_manager_namespace or self.resident_voice_namespace:
                 runtime_id, epoch = payload.get('_movement_binding', (None, None))
                 if not runtime_id or type(epoch) is not int:
                     raise ValueError('Current Manager movement state is unavailable')
@@ -1334,7 +1369,9 @@ class RosBridge:
         """Cancel only this process's goals, including sends awaiting acceptance."""
         with self.data.lock:
             active = [key for key, item in self.data.requests.items()
-                      if item['state'] not in TERMINAL]
+                      if item['state'] not in TERMINAL
+                      and not (self.resident_manager_namespace and item.get('capability') in {
+                          'device_operation', 'get_weather', 'set_weather_location'})]
         for request_id in active:
             self.cancel_pending.add(request_id)
             self.data.update(request_id, state='CANCELING')

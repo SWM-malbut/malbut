@@ -56,14 +56,14 @@ class _Node:
 
 
 def _controller(monkeypatch, *, busy=False, load_result=LoadMap.Response.RESULT_SUCCESS,
-                default_map='', can_mapping=None):
+                default_map='', can_mapping=None, deferred_start=False):
     events, modes = [], []
     node = _Node()
     controller = LocalizationController(
         node, None, slam=_Slam(events), on_mode=modes.append,
         can_switch=lambda: not busy, lifecycle_service='/manage',
         map_server_load_service='/load', service_timeout_s=1.0, default_map=default_map,
-        can_mapping=can_mapping)
+        can_mapping=can_mapping, deferred_start=deferred_start)
 
     def call(client, request, label):
         if isinstance(request, ManageLifecycleNodes.Request):
@@ -178,6 +178,7 @@ def test_mapping_guard_ignores_queued_replacement_only_for_own_cleanup(capabilit
     """Queued missions cannot prevent the current AutoSLAM from releasing SLAM."""
     node = object.__new__(SystemManagerNode)
     node._lock = RLock()
+    node._resident_runtime = False
     node._accepting_goals = True
     node._state = SimpleNamespace(movement_stopping=False, active=lambda: [SimpleNamespace(
         resources={ExecutionResource.BASE},
@@ -192,6 +193,7 @@ def test_unowned_mapping_respects_global_stop_admission(accepting, stopping):
     """Only owned AutoSLAM cleanup may bypass the regular admission fence."""
     node = object.__new__(SystemManagerNode)
     node._lock = RLock()
+    node._resident_runtime = False
     node._accepting_goals = accepting
     node._state = SimpleNamespace(movement_stopping=stopping, active=lambda: [])
     node._scheduler = SimpleNamespace(base_busy=lambda: False)
@@ -492,3 +494,72 @@ def test_integrated_binding_check_and_transition_reservation_are_atomic(monkeypa
     response = controller._prepare_request(request, PrepareLocalization.Response())
     assert response.success and response.code == 'completed'
     assert checks[:3] == [True, True, True]
+
+
+def _wait_runtime(predicate):
+    deadline = time.monotonic() + 2.0
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert predicate()
+
+
+def test_resident_localization_defers_every_backend_until_child_starts(monkeypatch, tmp_path):
+    path = _map(tmp_path, 'default_map.yaml')
+    controller, events, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
+    assert not events and not controller.movement_identity
+    assert not controller._start_mapping_request(None, SimpleNamespace()).success
+    assert controller.activate_runtime('')
+    _wait_runtime(lambda: not controller._switch_lock.locked())
+    assert controller.mode is LocalizationMode.LOCALIZATION
+    assert controller.map_path == path and controller.pose_ready
+    assert 'slam_start' not in events
+    controller.standby()
+    _wait_runtime(lambda: not controller._standby_pending)
+    assert controller.mode is LocalizationMode.ERROR and not controller.pose_ready
+    assert not controller._localization_started and controller._loaded_map is None
+    assert controller.activate_runtime('')
+    _wait_runtime(lambda: not controller._switch_lock.locked())
+    assert controller.pose_ready
+    assert events.count(('lifecycle', ManageLifecycleNodes.Request.STARTUP)) == 2
+
+
+def test_resident_restart_waits_for_old_localization_cleanup(monkeypatch, tmp_path):
+    from threading import Event
+
+    path = _map(tmp_path)
+    controller, _, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
+    entered, release = Event(), Event()
+    call = controller._call
+
+    def blocked(client, request, label):
+        if isinstance(request, LoadMap.Request):
+            entered.set()
+            assert release.wait(2.0)
+        return call(client, request, label)
+
+    monkeypatch.setattr(controller, '_call', blocked)
+    assert controller.activate_runtime('')
+    assert entered.wait(2.0)
+    controller.standby()
+    assert not controller.activate_runtime('')
+    assert controller._stop_requested and not controller._runtime_enabled
+    release.set()
+    _wait_runtime(lambda: not controller._standby_pending)
+    assert not controller.pose_ready and controller.mode is LocalizationMode.ERROR
+    assert controller.activate_runtime('')
+    _wait_runtime(lambda: not controller._switch_lock.locked())
+    assert controller.pose_ready
+
+
+def test_resident_reserved_start_cannot_clear_a_concurrent_stop(monkeypatch, tmp_path):
+    path = _map(tmp_path)
+    controller, events, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
+    workers = []
+    monkeypatch.setattr('malbut_system_manager.localization.threading.Thread',
+                        lambda target, args, daemon: SimpleNamespace(
+                            start=lambda: workers.append((target, args))))
+    assert controller.activate_runtime('')
+    controller.stop_movement()
+    target, args = workers.pop()
+    target(*args)
+    assert not events and not controller.pose_ready and not controller.movement_identity

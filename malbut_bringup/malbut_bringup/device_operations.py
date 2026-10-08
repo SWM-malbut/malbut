@@ -37,7 +37,9 @@ def active_missions(snapshot):
     """Read Manager-owned missions, independent of this bridge's own requests."""
     system = snapshot.get('system') or {}
     return {item['mission_id']: item for key in MISSION_COLLECTIONS
-            for item in system.get(key, []) if item.get('mission_id')}
+            for item in system.get(key, []) if item.get('mission_id')
+            and item.get('capability_id') not in {
+                'device_operation', 'get_weather', 'set_weather_location'}}
 
 
 def validate_operation(operation, arguments):
@@ -326,7 +328,8 @@ class DeviceOperations:
         was_stopped = before['runtime']['state'] == 'STOPPED'
         binding = {'runtime_id': arguments.get('movement_runtime_id'),
                    'epoch': arguments.get('movement_epoch')}
-        if not was_stopped and not binding['runtime_id']:
+        resident_manager = bool(getattr(bridge, 'resident_manager_namespace', ''))
+        if (resident_manager or not was_stopped) and not binding['runtime_id']:
             raise OperationError('movement_state_unknown',
                                  'Existing runtime preparation requires its observed epoch')
         payload['_movement_binding'] = (binding['runtime_id'], binding['epoch'])
@@ -375,7 +378,7 @@ class DeviceOperations:
             system = state.get('system') or {}
             current = {'runtime_id': system.get('movement_runtime_id'),
                        'epoch': system.get('movement_epoch')}
-            if was_stopped:
+            if was_stopped and not resident_manager:
                 # A new Manager always starts at zero. Adopting a newer epoch
                 # here would resume a request stopped during startup.
                 binding = {'runtime_id': current['runtime_id'], 'epoch': 0}
@@ -395,7 +398,10 @@ class DeviceOperations:
         except Exception as error:
             started = (dispatch_started.is_set()
                        or isinstance(error, OwnerCallTimeout) and error.started)
-            if started and (
+            # The resident Manager fences its preparation before canceling this
+            # Action and on failure. Calling StopMovement here would wait on
+            # this same Action and deadlock. Only cold-start process cleanup is ours.
+            if started and (was_stopped or not resident_manager) and (
                     canceled.is_set() or isinstance(error, TimeoutError)
                     or isinstance(error, OperationError) and error.code == 'result_unknown'):
                 # Interrupted preparation must not leave an owned runtime to

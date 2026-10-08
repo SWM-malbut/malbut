@@ -22,6 +22,7 @@ class StateStore:
 
     def __init__(self) -> None:
         self.ready = False
+        self.resident_runtime = False
         self.recharging = False
         self.emergency = False
         # None: localization is not managed here, so maps never gate missions.

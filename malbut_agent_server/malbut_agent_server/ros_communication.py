@@ -26,7 +26,6 @@ from malbut_agent_server.speech_receiver import (
     DEFAULT_DB_PATH, TRANSCRIPT_TOPIC, receive_transcript,
 )
 from malbut_agent_server.weather_query import ManagerWeatherQuery
-from malbut_agent_server.resident_weather_query import ResidentWeatherQuery
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 from malbut_agent_server.speech_missions import SpeechMissions
 from malbut_agent_server.speech_navigation import NavigationTargets
@@ -129,7 +128,7 @@ def create_communication_node(
                         device_qos.reliability = ReliabilityPolicy.RELIABLE
                         device_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
                         self.create_subscription(
-                            String, '/malbut/device/state',
+                            String, '/malbut/manager/device_state',
                             lambda message: self.speech_missions.observe_device_state(message.data),
                             device_qos,
                         )
@@ -145,10 +144,8 @@ def create_communication_node(
                                 message.data),
                             state_qos,
                         )
-                self.weather_query = (
-                    ResidentWeatherQuery(self, timeout_s=weather_query_timeout_s)
-                    if enable_device_operations else
-                    ManagerWeatherQuery(self.missions, timeout_s=weather_query_timeout_s)
+                self.weather_query = ManagerWeatherQuery(
+                    self.missions, timeout_s=weather_query_timeout_s,
                 )
 
                 def runtime_factory():

@@ -1,8 +1,9 @@
 # Resident voice and existing robot operations
 
 This integration extends the existing single-tool speech turn. The Agent proposes
-one operation and a fixed server-side workflow prepares it. Robot movement stays
-under the Manager; the resident bridge owns runtime, map and device API operations.
+one operation and a fixed server-side workflow prepares it. Every Agent operation
+goes through the Manager. The Manager invokes the registered robot, weather or
+device-operation server; the bridge implements runtime, map and Homecam operations.
 
 ## Launch and deployment
 
@@ -11,36 +12,48 @@ together. Apply web migration `0024_voice_agent.sql` before enabling voice deleg
 Old devices default to delegation disabled. Existing conversation, personal-memory,
 story-memory and cloud-analysis consent settings are unchanged.
 
-`ros2 launch malbut_bringup cloud.launch.py` now keeps the cloud bridge and a separate
-speech LaunchService resident. It uses the same prepared speech cache and environment
+`ros2 launch malbut_bringup cloud.launch.py` keeps the Manager, cloud bridge and a
+separate speech LaunchService resident. It uses the same prepared speech cache and environment
 variables as `bringup.launch.py`; explicit overrides use the speech launch names
 `python_executable`, `stt_model_path`, `stt_library_path`, `agent_user_id`,
 `agent_conversation_db`, `navigation_targets`, `input_device`, and `output_device`.
-`resident_voice:=false` retains cloud-only operation. The normal direct
+`resident_voice:=false` disables resident speech while retaining Manager and bridge.
+The normal direct
 `bringup.launch.py` entry point retains its default speech behavior.
 The current `robot.launch.py` starts only the robot core, as on main.
 
-The resident profile launches robot children with `speech:=false`. A process-owned
+The resident profile launches robot children with `speech:=false` and `manager:=false`.
+The single resident Manager owns mission admission across robot start/stop cycles.
+A process-owned
 voice lock rejects duplicate resident LaunchServices. Each launch has a unique ROS
-namespace; only that namespace's single voice node instances are exempt from child
+namespace; only the owned voice and Manager instances are exempt from child
 startup conflict checks. XFM selection happens once in the resident profile and its
 Pulse source is inherited by both STT and restarted media children. An unavailable
-microphone or a failed speech child does not terminate cloud control.
+microphone or a failed speech child does not terminate cloud control. The bridge
+owns the cloud profile: its exit tears down the resident group, including after a
+duplicate bridge is refused. Resident Manager and speech details stay in launch logs.
 
 Robot execution readiness and voice readiness are independent. Standby clears stale
-Manager/localization/sensor state and keeps voice available. The owner web view shows
+localization/sensor state while keeping the current Manager and voice available.
+The owner web view shows
 `대기 중 · 음성으로 다시 시작할 수 있습니다.` when the observed voice publisher remains ready.
 The Homecam microphone setting controls streaming audio, not STT wake listening.
-The resident Agent calls the existing weather and weather-location Actions directly,
-so weather and ordinary conversation remain available without the robot Manager.
+Weather and weather-location requests use the existing Manager capabilities in
+both profiles. The resident Manager accepts weather and device operations in
+standby, while robot-dependent missions require a current robot runtime. Agent
+clients never fall back to calling a downstream server when Manager is unavailable.
 
 ## Public contracts
 
-- `/malbut/device/operate` (`DeviceOperation.action`): request ID, fixed operation,
-  and JSON arguments. Results distinguish success/code/data/message. There is no
-  supplied URL, shell command, ROS endpoint, or new polygon geometry.
-- `/malbut/device/state` (`std_msgs/String`): current runtime/voice and cached
-  Manager/sensor observations. The richer `status` operation includes valid maps,
+- `/malbut/mission/execute` (`ExecuteMission.action`): the Agent's single execution
+  entry point, including `get_weather`, `set_weather_location` and the fixed
+  `device_operation` capability. Device arguments carry `request_id`, `operation`
+  and `arguments_json`; Manager validates the operation before dispatch.
+- `/malbut/device/operate` (`DeviceOperation.action`): the bridge backend invoked
+  by Manager, not by Agent. Results distinguish success/code/data/message. There is
+  no supplied URL, shell command, ROS endpoint, or new polygon geometry.
+- `/malbut/manager/device_state` (`std_msgs/String`): Manager's observed
+  runtime/voice and cached sensor state. The richer `status` operation includes valid maps,
   last explicit valid map, capabilities, and bounded recent Manager results.
 - `/malbut/mission/stop_movement` (`StopMovement.srv`): stops BASE missions except
   fall confirmation, including waiting and late-accepted goals. Same-ID requests
@@ -52,10 +65,11 @@ so weather and ordinary conversation remain available without the robot Manager.
 - `/malbut/localization/prepare` (`PrepareLocalization.srv`) applies the same epoch
   check while reserving a map/mapping transition. Standard LoadMap/Trigger endpoints
   remain available for existing direct clients. Agent preparation carries its original
-  epoch through the bridge; a new Manager must still be at its initial epoch zero.
+  epoch through the bridge. The resident Manager's epoch persists across child
+  runtime restarts; starting the robot cannot erase an earlier stop.
 - Conditional preemption binds approval to exact mission IDs. `shutdown_runtime`
-  additionally closes all Manager admission before the bridge shuts down the robot
-  group; weather/speech live in the resident group. Normal stop keeps fall dialogue.
+  additionally closes robot admission before the bridge shuts down the robot group;
+  resident weather and device operations remain available. Normal stop keeps fall dialogue.
 - `/malbut/localization/status` (`LocalizationState`) and enriched existing JSON
   carry runtime/transition IDs and `pose_ready`; a loaded map is not proof of a pose.
 - `/malbut/mission/recent_results` contains bounded, timestamped Manager-wide

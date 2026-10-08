@@ -6,10 +6,16 @@ import sys
 import uuid
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument, EmitEvent, ExecuteProcess, LogInfo, OpaqueFunction,
+    RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 
+from malbut_bringup.launch_support import package_file
 from malbut_bringup.speech_audio import shared_xfm_source
 
 
@@ -20,6 +26,7 @@ def _setup(context):
     # Namespace ownership is unique to this launch. Only these exact speech
     # nodes may coexist with a child robot bringup; unrelated duplicates fail.
     namespace = '/malbut/resident_voice_' + uuid.uuid4().hex
+    manager_namespace = '/malbut/resident_manager_' + uuid.uuid4().hex
     environment = dict(context.environment)
     environment.update(HOMECAM_BACKEND_URL=value('backend_url'),
                        HOMECAM_DEVICE_TOKEN_FILE=value('token_file'),
@@ -35,17 +42,35 @@ def _setup(context):
             voice = False
             actions.append(LogInfo(msg=f'Resident voice unavailable: {error}'))
     actions.append(Node(
+        package='malbut_system_manager', executable='system_manager',
+        name='system_manager', namespace=manager_namespace, output={'both': 'log'},
+        parameters=[{
+            'use_sim_time': False, 'ready_topic': '', 'resident_runtime': True,
+            'localization_control': True, 'initial_map': '',
+            'default_map': package_file('malbut_bringup', 'config/default_map.yaml'),
+            'slam_params_file': package_file('malbut_bringup', 'config/slam_toolbox.yaml'),
+            'scan_topic': '/scan_raw', 'relocalize_action': '/relocalize',
+        }],
+    ))
+    bridge = Node(
         package='malbut_bringup', executable='robot_cloud_sync',
-        name='robot_cloud_sync', output='screen', additional_env=environment,
+        name='robot_cloud_sync', namespace=manager_namespace, output='screen',
+        additional_env=environment,
         parameters=[{
             'use_sim_time': False, 'manage_bringup': True, 'map_topic': '/map',
             'backend_url': value('backend_url'), 'token_file': value('token_file'),
             'map_directory': value('map_directory'),
+            'resident_manager_namespace': manager_namespace,
             # Even a failed voice launch owns the profile. The robot child must
             # not silently launch a second speech runtime on subsequent starts.
             'resident_voice_namespace': namespace if value('resident_voice') == 'true' else '',
         }],
-    ))
+    )
+    # A failed credential/ownership check must not leave another Manager alive.
+    # Speech has its own failure boundary and does not trigger this handler.
+    actions.extend([RegisterEventHandler(OnProcessExit(
+        target_action=bridge, on_exit=[EmitEvent(event=Shutdown(reason='Cloud bridge exited'))])),
+        bridge])
     if voice:
         arguments = [f'{name}:={value(name)}' for name in (
             'python_executable', 'stt_model_path', 'stt_library_path',

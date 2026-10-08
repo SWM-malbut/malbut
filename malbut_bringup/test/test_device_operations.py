@@ -483,3 +483,56 @@ def test_running_dispatch_finishes_before_ordered_cleanup_and_terminal_result(op
         finished.set()
         wake.set()
         owner.join(2)
+
+
+def test_runtime_shutdown_ignores_resident_queries_but_requires_fall_confirmation(operations):
+    """Status/runtime-stop themselves must not become robot-shutdown conflicts."""
+    ops, bridge, _ = operations
+    bridge.data.system = {'active_background_missions': [
+        {'mission_id': 'status', 'capability_id': 'device_operation'},
+        {'mission_id': 'weather', 'capability_id': 'get_weather'}],
+        'active_foreground_missions': [
+        {'mission_id': 'fall', 'capability_id': 'fall_confirmation'}]}
+    result = ops.execute('stop-resident', 'runtime_stop', {})
+    assert result['code'] == 'preemption_confirmation_required'
+    assert result['result']['conflicting_mission_ids'] == ['fall']
+
+
+def test_resident_restart_preserves_nonzero_movement_epoch(operations):
+    """A fresh child does not reset its surviving Manager's movement approval."""
+    ops, bridge, _ = operations
+    bridge.resident_manager_namespace = '/malbut/resident_manager_test'
+    bridge.data.runtime.update(state='STOPPED', ready=False)
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 7}
+
+    def start(_):
+        bridge.data.runtime.update(state='RUNNING', mode='mapping', ready=True,
+                                   localization={'mode': 'LOCALIZATION'})
+    bridge._start_runtime.side_effect = start
+    result = ops.execute('restart-resident', 'runtime_start', {
+        'mode': 'mapping', 'movement_runtime_id': 'manager', 'movement_epoch': 7})
+    assert result['success']
+    assert result['result']['preparation_movement_binding'] == {
+        'runtime_id': 'manager', 'epoch': 7}
+
+
+@pytest.mark.parametrize('canceled', [False, True])
+def test_resident_preparation_failure_never_waits_on_its_own_manager_stop(
+        operations, canceled):
+    """Manager owns localization stop; a recursive StopMovement waits on this Action."""
+    ops, bridge, _ = operations
+    bridge.resident_manager_namespace = '/malbut/resident_manager_test'
+    bridge.data.runtime.update(state='RUNNING', ready=True)
+    bridge.stop_movement = Mock()
+    cancel = threading.Event()
+
+    def fail(_payload):
+        if canceled:
+            cancel.set()
+        raise TimeoutError()
+    bridge._start_runtime.side_effect = fail
+    result = ops.execute('failed-resident', 'runtime_start', {
+        'mode': 'mapping', 'movement_runtime_id': 'manager', 'movement_epoch': 0}, cancel)
+    assert result['code'] == ('canceled' if canceled else 'result_unknown')
+    bridge.stop_movement.call_async.assert_not_called()
+    bridge.runtime.stop.assert_not_called()
