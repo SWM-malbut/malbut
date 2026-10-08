@@ -22,6 +22,7 @@ import uuid
 import yaml
 
 from .drive_mode import PatrolFallStops
+from .map_check import MapCheck
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zone_override import ZoneOverride
@@ -512,6 +513,8 @@ class RosBridge:
         self.zone_toggles = {name: self.node.create_client(SetBool, name)
                              for name in self.zone_override.wanted()}
         self.localization = {}
+        # 목업 24번: how well the pose fits each saved map, one automatic retry.
+        self.map_check = MapCheck()
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.robot_frame = self.node.declare_parameter('robot_frame', 'base_footprint').value
@@ -709,8 +712,35 @@ class RosBridge:
                 status['message'] += ' · ' + self.runtime_message
         elif status['state'] not in ('STARTING', 'RUNNING'):
             self.startup_progress = {}
+        status['map_check'] = self._check_map(status)
         with self.data.lock:
             self.data.runtime = status
+
+    def _saved_map(self, map_path):
+        """Tell a saved map from the blank default map Bringup starts on."""
+        try:
+            return bool(map_path) and Path(map_path).resolve().is_relative_to(
+                self.catalog.directory)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _check_map(self, status):
+        with self.data.lock:
+            system = dict(self.data.system or {})
+            results = [item for item in self.data.recent_results if isinstance(item, dict)]
+        view, retry = self.map_check.update(
+            time.monotonic(), running=status['state'] in ('STARTING', 'RUNNING'),
+            ready=bool(status.get('ready')), localization=self.localization,
+            saved=self._saved_map(self.localization.get('map')),
+            system=system, results=results)
+        if retry:
+            # The saved pose was just checked; search the whole map (may rotate).
+            try:
+                self.submit({'command': 'start', 'capability': 'relocalize',
+                             'arguments': {'method': 2}})
+            except ValueError as error:
+                self.node.get_logger().warning(f'Automatic relocalization not sent: {error}')
+        return view
 
     def _map(self, message):
         try:
@@ -857,8 +887,17 @@ class RosBridge:
                 'controller', 'odom_publisher', 'ros_robot_controller',
                 'robot_state_publisher', 'aurora930_node', 'LD19'}):
             raise ValueError('Existing hardware nodes are not ready; do not launch duplicates')
-        self.runtime.start(payload['mode'], map_id=payload.get('map'),
-                           start_hardware=not bool(scan))
+        mode, map_id, auto_map = payload['mode'], payload.get('map'), None
+        if mode == 'mapping' and payload.get('last_map') is not False:
+            # A start without a map uses the last chosen one (2026-10-08): on the blank
+            # map destinations and patrol need a map pick after every start. AutoSLAM
+            # still switches to mapping by itself, and the pose is checked as for a pick.
+            # The voice "지도 만들어줘" opts out with last_map=False (2026-10-09).
+            auto_map = self.runtime.last_selected_map()
+            if auto_map:
+                mode, map_id = 'navigation', auto_map
+        self.runtime.start(mode, map_id=map_id, start_hardware=not bool(scan))
+        self.map_check.started(auto_map)
         self.runtime_message = ''
         self.tf_buffer.clear()
         self.action_status.clear()
@@ -897,6 +936,7 @@ class RosBridge:
             request.map_url = str(self.catalog.resolve(payload['map']))
             future = self.load_map.call_async(request)
         self.runtime_message = 'Switching localization; missions using the base must be stopped'
+        self.map_check.chosen()
         future.add_done_callback(lambda done: self._switched(payload, done))
         return future
 

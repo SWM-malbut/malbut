@@ -193,6 +193,14 @@ def test_local_validator_does_not_expose_arbitrary_cloud_operation():
         validate_operation('/api/devices/other/settings', {})
 
 
+def test_only_a_mapping_start_can_skip_the_last_chosen_map():
+    validate_operation('runtime_start', {'mode': 'mapping', 'last_map': False})
+    for arguments in ({'mode': 'mapping', 'last_map': True},
+                      {'mode': 'navigation', 'map': 'home.yaml', 'last_map': False}):
+        with pytest.raises(ValueError, match='last chosen map'):
+            validate_operation('runtime_start', arguments)
+
+
 @pytest.mark.parametrize('failed', [False, True])
 def test_canceled_start_waits_for_owned_process_exit(operations, failed):
     """Cancel receipt must wait for cleanup; failed shutdown is explicitly unconfirmed."""

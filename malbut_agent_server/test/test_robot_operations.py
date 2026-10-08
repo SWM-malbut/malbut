@@ -181,7 +181,8 @@ def test_autoslam_owns_mapping_after_default_map_runtime_preparation(rig, initia
     if not initially_ready:
         assert rig.manager.calls == []
         assert respond(rig, 'runtime_start') == {
-            'mode': 'mapping', 'movement_runtime_id': 'manager-lifetime', 'movement_epoch': 3}
+            'mode': 'mapping', 'last_map': False,
+            'movement_runtime_id': 'manager-lifetime', 'movement_epoch': 3}
         observed['runtime'].update(state='RUNNING', ready=True)
         respond(rig, 'status', observed)
     else:
