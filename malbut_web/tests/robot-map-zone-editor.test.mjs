@@ -143,7 +143,7 @@ test("common drive mode blocks conflicting destination commands and stays owner-
   assert.match(panel, /autonomousModeActive\) return/);
   // 보내기는 보호자도 쓰지만, 자율주행 중에는 막힌다. 자율주행 시작은 소유자만.
   assert.match(panel, /disabled=\{!snapshot\?\.online \|\| autonomousModeActive/);
-  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| snapshot\?\.state\?\.localization\.state !== "ok" \|\| navigationDriving \|\| autonomousModeActive/);
+  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| snapshot\?\.state\?\.localization\.state !== "ok" \|\| navigationBusy \|\| autonomousModeActive/);
   assert.match(panel, /if \(!isOwner && mapMode !== "navigate"\) return;/);
   assert.match(panel, /자율주행은 소유자만 할 수 있어요/);
   assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
@@ -237,13 +237,17 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
   for (const copy of [
     "순찰 꼼꼼함", "빠르게", "4m · 집의 80%", "보통", "3m · 집의 90%", "꼼꼼히", "2m · 집의 95%",
     "꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.",
-    "경로 계산 중", "이동 중", "둘러보는 중", "% 살펴봄 · ", "곳 방문", "남은 방: ",
+    "경로 계산 중", "이동 중", "둘러보는 중", "% 살펴봄", "곳 중 ", "곳 둘러봄", "곳 모두 둘러봄", "남은 방: ",
     "말벗과 연결이 끊겼어요. 말벗은 ", '"따라가기를" : "순찰을"', "계속하고, 다시 연결되면 지금 상태를 보여 드려요.",
     "중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.",
-    "순찰을 마쳤어요", "%까지 살펴봤어요", "더 갈 수 있는 곳이 없었어요 · ", "갈 수 없었던 방: ",
+    "순찰을 마쳤어요", "%까지 살펴봤어요", "더 갈 수 있는 곳이 없었어요", "갈 수 없었던 방: ",
+    "방 정보 없이 순찰했어요 · 집의 ", "방 편집에서 방을 나눠 두면 방마다 들어가 살펴봐요.",
     "순찰이 멈췄어요", "다시 시작해 주세요.", "순찰을 중지했어요",
   ]) assert.ok(panel.includes(copy), copy);
   assert.doesNotMatch(panel, /들름/);
+  // 목업 17번(2026-10-08): 멈춰 둘러본 곳 수는 방 수로 오해돼 보여 주지 않는다.
+  assert.doesNotMatch(panel, /곳 방문/);
+  assert.match(panel, /roomCount - rooms\("unvisited_rooms"\)\.length - rooms\("inaccessible_rooms"\)\.length/);
   // 다 마침 초록 · 목표 미달 주황 · 문제 빨강 · 직접 중지 회색.
   assert.match(panel, /tone: "ok", title: "순찰을 마쳤어요"/);
   assert.match(panel, /tone: "warn", title: `집의 \$\{percent\}%까지 살펴봤어요`/);

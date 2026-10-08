@@ -24,6 +24,7 @@ import yaml
 from .drive_mode import PatrolFallStops
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
+from .zone_override import ZoneOverride
 from .zones import (
     COSTS, MAX_POINTS, MAX_ZONES, read_zones, valid_zone_id, with_zone_ids, write_zones,
     zone_feature, ZoneError,
@@ -91,9 +92,11 @@ def validate_command(payload):
         return payload
     if (set(payload) == {'command', 'mission_id'} and payload['command'] == 'cancel_mission'
             and isinstance(payload['mission_id'], str)
-            and re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+            and re.fullmatch(r'[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',
                              payload['mission_id'])):
-        # One manager mission (a patrol), whoever started it.
+        # One manager mission (a patrol), whoever started it. The manager names
+        # missions by the goal UUID as 32 hex digits (2026-10-08: the hyphen-only
+        # check refused every stop from the web).
         return payload
     if payload == {'command': 'bringup_stop'}:
         return payload
@@ -443,7 +446,7 @@ class RosBridge:
         from geometry_msgs.msg import Twist
         from nav2_msgs.action import ComputePathToPose
         from nav2_msgs.srv import LoadMap
-        from std_srvs.srv import Trigger
+        from std_srvs.srv import SetBool, Trigger
         from nav_msgs.msg import OccupancyGrid
         from rclpy.action import ActionClient
         from rclpy.node import Node
@@ -503,6 +506,11 @@ class RosBridge:
         self.prepare_localization = self.node.create_client(
             PrepareLocalization, '/malbut/localization/prepare')
         self.prepare_localization_request = PrepareLocalization.Request
+        # Manual driving and a Zone escape turn the no-entry Zones off (zone_override).
+        self.zone_override = ZoneOverride()
+        self.zone_toggle_request = SetBool.Request
+        self.zone_toggles = {name: self.node.create_client(SetBool, name)
+                             for name in self.zone_override.wanted()}
         self.localization = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -599,6 +607,22 @@ class RosBridge:
         self.guard.trigger()
         return request_id
 
+    def _apply_zone_override(self):
+        """Send the keepout filter changes that manual driving or an escape needs."""
+        with self.data.lock:
+            system = self.data.system or {}
+        self.zone_override.set_manual(any(
+            isinstance(mission, dict) and mission.get('capability_id') == 'manual_drive'
+            for mission in system.get('active_foreground_missions') or []))
+        for service, enabled in self.zone_override.due():
+            client = self.zone_toggles.get(service)
+            if client is None or not client.service_is_ready():
+                continue  # Nav2 is not up: its filters start on; retried next second.
+            request = self.zone_toggle_request()
+            request.data = enabled
+            client.call_async(request)
+            self.zone_override.mark_sent(service, enabled)
+
     def _refresh(self):
         with self.data.lock:
             self.data.servers = {name: client.server_is_ready()
@@ -609,6 +633,7 @@ class RosBridge:
             self.data.map_active = bool(self.node.count_publishers(self.topics['map_topic']))
             self.data.robot_pose = self._robot_pose()
         self._finish_runtime_stop()
+        self._apply_zone_override()
         status = (self.runtime.snapshot() if self.runtime else {
             'state': 'STOPPED', 'mode': None, 'map': None, 'log_path': None,
             'message': 'Embedded viewer: start a standalone web panel to control Bringup',

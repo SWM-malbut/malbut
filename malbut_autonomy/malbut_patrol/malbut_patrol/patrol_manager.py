@@ -544,6 +544,8 @@ class PatrolManager(Node):
             if self.planner else [],
             'inaccessible_rooms': list(self.planner.inaccessible_room_names)
             if self.planner else [],
+            # 0: no rooms for this map, so the web says it patrolled without rooms.
+            'room_count': len(self.planner.room_names) if self.planner else 0,
         })
         self.status.publish(message)
 

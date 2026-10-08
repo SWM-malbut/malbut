@@ -538,7 +538,7 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
 
 | 구역 | 마스크 값 | 주행 |
 | --- | --- | --- |
-| 진입 금지(`restricted`) | 100 + 0.2m 여유 | 통과 불가. 차체가 걸치지 않도록 여유를 더한다 |
+| 진입 금지(`restricted`) | 100, 둘레 0.2m는 70 | 구역은 통과 불가. 둘레 0.2m 여유는 우회 권장과 같은 비용이라 지나갈 수 있다 |
 | 우회 권장(`avoid`) | 70 | 통과 가능하지만 비용이 높아 가능하면 피한다 |
 | 통행 허용(`allow`) | 0 | 비용 변화 없음(기존 형식 호환) |
 
@@ -550,6 +550,13 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   누른다. 로봇 브리지가 이 파일에 저장하고, 저장 지도 업로드에 구역을 함께 싣는다.
 - 이전 Gazebo 구현(`malbut_gazebo/zone_filter_mask.py`)의 구역 형식과 비용을 옮겼다.
   벽 주변 비용은 로봇의 inflation이 맡으므로 넣지 않았다.
+- 진입 금지의 0.2m 여유를 통과 불가로 두면, 로봇이 여유 안에 서는 순간 주행·회전·수동 조작이
+  모두 멈췄다(2026-10-08 실기). 지금은 구역만 막고, 차체가 구역에 닿는 움직임은 주행 제어기·
+  행동·수동 조작의 차체 윤곽 검사가 막는다. 목적지는 여유 밖으로 옮겨 받는다.
+- 그래도 차체가 구역에 닿아 있다고 판단되면(로봇 자리에 구역을 그림, 위치 추정이 튐)
+  웹에서 보낸 목적지·순찰은 먼저 1m 안의 구역 밖 지점으로 빠져나간다. 그동안 Local·Global
+  costmap의 keepout 필터를 끄고(Nav2 `<costmap>/keepout_filter/toggle_filter`, 최대 60초),
+  빠져나오면 켠 뒤 원래 일을 시작한다. 나갈 곳이 없거나 실패하면 웹 지도 카드에 이유를 보인다.
 
 ## 수동 조작
 
@@ -566,6 +573,10 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   있는 동안은 보드의 `/ros_robot_controller/joy`에서 스틱 기울기를 확인해 조작 중으로
   본다. 보드가 스틱 값을 변화 시에만 보내는 펌웨어라면 5초 이상 같은 방향으로 잡고
   있을 때 멈출 수 있으며, 스틱을 다시 움직이면 다시 시작한다.
+- 진입 금지 구역은 보지 않는다. 수동 조작이 실행되는 동안 웹 패널 브리지가 Local costmap의
+  keepout 필터만 끈다. 구역에 갇힌 로봇도 원격으로 빼낼 수 있고, 실제 장애물은 local
+  costmap의 라이다 장애물과 Collision Monitor가 계속 막는다. 사람이 운전하면 구역 안으로도
+  들어갈 수 있다.
 - 우선순위 `HIGH`, 자원 `BASE`. 실행 중인 추적·목적지 이동·위치 보정(`NORMAL`)과
   순찰(`LOW`)을 취소한 뒤 시작하고, 수동 조작 중에는 `NORMAL`·`LOW` 이동 요청을 거부한다. 이 동안
   `/malbut/state`의 `control_mode`는 `MANUAL`이다. 지도 선택 여부와 무관하지만, 위치

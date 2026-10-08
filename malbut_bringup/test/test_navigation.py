@@ -11,8 +11,10 @@ import yaml
 from malbut_bringup import cloud_sync
 from malbut_bringup.cloud_sync import CloudSync, space_documents, state_payload
 from malbut_bringup.navigation import (
-    NavigationError, Navigator, path_summary, point_in_geometry, resolve_goal,
+    distance_to_geometry, escape_point, FAILURES, NavigationError, Navigator, path_summary,
+    point_in_geometry, resolve_goal,
 )
+from malbut_bringup.zone_override import ZoneOverride
 from malbut_bringup.web_panel import PanelData, validate_command
 from malbut_bringup.web_runtime import SavedMapCatalog
 from malbut_bringup.zones import write_zones, zone_feature
@@ -67,6 +69,17 @@ def test_a_point_just_off_the_floor_moves_onto_it_and_no_entry_is_refused():
     # Off the floor beside a no-entry Zone: the nearest allowed floor, never the Zone.
     goal, _moved = resolve_goal((3.2, -0.2), [FLOOR], [BLOCKED])
     assert point_in_geometry(goal, FLOOR) and not point_in_geometry(goal, BLOCKED)
+
+
+def test_a_goal_in_the_no_entry_margin_moves_out_so_the_parked_body_stays_clear():
+    # BLOCKED spans x 3..4, y 0..1; 0.1 m left of it is in the 0.2 m margin.
+    goal, moved = resolve_goal((2.9, 0.5), [FLOOR], [BLOCKED])
+    assert distance_to_geometry(goal, BLOCKED) >= 0.2 - 1e-9
+    assert 0.09 <= moved <= 0.2  # Snapping searches 5 cm rings.
+    assert resolve_goal((2.7, 0.5), [FLOOR], [BLOCKED]) == ((2.7, 0.5), 0.0)
+    assert resolve_goal((2.9, 0.5), [FLOOR], [BLOCKED], margin=0.0) == ((2.9, 0.5), 0.0)
+    assert distance_to_geometry((2.0, 0.5), BLOCKED) == pytest.approx(1.0)
+    assert distance_to_geometry((3.5, 0.5), BLOCKED) == pytest.approx(0.5)  # inside: to its edge
 
 
 def test_paths_are_thinned_to_ten_centimetres_and_keep_both_ends():
@@ -271,3 +284,179 @@ def test_a_failed_plan_keeps_the_planners_reason_in_the_robot_log(robot):
     assert sync.pending[PREVIEW_ID]['result']['error'] == '그곳까지 가는 길을 찾지 못했어요.'
     bridge.node.get_logger().warning.assert_called_with(
         'Destination preview: Nav2 planner found no path')
+
+
+# ---------------------------------------------------------------- 금지 구역에서 빠져나오기 · 실패 이유
+
+ZONE = {'type': 'Polygon', 'coordinates': [_square(1.8, 1.0, 2.2, 1.4)]}
+
+
+def test_an_escape_is_needed_only_when_the_body_touches_a_no_entry_zone():
+    assert escape_point((1.0, 1.2), [FLOOR], [ZONE]) is None, 'clear of the Zone'
+    for inside_or_touching in ((2.0, 1.2), (1.7, 1.2)):  # Inside; 0.1 m from its edge.
+        exit_point = escape_point(inside_or_touching, [FLOOR], [ZONE])
+        assert exit_point and not point_in_geometry(exit_point, ZONE)
+        assert distance_to_geometry(exit_point, ZONE) >= 0.2 - 1e-9
+        assert math.dist(exit_point, inside_or_touching) <= 1.0
+    # Floor all around is inside the Zone's margin: it cannot get out by itself.
+    boxed = {'type': 'Polygon', 'coordinates': [_square(0, 0, 4, 3)]}
+    assert escape_point((2.0, 1.2), [FLOOR], [boxed]) is False
+
+
+class Zones:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, on):
+        self.calls.append(on)
+
+
+def _escape_session(clock, escape=(1.5, 1.2)):
+    navigator = Navigator(clock)
+    token = navigator.preview(3.0, 0.5, pose=POSE, map_key='home:1', floor=[FLOOR],
+                              blocked=[], plan=lambda x, y, yaw: [(0.0, 0.5), (x, y)],
+                              busy=False)['preview_token']
+    submit, zones = Mock(side_effect=['e' * 32, REQUEST_ID]), Zones()
+    started = navigator.start(token, map_key='home:1', busy=False, submit=submit,
+                              escape=escape, zones=zones)
+    return navigator, submit, zones, started
+
+
+def _request(request_id, state):
+    return {'id': request_id, 'capability': 'navigate_to_pose', 'state': state,
+            'feedback': {}, 'message': ''}
+
+
+def test_the_robot_drives_out_of_the_zone_first_then_to_the_destination():
+    clock = Clock()
+    navigator, submit, zones, started = _escape_session(clock)
+    session = started['session_id']
+    assert started['state'] == 'escaping' and zones.calls == [False]
+    assert navigator.busy([]), 'no second destination while it escapes'
+    navigator.advance([])
+    submit.assert_not_called()  # Waits for the costmaps to drop the Zones.
+    clock.now += 2.5
+    navigator.advance([])
+    assert submit.call_args.args[0] == {'x': 1.5, 'y': 1.2, 'yaw': started['goal']['yaw']}
+    assert navigator.target([_request('e' * 32, 'RUNNING')])['state'] == 'escaping'
+    navigator.advance([_request('e' * 32, 'SUCCEEDED')])
+    assert zones.calls == [False, True] and submit.call_count == 1
+    clock.now += 2.5
+    navigator.advance([])
+    assert submit.call_args.args[0] == started['goal']
+    target = navigator.target([_request(REQUEST_ID, 'RUNNING')])
+    assert target['state'] == 'driving' and target['session_id'] == session
+    cancel = Mock()
+    assert navigator.cancel(session, cancel)['state'] == 'canceling'
+    cancel.assert_called_once_with(REQUEST_ID)
+
+
+def test_an_escape_that_cannot_finish_restores_the_zones_and_names_the_reason():
+    clock = Clock()
+    navigator, submit, zones, _started = _escape_session(clock)
+    clock.now += 2.5
+    navigator.advance([])
+    navigator.advance([_request('e' * 32, 'ABORTED')])
+    target = navigator.target([])
+    assert (target['state'], target['reason']) == ('failed', 'zone_stuck')
+    assert zones.calls == [False, True] and submit.call_count == 1
+    # No floor to drive out to: it fails at once, without moving.
+    navigator, submit, zones, started = _escape_session(Clock(), escape=False)
+    assert (started['state'], navigator.target([])['reason']) == ('failed', 'zone_stuck')
+    submit.assert_not_called()
+    assert zones.calls == []
+
+
+def test_canceling_between_steps_restores_the_zones_without_a_manager_request():
+    navigator, submit, zones, started = _escape_session(Clock())
+    assert navigator.cancel(started['session_id'], Mock()) == {
+        'session_id': started['session_id'], 'state': 'canceled'}
+    assert zones.calls == [False, True]
+    navigator.advance([])
+    submit.assert_not_called()
+    assert navigator.target([])['state'] == 'canceled'
+
+
+def _feedback_at(x, y):
+    return {'state': 'RUNNING', 'feedback_yaml': yaml.safe_dump(
+        {'current_pose': {'pose': {'position': {'x': x, 'y': y, 'z': 0.0}}},
+         'distance_remaining': 1.2})}
+
+
+@pytest.mark.parametrize('request_fields, system, reason', [
+    ({'state': 'ABORTED', 'feedback': _feedback_at(0.05, 0.5)}, None, 'blocked_start'),
+    ({'state': 'ABORTED', 'feedback': _feedback_at(1.5, 0.5)}, None, 'blocked_way'),
+    ({'state': 'ABORTED', 'feedback': {}}, None, 'blocked_start'),
+    ({'state': 'ABORTED', 'result': {
+        'message': 'conflicting mission abc has higher priority HIGH'}}, None, 'manual_drive'),
+    ({'state': 'ABORTED', 'result': {
+        'message': 'conflicting mission abc has higher priority URGENT'}}, None, 'fall_check'),
+    ({'state': 'ABORTED', 'result': {'message': 'mission preempted by a replacement request'}},
+     {'active_foreground_missions': [{'capability_id': 'fall_confirmation'}]},
+     'fall_check_started'),
+    ({'state': 'ABORTED', 'result': {'message': 'mission preempted by a replacement request'}},
+     {'active_foreground_missions': [{'capability_id': 'follow_person'}]}, 'unknown'),
+    ({'state': 'ERROR', 'message': 'Navigation requires a live map and current robot pose'},
+     None, 'localization_lost'),
+])
+def test_a_failed_drive_names_why_for_the_web_map(request_fields, system, reason):
+    navigator = Navigator(Clock())
+    token = navigator.preview(3.0, 0.5, pose=POSE, map_key='home:1', floor=[FLOOR],
+                              blocked=[], plan=lambda x, y, yaw: [(0.0, 0.5), (x, y)],
+                              busy=False)['preview_token']
+    navigator.start(token, map_key='home:1', busy=False, submit=lambda goal: REQUEST_ID)
+    request = {'id': REQUEST_ID, 'capability': 'navigate_to_pose', 'message': '',
+               **request_fields}
+    target = navigator.target([request], system)
+    assert (target['state'], target['reason']) == ('failed', reason)
+    assert reason in FAILURES
+    # The reason stays with the drive after its request leaves the bridge's history.
+    assert navigator.target([])['reason'] == reason
+
+
+def test_a_robot_standing_in_a_zone_escapes_before_the_drive_it_was_sent(robot):
+    sync, bridge, path = robot
+    write_zones(path, [zone_feature('restricted', [[0.8, 0.8], [1.2, 0.8], [1.2, 1.2],
+                                                   [0.8, 1.2]])])
+    bridge.data.map_snapshot = lambda: {'available': True, 'active': True,
+                                        'pose': {'x': 1.0, 'y': 1.0, 'yaw': 0.0}}
+    bridge.zone_override = ZoneOverride()
+    sync.dispatch({'id': PREVIEW_ID, 'operation': 'navigation_preview',
+                   'payload': {'x': 2.0, 'y': 1.0}})
+    token = sync.pending[PREVIEW_ID]['result']['preview_token']
+    sync.dispatch({'id': START_ID, 'operation': 'navigation_start',
+                   'payload': {'previewToken': token}})
+    assert sync.pending[START_ID]['result']['state'] == 'escaping'
+    assert bridge.zone_override.escaping()
+    bridge.submit.assert_not_called()
+
+
+def test_a_patrol_sent_while_standing_in_a_zone_starts_after_the_escape(robot):
+    sync, bridge, path = robot
+    write_zones(path, [zone_feature('restricted', [[0.8, 0.8], [1.2, 0.8], [1.2, 1.2],
+                                                   [0.8, 1.2]])])
+    bridge.data.map_snapshot = lambda: {'available': True, 'active': True,
+                                        'pose': {'x': 1.0, 'y': 1.0, 'yaw': 0.0}}
+    bridge.zone_override = ZoneOverride()
+    clock = Clock()
+    sync.navigator.clock = clock
+    sync.dispatch({'id': START_ID, 'operation': 'drive_mode_start',
+                   'payload': {'mode': 'patrol', 'thoroughness': 1}})
+    assert sync.pending[START_ID]['result']['status'] == 'escaping'
+    bridge.submit.assert_not_called()
+    clock.now += 2.5
+    sync.navigator.advance([])
+    assert bridge.submit.call_args.args[0]['capability'] == 'navigate_to_pose'
+    sync.navigator.advance([_request(REQUEST_ID, 'SUCCEEDED')])
+    assert not bridge.zone_override.escaping()
+    clock.now += 2.5
+    sync.navigator.advance([])
+    assert bridge.submit.call_args.args[0] == {
+        'command': 'start', 'capability': 'patrol', 'arguments': {'thoroughness': 1}}
+    assert sync.navigator.target([])['state'] == 'handed_over'
+    # Clear of every Zone: the patrol starts at once, as before.
+    bridge.data.map_snapshot = lambda: {'available': True, 'active': True,
+                                        'pose': {'x': 2.0, 'y': 1.0, 'yaw': 0.0}}
+    sync.dispatch({'id': CANCEL_ID, 'operation': 'drive_mode_start',
+                   'payload': {'mode': 'patrol'}})
+    assert sync.pending[CANCEL_ID]['result']['status'] == 'queued'

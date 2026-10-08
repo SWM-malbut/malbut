@@ -10,6 +10,8 @@
 - Feedback: `state`, `coverage_ratio`(0..1), `viewpoints_visited`
 - Result: `success`, `message`, `coverage_ratio`, `viewpoints_visited`
 - 모니터링 Topic: `/patrol/status`, `std_msgs/msg/String` JSON
+  (`state`, `detail`, `coverage_ratio`, `viewpoints_visited`, `unvisited_rooms`,
+  `inaccessible_rooms`, `room_count`: 이 순찰이 쓴 방 수, 방 파일이 없으면 0)
 - 중앙 Manifest: `malbut_interfaces/capabilities/patrol.yaml`
 
 한 요청은 한 번의 순찰입니다. 원하는 관측률과 접근 가능한 각 방의 방문·관측을

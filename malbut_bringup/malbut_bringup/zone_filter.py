@@ -20,7 +20,10 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 from .user_map import load_slam_map, read_user_map, user_map_path
-from .zones import build_mask, COSTS, empty_mask, read_zones, write_mask, zones_path, ZoneError
+from .zones import (
+    build_mask, COSTS, empty_mask, read_zones, RESTRICTED_MARGIN_M, write_mask, zones_path,
+    ZoneError,
+)
 
 
 STATE_TOPIC = '/malbut/zones/state'
@@ -46,7 +49,8 @@ class ZoneFilter(Node):
         super().__init__('zone_filter', **kwargs)
         self.directory = Path(self.declare_parameter(
             'cache_directory', str(Path.home() / '.ros/malbut/zones')).value).expanduser()
-        self.buffer_m = float(self.declare_parameter('restricted_buffer_m', 0.20).value)
+        self.buffer_m = float(self.declare_parameter(
+            'restricted_buffer_m', RESTRICTED_MARGIN_M).value)
         if not math.isfinite(self.buffer_m) or self.buffer_m < 0:
             raise ValueError('restricted_buffer_m must be finite and not negative')
         self.client = self.create_client(LoadMap, self.declare_parameter(
