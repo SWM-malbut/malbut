@@ -478,7 +478,9 @@ def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():
 
 
 @pytest.mark.parametrize('aec', [None, 'true', 'false'])
-def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_module, fall_config, aec):
+def test_aggregate_schedules_modules_with_only_a_read_only_observer(
+    launch_module, fall_config, aec,
+):
     module = _load('bringup')
     context = _context(module, fall_monitor='true', fall_config=str(fall_config),
                        **({} if aec is None else {'speech_input_has_aec': aec}))

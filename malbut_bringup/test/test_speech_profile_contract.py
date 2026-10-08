@@ -26,7 +26,8 @@ def test_robot_profiles_enable_aec_but_standalone_default_remains_explicit():
         'malbut_bringup/launch/cloud.launch.py', 'input_has_aec')) == 'true'
     values = [node.value for node in ast.walk(tree('malbut_bringup/launch/speech.launch.py'))
               if isinstance(node, ast.Assign) and any(
-                  isinstance(target, ast.Name) and target.id == 'defaults' for target in node.targets)]
+                  isinstance(target, ast.Name) and target.id == 'defaults'
+                  for target in node.targets)]
     assert len(values) == 1
     assert ast.literal_eval(next(value for name, value in zip(values[0].keys, values[0].values)
                                  if name.value == 'input_has_aec')) == 'false'

@@ -183,7 +183,8 @@ def test_runtime_watchdog_reaps_stalled_child_descendant_and_preserves_peer(chil
         code, output = finish(start(
             'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
             'p = subprocess.Popen([sys.executable, "-c", '
-            '"import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"])\n'
+            '"import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+            'time.sleep(30)"])\n'
             f'pathlib.Path({str(descendant)!r}).write_text(str(p.pid))\n'
             'print("malbut_speech_capture_ready", flush=True)\n'
             'print("malbut_speech_heartbeat", flush=True)\n'
@@ -198,8 +199,8 @@ def test_runtime_watchdog_reaps_stalled_child_descendant_and_preserves_peer(chil
         peer.wait(timeout=3)
 
 
-@pytest.mark.parametrize('timeout,ready', [(0, True), (-1, True), (float('inf'), True),
-                                          (float('nan'), True), (True, True), (1, False)])
+@pytest.mark.parametrize('timeout,ready', [
+    (0, True), (-1, True), (float('inf'), True), (float('nan'), True), (True, True), (1, False)])
 def test_invalid_heartbeat_configuration_is_rejected_before_launch(timeout, ready):
     from malbut_bringup.speech_process import run
 
