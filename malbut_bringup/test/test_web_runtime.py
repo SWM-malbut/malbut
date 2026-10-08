@@ -161,6 +161,7 @@ def test_new_start_does_not_reuse_previous_runs_unresolved_stop_future():
     supervisor._process = None
     supervisor._closed = supervisor._closing = False
     supervisor._status = {'state': 'STOPPED'}
+    supervisor.resident_manager = False
     previous_stop = Future()
     supervisor._stop_future = previous_stop
     supervisor.start('mapping')
@@ -256,3 +257,20 @@ def test_resident_supervisor_never_starts_duplicate_speech(runtime):
     assert supervisor.last_selected_map() == 'home.yaml'
     supervisor.stop().result()
     assert supervisor.last_selected_map() == 'home.yaml'
+
+
+def test_resident_manager_is_not_restarted_with_robot_child(runtime):
+    """Child lifetimes change while a resident Manager keeps its admission epoch."""
+    supervisor, popen, _, _, _ = runtime
+    supervisor.resident_manager = True
+    supervisor.start('navigation', 'home.yaml', movement_binding=('manager', 7)).result()
+    first = supervisor.snapshot()
+    assert 'manager:=false' in popen.call_args.args[0]
+    assert first['runtime_id'] and first['map_path'].endswith('/home.yaml')
+    supervisor.stop().result()
+    supervisor.start('mapping', movement_binding=('manager', 9)).result()
+    second = supervisor.snapshot()
+    assert second['runtime_id'] != first['runtime_id']
+    assert second['map_path'] == ''
+    assert first['movement_epoch'] == 7 and second['movement_epoch'] == 9
+    assert first['movement_runtime_id'] == second['movement_runtime_id'] == 'manager'

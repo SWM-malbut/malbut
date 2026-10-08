@@ -2,10 +2,12 @@
 
 import hashlib
 import json
+from pathlib import Path
 import time
 from uuid import uuid4
 
 import pytest
+import yaml
 
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 from malbut_interfaces.action import DeviceOperation, ExecuteMission  # noqa: E402
@@ -37,8 +39,10 @@ def test_generated_device_action_and_conditional_stop_round_trip():
     def execute(handle):
         requests.append(handle.request)
         handle.succeed()
-        return DeviceOperation.Result(success=True, code='completed',
-                                      result_json='{"runtime":{"ready":true}}', message='observed')
+        return ExecuteMission.Result(result_yaml=yaml.safe_dump({
+            'success': True, 'code': 'completed',
+            'result_json': '{"runtime":{"ready":true}}', 'message': 'observed',
+        }))
 
     def stop(request, response):
         requests.append(request)
@@ -47,7 +51,7 @@ def test_generated_device_action_and_conditional_stop_round_trip():
         response.unresolved_mission_ids = ['new-unconfirmed']
         return response
 
-    server = ActionServer(node, DeviceOperation, '/malbut/device/operate', execute)
+    server = ActionServer(node, ExecuteMission, '/malbut/mission/execute', execute)
     service = node.create_service(StopMovement, '/malbut/mission/stop_movement', stop)
     client = RobotDeviceClient(node)
     try:
@@ -55,7 +59,10 @@ def test_generated_device_action_and_conditional_stop_round_trip():
         client.send('typed-status', 'status', {}, outcomes.append)
         spin_until(executor, lambda: len(outcomes) == 1)
         assert outcomes[0]['success'] and outcomes[0]['result']['runtime']['ready']
-        assert requests[0].request_id == 'typed-status'
+        assert requests[0].capability_id == 'device_operation'
+        assert yaml.safe_load(requests[0].arguments_yaml) == {
+            'request_id': 'typed-status', 'operation': 'status', 'arguments_json': '{}',
+        }
         client.stop('typed-stop', outcomes.append, confirmed_ids=['known'])
         spin_until(executor, lambda: len(outcomes) == 2)
         assert requests[1].require_preemption_confirmation is True
@@ -112,13 +119,14 @@ def test_generated_manager_goal_keeps_journal_uuid_and_confirmation():
         rclpy.shutdown(context=context)
 
 
-def test_resident_voice_profile_routes_committed_query_without_manager(tmp_path):
+def test_resident_voice_profile_routes_committed_query_through_manager(tmp_path):
     from malbut_interfaces.msg import SpeechRequest, SpeechTranscript
     from malbut_agent_server.config import Settings
     from malbut_agent_server.factory import build_orchestrator
     from malbut_agent_server.ros_communication import create_communication_node
     from malbut_agent_server.schemas import AgentDecision, ProviderResult
-    from malbut_agent_server.resident_weather_query import ResidentWeatherQuery
+    from malbut_agent_server.weather_query import ManagerWeatherQuery
+    from malbut_system_manager.system_manager_node import SystemManagerNode
 
     class Provider:
         def complete(self, request, memories, history, tools, conversation_summary=None):
@@ -150,6 +158,12 @@ def test_resident_voice_profile_routes_committed_query_without_manager(tmp_path)
                                       result_json=json.dumps(value), message='observed')
 
     server = ActionServer(sender, DeviceOperation, '/malbut/device/operate', execute)
+    directory = tmp_path / 'manifests'
+    directory.mkdir()
+    source = Path(__file__).resolve().parents[2] / 'malbut_interfaces/capabilities/device_operation.yaml'
+    (directory / source.name).write_bytes(source.read_bytes())
+    manager = SystemManagerNode(manifest_directory=str(directory))
+    owner.add_node(manager)
     sender.create_subscription(SpeechRequest, '/malbut/speech/response',
                                replies.append, 10)
     transcripts = sender.create_publisher(SpeechTranscript, '/malbut/speech/transcript', 10)
@@ -159,7 +173,7 @@ def test_resident_voice_profile_routes_committed_query_without_manager(tmp_path)
         enable_device_operations=True)
     owner.add_node(agent)
     try:
-        assert isinstance(agent.weather_query, ResidentWeatherQuery)
+        assert isinstance(agent.weather_query, ManagerWeatherQuery)
         spin_until(owner, lambda: transcripts.get_subscription_count() == 1 and
                    agent.speech_missions.device.action.server_is_ready())
         transcripts.publish(SpeechTranscript(utterance_id='typed-voice-status', text='로봇 상태 알려 줘'))
@@ -167,7 +181,10 @@ def test_resident_voice_profile_routes_committed_query_without_manager(tmp_path)
                                      for message in replies))
         spin_until(owner, lambda: operations.count('result_publish') == 2)
         assert operations.count('status') == 1
-        assert not agent.missions._client.server_is_ready()
+        assert agent.missions._client.server_is_ready()
+        subscriptions = {item.topic_name for item in agent.subscriptions}
+        assert '/malbut/manager/device_state' in subscriptions
+        assert '/malbut/device/state' not in subscriptions
         notification = next(message for message in replies
                             if message.request_type == SpeechRequest.NOTIFICATION)
         expected = 'speech-request-' + hashlib.sha256(b'typed-voice-status').hexdigest()
@@ -182,6 +199,8 @@ def test_resident_voice_profile_routes_committed_query_without_manager(tmp_path)
         owner.remove_node(agent)
         agent.destroy_node()
         server.destroy()
+        owner.remove_node(manager)
+        manager.destroy_node()
         owner.shutdown()
         sender.destroy_node()
         rclpy.shutdown()

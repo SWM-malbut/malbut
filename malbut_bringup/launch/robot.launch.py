@@ -11,7 +11,7 @@ from malbut_bringup.launch_support import (
 
 ARGUMENTS = [
     'start_hardware', 'hardware_launch_file', 'nav2_params_file', 'slam_params_file', 'map',
-    'scan_topic', 'odom_topic', 'restore_pose',
+    'scan_topic', 'odom_topic', 'restore_pose', 'manager',
 ]
 
 
@@ -57,18 +57,19 @@ def _setup(context):
 
     actions = [*hardware_actions, *nav2_actions(
         params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic'))]
-    actions.append(Node(
-        package='malbut_system_manager', executable='system_manager',
-        name='system_manager', output='screen', parameters=[{
-            'use_sim_time': False,
-            # Manager owns admission/safety; optional modules do not gate it.
-            'ready_topic': '',
-            'localization_control': True, 'initial_map': initial_map,
-            'default_map': default_map,
-            'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
-            'relocalize_action': '/relocalize' if value('restore_pose') == 'true' else '',
-        }],
-    ))
+    if value('manager') == 'true':
+        actions.append(Node(
+            package='malbut_system_manager', executable='system_manager',
+            name='system_manager', output='screen', parameters=[{
+                'use_sim_time': False,
+                # Manager owns admission/safety; optional modules do not gate it.
+                'ready_topic': '',
+                'localization_control': True, 'initial_map': initial_map,
+                'default_map': default_map,
+                'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
+                'relocalize_action': '/relocalize' if value('restore_pose') == 'true' else '',
+            }],
+        ))
     return actions
 
 

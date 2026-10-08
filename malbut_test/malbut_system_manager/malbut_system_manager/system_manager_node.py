@@ -26,6 +26,10 @@ from malbut_interfaces.msg import MissionStatus, SystemState as SystemStateMsg
 from malbut_interfaces.srv import StopMovement
 from std_msgs.msg import Empty, String
 
+from .device_operation import (
+    is_preparation, PREPARATIONS, RESIDENT_CAPABILITIES, survives_runtime_stop,
+    validate_device_operation,
+)
 from .localization import LocalizationController, SlamProcess
 from .manifest_registry import (
     ManifestError,
@@ -110,6 +114,8 @@ class SystemManagerNode(Node):
         self._stop_operations: dict[str, _StopOperation] = {}
         self._stop_waiters = []
         self._stopped_mission_ids: set[str] = set()
+        self._preparation_terminals = {}
+        self._preparation_fenced_ids = set()
         self._recent_results = OrderedDict()
         self._state = StateStore()
         self._scheduler = MissionScheduler(self._state)
@@ -148,6 +154,13 @@ class SystemManagerNode(Node):
         # Bringup gates admission on its readiness report; standalone use
         # (simulation experiments, tests) stays ready immediately.
         ready_topic = self.declare_parameter('ready_topic', '').value
+        self._resident_runtime = bool(self.declare_parameter('resident_runtime', False).value)
+        self._state.resident_runtime = self._resident_runtime
+        self._runtime_id = ''
+        self._runtime_initialized = False
+        self._runtime_received = 0.0
+        self._runtime_invalidated = False
+        self._robot_shutdown = False
         localization_control = bool(
             self.declare_parameter('localization_control', False).value
         )
@@ -199,7 +212,7 @@ class SystemManagerNode(Node):
             0.05, self._refresh_stop_gate, callback_group=self._server_group,
         )
         self._ready_subscription = None
-        if ready_topic:
+        if ready_topic and not self._resident_runtime:
             ready_qos = QoSProfile(depth=1)
             ready_qos.reliability = ReliabilityPolicy.RELIABLE
             ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -209,10 +222,21 @@ class SystemManagerNode(Node):
             )
         with self._lock:
             effects = (
-                SchedulerEffects() if ready_topic
+                SchedulerEffects() if ready_topic or self._resident_runtime
                 else self._scheduler.set_ready(True)
             )
             self._accepting_goals = True
+        self._device_state_publisher = self.create_publisher(
+            String, '/malbut/manager/device_state', state_qos)
+        self._device_state_subscription = self.create_subscription(
+            String, '/malbut/device/state', self._relay_device_state, state_qos,
+            callback_group=self._server_group)
+        if self._resident_runtime:
+            self._runtime_subscription = self.create_subscription(
+                String, '/malbut/runtime/state', self._on_runtime_state, state_qos,
+                callback_group=self._server_group)
+            self._runtime_timer = self.create_timer(
+                0.5, self._check_runtime_state, callback_group=self._server_group)
         self._apply_effects(effects)
         self._publish_state()
         capabilities = ', '.join(
@@ -272,6 +296,7 @@ class SystemManagerNode(Node):
             relocalize_timeout_s=relocalize_timeout_s,
             default_map=self.declare_parameter('default_map', '').value,
             can_mapping=self._mapping_can_switch,
+            deferred_start=self._resident_runtime,
         )
         initial_map = self.declare_parameter('initial_map', '').value
 
@@ -279,7 +304,8 @@ class SystemManagerNode(Node):
             timer.cancel()
             controller.start(initial_map)
 
-        timer = self.create_timer(0.1, start_once, callback_group=group)
+        if not self._resident_runtime:
+            timer = self.create_timer(0.1, start_once, callback_group=group)
         return controller
 
     def _on_localization_mode(self, mode: LocalizationMode) -> None:
@@ -291,7 +317,9 @@ class SystemManagerNode(Node):
 
     def _base_is_free(self) -> bool:
         with self._lock:
-            return (self._accepting_goals and not self._state.movement_stopping
+            return (self._accepting_goals
+                    and (not self._resident_runtime or self._state.ready)
+                    and not self._state.movement_stopping
                     and not self._scheduler.base_busy()
                     and not any(item.movement or item.request.capability_id == 'fall_confirmation'
                                 for item in self._admissions.values())
@@ -313,6 +341,94 @@ class SystemManagerNode(Node):
             return all(ExecutionResource.BASE not in mission.resources
                        or mission.capability.capability_id == 'autoslam'
                        for mission in active)
+
+    def _stop_preparation(self, mission_id):
+        """Fence delayed map services before canceling/completing their owner."""
+        if (mission_id in self._preparation_fenced_ids
+                or mission_id in self._stopped_mission_ids):
+            return
+        self._preparation_fenced_ids.add(mission_id)
+        self._movement_epoch += 1
+        if self._localization is not None:
+            self._localization.stop_movement()
+        self._state.movement_stopping = self._state.movement_stopping or (
+            self._localization is not None and self._localization.stop_pending)
+
+    def _owned_publisher(self, topic):
+        publishers = self.get_publishers_info_by_topic(topic)
+        return (len(publishers) == 1 and publishers[0].node_name == 'robot_cloud_sync'
+                and publishers[0].node_namespace == self.get_namespace())
+
+    def _relay_device_state(self, message):
+        if self._owned_publisher('/malbut/device/state'):
+            self._device_state_publisher.publish(message)
+
+    def _on_runtime_state(self, message):
+        if not self._owned_publisher('/malbut/runtime/state'):
+            return
+        try:
+            report = json.loads(message.data)
+            observed = float(report['observed_at'])
+            state, runtime_id = report['state'], report['runtime_id']
+            if (not math.isfinite(observed) or not -1.0 <= time.time() - observed <= 3.0
+                    or not isinstance(runtime_id, str) or len(runtime_id) > 128
+                    or state not in {'STOPPED', 'STARTING', 'RUNNING', 'STOPPING', 'ERROR'}
+                    or not isinstance(report.get('map', ''), str)
+                    or report.get('mode') not in (None, 'mapping', 'navigation')):
+                return
+        except (ValueError, TypeError, KeyError):
+            return
+        with self._effects_lock:
+            self._runtime_received = time.monotonic()
+            if state != 'RUNNING':
+                if state == 'STARTING' and not self._state.ready:
+                    return
+                self._runtime_unavailable()
+                return
+            if not runtime_id or (runtime_id == self._runtime_id
+                                  and (self._runtime_invalidated or self._robot_shutdown)):
+                return
+            if (report.get('movement_runtime_id'), report.get('movement_epoch')) != (
+                    self._movement_runtime_id, self._movement_epoch):
+                return
+            if runtime_id == self._runtime_id:
+                if self._localization is not None and not self._runtime_initialized:
+                    self._runtime_initialized = self._localization.activate_runtime(
+                        report.get('map') or '')
+                return
+            if self._runtime_id:
+                self._runtime_unavailable()
+            self._runtime_id = runtime_id
+            self._runtime_invalidated = False
+            self._robot_shutdown = False
+            self._state.ready = True
+            if self._localization is not None:
+                self._runtime_initialized = self._localization.activate_runtime(
+                    report.get('map') or '')
+            self._publish_state()
+
+    def _check_runtime_state(self):
+        if self._runtime_received and time.monotonic() - self._runtime_received > 3.0:
+            with self._effects_lock:
+                self._runtime_unavailable()
+
+    def _runtime_unavailable(self):
+        if self._runtime_invalidated:
+            return
+        self._runtime_invalidated = True
+        self._runtime_initialized = False
+        self._state.ready = False
+        effects = SchedulerEffects()
+        with self._lock:
+            for admission in self._admissions.values():
+                if (admission.movement
+                        or admission.request.capability_id not in RESIDENT_CAPABILITIES):
+                    admission.stopped = True
+            effects.extend(self._scheduler.request_shutdown(retain=survives_runtime_stop))
+        if self._localization is not None:
+            self._localization.standby()
+        self._apply_effects(effects)
+        self._publish_state()
 
     def _on_readiness(self, message: String) -> None:
         try:
@@ -420,6 +536,12 @@ class SystemManagerNode(Node):
             capability = self._registry.get(request.capability_id.strip())
         except (ManifestError, RequestValidationError):
             return False
+        if capability.capability_id == 'device_operation':
+            try:
+                arguments, _ = self._registry.parse_arguments(capability, request.arguments_yaml)
+                return arguments['operation'] in PREPARATIONS
+            except (ManifestError, RequestValidationError):
+                return False
         return (ExecutionResource.BASE in capability.resources
                 and capability.capability_id != 'fall_confirmation')
 
@@ -446,6 +568,7 @@ class SystemManagerNode(Node):
 
     def _refresh_stop_gate(self) -> None:
         with self._effects_lock:
+            self._finish_preparation_terminals()
             with self._lock:
                 self._stopped_mission_ids.intersection_update(
                     item.mission_id for item in self._state.all())
@@ -499,9 +622,14 @@ class SystemManagerNode(Node):
                     admissions = [item for item in self._admissions.values() if item.movement]
                     current = active | {item.identity for item in admissions if not item.done}
                     if request.shutdown_runtime:
-                        current = {item.mission_id for item in self._state.all()}
-                        current.update(item.identity for item in self._admissions.values()
-                                       if not item.done)
+                        current = {
+                            item.mission_id for item in self._state.all()
+                            if not self._resident_runtime or not survives_runtime_stop(item)}
+                        current.update(
+                            item.identity for item in self._admissions.values()
+                            if not item.done and (
+                                not self._resident_runtime or item.movement
+                                or item.request.capability_id not in RESIDENT_CAPABILITIES))
                     localization_id = (self._localization.movement_identity
                                        if self._localization is not None else '')
                     if localization_id:
@@ -515,7 +643,11 @@ class SystemManagerNode(Node):
                     else:
                         self._movement_epoch += 1
                         if request.shutdown_runtime:
-                            self._accepting_goals = False
+                            if self._resident_runtime:
+                                self._robot_shutdown = True
+                                self._runtime_unavailable()
+                            else:
+                                self._accepting_goals = False
                         operation.affected = active
                         operation.admissions = admissions
                         operation.localization_id = localization_id
@@ -549,6 +681,9 @@ class SystemManagerNode(Node):
                 if mission_id not in self._contexts:
                     self._early_cancellations.add(mission_id)
                     return CancelResponse.ACCEPT
+                mission = self._state.get(mission_id)
+                if mission is not None and is_preparation(mission):
+                    self._stop_preparation(mission_id)
                 accepted, effects = self._scheduler.request_cancel(mission_id)
             if accepted:
                 self._apply_effects(effects)
@@ -567,6 +702,11 @@ class SystemManagerNode(Node):
                 manifest,
                 goal_handle.request.arguments_yaml,
             )
+            if manifest.capability_id == 'device_operation':
+                try:
+                    validate_device_operation(arguments)
+                except ValueError as error:
+                    raise RequestValidationError(str(error)) from error
         except (ManifestError, RequestValidationError) as error:
             result = _public_result(mission_id, message=str(error))
             with self._effects_lock:
@@ -720,6 +860,8 @@ class SystemManagerNode(Node):
         outcome: TerminalOutcome,
         result_yaml: str,
         message: str,
+        *,
+        preparation_finished=False,
     ) -> None:
         with self._effects_lock:
             with self._lock:
@@ -727,6 +869,22 @@ class SystemManagerNode(Node):
                 if mission is None or mission.generation != generation:
                     return
                 self._deferred_downstream_cancellations.discard(mission_id)
+                if is_preparation(mission) and not preparation_finished:
+                    try:
+                        result = yaml.safe_load(result_yaml)
+                        succeeded = (outcome is TerminalOutcome.SUCCEEDED
+                                     and isinstance(result, dict)
+                                     and result.get('success') is True)
+                    except yaml.YAMLError:
+                        succeeded = False
+                    if not succeeded and mission.mission_id not in self._stopped_mission_ids:
+                        self._stop_preparation(mission_id)
+                    if self._localization is not None and self._localization.stop_pending:
+                        self._preparation_terminals[mission_id] = (
+                            generation, outcome, result_yaml, message,
+                            time.monotonic() + self._stop_timeout_s)
+                        self._publish_state()
+                        return
                 effects = self._scheduler.handle_terminal(
                     mission_id,
                     outcome,
@@ -742,8 +900,29 @@ class SystemManagerNode(Node):
                     except yaml.YAMLError:
                         ready = False
                     self._localization.record_pose_result(ready)
+            self._preparation_fenced_ids.discard(mission_id)
             self._apply_effects(effects)
             self._publish_state()
+
+    def _finish_preparation_terminals(self):
+        for mission_id, terminal in list(self._preparation_terminals.items()):
+            generation, outcome, result_yaml, message, deadline = terminal
+            pending = self._localization is not None and self._localization.stop_pending
+            if pending and time.monotonic() < deadline:
+                continue
+            self._preparation_terminals.pop(mission_id)
+            if pending:
+                mission = self._state.get(mission_id)
+                if mission is not None:
+                    mission.user_cancel_requested = False
+                outcome = TerminalOutcome.ABORTED
+                result_yaml = json.dumps({'success': False, 'code': 'stop_unconfirmed',
+                                          'result_json': '{}',
+                                          'message': 'Localization termination is unconfirmed'})
+                message = 'Localization termination is unconfirmed'
+            self._on_downstream_terminal(
+                mission_id, generation, outcome, result_yaml, message,
+                preparation_finished=True)
 
     def _on_cancel_rejected(
         self,
@@ -756,6 +935,10 @@ class SystemManagerNode(Node):
                 mission = self._state.get(mission_id)
                 if mission is None or mission.generation != generation:
                     return
+                if is_preparation(mission):
+                    self._stop_preparation(mission_id)
+                    self._stopped_mission_ids.add(mission_id)
+                    self._state.movement_stopping = True
                 effects = self._scheduler.handle_cancel_rejected(
                     mission_id,
                     message,
@@ -775,6 +958,10 @@ class SystemManagerNode(Node):
                 mission = self._state.get(mission_id)
                 if mission is None or mission.generation != generation:
                     return
+                if is_preparation(mission):
+                    self._stop_preparation(mission_id)
+                    self._stopped_mission_ids.add(mission_id)
+                    self._state.movement_stopping = True
                 effects = self._scheduler.handle_dispatch_timeout(
                     mission_id,
                     message,

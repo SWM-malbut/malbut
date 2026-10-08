@@ -3,6 +3,7 @@
 from collections.abc import Callable
 import json
 
+from .device_operation import is_preparation, RESIDENT_CAPABILITIES
 from .models import (
     CancelReason,
     ExecutionMode,
@@ -23,8 +24,8 @@ ConflictPolicy = Callable[[MissionRecord, MissionRecord], bool]
 
 def is_movement(mission: MissionRecord) -> bool:
     """Include all base owners except the independent fall conversation."""
-    return (ExecutionResource.BASE in mission.resources
-            and mission.capability.capability_id != 'fall_confirmation')
+    return (is_preparation(mission) or (ExecutionResource.BASE in mission.resources
+            and mission.capability.capability_id != 'fall_confirmation'))
 
 
 def resources_conflict(
@@ -190,10 +191,12 @@ class MissionScheduler:
             effects.updated.add(mission.mission_id)
         return effects
 
-    def request_shutdown(self) -> SchedulerEffects:
+    def request_shutdown(self, *, retain=lambda _: False) -> SchedulerEffects:
         """Cancel active work and finish work that has not been dispatched."""
         effects = SchedulerEffects()
         for mission in list(self.state.pending.values()):
+            if retain(mission):
+                continue
             self.state.remove(mission.mission_id)
             effects.complete.append(
                 MissionCompletion(
@@ -204,6 +207,8 @@ class MissionScheduler:
             )
             effects.updated.add(mission.mission_id)
         for mission in list(self.state.suspended.values()):
+            if retain(mission):
+                continue
             self.state.remove(mission.mission_id)
             effects.complete.append(
                 MissionCompletion(
@@ -214,6 +219,9 @@ class MissionScheduler:
             )
             effects.updated.add(mission.mission_id)
         for mission in list(self.state.active()):
+            if retain(mission):
+                continue
+            mission.user_cancel_requested = False
             mission.state = MissionState.CANCELING
             mission.cancel_reason = CancelReason.SHUTDOWN
             mission.preempted_by.clear()
@@ -526,8 +534,12 @@ class MissionScheduler:
             return 'manual recovery is in progress'
         # Recovery's owner admits only a failed startup gate or a previously
         # ready Bringup. Ordinary missions must remain blocked during startup.
-        if not self.state.ready and mission.capability.capability_id != 'recovery':
-            return 'system manager is still booting'
+        if not self.state.ready:
+            if self.state.resident_runtime:
+                if mission.capability.capability_id not in RESIDENT_CAPABILITIES:
+                    return 'robot runtime is not running or its state is stale'
+            elif mission.capability.capability_id != 'recovery':
+                return 'system manager is still booting'
         if self.state.emergency:
             return 'emergency stop is active'
         map_error = self._map_error(mission)

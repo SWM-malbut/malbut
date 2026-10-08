@@ -78,6 +78,9 @@ def _active_ids(status):
         if isinstance(items, dict):
             items = list(items.values())
         for item in items if isinstance(items, list) else []:
+            if isinstance(item, dict) and item.get('capability_id') in {
+                    'device_operation', 'get_weather', 'set_weather_location'}:
+                continue  # Resident operations survive robot runtime transitions.
             value = item if isinstance(item, str) else item.get('mission_id', '')
             if isinstance(value, str) and value:
                 ids.add(value)
@@ -606,7 +609,9 @@ class RobotOperations:
     def _complete_owned_stop(self, job):
         for request_id in job.get('stop_device_pending', []):
             observed = self.device.snapshot(request_id)
-            if not observed['done'] or observed['code'] != 'canceled':
+            rejected = (observed.get('not_dispatched') is True
+                        and observed['code'] in {'rejected', 'movement_epoch_changed'})
+            if not observed['done'] or not (observed['code'] == 'canceled' or rejected):
                 return
         for request_id in job['stop_owned_pending']:
             observed = self.manager.snapshot(request_id)
