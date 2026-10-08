@@ -1,19 +1,24 @@
-"""Exercise speech launch gates without starting audio, API, or ROS processes."""
+"""Exercise speech launch and recovery without starting audio or API clients."""
 
 import importlib.util
+import os
 from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
 
-from launch import LaunchContext
+from launch import LaunchContext, LaunchDescription, LaunchService
 from launch.actions import (
     DeclareLaunchArgument, EmitEvent, ExecuteProcess, OpaqueFunction,
     RegisterEventHandler, TimerAction,
 )
 from launch.events.process import ProcessExited
+from launch.event_handlers import OnProcessExit, OnProcessIO, OnProcessStart
+from launch.events import Shutdown
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
+from launch_ros.substitutions import ExecutableInPackage
 from launch_ros.utilities import evaluate_parameters
 import pytest
 
@@ -164,7 +169,7 @@ def test_missing_local_asset_fails_only_this_module_setup(speech, name):
 @pytest.mark.parametrize(
     'child', ['agent_communication', 'tts_node', 'weather', 'stt', 'key_sync'])
 @pytest.mark.parametrize('code', [0, 1, -11])
-def test_child_exit_is_reported_without_shutdown_or_respawn(speech, child, code):
+def test_child_exit_is_reported_without_shutting_down_peers(speech, child, code):
     from launch.actions import LogInfo
     context = _context(speech)
     actions = speech._setup(context)
@@ -174,6 +179,111 @@ def test_child_exit_is_reported_without_shutdown_or_respawn(speech, child, code)
     assert len(result) == 1 and isinstance(result[0], LogInfo)
     context._set_is_shutdown(True)
     assert _exit(actions, context, node, returncode=code) == []
+
+
+def test_only_stt_restarts_with_a_bounded_delay(speech):
+    nodes = [item for item in speech._setup(_context(speech)) if isinstance(item, Node)]
+    for node in nodes:
+        assert node._ExecuteLocal__respawn is (node.node_executable == 'stt')
+        if node.node_executable == 'stt':
+            assert node._ExecuteLocal__respawn_delay == 5.0
+
+
+@pytest.mark.parametrize('phase', [
+    'startup', 'runtime_clean', 'runtime_failed', 'shutdown_running', 'shutdown_backoff'])
+def test_real_stt_recovery_preserves_peers_and_honors_shutdown(speech, monkeypatch, tmp_path, phase):
+    """Run the actual nodes/prefix; replace only their hardware-dependent executables."""
+    attempts = tmp_path / 'attempts'
+    child = tmp_path / 'child.py'
+    child.write_text(f'''
+import os, pathlib, sys, time
+if pathlib.Path(sys.argv[0]).name != 'stt':
+    time.sleep(30)
+    raise SystemExit(0)
+attempts = pathlib.Path({str(attempts)!r})
+with attempts.open('a') as stream:
+    stream.write(str(os.getpid()) + '\\n')
+attempt = len(attempts.read_text().splitlines())
+if attempt > 1:
+    try:
+        os.kill(int(attempts.read_text().splitlines()[-2]), 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise RuntimeError('previous STT is still alive')
+if attempt == 1 and {phase!r} in ('startup', 'shutdown_backoff'):
+    raise SystemExit(2)
+print('malbut_speech_capture_ready', flush=True)
+if attempt == 1 and {phase!r}.startswith('runtime_'):
+    raise SystemExit(0 if {phase!r} == 'runtime_clean' else 2)
+print(f'fixture_ready attempt={{attempt}}', flush=True)
+time.sleep(30)
+''')
+    for name in ('agent_communication', 'tts_node', 'weather', 'stt', 'key_sync'):
+        (tmp_path / name).symlink_to(child)
+    monkeypatch.setattr(ExecutableInPackage, 'perform', lambda self, context: str(
+        tmp_path / perform_substitutions(context, self.executable)))
+    monkeypatch.setenv('ROS_LOG_DIR', str(tmp_path / 'ros-log'))
+    monkeypatch.setenv('PYTHONPATH', str(ROOT / 'malbut_bringup') + os.pathsep
+                       + os.environ.get('PYTHONPATH', ''))
+    actions = speech._setup(_context(speech, preflight_timeout_s='2.0'))
+    nodes = [item for item in actions if isinstance(item, Node)]
+    stt = next(item for item in nodes if item.node_executable == 'stt')
+    # The production delay is asserted separately; keep the real-process test fast.
+    stt._ExecuteLocal__respawn_delay = 0.2
+    starts = {node: [] for node in nodes}
+    stt_exits = []
+    premature_peer_exits = []
+    output = bytearray()
+    completed = []
+
+    def started(event, context):
+        starts[event.action].append((event.pid, time.monotonic()))
+
+    def stop():
+        completed.append(True)
+        return [EmitEvent(event=Shutdown(reason='recovery test complete'))]
+
+    def exited(event, context):
+        if context.is_shutdown:
+            return []
+        if event.action is stt:
+            stt_exits.append(time.monotonic())
+            if phase == 'shutdown_backoff':
+                return stop()
+        else:
+            premature_peer_exits.append(event.action)
+        return []
+
+    def received(event):
+        output.extend(event.text)
+        expected = b'1' if phase == 'shutdown_running' else b'2'
+        if b'fixture_ready attempt=' + expected + b'\n' in output and not completed:
+            return stop()
+        return []
+
+    service = LaunchService()
+    service.include_launch_description(LaunchDescription([
+        RegisterEventHandler(OnProcessStart(on_start=started)),
+        RegisterEventHandler(OnProcessExit(on_exit=exited)),
+        RegisterEventHandler(OnProcessIO(target_action=stt, on_stdout=received)),
+        *actions,
+        TimerAction(period=8.0, actions=[EmitEvent(event=Shutdown(reason='test timeout'))]),
+    ]))
+    assert service.run() == 0
+    assert completed, 'STT never reached the expected recovery/shutdown event'
+    assert not premature_peer_exits
+    assert all(len(starts[node]) == 1 for node in nodes if node is not stt)
+    expected_attempts = 1 if phase.startswith('shutdown_') else 2
+    assert len(starts[stt]) == expected_attempts
+    child_pids = [int(pid) for pid in attempts.read_text().splitlines()]
+    assert len(child_pids) == expected_attempts
+    assert len(set(child_pids)) == expected_attempts
+    if expected_attempts == 2:
+        assert starts[stt][1][1] - stt_exits[0] >= 0.18
+    for pid in child_pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
 
 
 def test_preflight_only_stays_an_explicit_diagnostic(speech, monkeypatch):
