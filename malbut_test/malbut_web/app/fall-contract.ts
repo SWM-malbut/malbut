@@ -9,7 +9,19 @@ const kinds = [
   "notification_requested", "agent_check_failed", "analysis_completed",
   "analysis_unavailable", "stale_analysis_result", "recheck_unavailable", "incident_resolved",
   "confirmation_completed", "incident_merged",
+  // The robot drives near an uncertain suspicion and checks for a person first.
+  "approach_started", "approach_completed", "person_check_completed", "approach_returned",
 ];
+// Allowed reasons per approach event; null is never a reason for these except a start
+// that interrupted nothing.
+const approachReasons: Record<string, Array<string | null>> = {
+  approach_started: ["patrol_stopped", "follow_stopped", null],
+  approach_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
+  person_check_completed: ["person", "not_a_person"],
+  approach_returned: ["returned", "return_failed"],
+};
+// A robot-side closure after its own check. Never a normal-activity judgment.
+const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person"];
 
 export type FallEventInput = {
   schemaVersion: 1;
@@ -29,7 +41,7 @@ export type FallEventInput = {
   mergedIntoIncidentIds?: string[];
   analysis?: {
     requestId: string;
-    purpose: "incident" | "crosscheck";
+    purpose: "incident" | "crosscheck" | "person_check";
     assessment: string;
     explanation: string;
   };
@@ -43,13 +55,14 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     "answer", "reason", "notificationLevel"];
   if (v.eventKind === "incident_merged") keys.push("mergedIntoIncidentIds");
   if (Object.hasOwn(v, "analysis")) {
-    if (v.eventKind !== "analysis_completed") return null;
+    if (v.eventKind !== "analysis_completed" && v.eventKind !== "person_check_completed") return null;
     const a = v.analysis;
     if (!a || typeof a !== "object" || Array.isArray(a)) return null;
     const record = a as Record<string, unknown>;
     if (Object.keys(record).length !== 4 ||
         typeof record.requestId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(record.requestId) ||
-        !["incident", "crosscheck"].includes(record.purpose as string) ||
+        !(v.eventKind === "person_check_completed" ? ["person_check"] : ["incident", "crosscheck"])
+          .includes(record.purpose as string) ||
         !assessments.includes(record.assessment as string) ||
         typeof record.explanation !== "string" || !record.explanation.trim() ||
         [...record.explanation].length > 1000) return null;
@@ -71,6 +84,8 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
       !(v.answer === null || (typeof v.answer === "string" && answers.includes(v.answer))) ||
       !(v.reason === null || (typeof v.reason === "string" && /^[a-z_]{1,80}$/.test(v.reason)))) return null;
   if (WEB_ONLY_FALL_REASONS.includes(v.reason as string)) return null;
+  if (Object.hasOwn(approachReasons, v.eventKind as string) &&
+      !approachReasons[v.eventKind as string].includes(v.reason as string | null)) return null;
   if (v.eventKind === "incident_merged") {
     const targets = v.mergedIntoIncidentIds;
     if (v.state !== "resolved" || v.reason !== "findings_associated" || v.answer === "help_request" ||
@@ -98,8 +113,10 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
           (v.state === "resolved" && v.answer === "okay"))) return null;
   }
   if (v.state === "resolved") {
-    if (v.eventKind !== "incident_merged" && v.eventKind !== "confirmation_completed" && (v.eventKind !== "incident_resolved" ||
-        !["normal_verified", "risk_cleared", "response_completed"].includes(v.reason as string))) return null;
+    // A return trip ends after the robot's own not-a-person closure.
+    if (v.eventKind !== "incident_merged" && v.eventKind !== "confirmation_completed" &&
+        v.eventKind !== "approach_returned" &&
+        (v.eventKind !== "incident_resolved" || !resolvedReasons.includes(v.reason as string))) return null;
     if (v.reason === "normal_verified" && (v.fallSeen || v.answer !== "okay" || v.assessment !== "normal_activity")) return null;
   }
   // Construct in a canonical order for idempotency comparisons; no raw media,

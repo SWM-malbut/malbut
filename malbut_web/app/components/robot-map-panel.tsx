@@ -1822,8 +1822,9 @@ export function RobotMapPanel({
                     onClick={() => void sendCommand("drive_mode_start", patrolLevels
                       ? { mode: "patrol", thoroughness: patrolLevel }
                       : { mode: "patrol" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
-                  >방 순찰 시작</button>
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
+                  >{isRecord(driveMode?.detail?.last_patrol) && driveMode?.detail?.last_patrol.outcome === "fall_check"
+                      ? "순찰 다시 시작" : "방 순찰 시작"}</button>
                   {/* 실로봇에는 자율 배회 기능이 없다(시뮬레이터 데모 전용). */}
                   {!realRobot && (
                     <button
@@ -3481,7 +3482,26 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
     return { tone: "neutral", title: "순찰을 중지했어요",
       lines: [`집의 ${percent}%까지 살펴봤어요 · ${visited}곳 방문`] };
   }
+  if (result.outcome === "fall_check") {
+    // 목업 17번 · 낙상 확인으로 멈춤: 순찰은 스스로 다시 시작하지 않는다.
+    const at = typeof result.stopped_at === "string" && Number.isFinite(Date.parse(result.stopped_at))
+      ? new Date(result.stopped_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })
+      : null;
+    const outcome = result.fall_result === "not_a_person"
+      ? (result.returned === true ? "확인 결과: 사람 아님 · 원래 자리로 돌아왔어요" : "확인 결과: 사람 아님")
+      : result.fall_result === "person" ? "확인 결과: 사람 · 말벗이 그 자리에 있어요"
+        : result.fall_result === "unreachable" ? "가까이 가지 못해 그 자리에서 물어봤어요" : "확인 중이에요";
+    return { tone: "warn", title: "낙상 의심을 확인하느라 순찰을 멈췄어요", lines: [
+      at ? `${at} · ${outcome}` : outcome,
+      "순찰은 자동으로 다시 시작하지 않아요. 자세한 내용은 사건 기록에 있어요.",
+    ] };
+  }
   return null;
+}
+
+/** 낙상 확인 미션이 바퀴를 쓰는 동안: 순찰을 시작해도 말벗이 받아 주지 않는다. */
+function fallCheckActive(value: RobotDriveModeSnapshot | undefined) {
+  return value?.detail?.fall_check_active === true;
 }
 
 function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
