@@ -82,9 +82,13 @@ Goal 응답 watchdog과 취소 watchdog의 합에 1초를 더한 값입니다. `
 실제 충돌 ID가 `confirmed_preemption_mission_ids` 안에 있을 때만 변경을 허용합니다.
 불일치 시 아무 작업도 취소하지 않고 `preemption_confirmation_required`를 반환합니다.
 ExecuteMission은 해당 code와 `conflicting_mission_ids`를 `result_yaml`에 담습니다.
-StopMovement의 `shutdown_runtime=true`는 이 확인을 모든 미션에 적용하고 새 미션
-접수를 프로세스 종료까지 닫습니다. 이 경우에도 서비스 자체는 이동만 정지하므로,
-호출자가 확인된 나머지 작업을 종료한 뒤 Bringup을 내립니다.
+StopMovement의 `shutdown_runtime=true`는 직접 실행한 Manager에서는 모든 미션의
+확인을 요구하고 새 접수를 프로세스 종료까지 닫습니다. `resident_runtime=true`에서는
+로봇 자식 실행에 속한 작업만 확인·종료하고 로봇 기능의 접수만 닫습니다. 날씨와
+일반 `device_operation` 작업은 계속 실행되므로 이 서비스를 호출한 런타임 종료
+작업 자체도 유지됩니다. `runtime_start`·`map_select` 준비 작업은 예외로 이동 정지
+대상입니다. 다음 자식 실행이 확인되면 로봇 기능의 접수를 다시 열며 이동 세대는
+초기화하지 않습니다.
 
 통합 Agent·웹·수동 입력은 `/malbut/state`의 `movement_runtime_id`, `movement_epoch`를
 확인한 뒤 ExecuteMission에 같은 값을 넣고 `require_movement_epoch=true`로 보냅니다.
@@ -297,3 +301,29 @@ map_server·AMCL과 관리자가 소유한 SLAM Toolbox 중 하나를 위치 추
 실기기 적용본에도 같은 미션 관리 코드를 포함합니다.
 기능 알고리즘이나 센서 드라이버를 이 패키지로 옮기지 않으며,
 새 기능은 ROS 계약과 Manifest를 통해 연결합니다.
+
+
+## 상주 Manager와 기기 관리
+
+Cloud 실행은 `resident_runtime=true`인 기존 SystemManager 하나를 유지하고 로봇 자식의
+Manager는 실행하지 않습니다. `device_operation` Manifest는 고정된
+`/malbut/device/operate` Action을 실행합니다. Agent는 다른 기능과 똑같이
+`ExecuteMission`에 `request_id`, `operation`, `arguments_json`을 보내며 Manager는
+등록된 작업 이름과 16 KiB 이하 JSON 객체를 검증한 뒤 스케줄러·실행기를 통과시킵니다.
+임의 주소나 Action 이름을 입력으로 지정할 수 없습니다. 로봇이 꺼져 있어도
+`get_weather`, `set_weather_location`, `device_operation`은 실행할 수 있습니다.
+
+상주 모드는 시작할 때 지도·SLAM을 실행하지 않습니다. 같은 namespace의 단일
+`robot_cloud_sync`가 발행하는 `/malbut/runtime/state`에서 3초 이내의 `RUNNING`과
+새 자식 `runtime_id`, 시작 시점의 `movement_runtime_id`·`movement_epoch`를 확인한
+뒤 저장 지도 또는 설정된 기본 unknown 지도를 초기화합니다. SLAM 시작은 기존대로
+AutoSLAM이 소유합니다. 실행 상태가 끊기거나 종료되면 로봇 미션을 서버 주도 종료하고
+내부 위치 추정과 SLAM을 정리합니다. 이전 자식의 늦은 완료나 오래된 시작 요청은
+새 자식의 초기화를 다시 열 수 없습니다. `ready_topic`은 상주 모드의 생존 판정에
+사용하지 않습니다.
+
+Manager는 같은 소유자의 `/malbut/device/state` 관측을
+`/malbut/manager/device_state`로 중계합니다. 이는 읽기 상태 전달이며 작업 실행은
+항상 Manager 미션을 통과합니다. 준비 작업의 취소·실패는 이동 세대와 내부 위치
+추정을 함께 닫고 실제 위치 추정 종료까지 결과를 보류합니다. 정해진 응답 상한 내에
+종료가 확인되지 않으면 `ABORTED / stop_unconfirmed`를 반환하고 이동 차단을 유지합니다.

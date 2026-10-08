@@ -384,7 +384,7 @@ jobs:
             test/test_speech_addressee_service_ros.py test/test_fall_runtime.py \
             test/test_situation_action_ros.py test/test_situation_recovery_ros.py \
             test/test_ros_speech_missions.py test/test_robot_device_ros.py \
-            test/test_resident_weather_query_ros.py
+            test/test_manager_boundary_ros.py
 
       - name: Validate robot Xacro
         if: needs.changes.outputs.ros_full == 'true'
