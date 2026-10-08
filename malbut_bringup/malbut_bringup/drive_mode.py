@@ -55,10 +55,15 @@ def _rooms(value):
 def _progress(status):
     coverage = status.get('coverage_ratio')
     visited = status.get('viewpoints_visited')
-    return {
+    progress = {
         'coverage_ratio': round(float(coverage), 3) if type(coverage) in (int, float) else 0.0,
         'viewpoints_visited': int(visited) if type(visited) is int else 0,
     }
+    rooms = status.get('room_count')
+    if type(rooms) is int and 0 <= rooms <= 64:
+        # Rooms this patrol used; an older patrol node sends none.
+        progress['room_count'] = rooms
+    return progress
 
 
 def last_patrol(status):
@@ -74,6 +79,7 @@ def last_patrol(status):
     else:
         return None
     return {'outcome': outcome, **_progress(status),
+            'unvisited_rooms': _rooms(status.get('unvisited_rooms')),
             'inaccessible_rooms': _rooms(status.get('inaccessible_rooms'))}
 
 

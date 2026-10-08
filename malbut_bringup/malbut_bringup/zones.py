@@ -26,6 +26,12 @@ import yaml
 ZONE_FORMAT = 'malbut-semantic-zones-v1'
 # Raw mask values: Nav2 scales 0..100 to costmap cost, 100 is lethal.
 COSTS = {'allow': 0, 'avoid': 70, 'restricted': 100}
+# Around a no-entry Zone, about half the robot's padded footprint (0.185 m). Only
+# the Zone is lethal: the margin costs like an avoid Zone, so paths keep the body
+# clear where there is room, and a robot standing in the margin can still drive out.
+# The footprint checks of the controller, behaviors and manual driving keep the
+# body out of the Zone itself (2026-10-08: a lethal margin froze the robot).
+RESTRICTED_MARGIN_M = 0.20
 MAX_ZONES = 64
 MAX_POINTS = 64
 MIN_AREA_M2 = 0.01
@@ -180,7 +186,7 @@ def zone_feature(behavior, points, name=''):
     return feature
 
 
-def build_mask(map_yaml, features, restricted_buffer_m=0.20):
+def build_mask(map_yaml, features, restricted_buffer_m=RESTRICTED_MARGIN_M):
     """Rasterize Zones on the saved map's grid; the highest cost wins."""
     import cv2
     import numpy as np
@@ -216,10 +222,10 @@ def build_mask(map_yaml, features, restricted_buffer_m=0.20):
         for hole in rings[1:]:
             cv2.fillPoly(zone, [pixels(hole)], 0)
         if behavior == 'restricted' and buffer_cells:
-            # Nav2 checks the restricted cost at the robot center; the buffer keeps
-            # the footprint out as well.
             size = 2 * buffer_cells + 1
-            zone = cv2.dilate(zone, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)))
+            margin = cv2.dilate(zone, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)))
+            ring = (margin > 0) & (zone == 0)
+            mask[ring] = np.maximum(mask[ring], COSTS['avoid'])
         mask[zone > 0] = np.maximum(mask[zone > 0], COSTS[behavior])
     return mask, {'resolution': resolution, 'origin': [origin[0], origin[1], 0.0]}
 

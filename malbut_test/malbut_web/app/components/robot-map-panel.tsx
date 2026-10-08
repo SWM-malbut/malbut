@@ -16,6 +16,9 @@ import { ManagedRobotMap } from "./managed-robot-map";
 import { ManagedRobotTools } from "./managed-robot-tools";
 import { useManagedRobotWorkspace } from "./managed-robot-workspace";
 import { MapDrivePad, RealRobotMapManager } from "./real-robot-map-manager";
+import {
+  NAVIGATION_ESCAPING_NOTE, NAVIGATION_ESCAPING_TITLE, NAVIGATION_FAILED_TITLE, navigationFailureCopy,
+} from "../robot-navigation-copy";
 
 type RobotDriveModeSnapshot = {
   mode: "idle" | "destination" | "patrol" | "roaming" | "person_following";
@@ -143,6 +146,8 @@ export function RobotMapPanel({
   const [managedDiagnostics, setManagedDiagnostics] = useState<{ deviceId: string; report: Record<string, unknown> } | null>(null);
   const [navigationPreview, setNavigationPreview] = useState<Record<string, unknown> | null>(null);
   const [previewExpiresAt, setPreviewExpiresAt] = useState(0);
+  // 목업 23번: [다시 선택] hides a failed drive until the next one.
+  const [dismissedNavigation, setDismissedNavigation] = useState("");
   const [clockNow, setClockNow] = useState(0);
   const [mapMode, setMapMode] = useState<MapMode>(initialMode);
   const [screen, setScreen] = useState<MapScreen>(
@@ -362,6 +367,10 @@ export function RobotMapPanel({
     ? navigationPreview.preview_token
     : "";
   const navigationSucceeded = mapMode === "navigate" && !previewToken && navigation?.state === "succeeded";
+  // 목업 23번: out of a no-entry Zone first, or why the drive ended without arriving.
+  const navigationEscaping = navigation?.state === "escaping";
+  const navigationFailed = !previewToken && navigation?.state === "failed" && navigationSession !== dismissedNavigation;
+  const navigationBusy = navigationDriving || navigationEscaping;
   const navigationProgress = navigationSucceeded ? 100 : navigationProgressPercent(navigation);
   const previewPath = isRecord(navigationPreview?.path) && Array.isArray(navigationPreview.path.points)
     ? navigationPreview.path.points as unknown[]
@@ -517,7 +526,7 @@ export function RobotMapPanel({
       return;
     }
     const geometry = snapshot?.map?.geometry;
-    if (!geometry || navigationDriving) return;
+    if (!geometry || navigationBusy) return;
     // 방·구역 편집은 말벗이 꺼져 있어도 된다(켜지면 반영). 목적지는 켜져 있을 때만 고른다.
     if (!snapshot?.online && mapMode !== "rooms" && mapMode !== "zones") return;
     if (!isOwner && mapMode !== "navigate") return;
@@ -1194,7 +1203,7 @@ export function RobotMapPanel({
     </div>
   );
   const navigating = mapMode === "navigate";
-  const canStartPreview = navigating && Boolean(previewToken) && !navigationDriving;
+  const canStartPreview = navigating && Boolean(previewToken) && !navigationBusy;
   const localizedPose = snapshot?.state?.localization.state === "ok" ? snapshot.state.pose : null;
   const currentRoom = localizedPose
     ? roomDrafts.find((room) => featureContains(room, localizedPose.x, localizedPose.y)) ?? null
@@ -1655,12 +1664,28 @@ export function RobotMapPanel({
             <strong className="ui-map-status-title">
               {mapping && realRobot ? "새 지도를 만들고 있어요 · 지도 관리에서 진행을 볼 수 있어요"
                 : mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
+                : navigationEscaping ? NAVIGATION_ESCAPING_TITLE
+                : navigationFailed ? NAVIGATION_FAILED_TITLE
                 : navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
                   : navigationSucceeded ? "선택한 목적지에 도착했어요"
                     : canStartPreview ? "선택한 위치까지 이동할 수 있어요"
                       : navigating ? "지도에서 보낼 곳을 선택해 주세요"
                         : snapshot?.map ? "저장된 지도를 사용하고 있어요" : "아직 저장된 지도가 없어요"}
             </strong>
+            {navigationEscaping && (
+              <>
+                <div role="status" className="ui-map-notice is-info">{NAVIGATION_ESCAPING_NOTE}</div>
+                {typeof navigation?.session_id === "string" && (
+                  <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
+                )}
+              </>
+            )}
+            {navigationFailed && (
+              <>
+                <div role="status" className="ui-map-notice is-warn">{navigationFailureCopy(navigation)}</div>
+                <button type="button" className="ui-button" onClick={() => { setDismissedNavigation(navigationSession); setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
+              </>
+            )}
             {(navigationDriving || navigationSucceeded) && (
               <div
                 className="ui-progress"
@@ -1719,7 +1744,7 @@ export function RobotMapPanel({
                     key={featureId(room)}
                     type="button"
                     className="ui-button"
-                    disabled={!snapshot?.online || navigationDriving || autonomousModeActive || Boolean(activeCommand) || busy}
+                    disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(activeCommand) || busy}
                     onClick={() => {
                       const point = featureWorldLabelPoint(room);
                       if (!point) return;
@@ -1822,7 +1847,7 @@ export function RobotMapPanel({
                     onClick={() => void sendCommand("drive_mode_start", patrolLevels
                       ? { mode: "patrol", thoroughness: patrolLevel }
                       : { mode: "patrol" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("patrol") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
                   >{isRecord(driveMode?.detail?.last_patrol) && driveMode?.detail?.last_patrol.outcome === "fall_check"
                       ? "순찰 다시 시작" : "방 순찰 시작"}</button>
                   {/* 실로봇에는 자율 배회 기능이 없다(시뮬레이터 데모 전용). */}
@@ -1831,14 +1856,14 @@ export function RobotMapPanel({
                       type="button"
                       className="ui-button"
                       onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
-                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
+                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
                     >자율 배회 시작</button>
                   )}
                   <button
                     type="button"
                     className="ui-button"
                     onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
                   >사람 따라가기</button>
                   {typeof driveMode?.detail?.follow_distance_m === "number" && (
                     <p className="ui-note">말벗 앞에 보이는 사람을 {driveMode.detail.follow_distance_m}m 거리로 따라가요.</p>
@@ -2227,7 +2252,7 @@ export function RobotMapPanel({
           isOwner={isOwner}
           busy={busy}
           commandActive={Boolean(activeCommand)}
-          driveActive={navigationDriving || autonomousModeActive}
+          driveActive={navigationBusy || autonomousModeActive}
           roomCount={originalRooms.length}
           sendCommand={sendCommand}
         />
@@ -3419,16 +3444,24 @@ const PATROL_LEVELS: Array<[string, string]> = [
 ];
 
 function patrolNumbers(value: Record<string, unknown>) {
-  return {
-    percent: Math.round(numberValue(value.coverage_ratio) * 100),
-    visited: Math.round(numberValue(value.viewpoints_visited)),
-    rooms: (key: string) => Array.isArray(value[key])
-      ? value[key].filter((name): name is string => typeof name === "string")
-      : [],
-  };
+  const rooms = (key: string) => Array.isArray(value[key])
+    ? value[key].filter((name): name is string => typeof name === "string")
+    : [];
+  // Rooms the patrol used (0: none for this map). An older robot sends no count.
+  const roomCount = typeof value.room_count === "number" && Number.isInteger(value.room_count)
+    ? value.room_count : null;
+  const roomsSeen = roomCount === null ? 0
+    : Math.max(0, roomCount - rooms("unvisited_rooms").length - rooms("inaccessible_rooms").length);
+  return { percent: Math.round(numberValue(value.coverage_ratio) * 100), rooms, roomCount, roomsSeen };
 }
 
-/** 목업 17번 · 순찰 중: 지금 하는 일, 살펴본 비율·방문한 곳, 남은 방. */
+/** 목업 17번: 방 기준으로 둘러본 정도를 말한다(멈춰 둘러본 곳 수는 보여 주지 않음). */
+function patrolRoomsCopy(roomCount: number | null, roomsSeen: number) {
+  if (!roomCount) return null;
+  return roomsSeen >= roomCount ? `방 ${roomCount}곳 모두 둘러봄` : `방 ${roomCount}곳 중 ${roomsSeen}곳 둘러봄`;
+}
+
+/** 목업 17번 · 순찰 중: 지금 하는 일, 둘러본 방·살펴본 비율, 남은 방. */
 function patrolProgressCopy(value: RobotDriveModeSnapshot | undefined) {
   const detail = value?.detail ?? {};
   const phases: Record<string, string> = {
@@ -3438,11 +3471,12 @@ function patrolProgressCopy(value: RobotDriveModeSnapshot | undefined) {
     : value?.state === "stopping" ? "멈추는 중"
       : detail.suspended === true ? "잠시 멈춤"
         : phases[String(detail.patrol_phase)] ?? "준비 중";
-  const { percent, visited, rooms } = patrolNumbers(detail);
+  const { percent, rooms, roomCount, roomsSeen } = patrolNumbers(detail);
   const remaining = rooms("unvisited_rooms");
+  const roomLine = patrolRoomsCopy(roomCount, roomsSeen);
   return [
     `순찰 · ${phase}`,
-    `집의 ${percent}% 살펴봄 · ${visited}곳 방문`,
+    roomLine ? `${roomLine} · 집의 ${percent}% 살펴봄` : `집의 ${percent}% 살펴봄`,
     ...(remaining.length ? [`남은 방: ${remaining.join(", ")}`] : []),
   ];
 }
@@ -3464,14 +3498,22 @@ function followProgressCopy(value: RobotDriveModeSnapshot | undefined) {
 function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
   const result = value?.detail?.last_patrol;
   if (!isRecord(result)) return null;
-  const { percent, visited, rooms } = patrolNumbers(result);
+  const { percent, rooms, roomCount, roomsSeen } = patrolNumbers(result);
+  const roomLine = patrolRoomsCopy(roomCount, roomsSeen);
   if (result.outcome === "done") {
-    return { tone: "ok", title: "순찰을 마쳤어요", lines: [`집의 ${percent}% 살펴봄 · ${visited}곳 방문`] };
+    if (roomCount === 0) {
+      return { tone: "ok", title: "순찰을 마쳤어요", lines: [
+        `방 정보 없이 순찰했어요 · 집의 ${percent}% 살펴봄`,
+        "방 편집에서 방을 나눠 두면 방마다 들어가 살펴봐요.",
+      ] };
+    }
+    return { tone: "ok", title: "순찰을 마쳤어요",
+      lines: [roomLine ? `${roomLine} · 집의 ${percent}% 살펴봄` : `집의 ${percent}% 살펴봄`] };
   }
   if (result.outcome === "partial") {
     const blocked = rooms("inaccessible_rooms");
     return { tone: "warn", title: `집의 ${percent}%까지 살펴봤어요`, lines: [
-      `더 갈 수 있는 곳이 없었어요 · ${visited}곳 방문`,
+      roomLine ? `${roomLine} · 더 갈 수 있는 곳이 없었어요` : "더 갈 수 있는 곳이 없었어요",
       ...(blocked.length ? [`갈 수 없었던 방: ${blocked.join(", ")}`] : []),
     ] };
   }
@@ -3480,7 +3522,7 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
   }
   if (result.outcome === "stopped") {
     return { tone: "neutral", title: "순찰을 중지했어요",
-      lines: [`집의 ${percent}%까지 살펴봤어요 · ${visited}곳 방문`] };
+      lines: [roomLine ? `${roomLine} · 집의 ${percent}%까지 살펴봤어요` : `집의 ${percent}%까지 살펴봤어요`] };
   }
   if (result.outcome === "fall_check") {
     // 목업 17번 · 낙상 확인으로 멈춤: 순찰은 스스로 다시 시작하지 않는다.

@@ -88,6 +88,7 @@ def test_narrow_door_excludes_unreachable_room_without_endless_goals():
     rooms = {'features': [_room('closed-room', 3.1, 0.0, 6.0, 3.0)]}
     planner = _planner(cells, rooms=rooms, clearance=0.16, robot=(1.05, 1.05))
     assert planner.inaccessible_room_names == ('closed-room',)
+    assert planner.room_names == ('closed-room',), 'a room it cannot reach still counts'
     assert not planner.unvisited_room_names
     assert not planner.reachable[:, 31:].any()
     for _ in range(planner.candidate_count):
@@ -98,6 +99,10 @@ def test_narrow_door_excludes_unreachable_room_without_endless_goals():
         planner.mark_attempted(goal.index)
     assert planner.select((1.05, 1.05)) is None
     assert not planner.complete
+
+
+def test_a_patrol_without_rooms_names_none():
+    assert _planner().room_names == ()
 
 
 def test_room_seen_from_doorway_still_requires_entering_the_room():
