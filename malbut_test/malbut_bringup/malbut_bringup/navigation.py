@@ -14,6 +14,8 @@ import time
 
 import yaml
 
+from .zones import RESTRICTED_MARGIN_M
+
 
 PREVIEW_TTL_S = 30
 SNAP_RADIUS_M = 0.5
@@ -29,6 +31,22 @@ _STATES = {
     'CANCELING': 'canceling', 'SUCCEEDED': 'succeeded', 'CANCELED': 'canceled',
     'ABORTED': 'failed', 'REJECTED': 'failed', 'ERROR': 'failed',
 }
+
+
+# The padded footprint's half-diagonal: a centre this close to a no-entry Zone puts
+# the body in it, and Nav2 then refuses every motion (2026-10-08).
+FOOTPRINT_REACH_M = 0.19
+ESCAPE_RADIUS_M = 1.0
+# The bridge applies a keepout change within a second; the global costmap updates at 1 Hz.
+ZONE_SETTLE_S = 2.5
+# Below this the drive never really left its start (Nav2 gave up where it stood).
+STUCK_AT_START_M = 0.15
+# The reasons the web map names for a failed drive (목업 23번).
+FAILURES = ('blocked_start', 'blocked_way', 'zone_stuck', 'manual_drive', 'fall_check',
+            'fall_check_started', 'localization_lost', 'unknown')
+_FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
+_MISSION_LISTS = ('active_foreground_missions', 'active_background_missions',
+                  'pending_missions', 'suspended_missions')
 
 
 class NavigationError(ValueError):
@@ -62,19 +80,44 @@ def _in_ring(point, ring):
     return inside
 
 
-def resolve_goal(point, floor, blocked):
+def distance_to_geometry(point, geometry):
+    """Return the distance from a point to the nearest edge of a Polygon or MultiPolygon."""
+    coordinates = geometry.get('coordinates') if isinstance(geometry, dict) else None
+    polygons = {'Polygon': [coordinates], 'MultiPolygon': coordinates}.get(
+        geometry.get('type') if isinstance(geometry, dict) else None)
+    best = math.inf
+    for polygon in polygons if isinstance(polygons, list) else []:
+        for ring in polygon if isinstance(polygon, list) else []:
+            if isinstance(ring, list) and len(ring) >= 2:
+                for start, end in zip(ring, ring[1:] + ring[:1]):
+                    best = min(best, _segment_distance(point, start[:2], end[:2]))
+    return best
+
+
+def _segment_distance(point, start, end):
+    (px, py), (ax, ay), (bx, by) = point, start, end
+    dx, dy = bx - ax, by - ay
+    length = dx * dx + dy * dy
+    t = 0.0 if length == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def resolve_goal(point, floor, blocked, margin=RESTRICTED_MARGIN_M):
     """
     Return where to drive for a picked point and how far it moved.
 
-    A point in a no-entry Zone is refused. A point just off the floor moves to the
-    nearest floor point within 0.5 m that no Zone forbids.
+    A point in a no-entry Zone is refused. A point just off the floor, or so close to a
+    no-entry Zone that the parked body would touch it (the robot's margin), moves to
+    the nearest floor point within 0.5 m that keeps the margin.
     """
     if any(point_in_geometry(point, zone) for zone in blocked):
         raise NavigationError('진입 금지 구역이에요. 다른 곳을 골라 주세요.')
 
     def usable(candidate):
         return (any(point_in_geometry(candidate, area) for area in floor)
-                and not any(point_in_geometry(candidate, zone) for zone in blocked))
+                and not any(point_in_geometry(candidate, zone)
+                            or distance_to_geometry(candidate, zone) < margin
+                            for zone in blocked))
 
     if usable(point):
         return point, 0.0
@@ -87,6 +130,58 @@ def resolve_goal(point, floor, blocked):
             if usable(candidate):
                 return candidate, radius
     raise NavigationError('말벗이 다닐 수 있는 바닥을 골라 주세요.')
+
+
+def escape_point(point, floor, blocked, margin=RESTRICTED_MARGIN_M):
+    """
+    Return where to drive first so the body clears every no-entry Zone.
+
+    None: the body is already clear. False: no floor point within 1 m keeps the
+    margin, so the robot cannot get out by itself.
+    """
+    if not any(point_in_geometry(point, zone) or distance_to_geometry(point, zone)
+               < FOOTPRINT_REACH_M for zone in blocked):
+        return None
+
+    def usable(candidate):
+        return (any(point_in_geometry(candidate, area) for area in floor)
+                and not any(point_in_geometry(candidate, zone)
+                            or distance_to_geometry(candidate, zone) < margin
+                            for zone in blocked))
+
+    for ring in range(1, int(round(ESCAPE_RADIUS_M / SNAP_STEP_M)) + 1):
+        radius = ring * SNAP_STEP_M
+        count = max(8, math.ceil(2 * math.pi * radius / SNAP_STEP_M))
+        for index in range(count):
+            angle = 2 * math.pi * index / count
+            candidate = (point[0] + radius * math.cos(angle), point[1] + radius * math.sin(angle))
+            if usable(candidate):
+                return candidate
+    return False
+
+
+def failure_reason(request, start, system):
+    """Name why a destination drive ended without arriving, for the web map (목업 23번)."""
+    result = request.get('result') if isinstance(request.get('result'), dict) else {}
+    message = ' '.join(str(value) for value in (result.get('message'), request.get('message'))
+                       if value)
+    if 'priority HIGH' in message:
+        return 'manual_drive'  # Manual driving is the only HIGH mission.
+    if 'priority URGENT' in message:
+        return 'fall_check'
+    if 'preempted' in message:
+        running = {mission.get('capability_id') for key in _MISSION_LISTS
+                   for mission in (system or {}).get(key) or [] if isinstance(mission, dict)}
+        return 'fall_check_started' if running & set(_FALL_MISSIONS) else 'unknown'
+    if request.get('state') in ('ERROR', 'REJECTED'):
+        lowered = message.lower()
+        return 'localization_lost' if 'pose' in lowered or 'locali' in lowered else 'unknown'
+    if request.get('state') == 'ABORTED':
+        pose = _feedback_pose(request)
+        if pose is None or start is None or math.dist(pose, start) < STUCK_AT_START_M:
+            return 'blocked_start'
+        return 'blocked_way'
+    return 'unknown'
 
 
 def path_summary(points):
@@ -103,14 +198,29 @@ def path_summary(points):
             'points': [[round(x, 4), round(y, 4)] for x, y in kept]}
 
 
-def _feedback(request):
-    """Read Nav2's remaining distance and time from the mission's forwarded feedback."""
+def _feedback_values(request):
     nested = (request.get('feedback') or {}).get('feedback_yaml')
     try:
         values = yaml.safe_load(nested) if isinstance(nested, str) else None
     except yaml.YAMLError:
         values = None
-    if not isinstance(values, dict):
+    return values if isinstance(values, dict) else None
+
+
+def _feedback_pose(request):
+    """Return where Nav2 last reported the robot during this drive, or None."""
+    try:
+        position = _feedback_values(request)['current_pose']['pose']['position']
+        x, y = float(position['x']), float(position['y'])
+    except (TypeError, KeyError, ValueError):
+        return None
+    return (x, y) if math.isfinite(x) and math.isfinite(y) else None
+
+
+def _feedback(request):
+    """Read Nav2's remaining distance and time from the mission's forwarded feedback."""
+    values = _feedback_values(request)
+    if values is None:
         return None, None
     distance = values.get('distance_remaining')
     eta = values.get('estimated_time_remaining')
@@ -133,6 +243,8 @@ class Navigator:
 
     def busy(self, requests):
         """Return whether a destination drive (this one or another) is still going."""
+        if self.session is not None and self.session['state'] == 'escaping':
+            return True
         return any(item.get('capability') == 'navigate_to_pose'
                    and _STATES.get(item.get('state')) in ('driving', 'canceling')
                    for item in requests)
@@ -169,8 +281,14 @@ class Navigator:
             'snapped': moved > 0, 'snap_distance_m': round(moved, 3), 'path': path,
         }
 
-    def start(self, token, *, map_key, busy, submit):
-        """Send a previewed destination once; ``submit`` returns the mission's request ID."""
+    def start(self, token, *, map_key, busy, submit, escape=None, zones=None):
+        """
+        Send a previewed destination once; ``submit`` returns the mission's request ID.
+
+        ``escape`` is where to drive first when the body touches a no-entry Zone
+        (``escape_point``); ``zones(False)`` lifts the Zones for that short drive and
+        ``zones(True)`` restores them before the destination itself is sent.
+        """
         record = self.previews.pop(token, None)
         if record is None or record['expires'] <= self.clock():
             raise NavigationError('고른 목적지의 확인 시간이 지났어요. 다시 골라 주세요.')
@@ -178,29 +296,108 @@ class Navigator:
             raise NavigationError('그사이 지도가 바뀌었어요. 다시 골라 주세요.')
         if busy:
             raise NavigationError('이동 중에는 새 목적지를 고를 수 없어요.')
-        session_id = submit(record['goal'])
-        self.session = {'session_id': session_id, 'goal': record['goal'],
-                        'path': record['path'], 'state': 'driving'}
-        return {'session_id': session_id, 'state': 'driving',
-                'goal': record['goal'], 'path': record['path']}
+        session = {'goal': record['goal'], 'path': record['path'], 'submit': submit,
+                   'zones': zones, 'reason': None}
+        if escape is False:
+            session.update(session_id=secrets.token_hex(16), request_id=None,
+                           state='failed', phase='done', reason='zone_stuck')
+        elif escape is not None and zones is not None:
+            zones(False)
+            session.update(session_id=secrets.token_hex(16), request_id=None, state='escaping',
+                           phase='escape_wait', escape={'x': round(escape[0], 4),
+                                                        'y': round(escape[1], 4),
+                                                        'yaw': record['goal']['yaw']},
+                           at=self.clock() + ZONE_SETTLE_S)
+        else:
+            request_id = submit(record['goal'])
+            session.update(session_id=request_id, request_id=request_id, state='driving',
+                           phase='drive')
+        self.session = session
+        return {key: session[key] for key in ('session_id', 'state', 'goal', 'path')}
+
+    def escape_then(self, escape, *, submit, zones, then):
+        """Drive out of a no-entry Zone first, then call ``then`` (a patrol start)."""
+        if self.busy([]):
+            raise NavigationError('말벗이 금지 구역에서 빠져나오는 중이에요.')
+        point = escape if escape else (0.0, 0.0)
+        goal = {'x': round(point[0], 4), 'y': round(point[1], 4), 'yaw': 0.0}
+        session = {'session_id': secrets.token_hex(16), 'request_id': None, 'goal': goal,
+                   'path': {'length_m': 0.0, 'points': []}, 'submit': submit,
+                   'zones': zones, 'then': then, 'reason': None}
+        if escape is False:
+            session.update(state='failed', phase='done', reason='zone_stuck')
+        else:
+            zones(False)
+            session.update(state='escaping', phase='escape_wait', escape=goal,
+                           at=self.clock() + ZONE_SETTLE_S)
+        self.session = session
+        return {'session_id': session['session_id'], 'state': session['state']}
+
+    def advance(self, requests):
+        """Move an escape on: wait for the Zones, drive out, restore them, then drive."""
+        session = self.session
+        if session is None or session['phase'] not in ('escape_wait', 'escape', 'drive_wait'):
+            return
+        now = self.clock()
+        try:
+            if session['phase'] == 'escape_wait' and now >= session['at']:
+                session['request_id'] = session['submit'](session['escape'])
+                session['phase'] = 'escape'
+            elif session['phase'] == 'escape':
+                request = self._request(requests)
+                state = request.get('state') if request else None
+                if state in ('SUCCEEDED', 'CANCELED', 'ABORTED', 'REJECTED', 'ERROR'):
+                    session['zones'](True)
+                    if state == 'SUCCEEDED':
+                        session.update(phase='drive_wait', at=now + ZONE_SETTLE_S)
+                    else:
+                        session.update(phase='done', state='failed', reason='zone_stuck')
+            elif session['phase'] == 'drive_wait' and now >= session['at']:
+                if session.get('then') is not None:
+                    # Out of the Zone: the patrol takes over; the map card shows it.
+                    session['then']()
+                    session.update(phase='done', state='handed_over')
+                else:
+                    session['request_id'] = session['submit'](session['goal'])
+                    session.update(phase='drive', state='driving')
+        except (ValueError, RuntimeError) as error:
+            if session.get('zones') is not None:
+                session['zones'](True)
+            session.update(phase='done', state='failed', reason='unknown',
+                           message=str(error)[:256])
+
+    def _request(self, requests):
+        request_id = self.session.get('request_id') if self.session else None
+        return next((item for item in requests if item.get('id') == request_id), None)
 
     def cancel(self, session_id, cancel):
         """Stop the drive this bridge started, and nothing else."""
-        if self.session is None or self.session['session_id'] != session_id:
+        session = self.session
+        if session is None or session['session_id'] != session_id:
             raise NavigationError('이미 끝났거나 바뀐 이동이에요.')
-        cancel(session_id)
+        if session['phase'] in ('escape_wait', 'drive_wait'):
+            # Nothing runs in the manager between steps: restore the Zones and stop here.
+            if session.get('zones') is not None:
+                session['zones'](True)
+            session.update(phase='done', state='canceled')
+            return {'session_id': session_id, 'state': 'canceled'}
+        if session.get('request_id'):
+            cancel(session['request_id'])
         return {'session_id': session_id, 'state': 'canceling'}
 
-    def target(self, requests):
+    def target(self, requests, system=None):
         """Report the drive in the web map screen's navigation fields (empty before one)."""
         if self.session is None:
             return {}
         session = self.session
-        request = next((item for item in requests if item.get('id') == session['session_id']),
-                       None)
+        request = self._request(requests) if session['phase'] == 'drive' else None
         if request is not None:
             session['state'] = _STATES.get(request.get('state'), 'driving')
             session['message'] = str(request.get('message') or '')[:256]
+            if session['state'] == 'failed' and session.get('reason') is None:
+                points = session['path'].get('points') or []
+                start = tuple(points[0]) if points else None
+                session['reason'] = failure_reason(request, start, system)
             distance, eta = _feedback(request)
             if distance is not None:
                 session['distance_remaining_m'] = round(distance, 3)
@@ -217,4 +414,5 @@ class Navigator:
             'distance_remaining_m': remaining,
             'estimated_time_remaining_s': session.get('estimated_time_remaining_s'),
             'progress_ratio': round(progress, 3), 'message': session.get('message', ''),
+            'reason': session.get('reason') if session['state'] == 'failed' else None,
         }

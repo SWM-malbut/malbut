@@ -34,16 +34,22 @@ def _value(mask, x, y):
     return mask[mask.shape[0] - 1 - row_from_bottom, column]
 
 
-def test_restricted_zone_is_lethal_with_a_footprint_buffer(saved_map):
-    """Nav2 checks restricted cost at the robot center; the buffer keeps the body out."""
+def test_only_the_restricted_zone_is_lethal_and_its_margin_is_passable(saved_map):
+    """The margin keeps paths clear of the Zone but never traps a robot standing in it."""
     zone = zone_feature('restricted', [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]])
     mask, geometry = build_mask(saved_map, [zone])
     assert geometry == {'resolution': 0.05, 'origin': [-1.0, -1.0, 0.0]}
     assert mask.shape == (40, 80)
     assert _value(mask, 0.25, 0.25) == 100
-    assert _value(mask, 0.66, 0.25) == 100  # 0.16 m outside: within the 0.2 m buffer
+    assert _value(mask, 0.66, 0.25) == 70  # 0.16 m outside: in the 0.2 m margin, avoid cost
     assert _value(mask, 0.8, 0.25) == 0
     assert _value(mask, -0.5, -0.5) == 0
+    # The margin never lowers a neighbouring Zone, and a wider margin reaches farther.
+    other = zone_feature('restricted', [[0.6, 0.0], [0.9, 0.0], [0.9, 0.5], [0.6, 0.5]])
+    both, _ = build_mask(saved_map, [zone, other])
+    assert _value(both, 0.65, 0.25) == 100
+    wide, _ = build_mask(saved_map, [zone], restricted_buffer_m=0.4)
+    assert _value(wide, 0.8, 0.25) == 70
 
 
 def test_avoid_is_traversable_cost_and_restricted_wins_overlaps(saved_map):

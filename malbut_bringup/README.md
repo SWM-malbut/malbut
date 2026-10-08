@@ -174,7 +174,7 @@ Collision Monitor는 **수동 조작 경로에만** 연결됩니다.
 | 경로·제어 | Navfn planner, DWB controller, velocity smoother |
 | 장애물 | Local·Global costmap 모두 LiDAR 기반 |
 | 차체 외곽 | 0.277×0.212 m 직사각형 footprint |
-| Zone | 지도별 금지·우회 권장 구역을 keepout 마스크로 적용 |
+| Zone | 지도별 금지·우회 권장 구역을 keepout 마스크로 적용. 금지 구역만 막고, 둘레 20 cm 마진은 우회 권장 비용(지나갈 수 있음) |
 | Depth | 사람 위치 추정에 사용. Depth costmap·원본 점군 구독은 기본 제외 |
 
 주행 파라미터는 [nav2_params.yaml](config/nav2_params.yaml),

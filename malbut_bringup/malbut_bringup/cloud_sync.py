@@ -21,7 +21,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import yaml
 
-from .navigation import NavigationError, Navigator
+from .navigation import escape_point, NavigationError, Navigator
 from .drive_mode import FOLLOW_DISTANCE_M, robot_drive_mode
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
@@ -203,6 +203,15 @@ def panel_command(operation, payload):
     else:
         raise ValueError('Operation is not supported by the real robot')
     return validate_command(command)
+
+
+def _floor_and_blocked(user_map, zones):
+    """Return the walkable floor and the no-entry Zones of a saved map's documents."""
+    floor = [feature['geometry'] for feature in (user_map or {}).get('features', [])
+             if (feature.get('properties') or {}).get('role') == 'walkable_area']
+    blocked = [feature['geometry'] for feature in (zones or {}).get('features', [])
+               if (feature.get('properties') or {}).get('behavior') == 'restricted']
+    return floor, blocked
 
 
 def delete_map(runtime, catalog, map_id):
@@ -510,6 +519,11 @@ class CloudSync:
         try:
             if operation in LOCAL_OPERATIONS:
                 result = {'ok': True, 'result': self._local(operation, payload)}
+            elif self._patrol_escape(operation, payload):
+                result = {'ok': True, 'result': {
+                    'accepted': True, 'requestId': None, 'status': 'escaping',
+                    'robotInterface': ROBOT_INTERFACE,
+                }}
             else:
                 request_id = self.bridge.submit(panel_command(operation, payload))
                 result = {'ok': True, 'result': {
@@ -574,6 +588,45 @@ class CloudSync:
                    'last_warning': self.last_warning})
         return json.loads(json.dumps(diagnostics, default=str))
 
+    def _zone_escape(self, runtime, floor, blocked, pose):
+        """
+        Return (escape, zones) for a robot whose body touches a no-entry Zone.
+
+        A Zone drawn under the robot or a jump in its map pose freezes every
+        motion; ``escape`` is where to drive with the Zones lifted (None: clear).
+        """
+        override = getattr(self.bridge, 'zone_override', None)
+        if (override is None or pose is None or not floor
+                or runtime.get('mode') != 'navigation'):
+            return None, None
+        return (escape_point((pose['x'], pose['y']), floor, blocked),
+                lambda on: override.end_escape() if on else override.start_escape())
+
+    def _nav_submit(self, goal):
+        return self.bridge.submit({
+            'command': 'start', 'capability': 'navigate_to_pose',
+            'arguments': {key: goal[key] for key in ('x', 'y', 'yaw')}})
+
+    def _patrol_escape(self, operation, payload):
+        """Start a patrol only after driving out of a no-entry Zone; True when it does."""
+        if operation != 'drive_mode_start' or not isinstance(payload, dict) or (
+                payload.get('mode') != 'patrol'):
+            return False
+        command = panel_command(operation, payload)
+        runtime = self.bridge.data.snapshot()['runtime']
+        user_map, zones, _revision = space_documents(runtime, self.bridge.catalog)
+        if zones is None:
+            return False
+        floor, blocked = _floor_and_blocked(user_map, zones)
+        info = self.bridge.data.map_snapshot()
+        escape, toggle = self._zone_escape(runtime, floor, blocked,
+                                           info.get('pose') if info.get('active') else None)
+        if escape is None:
+            return False
+        self.navigator.escape_then(escape, submit=self._nav_submit, zones=toggle,
+                                   then=lambda: self.bridge.submit(command))
+        return True
+
     def _navigation(self, operation, payload, runtime):
         """Preview, start or cancel a destination drive picked on the web map."""
         requests = self.bridge.data.snapshot().get('requests', [])
@@ -587,29 +640,25 @@ class CloudSync:
         if runtime.get('mode') != 'navigation' or zones is None:
             raise NavigationError('말벗이 저장된 지도로 주행 중일 때 보낼 수 있어요.')
         map_key = f'{cloud_map_id(runtime)}:{map_revision}'
+        floor, blocked = _floor_and_blocked(user_map, zones)
+        info = self.bridge.data.map_snapshot()
+        pose = info.get('pose') if info.get('active') else None
         if operation == 'navigation_start':
             if set(payload) != {'previewToken'} or not isinstance(payload['previewToken'], str):
                 raise ValueError('Navigation start needs only the preview token')
-            return self.navigator.start(
-                payload['previewToken'], map_key=map_key, busy=busy,
-                submit=lambda goal: self.bridge.submit({
-                    'command': 'start', 'capability': 'navigate_to_pose',
-                    'arguments': {key: goal[key] for key in ('x', 'y', 'yaw')}}))
+            escape, toggle = self._zone_escape(runtime, floor, blocked, pose)
+            return self.navigator.start(payload['previewToken'], map_key=map_key, busy=busy,
+                                        submit=self._nav_submit, escape=escape, zones=toggle)
         if (set(payload) != {'x', 'y'} or not all(
                 type(payload[key]) in (int, float) and math.isfinite(payload[key])
                 for key in ('x', 'y'))):
             raise ValueError('Navigation preview needs finite x and y')
         if user_map is None:
             raise NavigationError('이 지도에는 다닐 수 있는 바닥 정보가 없어 보낼 수 없어요.')
-        info = self.bridge.data.map_snapshot()
         try:
             return self.navigator.preview(
                 float(payload['x']), float(payload['y']),
-                pose=info.get('pose') if info.get('active') else None, map_key=map_key,
-                floor=[feature['geometry'] for feature in user_map['features']
-                       if (feature.get('properties') or {}).get('role') == 'walkable_area'],
-                blocked=[feature['geometry'] for feature in zones['features']
-                         if feature['properties'].get('behavior') == 'restricted'],
+                pose=pose, map_key=map_key, floor=floor, blocked=blocked,
                 plan=self.bridge.plan_path, busy=busy)
         except NavigationError as error:
             # The owner reads a plain reason; the robot log keeps the planner's own.
@@ -633,9 +682,12 @@ class CloudSync:
             self.maps_at = now
         snapshot = self.bridge.data.snapshot()
         info = self.bridge.data.map_snapshot()
+        # A Zone escape moves on as soon as its step ends, at every poll.
+        self.navigator.advance(snapshot.get('requests', []))
         # Fast manual polls only claim commands; state keeps its normal cadence.
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
-            navigation = self.navigator.target(snapshot.get('requests', []))
+            navigation = self.navigator.target(snapshot.get('requests', []),
+                                               snapshot.get('system'))
             self.client.request('/api/device/v1/robot/state', 'POST',
                                 state_payload(snapshot, info, self.maps, navigation=navigation))
             self.last_state_at = now

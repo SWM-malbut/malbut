@@ -69,6 +69,21 @@ def test_the_last_result_stays_until_the_next_patrol(status, outcome):
     assert mode['detail']['available_modes'] == ['patrol']
 
 
+def test_the_rooms_a_patrol_used_reach_the_web_so_it_can_count_them():
+    running = robot_drive_mode(_system(), _status(room_count=4), None,
+                               ready=True, can_follow=False)
+    assert running['detail']['room_count'] == 4
+    done = robot_drive_mode({}, _status('completed', 'done', room_count=4, unvisited_rooms=[]),
+                            None, ready=True, can_follow=False)['detail']['last_patrol']
+    assert done['room_count'] == 4 and done['unvisited_rooms'] == []
+    stopped = last_patrol(_status('idle', 'Patrol canceled', room_count=4))
+    assert stopped['unvisited_rooms'] == ['침실', '주방']
+    assert last_patrol(_status('completed', 'done', room_count=0))['room_count'] == 0
+    # An older patrol node sends no count; a bad one is dropped, not guessed.
+    assert 'room_count' not in last_patrol(_status('completed', 'done'))
+    assert 'room_count' not in last_patrol(_status('completed', 'done', room_count='4'))
+
+
 def test_patrol_is_offered_only_when_it_can_run():
     waiting = _status('idle', 'Waiting for a patrol goal')
     assert last_patrol(waiting) is None, 'a fresh start has no result'
@@ -94,6 +109,10 @@ def test_the_web_starts_and_stops_patrol_through_the_existing_bridge():
         'thoroughness': 1}
     stop = panel_command('drive_mode_stop', {'mode': 'patrol', 'sessionId': MISSION_ID})
     assert stop == {'command': 'cancel_mission', 'mission_id': MISSION_ID}
+    # The manager's own mission ID: the goal UUID as 32 hex digits, no hyphens.
+    manager_id = MISSION_ID.replace('-', '')
+    assert panel_command('drive_mode_stop', {'mode': 'patrol', 'sessionId': manager_id}) == {
+        'command': 'cancel_mission', 'mission_id': manager_id}
     for operation, payload in [
         ('drive_mode_start', {'mode': 'roaming'}),
         ('drive_mode_start', {'mode': 'patrol', 'thoroughness': 3}),

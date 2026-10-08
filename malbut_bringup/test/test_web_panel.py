@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from malbut_bringup.zone_override import GLOBAL_TOGGLE, LOCAL_TOGGLE, ZoneOverride
 from malbut_bringup.web_panel import (
     image_jpeg, live_zone_map, mission_arguments, PanelData, PanelServer, RosBridge,
     save_zones, validate_command, zone_view,
@@ -261,6 +262,9 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.to_dict = lambda message: vars(message)
     bridge.auto_goal = SimpleNamespace
     bridge.mission_goal = SimpleNamespace
+    bridge.zone_override = ZoneOverride(clock=lambda: 0.0)
+    bridge.zone_toggle_request = SimpleNamespace
+    bridge.zone_toggles = {name: Mock() for name in (LOCAL_TOGGLE, GLOBAL_TOGGLE)}
     handle = Mock(accepted=True)
     handle.get_result_async.return_value = Future()
     handle.cancel_goal_async.return_value = _future(SimpleNamespace(goals_canceling=[1]))
@@ -271,6 +275,40 @@ def _bridge(manager_ready=False, autoslam_ready=True):
         client.send_goal_async.return_value = _future(handle)
         bridge.clients[name] = client
     return bridge, handle
+
+
+def _zone_requests(bridge, service):
+    return [call.args[0].data for call in bridge.zone_toggles[service].call_async.call_args_list]
+
+
+def test_manual_driving_ignores_no_entry_zones_and_an_escape_lifts_both_costmaps():
+    """Zones never trap the robot: manual driving and an escape turn the keepout off."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge._apply_zone_override()
+    assert not _zone_requests(bridge, LOCAL_TOGGLE), 'filters start on; nothing to send'
+    bridge.data.system = {'active_foreground_missions': [
+        {'mission_id': 'a' * 32, 'capability_id': 'manual_drive'}]}
+    bridge._apply_zone_override()
+    assert _zone_requests(bridge, LOCAL_TOGGLE) == [False]
+    assert not _zone_requests(bridge, GLOBAL_TOGGLE), 'the planner keeps the Zones'
+    bridge.data.system = {'active_foreground_missions': []}
+    bridge._apply_zone_override()
+    assert _zone_requests(bridge, LOCAL_TOGGLE) == [False, True]
+    bridge.zone_override.start_escape()
+    bridge._apply_zone_override()
+    assert _zone_requests(bridge, LOCAL_TOGGLE)[-1] is False
+    assert _zone_requests(bridge, GLOBAL_TOGGLE) == [False]
+    bridge.zone_override.end_escape()
+    bridge._apply_zone_override()
+    assert _zone_requests(bridge, LOCAL_TOGGLE)[-1] is True
+    assert _zone_requests(bridge, GLOBAL_TOGGLE) == [False, True]
+    # Nav2 not up yet: nothing is marked sent, so the change is retried.
+    bridge.zone_override.start_escape()
+    for client in bridge.zone_toggles.values():
+        client.service_is_ready.return_value = False
+    bridge._apply_zone_override()
+    assert _zone_requests(bridge, GLOBAL_TOGGLE) == [False, True]
+    assert bridge.zone_override.due()
 
 
 def test_autoslam_uses_manager_when_available():
@@ -718,15 +756,20 @@ def test_a_patrol_is_stopped_through_the_manager_whoever_started_it():
     bridge.cancel_clients = {'/malbut/mission/execute': cancel}
     bridge.cancel_request = lambda: SimpleNamespace(
         goal_info=SimpleNamespace(goal_id=SimpleNamespace(uuid=None)))
-    mission = '0f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f'
+    # The manager reports mission IDs as 32 hex digits: the goal UUID it cancels.
+    mission = '0f4b5ec02a1b4c3d8e9f0a1b2c3d4e5f'
     bridge.submit({'command': 'cancel_mission', 'mission_id': mission})
     bridge._drain()
     request = cancel.call_async.call_args.args[0]
-    assert bytes(request.goal_info.goal_id.uuid) == uuid.UUID(mission).bytes
+    assert bytes(request.goal_info.goal_id.uuid) == bytes.fromhex(mission)
+    bridge.submit({'command': 'cancel_mission', 'mission_id': str(uuid.UUID(mission))})
+    bridge._drain()
+    request = cancel.call_async.call_args.args[0]
+    assert bytes(request.goal_info.goal_id.uuid) == bytes.fromhex(mission)
     cancel.service_is_ready.return_value = False
     bridge.submit({'command': 'cancel_mission', 'mission_id': mission})
     bridge._drain()
-    assert cancel.call_async.call_count == 1 and 'cannot cancel' in bridge.runtime_message
+    assert cancel.call_async.call_count == 2 and 'cannot cancel' in bridge.runtime_message
 
     bridge._patrol(SimpleNamespace(data=json.dumps({'state': 'observing',
                                                     'coverage_ratio': 0.4})))
