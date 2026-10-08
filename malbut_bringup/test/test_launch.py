@@ -608,10 +608,10 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
         pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
         assert coordinator['runtime_id'] == monitor['manager_runtime_id']
         assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
-        # Unmeasured RGB-D alignment: no depth for map places by default.
+        # Depth is on by default (2026-10-08): the same pair person following uses.
         assert (monitor['depth_topic'], monitor['camera_info_topic'], monitor['global_frame']) == (
-            '', '', 'map')
-        assert 'depth_image_topic' not in pose
+            '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info', 'map')
+        assert pose['depth_image_topic'] == '/depth_cam/depth0/image_raw'
 
 
 def test_fall_starts_one_non_ros_uploader_with_shared_settings(launch_module, fall_config):
@@ -651,7 +651,7 @@ def test_upload_setup_failure_does_not_disable_detection(launch_module, fall_con
     context.environment.update(environment)
     actions = module._setup(context)
     assert {a.node_executable for a in actions if isinstance(a, Node)} == {
-        'malbut-fall-monitor', 'homecam_detector_node', 'fall_coordinator'}
+        'malbut-fall-monitor', 'homecam_detector_node', 'fall_coordinator', 'fall_approach'}
     assert not any(isinstance(a, ExecuteProcess) and not isinstance(a, Node) for a in actions)
     assert any(isinstance(a, LogInfo) for a in actions)
 
@@ -799,6 +799,16 @@ def test_one_switch_gives_fall_pose_and_map_places_the_aligned_depth(launch_modu
         0.118, 0.05, 0.0)
     assert (monitor['depth_topic'], monitor['camera_info_topic']) == (
         '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info')
+
+
+def test_fall_depth_and_approach_are_on_by_default(launch_module, fall_config):
+    """Person following already uses this depth/RGB pair as aligned (2026-10-08)."""
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    actions = module._setup(context)
+    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
+    assert pose['depth_aligned_to_rgb'] is True and pose['camera_height_m'] == 0.12
+    assert _nodes(actions, 'fall_approach'), 'the approach node starts without arguments'
 
 
 @pytest.mark.parametrize('switch', ['false', 'true'])

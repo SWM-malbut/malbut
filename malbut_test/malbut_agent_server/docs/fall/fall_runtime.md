@@ -29,16 +29,18 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
 이 사건의 대상이 아닌 약한 박스를 빼고 그린다. 옷걸이·침대에 그려지던 약한 박스를 없애기 위한 표시 규칙이며,
 주기 확인 간격·사람 연결·낙상 판단에는 쓰지 않는다. 이전 detector처럼 값이 없으면 그대로 그린다.
 
-낙상 깊이는 런치 인자 `fall_depth_aligned_to_rgb` 하나로 켠다(기본 `false`). 로봇의 `depth0`가 RGB에
-정렬됐는지 아직 실측하지 않았기 때문이다(`launch_support.py` 주석, `depth_costmap/README.md`). 켜면 함께 바뀐다.
+낙상 깊이는 런치 인자 `fall_depth_aligned_to_rgb` 하나로 켠다. 2026-10-08부터 기본 `true`다.
+사람 따라가기가 같은 `depth0`/`rgb0`/`rgb0 camera_info`를 정렬된 쌍으로 읽어 사람과 0.6 m를 유지하고 있어,
+1 m 앞에서 멈추는 다가가기에는 충분하다고 판단했다(정렬 자체를 따로 실측한 것은 아님). 켜면 함께 바뀐다.
 - `malbut_fall_pose`: 깊이·카메라 정보·`camera_height_m`(`fall_camera_height_m`, 기본 0.12 m: URDF 0.0919 + base 0.028)·
   `camera_pitch_rad`를 받아 몸통이 바닥에서 0.30 m 넘게 떨어진 누운 자세(침대·소파)를 낮은 자세로 보지 않는다.
   빠르게 털썩 눕는 동작(급격한 자세 변화)은 깊이와 무관하게 후보가 될 수 있다.
 - 낙상 런타임: `depth_topic`, `camera_info_topic`(`fall_depth_camera_info_topic`)을 받아 Cloud 박스를 지도 좌표로 바꾼다.
   꺼져 있으면 대상 미확인 사건은 화면 위치로 같은 자리를 판단한다.
-실기 확인 전에는 켜지 않는다: 정렬, 카메라 높이, 같은 물건을 두 위치에서 찍은 지도 좌표 차이를 먼저 확인한다.
+실기에서 볼 것: 같은 물건을 두 위치에서 찍은 지도 좌표 차이, 카메라 높이 0.12 m(침대·소파 거르기에만 쓰임).
+가방처럼 작은 물체는 사람보다 정렬 어긋남에 민감할 수 있다. 문제가 보이면 `fall_depth_aligned_to_rgb:=false`로 끈다.
 
-2026-10-08 다가가 확인하기(런치 `fall_approach`, 기본 꺼짐, 깊이 스위치 필요):
+2026-10-08 다가가 확인하기(런치 `fall_approach`, 기본 켜짐, 깊이 스위치 필요):
 - 질문할 때 사람이 확실하지 않으면(대상 미확인 사건이거나, 대상 Pose가 약하거나 관절로 잴 수 없음)
   지도 좌표를 `approach_target`으로 붙이고 `approach_started`(reason `patrol_stopped`/`follow_stopped`/null)를 남긴다.
   확실한 Pose 사람이거나 지도 좌표가 없으면 지금처럼 바로 묻는다.
