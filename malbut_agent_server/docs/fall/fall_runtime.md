@@ -374,6 +374,12 @@ Agent 답변은 전체 명세의 `AgentCheckReply`와 동일하다. 실제 질�
   [관측 생성 기준](fall_subject_observation.md). Agent 답변은 만들어내지 않는다.
 - 추가 확인 2회, Cloud 대기 20초와 기존 호출 간격 설정을 유지한다.
   실패 시도도 횟수에 포함하던 기존 동작은 그대로이며, 최종 제품 규칙 합의는 별도다.
+- 2026-10-08: 아직 아무에게도 묻지 않은 Pose 사건의 Cloud 확인이 실패하면(시간 초과·응답 오류·호출 한도·영상 없음)
+  같은 추가 확인 횟수와 간격(`retry_interval_s`)으로 다시 보낸다. 처음 1회와 재전송 2회가 모두 실패하면
+  영상 판정을 `unobservable`로 두고 Pose 근거만으로 그 사람에게 묻는다(Agent 요약: 영상만으로 상태 확인이 어려움).
+  자동 정상 종결은 막는다. 이전에는 재전송도 질문도 없어서, 다음 주기 확인이 다시 의심해야만 물었다.
+  동의 없음·연결 차단·설정 대기·지도 작성 등 가드로 막힌 실패와 이미 질문한 사건은 재전송·질문하지 않는다.
+  구현 `CloudFallMonitor._retry_or_ask`, 검사 `test/test_fall_cloud_retry.py`.
 
 정상 종결의 확인 근거는 SQLite `incident_events.closure_evidence`에 별도로 남긴다.
 기존 DB에는 이 선택적 열을 추가하고, 웹 업로드 JSON에는 포함하지 않는다.
