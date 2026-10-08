@@ -42,17 +42,18 @@ def defaults():
         'fall_pose_intra_op_num_threads': '2',
         'fall_pose_allow_spinning': 'false',
         'fall_pose_opencv_num_threads': '1',
-        # Fall depth stays off until RGB-D alignment is measured on the robot
-        # (see the topic note below). One switch: the Pose floor height (bed or
-        # sofa is not a fall) and the monitor's map places use the same depth.
-        'fall_depth_aligned_to_rgb': 'false',
+        # One switch: the Pose floor height (bed or sofa is not a fall) and the
+        # monitor's map places use the same depth. On since 2026-10-08: person
+        # following already reads this depth/RGB pair as aligned on the robot and
+        # holds 0.6 m from a person with it (the fall approach stops 1 m away).
+        'fall_depth_aligned_to_rgb': 'true',
         'fall_depth_camera_info_topic': '/depth_cam/rgb0/camera_info',
         # Floor to optical centre: URDF camera_z 0.0919 above base_link + 0.028.
         'fall_camera_height_m': '0.12',
         'fall_camera_pitch_rad': '0.0',
         # Drive 1 m in front of an uncertain suspicion before asking. Needs the
-        # depth switch for map points; off until checked on the robot.
-        'fall_approach': 'false',
+        # depth switch for map points; without a point it asks where it stands.
+        'fall_approach': 'true',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',

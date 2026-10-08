@@ -39,7 +39,7 @@ Agent가 임의로 호출할 수 있도록 Manifest에 노출하지 않는다.
 
 사람인지 확실하지 않은 낙상 의심(Cloud만 찾았거나 Pose 박스가 약함)은 묻기 전에 먼저 가까이 가서 본다.
 런타임이 `question_requested`에 `approach_target{x, y, frame: map}`을 붙였을 때만이다(런치 `fall_approach`,
-기본 꺼짐. 지도 좌표가 필요해 깊이 스위치 `fall_depth_aligned_to_rgb`도 켜져 있어야 한다).
+2026-10-08부터 기본 켜짐. 지도 좌표가 필요해 깊이 스위치 `fall_depth_aligned_to_rgb`도 켜져 있어야 하며 이것도 기본 켜짐).
 
 ```
 approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역을 피해 1 m 앞, 의심 장소를 바라봄
