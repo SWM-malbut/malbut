@@ -200,9 +200,9 @@ def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_pat
             self.timers = []
 
         def declare_parameter(self, name, default, descriptor):
-            assert default == '' and descriptor.read_only
+            assert descriptor.read_only
             return SimpleNamespace(value={'manager_runtime_id': 'manager-1',
-                                          'runtime_id': 'vlm-1'}[name])
+                                          'runtime_id': 'vlm-1'}.get(name, default))
 
         def create_service(self, srv, name, callback):
             self.services[name] = callback
@@ -293,7 +293,7 @@ def test_map_making_mission_pauses_fall_frames_until_it_or_the_manager_ends(tmp_
 
         def declare_parameter(self, name, default, descriptor):
             return SimpleNamespace(value={'manager_runtime_id': 'manager-1',
-                                          'runtime_id': 'vlm-1'}[name])
+                                          'runtime_id': 'vlm-1'}.get(name, default))
 
         def create_service(self, srv, name, callback):
             self.services[name] = callback
@@ -361,3 +361,87 @@ def test_map_making_mission_pauses_fall_frames_until_it_or_the_manager_ends(tmp_
     Node.manager = 0
     assert status().pause_reason == 'none'
     assert not provider.calls
+
+
+def test_rgb_frames_keep_aligned_depth_and_map_pose_for_scene_places(tmp_path, monkeypatch):
+    node_module = pytest.importorskip('rclpy.node')
+    sensor = pytest.importorskip('sensor_msgs.msg')
+    tf2_ros = pytest.importorskip('tf2_ros')
+    geometry_msgs = pytest.importorskip('geometry_msgs.msg')
+    from malbut_interfaces.msg import FallControlHeartbeat
+    from malbut_interfaces.srv import ApplyFallSettings
+    from test_fall_control import settings as control_settings, heartbeat
+    import numpy as np
+
+    params = {'manager_runtime_id': 'manager-1', 'runtime_id': 'vlm-1',
+              'depth_topic': '/depth', 'camera_info_topic': '/info'}
+
+    class Node:
+        def __init__(self, name):
+            self.subscriptions, self.publishers, self.services = {}, {}, {}
+
+        def declare_parameter(self, name, default, descriptor):
+            return SimpleNamespace(value=params.get(name, default))
+
+        def create_service(self, srv, name, callback):
+            self.services[name] = callback
+
+        def create_subscription(self, msg, topic, callback, qos):
+            self.subscriptions[topic] = callback
+
+        def create_publisher(self, msg, topic, qos):
+            self.publishers[topic] = publisher = Mock()
+            return publisher
+
+        def create_timer(self, *args, **kwargs):
+            pass
+
+        def get_clock(self):
+            return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+
+        def get_logger(self):
+            return Mock()
+
+        def count_publishers(self, topic):
+            return 1
+
+    monkeypatch.setattr(node_module, 'Node', Node)
+    monkeypatch.setattr(tf2_ros, 'TransformListener', lambda buffer, node: None)
+    _, clock, provider = make()
+    node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                            provider=provider, journal=None, clock=clock)
+    node.services['/malbut/falls/settings/apply'](
+        ApplyFallSettings.Request(**control_settings(node.control)), ApplyFallSettings.Response())
+    node.subscriptions['/malbut/falls/control/heartbeat'](
+        FallControlHeartbeat(**heartbeat(node.control, clock)))
+
+    pose = geometry_msgs.TransformStamped()
+    pose.header.frame_id, pose.child_frame_id = 'map', 'camera_optical'
+    pose.transform.translation.x, pose.transform.translation.y = 1.0, 1.0
+    (pose.transform.rotation.x, pose.transform.rotation.y,
+     pose.transform.rotation.z, pose.transform.rotation.w) = (-0.5, 0.5, -0.5, 0.5)
+    node._tf.set_transform_static(pose, 'test')
+    info = sensor.CameraInfo()
+    info.header.frame_id, info.width, info.height = 'camera_optical', 640, 400
+    info.k = [500.0, 0.0, 320.0, 0.0, 500.0, 200.0, 0.0, 0.0, 1.0]
+    node.subscriptions['/info'](info)
+    depth = sensor.Image()
+    depth.header.stamp.sec, depth.header.frame_id = 1000, 'camera_optical'
+    depth.height, depth.width, depth.step, depth.encoding = 400, 640, 640 * 2, '16UC1'
+    depth.data = np.full((400, 640), 2000, dtype=np.uint16).tobytes()
+    node.subscriptions['/depth'](depth)
+
+    image = sensor.Image()
+    image.header.stamp.sec, image.header.frame_id = 1000, 'rgb'
+    image.height, image.width, image.step, image.encoding = 400, 640, 640 * 3, 'bgr8'
+    image.data = np.zeros((400, 640, 3), dtype=np.uint8).tobytes()
+    node.on_image(image)
+    (observed,) = list(node.place._frames)
+    assert node.place.locate(observed, (.45, .4, .55, .6)) == pytest.approx((3.0, 1.0))
+
+    # No depth near this RGB time: the place stays unknown, the frame is still used.
+    clock.value += 1
+    image.header.stamp.sec = 1001
+    node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=1001 * 10**9))
+    node.on_image(image)
+    assert len(node.place._frames) == 1 and node.monitor.buffer.stored_bytes > 0

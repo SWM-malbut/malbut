@@ -113,10 +113,14 @@ class FallDetectorInput:
         self._last[channel] = capture
         return converted
 
-    def rgb(self, jpeg, *, capture, frame_id, source_now, now):
+    def rgb(self, jpeg, *, capture, frame_id, source_now, now, on_accepted=None):
+        """on_accepted(monitor time) keys per-frame data such as the map pose."""
         observed = self._time(capture, source_now=source_now, now=now,
                               channel='rgb', frame_id=frame_id)
-        return self.monitor.ingest_rgb(RgbFrame(observed, jpeg))
+        accepted = self.monitor.ingest_rgb(RgbFrame(observed, jpeg))
+        if accepted and on_accepted is not None:
+            on_accepted(observed)
+        return accepted
 
     def poses(self, payload, *, source_now, now):
         data = bounded_object(payload)
@@ -193,9 +197,12 @@ class FallDetectorInput:
                         or data.get('robotMotion') != 'stationary'):
                     raise ValueError('unsupported subject clearance')
                 box = track.get('box')
+                level = track.get('confidenceLevel')
+                if level not in (None, 'strong', 'weak'):
+                    raise ValueError('invalid subject confidence level')
                 subjects.append(SubjectPose(
                     track['targetTrackId'], tuple(box) if isinstance(box, list) else box,
-                    check, usable))
+                    check, usable, None if level is None else level == 'strong'))
             # Validate duplicate identities and full payload before side effects.
             SubjectFrame(capture, tuple(subjects), data['subjectCheckMaxGapSec'])
         prepared = []
@@ -279,8 +286,10 @@ class FallDetectorInput:
             self.monitor.ingest_subject_frame(SubjectFrame(
                 observed_frame, tuple(SubjectPose(
                     f'pose:{self._generation}:{p.subject_key}', p.box, p.state,
-                    p.association_usable) for p in mapped_frame.subjects),
-                data['subjectCheckMaxGapSec'], camera_stationary=data.get('robotMotion') == 'stationary'))
+                    p.association_usable, p.strong) for p in mapped_frame.subjects),
+                data['subjectCheckMaxGapSec'],
+                camera_stationary=data.get('robotMotion') == 'stationary',
+                camera_moving=data.get('robotMotion') == 'moving'))
         # Bound per-track timestamp bookkeeping too. IDs are association only.
         if len(self._last) > 1024:
             self._last = {k: v for k, v in self._last.items() if k in {'rgb', 'poses'}}

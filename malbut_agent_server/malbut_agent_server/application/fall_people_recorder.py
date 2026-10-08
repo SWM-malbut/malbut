@@ -6,6 +6,8 @@ monotonic clock. A segment is finalized shortly after it ends and again when it
 changes. Times are milliseconds from the segment start, so a wall clock step
 never moves a box inside its clip. Track keys are one-way hashes: they only let
 the web match the same person across linked incidents of one scene.
+Weak detector boxes (clothes, bedding) are left out unless they are the
+incident's own person.
 """
 
 from collections import OrderedDict, deque
@@ -44,7 +46,8 @@ class _Segment:
                  start: float, end: float) -> None:
         self.incident_id, self.index, self.target = incident_id, index, target
         self.start, self.end = start, end
-        self.frames: Dict[float, Tuple[Tuple[str, Box], ...]] = {}
+        # (subject key, box, strong): strong is None when the detector did not say.
+        self.frames: Dict[float, Tuple[Tuple[str, Box, Optional[bool]], ...]] = {}
         self.cloud: Dict[float, Box] = {}
         self.dirty, self.truncated = True, False
 
@@ -77,11 +80,12 @@ class FallPeopleRecorder:
         # a late change never re-sends a partial segment under an old revision.
         self._revisions = OrderedDict()
 
-    def observe(self, observed_at: float, people: Iterable[Tuple[str, Box]]) -> None:
+    def observe(self, observed_at: float, people: Iterable[tuple]) -> None:
+        """people: (subject key, box) or (subject key, box, strong)."""
         timestamp(observed_at)
         if self._history and observed_at <= self._history[-1][0]:
             return
-        frame = tuple(people)
+        frame = tuple((p[0], p[1], p[2] if len(p) > 2 else None) for p in people)
         self._history.append((observed_at, frame))
         while observed_at - self._history[0][0] > self.history_s:
             self._history.popleft()
@@ -170,7 +174,9 @@ class FallPeopleRecorder:
             return min(span, max(0, round((t - segment.start) * 1000)))
         tracks: Dict[str, list] = {}
         for observed_at in sorted(segment.frames):
-            for subject, box in segment.frames[observed_at]:
+            for subject, box, strong in segment.frames[observed_at]:
+                if strong is False and subject != segment.target:
+                    continue
                 mille = _mille(box)
                 if mille is not None:
                     tracks.setdefault(subject, []).append((ms(observed_at),) + mille)

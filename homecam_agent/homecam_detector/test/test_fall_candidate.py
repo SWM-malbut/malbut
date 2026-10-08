@@ -380,3 +380,14 @@ def test_compact_layout_does_not_fabricate_a_witnessed_transition():
 def test_compact_config_validation(kwargs):
     with pytest.raises(ValueError):
         FallCandidateConfig(**kwargs)
+
+
+def test_track_reports_confidence_level_for_display_only():
+    detector = FallCandidateDetector()
+    poses = {"strong": body(score=0.8), "weak": body(score=0.2, offset=(200, 0))}
+    output = step(detector, poses, 0.0)
+    levels = {t["targetTrackId"]: t["confidenceLevel"] for t in output["tracks"]}
+    assert levels == {"strong": "strong", "weak": "weak"}
+    missing = detector.update(PoseTrackingResult((tracked(None, "gone", "missing"),), (), ()),
+                              capture_time=0.2, image_size=(640, 400), robot_motion="stationary")
+    assert missing["tracks"][0]["confidenceLevel"] is None
