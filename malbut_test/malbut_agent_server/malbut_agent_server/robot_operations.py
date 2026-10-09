@@ -476,11 +476,9 @@ class RobotOperations:
                 self._send(job, 'map_select', {'map': chosen}, 'prepared')
             else:
                 self._execute(job, status)
-        elif tool == 'request_mapping' and (
-                not runtime.get('ready') or localization.get('mode') not in {'LOCALIZATION', 'MAPPING'}):
+        elif tool == 'request_mapping' and localization.get('mode') not in {'LOCALIZATION', 'MAPPING'}:
             job['starting_manager'] = not runtime.get('ready')
-            # A new map starts on the blank map, not the last chosen one (2026-10-09).
-            self._send(job, 'runtime_start', {'mode': 'mapping', 'last_map': False}, 'prepared')
+            self._send(job, 'runtime_start', {'mode': 'mapping'}, 'prepared')
         elif not runtime.get('ready'):
             job['starting_manager'] = True
             self._send(job, 'runtime_start', {'mode': 'mapping'}, 'prepared')

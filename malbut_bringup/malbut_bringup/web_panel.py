@@ -916,11 +916,10 @@ class RosBridge:
                 'robot_state_publisher', 'aurora930_node', 'LD19'}):
             raise ValueError('Existing hardware nodes are not ready; do not launch duplicates')
         mode, map_id, auto_map = payload['mode'], payload.get('map'), None
-        if mode == 'mapping' and payload.get('last_map') is not False:
+        if mode == 'mapping':
             # A start without a map uses the last chosen one (2026-10-08): on the blank
             # map destinations and patrol need a map pick after every start. AutoSLAM
             # still switches to mapping by itself, and the pose is checked as for a pick.
-            # The voice "지도 만들어줘" opts out with last_map=False (2026-10-09).
             auto_map = self.runtime.last_selected_map()
             if auto_map:
                 mode, map_id = 'navigation', auto_map

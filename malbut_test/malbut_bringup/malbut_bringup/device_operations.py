@@ -52,7 +52,7 @@ def validate_operation(operation, arguments):
         return  # The authenticated backend validates its own exact field allowlist.
     fields = {
         'status': set(), 'map_list': set(), 'zones_get': set(),
-        'runtime_start': {'mode', 'map', 'last_map', 'movement_runtime_id', 'movement_epoch'},
+        'runtime_start': {'mode', 'map', 'movement_runtime_id', 'movement_epoch'},
         'runtime_stop': {'confirmed_mission_ids'},
         'map_select': {'map', 'movement_runtime_id', 'movement_epoch'},
         'map_delete': {'map', 'confirmed', 'revision'},
@@ -72,9 +72,6 @@ def validate_operation(operation, arguments):
             raise ValueError('Select mapping or navigation')
         if arguments['mode'] == 'mapping' and 'map' in arguments:
             raise ValueError('Mapping does not load a saved map')
-        if 'last_map' in arguments and (arguments['mode'] != 'mapping'
-                                        or arguments['last_map'] is not False):
-            raise ValueError('Only a mapping start can skip the last chosen map')
     if (operation in ('map_select', 'map_delete', 'zones_update')
             or operation == 'runtime_start' and arguments['mode'] == 'navigation'):
         name = arguments.get('map')

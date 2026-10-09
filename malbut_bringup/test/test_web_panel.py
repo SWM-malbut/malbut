@@ -434,18 +434,6 @@ def test_a_start_without_a_remembered_map_stays_on_the_blank_map():
     bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=True)
 
 
-def test_a_start_for_a_new_map_stays_on_the_blank_map():
-    """The voice 지도 만들어줘 skips the last chosen map and its pose search."""
-    bridge, _ = _bridge()
-    bridge.runtime = Mock()
-    bridge.runtime.last_selected_map.return_value = 'home.yaml'
-    bridge.node.get_node_names_and_namespaces.return_value = []
-    bridge.node.count_publishers.return_value = 0
-    bridge._start_runtime({'mode': 'mapping', 'last_map': False})
-    bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=True)
-    assert bridge.map_check.auto_map is None
-
-
 @pytest.mark.parametrize('name', [
     'malbut_stt', 'malbut_tts', 'malbut_agent_communication',
 ])
