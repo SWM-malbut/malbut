@@ -56,8 +56,39 @@ def _rotate(q, v):
     return v[0] + 2 * (w * cx + dx), v[1] + 2 * (w * cy + dy), v[2] + 2 * (w * cz + dz)
 
 
+def mount_corrected(translation, rotation, *, pitch_rad=0.0, roll_rad=0.0, height_m=0.0):
+    """
+    Return (translation, rotation) of map <- camera optical with the measured mount.
+
+    The robot model puts the camera level; measured against the floor on
+    2026-10-09 it looks 1.6 degrees down with its left side 1.6 degrees low and
+    sits 0.4 cm lower. A real optical ray is turned into the model's optical
+    frame (down about x, then right side down about z), and the camera lowered.
+    """
+    pitch = (math.sin(-pitch_rad / 2), 0.0, 0.0, math.cos(-pitch_rad / 2))
+    roll = (0.0, 0.0, math.sin(roll_rad / 2), math.cos(roll_rad / 2))
+    correction = _multiply(roll, pitch)
+    return ((translation[0], translation[1], translation[2] + height_m),
+            _multiply(tuple(rotation), correction))
+
+
+def _multiply(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
 def map_point(geometry: FrameGeometry, box) -> Optional[Tuple[float, float]]:
     """Median depth inside the box centre, projected through the box centre."""
+    point = map_point3d(geometry, box)
+    return None if point is None else point[:2]
+
+
+def map_point3d(geometry: FrameGeometry, box) -> Optional[Tuple[float, float, float]]:
+    """The same point with its height above the map plane (the floor)."""
     left, top, right, bottom = box
     rows, cols = geometry.depth_mm.shape
     centre_x, centre_y = (left + right) / 2, (top + bottom) / 2
@@ -73,8 +104,9 @@ def map_point(geometry: FrameGeometry, box) -> Optional[Tuple[float, float]]:
     z = float(np.median(valid))
     u, v = centre_x * geometry.width, centre_y * geometry.height
     camera = ((u - geometry.cx) * z / geometry.fx, (v - geometry.cy) * z / geometry.fy, z)
-    x, y, _ = _rotate(geometry.rotation, camera)
-    return x + geometry.translation[0], y + geometry.translation[1]
+    x, y, z = _rotate(geometry.rotation, camera)
+    return (x + geometry.translation[0], y + geometry.translation[1],
+            z + geometry.translation[2])
 
 
 class FallPlaceLocator:
@@ -103,9 +135,17 @@ class FallPlaceLocator:
 
     def locate_near(self, observed_at, box, *, tolerance_s=0.25):
         """Pose runs on its own frames: use the nearest RGB geometry within tolerance."""
+        point = self.locate3d_near(observed_at, box, tolerance_s=tolerance_s)
+        return None if point is None else point[:2]
+
+    def locate3d(self, captured_at, box):
+        geometry = self._frames.get(captured_at)
+        return map_point3d(geometry, box) if geometry is not None else None
+
+    def locate3d_near(self, observed_at, box, *, tolerance_s=0.25):
         if not self._frames:
             return None
         stamp = min(self._frames, key=lambda t: abs(t - observed_at))
         if abs(stamp - observed_at) > tolerance_s:
             return None
-        return map_point(self._frames[stamp], box)
+        return map_point3d(self._frames[stamp], box)

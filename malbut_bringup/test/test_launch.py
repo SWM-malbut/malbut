@@ -835,8 +835,21 @@ def test_fall_depth_and_approach_are_on_by_default(launch_module, fall_config):
     context = _context(module, fall_config=str(fall_config))
     actions = module._setup(context)
     pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
-    assert pose['depth_aligned_to_rgb'] is True and pose['camera_height_m'] == 0.12
+    assert pose['depth_aligned_to_rgb'] is True
     assert _nodes(actions, 'fall_approach'), 'the approach node starts without arguments'
+
+
+def test_the_measured_camera_mount_reaches_pose_and_the_map_places(launch_module, fall_config):
+    """2026-10-09 floor fit: 11.6 cm, 1.6 degrees down, left side 1.6 degrees low."""
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    actions = module._setup(context)
+    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
+    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+    assert (pose['camera_height_m'], pose['camera_pitch_rad']) == (0.116, 0.028)
+    assert monitor['mount_pitch_correction_rad'] == 0.028
+    assert monitor['mount_roll_correction_rad'] == -0.028
+    assert monitor['mount_height_correction_m'] == pytest.approx(0.116 - 0.119864)
 
 
 @pytest.mark.parametrize('switch', ['false', 'true'])
@@ -856,7 +869,8 @@ def test_fall_approach_switch_starts_the_drive_node_and_tells_the_runtime(
 
 @pytest.mark.parametrize('changes', [
     {'fall_camera_height_m': '0'}, {'fall_camera_height_m': 'tall'},
-    {'fall_camera_pitch_rad': '1.0'},
+    {'fall_camera_pitch_rad': '1.0'}, {'fall_camera_roll_rad': '-0.6'},
+    {'fall_camera_roll_rad': 'level'},
     {'fall_pose_execution_provider': 'invalid'}, {'fall_pose_intra_op_num_threads': '-1'},
     {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},
     {'fall_pose_model_path': '/missing/pose.onnx'},

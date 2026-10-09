@@ -3,8 +3,10 @@
 import numpy as np
 import pytest
 
+import math
+
 from malbut_agent_server.application.fall_place_locator import (
-    FallPlaceLocator, FrameGeometry, map_point,
+    _rotate, FallPlaceLocator, FrameGeometry, map_point, map_point3d, mount_corrected,
 )
 
 # REP-103 optical (z forward, x right, y down) to a body/map frame (x forward, y left, z up).
@@ -81,3 +83,29 @@ def test_locator_keeps_recent_frames_by_monitor_time_only():
     assert locator.locate(103, (.45, .4, .55, .6)) is None    # older than 60 s
     locator.clear()
     assert locator.locate(170, (.45, .4, .55, .6)) is None
+
+
+def test_the_point_keeps_its_height_above_the_floor():
+    x, y, z = map_point3d(geometry(translation=(1.0, 1.0, 0.12)), (.45, .1, .55, .3))
+    # 120 px above the image centre at 2 m: 0.48 m up from the 0.12 m camera.
+    assert (x, y, z) == pytest.approx((3.0, 1.0, 0.60))
+
+
+def test_the_measured_mount_puts_the_floor_back_at_zero():
+    """2026-10-09: 1.6 degrees down, left side low, 0.4 cm lower than the model."""
+    pitch, roll, lower = math.radians(1.6), math.radians(-1.6), -0.004
+    t_real, q_real = mount_corrected((0.0, 0.0, 0.12), OPTICAL,
+                                     pitch_rad=pitch, roll_rad=roll, height_m=lower)
+    assert _rotate(q_real, (0, 0, 1))[2] == pytest.approx(-math.sin(pitch), abs=1e-4)
+    assert _rotate(q_real, (1, 0, 0))[2] == pytest.approx(-math.sin(roll), abs=1e-4)
+    # The real camera sees a floor point 3 m ahead and 0.5 m to the right.
+    columns = [_rotate(q_real, axis) for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1))]
+    offset = np.array((3.0, -0.5, 0.0)) - np.array(t_real)
+    camera = np.array([np.dot(column, offset) for column in columns])
+    u, v = 320 + 500 * camera[0] / camera[2], 200 + 500 * camera[1] / camera[2]
+    depth = np.full((400, 640), int(round(camera[2] * 1000)), dtype=np.uint16)
+    box = ((u - 8) / 640, (v - 8) / 400, (u + 8) / 640, (v + 8) / 400)
+    seen = FrameGeometry(depth, 500.0, 500.0, 320.0, 200.0, 640, 400, t_real, q_real)
+    model = FrameGeometry(depth, 500.0, 500.0, 320.0, 200.0, 640, 400, (0.0, 0.0, 0.12), OPTICAL)
+    assert map_point3d(seen, box) == pytest.approx((3.0, -0.5, 0.0), abs=0.005)
+    assert map_point3d(model, box)[2] > 0.05, 'uncorrected, the floor floats several cm'

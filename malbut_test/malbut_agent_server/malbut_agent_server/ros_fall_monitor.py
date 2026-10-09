@@ -14,7 +14,9 @@ from uuid import uuid4
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
 from malbut_agent_server.application.fall_detector_input import FallDetectorInput, ros_stamp
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
-from malbut_agent_server.application.fall_place_locator import FallPlaceLocator, FrameGeometry
+from malbut_agent_server.application.fall_place_locator import (
+    FallPlaceLocator, FrameGeometry, mount_corrected,
+)
 from malbut_agent_server.fall_runtime import (
     FallNodeSettings, apply_decision, event_metadata, parse_agent_reply,
     parse_subject_observation,
@@ -74,6 +76,10 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 'place_projection_frame', '',
                 descriptor=ParameterDescriptor(read_only=True)).value
             self.place = FallPlaceLocator() if depth_topic and info_topic else None
+            # The camera mount measured against the floor, relative to the robot model.
+            self._mount = {name: float(self.declare_parameter(
+                'mount_' + name, 0.0, descriptor=ParameterDescriptor(read_only=True)).value)
+                for name in ('pitch_correction_rad', 'roll_correction_rad', 'height_correction_m')}
             approach = self.declare_parameter(
                 'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
             self.monitor = CloudFallMonitor(
@@ -81,7 +87,8 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 buffer=FallFrameBuffer(retention_s=settings.retention_s,
                                        max_bytes=settings.buffer_bytes,
                                        max_frames=settings.buffer_frames),
-                provider=provider, journal=journal, clock=clock, place_locator=self.place)
+                provider=provider, journal=journal, clock=clock, place_locator=self.place,
+                place_log=self.get_logger().info)
             self.monitor.approach_enabled = bool(approach)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
@@ -243,10 +250,14 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                     # The newest map pose: the frame arrived within a second.
                     transform = self._tf.lookup_transform(self._global_frame, source, Time())
                 t, r = transform.transform.translation, transform.transform.rotation
+                translation, rotation = mount_corrected(
+                    (t.x, t.y, t.z), (r.x, r.y, r.z, r.w),
+                    pitch_rad=self._mount['pitch_correction_rad'],
+                    roll_rad=self._mount['roll_correction_rad'],
+                    height_m=self._mount['height_correction_m'])
                 return FrameGeometry(
                     np.ascontiguousarray(image, dtype=np.uint16), info.k[0], info.k[4],
-                    info.k[2], info.k[5], info.width, info.height,
-                    (t.x, t.y, t.z), (r.x, r.y, r.z, r.w))
+                    info.k[2], info.k[5], info.width, info.height, translation, rotation)
             except (*self._tf_errors, CvBridgeError, ValueError, TypeError):
                 return None  # No map or depth: scene cases use image positions.
 
