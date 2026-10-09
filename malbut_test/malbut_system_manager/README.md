@@ -63,68 +63,6 @@ flowchart TB
 상태 Topic은 최신 상태를 늦게 연결한 구독자도 받을 수 있도록
 `RELIABLE / TRANSIENT_LOCAL / depth=1`로 발행합니다.
 
-## 음성·웹 공통 정지와 조건부 선점
-
-`/malbut/mission/stop_movement`(`malbut_interfaces/srv/StopMovement`)는 요청한
-클라이언트와 무관하게 BASE 미션을 정지합니다. `fall_confirmation`은 제외하며,
-날씨처럼 BASE를 쓰지 않는 작업도 유지합니다. 실행 중인 작업뿐 아니라 대기·중단·
-접수 직후 아직 실행되지 않은 요청과 지도 전환의 내부 위치 보정까지 포함합니다.
-수동 입력은 `/preempt_teleop`으로 해제하고 `/malbut/movement_stop`에 요청 ID를
-발행합니다. 수동 주행은 입력이 중립으로 돌아온 뒤 다시 시작할 수 있습니다.
-
-`request_id` 재전송은 같은 정지의 상태만 조회하며 나중에 시작한 작업을 정지하지
-않습니다. `stopped=true`는 대상의 실제 하위 종료가 확인됐다는 뜻입니다. 응답 상한은
-Goal 응답 watchdog과 취소 watchdog의 합에 1초를 더한 값입니다. `stop_unconfirmed`면
-미확인 ID를 반환하고 실제 종료가 확인될 때까지 새 이동을 막습니다. 원래 미션의
-상위 Action은 서버 주도 정지이므로 `ABORTED`, 메시지 `movement_stopped`로 끝납니다.
-
-`ExecuteMission`과 `StopMovement`의 `require_preemption_confirmation=true`는
-실제 충돌 ID가 `confirmed_preemption_mission_ids` 안에 있을 때만 변경을 허용합니다.
-불일치 시 아무 작업도 취소하지 않고 `preemption_confirmation_required`를 반환합니다.
-ExecuteMission은 해당 code와 `conflicting_mission_ids`를 `result_yaml`에 담습니다.
-StopMovement의 `shutdown_runtime=true`는 직접 실행한 Manager에서는 모든 미션의
-확인을 요구하고 새 접수를 프로세스 종료까지 닫습니다. `resident_runtime=true`에서는
-로봇 자식 실행에 속한 작업만 확인·종료하고 로봇 기능의 접수만 닫습니다. 날씨와
-일반 `device_operation` 작업은 계속 실행되므로 이 서비스를 호출한 런타임 종료
-작업 자체도 유지됩니다. `runtime_start`·`map_select` 준비 작업은 예외로 이동 정지
-대상입니다. 다음 자식 실행이 확인되면 로봇 기능의 접수를 다시 열며 이동 세대는
-초기화하지 않습니다.
-
-통합 Agent·웹·수동 입력은 `/malbut/state`의 `movement_runtime_id`, `movement_epoch`를
-확인한 뒤 ExecuteMission에 같은 값을 넣고 `require_movement_epoch=true`로 보냅니다.
-새로 허용된 정지는 이동 세대를 원자적으로 증가시킵니다. 따라서 정지 전 보냈지만
-정지 후 도착한 Goal도 `ABORTED / movement_epoch_changed`로 끝나며 실제 동작을
-시작하지 않습니다. 동일 정지 ID의 재조회와 확인 부족으로 거부된 정지는 세대를
-바꾸지 않습니다. Manager 재시작은 lifetime ID가 바뀌므로 이전 요청을 재사용할 수
-없습니다. 기존 비통합 호출은 기본값 `require_movement_epoch=false`를 유지합니다.
-
-`/malbut/localization/status`(`LocalizationState`)는 controller `runtime_id`, 단조 증가
-`transition_id`, `mode`, `map_path`, `pose_ready`, `message`를 제공합니다. 기존 JSON
-`/malbut/localization/state`에도 identity와 `pose_ready`가 포함됩니다. 저장 지도 로드와
-위치 확인은 별개이며, `pose_ready=false`이면 위치 보정 전 이동·추적·순찰을 거부합니다.
-지도에 연결된 요청은 `ExecuteMission.expected_localization_runtime_id`와
-`expected_localization_transition_id`에 준비할 때 확인한 identity를 전달합니다.
-Manager는 미션 접수와 같은 lock 안에서 현재 identity를 비교합니다. 다르면 실행 없이
-`ABORTED`와 `result_yaml.code=localization_changed`를 반환하므로, 이전 지도에서 계산한
-좌표가 새 지도에 적용되지 않습니다. 두 필드의 기본값인 빈 문자열·0은 기존 호출의
-지도 바인딩 생략을 유지합니다.
-
-통합 준비는 `/malbut/localization/prepare`(`PrepareLocalization`)에 `mapping`,
-`map_url`, `movement_runtime_id`, `movement_epoch`를 보냅니다. `mapping=true`이면
-`map_url`은 비워 두고, 저장 지도 선택은 `mapping=false`와 YAML 절대 경로를 씁니다.
-이동 세대 확인과 지도 전환 예약을 같은 lock 안에서 처리하므로 정지 전에 보낸
-준비 서비스가 늦게 도착해도 내부 AUTO를 시작하지 않습니다. 결과는 `success`,
-`code`, `message`이며, 지도 로드 성공과 `pose_ready` 확인은 별개입니다. 기존
-`load_map`·`start_mapping` 서비스는 그대로 유지하지만 이동 세대 필드가 없으므로
-통합 클라이언트는 이 준비 서비스를 사용합니다.
-
-`/malbut/mission/recent_results`는 최근 결과를 JSON 배열로 보존하는 transient-local
-토픽입니다. 최대 20개·60KiB이며 개별 `result_yaml`은 4096자로 제한하고 잘린 경우
-`result_truncated=true`를 붙입니다. `mission_id`, `capability_id`, `state`, `message`,
-UTC `observed_at`과 `downstream_terminal`을 포함합니다. 상위 요청이 실패했지만 하위
-실행이 남은 경우 `downstream_terminal=false`이며, 늦은 실제 종료가 오면 갱신합니다.
-
-
 ## 기능 등록: Capability Manifest
 
 기능 목록은 [malbut_interfaces/capabilities](../malbut_interfaces/capabilities)에 모읍니다.
@@ -295,35 +233,9 @@ map_server·AMCL과 관리자가 소유한 SLAM Toolbox 중 하나를 위치 추
 | [Manifest 디렉터리](../malbut_interfaces/capabilities) | 현재 등록된 기능별 실행 계약 |
 | [manual_control_node.py](malbut_system_manager/manual_control_node.py) | 수동 입력을 미션 요청으로 연결하고 무입력 시 AssistedTeleop 종료 |
 | [운영 가이드](README_OPERATIONS.md) | 실행 명령, parameter, Service 규칙, 기존 단계형 복구 상세 |
-| [검증 코드](test) | 자원 충돌·취소·통신 실패·ROS 실행·지도 전환 검증 |
-| [실제 응용 연결 실험](experiments/README.md) | Gazebo·Nav2·응용 Action을 통한 요청 교체·취소 실험 |
+| [검증 코드](../../malbut_system_manager/test) | 자원 충돌·취소·통신 실패·ROS 실행·지도 전환 검증 |
+| [실제 응용 연결 실험](../../malbut_system_manager/experiments/README.md) | Gazebo·Nav2·응용 Action을 통한 요청 교체·취소 실험 |
 
 실기기 적용본에도 같은 미션 관리 코드를 포함합니다.
 기능 알고리즘이나 센서 드라이버를 이 패키지로 옮기지 않으며,
 새 기능은 ROS 계약과 Manifest를 통해 연결합니다.
-
-
-## 상주 Manager와 기기 관리
-
-Cloud 실행은 `resident_runtime=true`인 기존 SystemManager 하나를 유지하고 로봇 자식의
-Manager는 실행하지 않습니다. `device_operation` Manifest는 고정된
-`/malbut/device/operate` Action을 실행합니다. Agent는 다른 기능과 똑같이
-`ExecuteMission`에 `request_id`, `operation`, `arguments_json`을 보내며 Manager는
-등록된 작업 이름과 16 KiB 이하 JSON 객체를 검증한 뒤 스케줄러·실행기를 통과시킵니다.
-임의 주소나 Action 이름을 입력으로 지정할 수 없습니다. 로봇이 꺼져 있어도
-`get_weather`, `set_weather_location`, `device_operation`은 실행할 수 있습니다.
-
-상주 모드는 시작할 때 지도·SLAM을 실행하지 않습니다. 같은 namespace의 단일
-`robot_cloud_sync`가 발행하는 `/malbut/runtime/state`에서 3초 이내의 `RUNNING`과
-새 자식 `runtime_id`, 시작 시점의 `movement_runtime_id`·`movement_epoch`를 확인한
-뒤 저장 지도 또는 설정된 기본 unknown 지도를 초기화합니다. SLAM 시작은 기존대로
-AutoSLAM이 소유합니다. 실행 상태가 끊기거나 종료되면 로봇 미션을 서버 주도 종료하고
-내부 위치 추정과 SLAM을 정리합니다. 이전 자식의 늦은 완료나 오래된 시작 요청은
-새 자식의 초기화를 다시 열 수 없습니다. `ready_topic`은 상주 모드의 생존 판정에
-사용하지 않습니다.
-
-Manager는 같은 소유자의 `/malbut/device/state` 관측을
-`/malbut/manager/device_state`로 중계합니다. 이는 읽기 상태 전달이며 작업 실행은
-항상 Manager 미션을 통과합니다. 준비 작업의 취소·실패는 이동 세대와 내부 위치
-추정을 함께 닫고 실제 위치 추정 종료까지 결과를 보류합니다. 정해진 응답 상한 내에
-종료가 확인되지 않으면 `ABORTED / stop_unconfirmed`를 반환하고 이동 차단을 유지합니다.

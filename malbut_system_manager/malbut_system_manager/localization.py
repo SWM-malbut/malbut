@@ -8,12 +8,8 @@ import subprocess
 import threading
 import time
 from typing import Callable
-from uuid import uuid4
 
-from action_msgs.msg import GoalStatus
 from malbut_interfaces.action import Relocalize
-from malbut_interfaces.msg import LocalizationState
-from malbut_interfaces.srv import PrepareLocalization
 from nav2_msgs.srv import LoadMap, ManageLifecycleNodes, SetInitialPose
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -24,15 +20,9 @@ from .models import LocalizationMode
 
 
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
-# A resident Manager starts localization once the robot process is up, before the
-# robot group has /relocalize (2026-10-09: no pose after every start, while a
-# later map switch found it). The first pose search waits this long for it.
-STARTUP_RELOCALIZE_WAIT_S = 180.0
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
 STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
 STATE_TOPIC = '/malbut/localization/state'
-STATUS_TOPIC = '/malbut/localization/status'
-PREPARE_SERVICE = '/malbut/localization/prepare'
 _PR_SET_PDEATHSIG = 1
 
 
@@ -101,39 +91,17 @@ class LocalizationController:
         relocalize_timeout_s: float = 90.0,
         default_map: str = '',
         can_mapping: Callable[[], bool] | None = None,
-        on_pose_ready: Callable[[bool], None] = lambda _: None,
-        admission_lock=None,
-        movement_state: Callable[[], tuple[str, int]] = lambda: ('', 0),
-        deferred_start: bool = False,
     ) -> None:
         self._node = node
         self._slam = slam
         self._on_mode = on_mode
-        self._on_pose_ready = on_pose_ready
         self._can_switch = can_switch
         self._can_mapping = can_mapping or can_switch
-        self._admission_lock = admission_lock or threading.RLock()
-        self._movement_state = movement_state
         self._timeout_s = service_timeout_s
         self._relocalize_timeout_s = relocalize_timeout_s
         self._default_map = str(Path(default_map).resolve()) if default_map else ''
         self._closing = False
         self._relocalizing = None
-        self._relocalize_goal_future = None
-        self._relocalize_result = None
-        self._movement_lock = threading.RLock()
-        # Reserve the initial transition before its startup timer can run.
-        self._transition_active = not deferred_start
-        self._deferred_start = deferred_start
-        self._runtime_enabled = not deferred_start
-        self._runtime_generation = 0
-        self._standby_pending = False
-        self._starting_runtime = False
-        self._started = False
-        self._stop_requested = False
-        self.runtime_id = uuid4().hex
-        self.transition_id = 1
-        self.pose_ready = False
         self._switch_lock = threading.Lock()
         self._localization_started = False
         self._loaded_map: str | None = None
@@ -144,7 +112,6 @@ class LocalizationController:
         state_qos.reliability = ReliabilityPolicy.RELIABLE
         state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self._state_publisher = node.create_publisher(String, STATE_TOPIC, state_qos)
-        self._status_publisher = node.create_publisher(LocalizationState, STATUS_TOPIC, state_qos)
         self._manage = node.create_client(
             ManageLifecycleNodes, lifecycle_service, callback_group=group)
         self._map_server = node.create_client(
@@ -163,19 +130,13 @@ class LocalizationController:
                                 self._start_mapping_request, callback_group=group),
             node.create_service(Trigger, STOP_MAPPING_SERVICE,
                                 self._stop_mapping_request, callback_group=group),
-            node.create_service(PrepareLocalization, PREPARE_SERVICE,
-                                self._prepare_request, callback_group=group),
         ]
         self._monitor = node.create_timer(1.0, self._check_slam, callback_group=group)
-        self._set(LocalizationMode.ERROR if deferred_start else LocalizationMode.SWITCHING,
-                  None, 'robot runtime is stopped' if deferred_start else 'starting localization')
+        self._publish('starting localization')
 
     def start(self, initial_map: str) -> None:
         """Enter the launch-selected state; runs on an executor thread."""
         with self._switch_lock:
-            if self._started:
-                return
-            self._started = True
             try:
                 if initial_map:
                     self._to_localization(_map_file(initial_map))
@@ -183,72 +144,6 @@ class LocalizationController:
                     self._to_mapping()
             except (LocalizationError, OSError) as error:
                 self._fail(str(error))
-            finally:
-                self._transition_active = False
-
-    def activate_runtime(self, initial_map: str) -> bool:
-        """Reserve one fresh child initialization before scheduling its worker."""
-        with self._admission_lock:
-            if (self._standby_pending or self.stop_pending
-                    or not self._switch_lock.acquire(blocking=False)):
-                return False
-            self._runtime_generation += 1
-            generation = self._runtime_generation
-            self._runtime_enabled = True
-            binding = self._movement_state()
-            self._begin_transition()
-            self._set(LocalizationMode.SWITCHING, initial_map or self._default_map,
-                      'starting robot localization')
-        threading.Thread(target=self._start_runtime,
-                         args=(generation, binding, initial_map), daemon=True).start()
-        return True
-
-    def _start_runtime(self, generation, binding, initial_map):
-        try:
-            with self._admission_lock:
-                if generation != self._runtime_generation:
-                    return
-                if (not self._runtime_enabled or self._closing or self._stop_requested
-                        or binding != self._movement_state()):
-                    self._transition_active = False
-                    self._set(LocalizationMode.ERROR, None, 'localization startup was stopped')
-                    return
-                self._started = True
-                self._localization_started = False
-                self._loaded_map = None
-            try:
-                # Resident startup always uses a map. Only AutoSLAM starts SLAM.
-                self._starting_runtime = True
-                self._to_localization(_map_file(initial_map or self._default_map))
-            except (LocalizationError, OSError) as error:
-                self._fail(str(error))
-            finally:
-                self._starting_runtime = False
-                if generation == self._runtime_generation:
-                    self._transition_active = False
-        finally:
-            self._switch_lock.release()
-
-    def standby(self) -> None:
-        """Close admission immediately and stop owned SLAM after any switch exits."""
-        with self._admission_lock:
-            self._runtime_enabled = False
-            self._standby_pending = True
-            self.stop_movement()
-            self._set(LocalizationMode.ERROR, None, 'robot runtime is stopped')
-        threading.Thread(target=self._finish_standby, daemon=True).start()
-
-    def _finish_standby(self):
-        with self._switch_lock:
-            try:
-                self._slam.stop()
-            except LocalizationError as error:
-                self._node.get_logger().error(str(error))
-            self._started = False
-            self._localization_started = False
-            self._loaded_map = None
-            self._transition_active = False
-            self._standby_pending = False
 
     def close(self) -> None:
         """Stop the owned SLAM process during manager shutdown."""
@@ -288,48 +183,16 @@ class LocalizationController:
             self._node.get_logger().warning(message)
         return response
 
-    def _prepare_request(self, request, response):
-        if not request.movement_runtime_id or request.mapping and request.map_url:
-            response.code = 'invalid_request'
-            response.message = 'A movement binding and an unambiguous map mode are required'
-            return response
-        try:
-            path = None if request.mapping else _map_file(request.map_url)
-        except LocalizationError as error:
-            response.code, response.message = 'invalid_map', str(error)
-            return response
-        response.success, response.message = self._switch(
-            path, expected_movement=(request.movement_runtime_id, request.movement_epoch))
-        response.code = (
-            'completed' if response.success else 'movement_epoch_changed'
-            if response.message == 'movement_epoch_changed' else 'localization_failed')
-        if response.code == 'movement_epoch_changed':
-            response.message = 'Movement was stopped after this preparation was requested'
-        return response
-
-    def _switch(self, map_path: str | None, *, mapping: bool = False,
-                expected_movement=None) -> tuple[bool, str]:
+    def _switch(self, map_path: str | None, *, mapping: bool = False) -> tuple[bool, str]:
         if not self._switch_lock.acquire(blocking=False):
             return False, 'another localization switch is in progress'
-        transition_started = False
         try:
-            if self._deferred_start and not self._runtime_enabled:
-                return False, 'robot runtime is stopped'
-            if not self._started:
-                return False, 'initial localization startup is pending'
             target = (LocalizationMode.LOCALIZATION if map_path
                       else LocalizationMode.MAPPING)
-            with self._admission_lock:
-                if (expected_movement is not None
-                        and expected_movement != self._movement_state()):
-                    return False, 'movement_epoch_changed'
-                if self.mode is target and self.map_path == map_path:
-                    return True, f'already {target.value.lower()}'
-                if not (self._can_mapping if mapping else self._can_switch)():
-                    return False, 'cancel missions that use the base before switching maps'
-                self._begin_transition()
-                transition_started = True
-                self._set(LocalizationMode.SWITCHING, map_path, 'switching localization')
+            if self.mode is target and self.map_path == map_path:
+                return True, f'already {target.value.lower()}'
+            if not (self._can_mapping if mapping else self._can_switch)():
+                return False, 'cancel missions that use the base before switching maps'
             if map_path:
                 self._to_localization(map_path)
             else:
@@ -339,64 +202,17 @@ class LocalizationController:
             self._fail(str(error))
             return False, str(error)
         finally:
-            if transition_started:
-                self._transition_active = False
             self._switch_lock.release()
 
-    def _begin_transition(self):
-        with self._movement_lock:
-            self.transition_id += 1
-            self._transition_active = True
-            self._stop_requested = False
-        self.pose_ready = False
-
-    @property
-    def movement_identity(self):
-        """Name a switch or unresolved internal pose action for stop reporting."""
-        with self._movement_lock:
-            pending = (self._transition_active
-                       or self._relocalize_goal_future is not None
-                       or self._relocalize_result is not None)
-            return f'localization:{self.runtime_id}:{self.transition_id}' if pending else ''
-
-    @property
-    def stop_pending(self):
-        """Retain the stop gate until a canceled internal action actually ends."""
-        return self._stop_requested and bool(self.movement_identity)
-
-    def movement_pending(self, identity):
-        """Check only the original transition, never a newer map operation."""
-        return bool(identity) and self.movement_identity == identity
-
-    def stop_movement(self):
-        """Fence a map switch and cancel its current or late pose action."""
-        with self._movement_lock:
-            if not self.movement_identity:
-                return
-            self._stop_requested = True
-            handle = self._relocalizing
-        self.record_pose_result(False)
-        if handle is not None:
-            handle.cancel_goal_async()
-
-    def record_pose_result(self, ready):
-        """Update readiness after a managed pose correction on the selected map."""
-        self.pose_ready = bool(ready) and self.mode is LocalizationMode.LOCALIZATION
-        self._on_pose_ready(self.pose_ready)
-        self._publish(self._last_message)
-
     def _to_mapping(self) -> None:
-        self._require_runtime()
         self._set(LocalizationMode.SWITCHING, None, 'switching to mapping')
         if self._localization_started:
             # RESET also removes map_server's latched map and AMCL's map->odom.
             self._reset_localization()
-        self._require_runtime()
         self._slam.start()
         self._set(LocalizationMode.MAPPING, None, self._message(LocalizationMode.MAPPING))
 
     def _to_localization(self, map_path: str) -> None:
-        self._require_runtime()
         self._set(LocalizationMode.SWITCHING, map_path, 'switching to the saved map')
         self._slam.stop()
         if self._localization_started and self._loaded_map != map_path:
@@ -429,8 +245,6 @@ class LocalizationController:
             request.pose.header.stamp = self._node.get_clock().now().to_msg()
             request.pose.pose.pose.orientation.w = 1.0
             self._call(self._initial_pose, request, 'AMCL initial pose')
-            with self._movement_lock:
-                self.pose_ready = not self._stop_requested
             return 'default unknown map loaded; AMCL initialized at (0, 0)'
         if self._relocalize is None:
             return self._message(LocalizationMode.LOCALIZATION)
@@ -438,78 +252,29 @@ class LocalizationController:
         self._set(LocalizationMode.SWITCHING, map_path,
                   'saved map loaded; finding the robot pose')
         retry = 'set the initial pose before driving'
-        if not self._relocalize_ready():
+        if not self._relocalize.wait_for_server(timeout_sec=self._timeout_s):
             return f'saved map loaded; relocalization is unavailable, {retry}'
         goal = Relocalize.Goal()
         goal.method = Relocalize.Goal.AUTO
         try:
-            with self._movement_lock:
-                if self._stop_requested:
-                    return 'saved map loaded; pose search was stopped'
-                future = self._relocalize.send_goal_async(goal)
-                self._relocalize_goal_future = future
-                future.add_done_callback(self._observe_pose_goal)
-            handle = self._wait(future, 'relocalization request', self._timeout_s)
+            handle = self._wait(self._relocalize.send_goal_async(goal),
+                                'relocalization request', self._timeout_s)
         except LocalizationError as error:
-            self.stop_movement()
             return f'saved map loaded; finding the pose failed ({error}), {retry}'
         if not handle.accepted:
             return f'saved map loaded; another pose correction is running, {retry}'
+        self._relocalizing = handle
         try:
-            response = self._wait(handle.get_result_async(), 'relocalization',
-                                  self._relocalize_timeout_s)
-            result = response.result
+            result = self._wait(handle.get_result_async(), 'relocalization',
+                                self._relocalize_timeout_s).result
         except LocalizationError as error:
-            self.stop_movement()
+            handle.cancel_goal_async()
             return f'saved map loaded; finding the pose failed ({error}), {retry}'
-        if (result.success and response.status == GoalStatus.STATUS_SUCCEEDED
-                and not self._stop_requested):
-            self.pose_ready = True
+        finally:
+            self._relocalizing = None
+        if result.success:
             return f'saved map loaded; {result.message}'
         return f'saved map loaded; pose not found ({result.message}), {retry}'
-
-    def _relocalize_ready(self) -> bool:
-        if not self._starting_runtime:
-            return self._relocalize.wait_for_server(timeout_sec=self._timeout_s)
-        deadline = time.monotonic() + STARTUP_RELOCALIZE_WAIT_S
-        while not self._relocalize.wait_for_server(timeout_sec=1.0):
-            self._require_runtime()
-            if self._closing or self._stop_requested or time.monotonic() >= deadline:
-                return False
-        return True
-
-    def _observe_pose_goal(self, future):
-        with self._movement_lock:
-            try:
-                handle = future.result()
-            except Exception:
-                # Delivery remains unknown; retain the gate and the future.
-                self._stop_requested = True
-                return
-            self._relocalize_goal_future = None
-            if not handle.accepted:
-                return
-            self._relocalizing = handle
-            result = handle.get_result_async()
-            self._relocalize_result = result
-            result.add_done_callback(self._observe_pose_terminal)
-            should_cancel = self._stop_requested
-        if should_cancel:
-            handle.cancel_goal_async()
-
-    def _observe_pose_terminal(self, future):
-        with self._movement_lock:
-            try:
-                if future.result().status not in (
-                        GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_CANCELED,
-                        GoalStatus.STATUS_ABORTED):
-                    self._stop_requested = True
-                    return
-            except Exception:
-                self._stop_requested = True
-                return
-            self._relocalizing = None
-            self._relocalize_result = None
 
     def _manage_nodes(self, command: int) -> None:
         request = ManageLifecycleNodes.Request()
@@ -518,10 +283,8 @@ class LocalizationController:
             raise LocalizationError('localization lifecycle transition failed')
 
     def _call(self, client, request, label: str):
-        self._require_runtime()
         if not client.wait_for_service(timeout_sec=self._timeout_s):
             raise LocalizationError(f'{label} service is unavailable')
-        self._require_runtime()
         future = client.call_async(request)
         try:
             return self._wait(future, label, self._timeout_s)
@@ -529,16 +292,11 @@ class LocalizationController:
             client.remove_pending_request(future)
             raise
 
-    def _require_runtime(self):
-        if self._deferred_start and not self._runtime_enabled:
-            raise LocalizationError('robot runtime is stopped')
-
     def _wait(self, future, label: str, timeout_s: float):
         # Service handlers run on a reentrant group of a multithreaded executor,
         # so other executor threads complete this future while we wait.
         deadline = time.monotonic() + timeout_s
         while not future.done():
-            self._require_runtime()
             if self._closing:
                 raise LocalizationError('system manager is shutting down')
             if time.monotonic() >= deadline:
@@ -556,13 +314,8 @@ class LocalizationController:
         self._set(LocalizationMode.ERROR, self.map_path, message)
 
     def _set(self, mode: LocalizationMode, map_path: str | None, message: str) -> None:
-        if self._deferred_start and not self._runtime_enabled:
-            mode, map_path, message = LocalizationMode.ERROR, None, 'robot runtime is stopped'
         self.mode, self.map_path = mode, map_path
-        if mode is not LocalizationMode.LOCALIZATION:
-            self.pose_ready = False
         self._last_message = message
-        self._on_pose_ready(self.pose_ready)
         self._on_mode(mode)
         self._publish(message)
 
@@ -575,15 +328,8 @@ class LocalizationController:
         return mode.value.lower()
 
     def _publish(self, message: str) -> None:
-        self._status_publisher.publish(LocalizationState(
-            runtime_id=self.runtime_id, transition_id=self.transition_id,
-            mode=self.mode.value, map_path=self.map_path or '',
-            pose_ready=self.pose_ready, message=message,
-        ))
         self._state_publisher.publish(String(data=json.dumps({
             'mode': self.mode.value, 'map': self.map_path, 'message': message,
-            'runtime_id': self.runtime_id, 'transition_id': self.transition_id,
-            'pose_ready': self.pose_ready,
         })))
 
 

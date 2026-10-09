@@ -744,6 +744,17 @@ class StoryRuntimeStore:
                          (result_digest, row['user_id'], row['claim']))
             return True
 
+    def release_claim(self, job):
+        """Return only a stopped worker's matching claim, without spending a retry."""
+        with self._transaction(True) as conn:
+            return conn.execute(
+                "UPDATE story_runtime_jobs SET state='queued',attempts=MAX(attempts-1,0), "
+                "claim=NULL,lease_until=NULL,available_at=?,expected_version=NULL, "
+                "read_sources_json='[]',batch_json='[]' "
+                "WHERE user_id=? AND state='running' AND claim=?",
+                (self._now(), job['user_id'], job['claim']),
+            ).rowcount
+
     def fail(self, job, error):
         with self._transaction(True) as conn:
             row = conn.execute('SELECT * FROM story_runtime_jobs WHERE user_id=? AND job_id=? '

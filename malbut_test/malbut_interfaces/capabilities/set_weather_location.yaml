@@ -19,34 +19,6 @@ input:
     arguments_yaml:
       type: string
       description: 사용자가 알려준 지역 이름을 location 필드에 담은 YAML
-    require_preemption_confirmation:
-      type: bool
-      description: 지역 설정은 다른 임무를 선점하지 않는다.
-      default: false
-    confirmed_preemption_mission_ids:
-      type: string[]
-      description: 지역 설정에 취소 허가가 필요한 임무는 없다.
-      default: []
-    expected_localization_runtime_id:
-      type: string
-      description: 날씨 지역 설정은 지도 좌표를 사용하지 않는다.
-      default: ''
-    expected_localization_transition_id:
-      type: uint64
-      description: 날씨 지역 설정은 지도 전환에 바인딩하지 않는다.
-      default: 0
-    require_movement_epoch:
-      type: bool
-      description: 날씨 지역 설정은 이동을 실행하지 않는다.
-      default: false
-    movement_runtime_id:
-      type: string
-      description: 날씨 지역 설정은 이동 세대를 사용하지 않는다.
-      default: ''
-    movement_epoch:
-      type: uint64
-      description: 날씨 지역 설정은 이동 세대를 사용하지 않는다.
-      default: 0
 
 execution:
   mode: BACKGROUND

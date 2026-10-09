@@ -349,6 +349,9 @@ def build_orchestrator(
             weather_location_executor=weather_location_executor,
         )
         runtime.speech_addressee = speech_addressee
+        from malbut_agent_server.homecam_query import HomecamQueryClient, configure_homecam_queries
+
+        configure_homecam_queries(runtime, HomecamQueryClient.from_env())
         return runtime
     except Exception:
         if story_memory is not None:

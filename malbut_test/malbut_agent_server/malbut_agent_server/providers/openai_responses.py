@@ -357,7 +357,9 @@ class OpenAIResponsesProvider(AgentProvider):
         )
         payload: Dict[str, Any] = {
             'model': self.model,
-            'instructions': system_instructions_for_tools(tools) + '\n\n'
+            'instructions': system_instructions_for_tools(
+                tools, homecam_result='homecam_query_result_untrusted' in (memory_context or {}),
+            ) + '\n\n'
             + CONVERSATION_INSTRUCTIONS,
             'input': prepared_context.text,
             'parallel_tool_calls': False,

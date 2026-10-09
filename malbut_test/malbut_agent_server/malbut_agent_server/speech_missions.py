@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 from pathlib import Path
 from threading import RLock, get_ident
 import time
@@ -15,6 +16,10 @@ _CAPABILITIES = {
     'request_navigation': 'navigate_to_pose',
     'request_follow_person': 'follow_person',
     'request_patrol': 'patrol',
+    'request_mapping': 'autoslam',
+    'request_relocalization': 'relocalize',
+    'request_manual_control': 'manual_drive',
+    'request_recovery': 'recovery',
 }
 _TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELED', 'REJECTED', 'UNAVAILABLE'}
 _NAV_UNAVAILABLE = '목적지 이동 설정을 확인할 수 없어 이동하지 않았어요.'
@@ -57,9 +62,11 @@ class SpeechMissions:
     this process, matching ManagerClient's lifecycle.
     """
 
-    def __init__(self, manager, navigation_targets=None, clock=time.monotonic):
+    def __init__(self, manager, navigation_targets=None, clock=time.monotonic,
+                 cancel_foreground=None):
         """Bind an existing Manager client without creating ROS entities."""
         self._manager = manager
+        self._cancel_foreground = cancel_foreground
         self._targets = navigation_targets
         self._clock = clock
         self._owner = get_ident()
@@ -129,13 +136,28 @@ class SpeechMissions:
             ):
                 raise ValueError('patrol requires a supported thoroughness')
             manager_arguments = {'thoroughness': levels[level]}
+        elif tool_name == 'request_mapping':
+            name = arguments.get('map_name')
+            if (set(arguments) != {'map_name'} or not isinstance(name, str)
+                    or re.fullmatch(r'[A-Za-z0-9가-힣][A-Za-z0-9가-힣_-]{0,63}', name) is None):
+                raise ValueError('mapping requires a filename without path or extension')
+            manager_arguments = {'map_name': name}
+        elif tool_name == 'request_relocalization':
+            methods = {'auto': 0, 'global_search': 2}
+            method = arguments.get('method')
+            if (set(arguments) != {'method'} or not isinstance(method, str)
+                    or method not in methods):
+                raise ValueError('unsupported relocalization method')
+            manager_arguments = {'method': methods[method]}
         else:
             if arguments:
                 raise ValueError('this voice mission takes no arguments')
             manager_arguments = ({
                 'target_mode': 0, 'target_person_id': '',
                 'desired_distance_m': 1.0,
-            } if tool_name == 'request_follow_person' else {})
+            } if tool_name == 'request_follow_person' else
+                {'time_allowance': {'sec': 0, 'nanosec': 0}}
+                if tool_name == 'request_manual_control' else {})
         with self._lock:
             fields = {
                 'request_id': request_id, 'tool_name': tool_name,
@@ -262,7 +284,7 @@ class SpeechMissions:
             request_id for request_id, owned in self._owned.items()
             if not owned.terminal
         ]
-        if not pending:
+        if not pending and self._cancel_foreground is None:
             return '음성으로 요청한 실행 중인 동작이 없어요.'
         refusal = self._guard_refusal(guard)
         if refusal is not None:
@@ -278,10 +300,17 @@ class SpeechMissions:
                     uncertain = True
             except Exception:
                 uncertain = True
+        if self._cancel_foreground is not None:
+            try:
+                count = self._cancel_foreground()
+                if not pending and count == 0:
+                    return '현재 실행 중이거나 대기 중인 전면 작업이 없어요.'
+            except Exception:
+                uncertain = True
         if uncertain:
-            return ('음성으로 요청한 동작의 취소를 요청했지만 접수 여부를 '
+            return ('전면 작업의 취소를 요청했지만 접수 여부를 '
                     '확인하지 못했어요. 종료된 것으로 판단하지 않을게요.')
-        return '음성으로 요청한 동작의 취소를 요청했어요. 종료 여부를 확인할게요.'
+        return '전면 작업의 취소를 요청했어요. 종료 여부를 확인할게요.'
 
     @staticmethod
     def _guard_refusal(guard):

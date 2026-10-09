@@ -312,6 +312,69 @@ class StoryMemoryServiceTests(unittest.TestCase):
         self.assertEqual(len(self.service.list_stories('alice')), 1)
         self.assertFalse(self.service.after_turn('alice', 'request-1'))
 
+    def _assert_recoverable_shutdown(self, before_extraction):
+        old = self.service
+        entered, release = threading.Event(), threading.Event()
+        original = old._process if before_extraction else self.extractor.extract
+
+        def paused(*args):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError('shutdown fixture was not released')
+            return original(*args)
+
+        stopped = threading.Event()
+        closer = None
+        target, method = (old, '_process') if before_extraction else (self.extractor, 'extract')
+        with patch.object(target, method, paused):
+            try:
+                old.enable('alice')
+                self._turn('전시에서 새로운 작품을 봤어.', enqueue=False)
+                self.assertTrue(entered.wait(3))
+
+                def close():
+                    old.close()
+                    stopped.set()
+
+                closer = threading.Thread(target=close)
+                closer.start()
+                self.assertTrue(old._stop.wait(3))
+                release.set()
+                self.assertTrue(stopped.wait(3))
+            finally:
+                release.set()
+                if closer is not None:
+                    closer.join(5)
+        self.assertFalse(old._thread.is_alive())
+        stats = old.store.stats('alice')
+        self.assertEqual(stats['running'], 0)
+        self.assertEqual(stats['queued'], 1)
+        self.service = self._service()
+        self.assertTrue(self.service.flush('alice', timeout=5))
+        self.assertEqual(len(self.service.list_stories('alice')), 1)
+
+    def test_shutdown_after_claim_releases_work_before_restart(self):
+        self._assert_recoverable_shutdown(before_extraction=True)
+
+    def test_shutdown_during_extraction_releases_work_before_restart(self):
+        self._assert_recoverable_shutdown(before_extraction=False)
+
+    def test_shutdown_does_not_release_a_worker_which_has_not_exited(self):
+        self.extractor.release = threading.Event()
+        self.service.enable('alice')
+        self._turn('전시에서 새로운 작품을 봤어.')
+        self.assertTrue(self.extractor.entered.wait(3))
+        thread = self.service._thread
+        try:
+            with patch.object(thread, 'join'):
+                self.service.close()
+            self.assertTrue(thread.is_alive())
+            self.assertEqual(self.service.store.stats('alice')['running'], 1)
+            self.assertIsNone(self.service.store.claim('alice'))
+        finally:
+            self.extractor.release.set()
+            thread.join(5)
+
     def test_restart_recovers_expired_claim_without_new_user_input(self):
         self.service.enable('alice')
         self.service.close()

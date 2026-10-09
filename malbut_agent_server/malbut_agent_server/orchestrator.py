@@ -44,10 +44,10 @@ from malbut_agent_server.providers.base import (
     accepts_memory_context,
     accepts_weather_context,
 )
-from malbut_agent_server.prompting import bounded_weather_context, MAX_CONVERSATION_CONTEXT_CHARS
+from malbut_agent_server.prompting import bounded_weather_context
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
-from malbut_agent_server.tools import validate_tool_arguments
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, validate_tool_arguments
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -901,16 +901,6 @@ class AgentOrchestrator:
                 memory_context = copy.deepcopy(memory_snapshot.context)
                 if self._separate_memory_extraction(request, memory_snapshot):
                     memory_context['mode'] = 'answer_only'
-                operation_context = getattr(self, 'robot_operation_context', None)
-                if operation_context is not None:
-                    observations = operation_context(request.user_id, request.conversation_id)
-                    memory_context['robot_operation_results'] = observations
-                    while observations and len(json.dumps(
-                            memory_context, ensure_ascii=False, allow_nan=False,
-                    )) > MAX_CONVERSATION_CONTEXT_CHARS:
-                        observations.pop()
-                    if not observations:
-                        memory_context.pop('robot_operation_results', None)
                 memory_arguments['memory_context'] = memory_context
             provider_result = self.provider.complete(
                 model_request,
@@ -1036,10 +1026,21 @@ class AgentOrchestrator:
         elif raw_decision.type == 'tool_call' and safety.code == 'manager_request':
             # Persist the proposal as a request, never a model-invented completion.
             decision = replace(raw_decision, message=(
-                '음성으로 시작한 작업의 취소를 요청할게요.'
+                '전면 작업의 취소를 요청할게요.'
                 if raw_decision.tool_name == 'cancel_voice_mission'
                 else 'Manager에 작업 실행을 요청할게요.'
             ))
+        elif raw_decision.type == 'tool_call' and raw_decision.tool_name in HOMECAM_QUERY_TOOLS:
+            provider_result = self._answer_homecam(
+                model_request, memories, conversation_turns, conversation_summary,
+                provider_result,
+                memory_context={
+                    'mode': 'answer_only',
+                    'enabled': memory_snapshot.state['enabled'],
+                    'response_settings': memory_snapshot.context['response_settings'],
+                },
+            )
+            decision = provider_result.decision
         issued_at = float(self._state_clock())
         expires_at = (
             issued_at + decision.expires_in_ms / 1000.0
@@ -1084,6 +1085,51 @@ class AgentOrchestrator:
                 else None
             ),
             clock=self._state_clock,
+        )
+
+    def _answer_homecam(self, request, memories, turns, summary, first_result, *, memory_context):
+        """Read cloud metadata directly, then answer with no executable Tools."""
+        executor = getattr(self, 'homecam_executor', None)
+        try:
+            if executor is None or not accepts_memory_context(self.provider):
+                raise RuntimeError('homecam query unavailable')
+            result = executor(first_result.decision.tool_name, first_result.decision.arguments)
+        except CancelledError:
+            raise
+        except Exception:
+            result = {'success': False, 'code': 'UNAVAILABLE', 'result': {}}
+        if not result['success']:
+            message = ('웹에서 소유자의 음성 홈캠 조회 허용이 필요해요.'
+                       if result['code'] == 'VOICE_DELEGATION_REQUIRED'
+                       else '홈캠 정보를 조회하지 못했어요. 잠시 후 다시 요청해 주세요.')
+            return replace(first_result, decision=AgentDecision(
+                'message', message, reason='homecam_unavailable',
+            ), memory_proposal=None)
+        context = copy.deepcopy(memory_context)
+        # This is current-query data, not a remembered fact or workflow journal.
+        context['homecam_query_result_untrusted'] = {
+            'tool': first_result.decision.tool_name, 'data': result['result'],
+        }
+        value = request.to_dict()
+        value['available_tools'] = []
+        answer = self.provider.complete(
+            type(request).from_dict(value), list(memories), copy.deepcopy(list(turns)), [],
+            conversation_summary=copy.deepcopy(summary), memory_context=context,
+        )
+        answer.validate()
+        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
+            return replace(first_result, decision=AgentDecision(
+                'refusal', '홈캠 조회 결과로 답변을 만들지 못했어요.',
+                reason='homecam_followup_tool_forbidden',
+            ), memory_proposal=None)
+        return replace(
+            answer, latency_ms=first_result.latency_ms + answer.latency_ms,
+            usage=ProviderUsage(**{
+                name: (getattr(first_result.usage, name) + getattr(answer.usage, name)
+                       if getattr(first_result.usage, name) is not None
+                       and getattr(answer.usage, name) is not None else None)
+                for name in ('input_tokens', 'output_tokens', 'total_tokens')
+            }),
         )
 
     def _answer_weather(

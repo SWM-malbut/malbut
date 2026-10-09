@@ -62,6 +62,30 @@ class Targets:
         )
 
 
+@pytest.mark.parametrize('tool, arguments, capability, expected', [
+    ('request_mapping', {'map_name': 'new_home'}, 'autoslam', {'map_name': 'new_home'}),
+    ('request_relocalization', {'method': 'auto'}, 'relocalize', {'method': 0}),
+    ('request_relocalization', {'method': 'global_search'}, 'relocalize', {'method': 2}),
+    ('request_manual_control', {}, 'manual_drive', {'time_allowance': {'sec': 0, 'nanosec': 0}}),
+    ('request_recovery', {}, 'recovery', {}),
+])
+def test_added_commands_submit_only_the_existing_manifest(tool, arguments, capability, expected):
+    manager = FakeManager()
+    dispatcher = SpeechMissions(manager)
+    dispatcher.dispatch(dispatcher.prepare('leaf-request', tool, arguments))
+    assert len(manager.submissions) == 1
+    assert manager.submissions[0][:2] == (capability, expected)
+
+
+def test_cancel_uses_existing_foreground_cancel_and_remembers_unaccepted_voice_goal():
+    manager = FakeManager()
+    all_foreground = []
+    dispatcher = SpeechMissions(manager, cancel_foreground=lambda: all_foreground.append(True))
+    dispatcher.dispatch(dispatcher.prepare('follow', 'request_follow_person', {}))
+    dispatcher.dispatch(dispatcher.prepare('cancel', 'cancel_voice_mission', {}))
+    assert len(manager.cancellations) == 1 and all_foreground == [True]
+
+
 @pytest.fixture
 def harness():
     manager = FakeManager()

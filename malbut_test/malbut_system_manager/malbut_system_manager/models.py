@@ -77,7 +77,6 @@ class CancelReason(str, Enum):
     USER = 'USER'
     PREEMPTION = 'PREEMPTION'
     SHUTDOWN = 'SHUTDOWN'
-    STOP = 'STOP'
 
 
 class ControlMode(str, Enum):
@@ -141,8 +140,6 @@ class MissionRecord:
     cancel_reason: CancelReason | None = None
     user_cancel_requested: bool = False
     resumable: bool = True
-    require_preemption_confirmation: bool = False
-    confirmed_preemption_mission_ids: frozenset[str] = frozenset()
 
     @property
     def mode(self) -> ExecutionMode:

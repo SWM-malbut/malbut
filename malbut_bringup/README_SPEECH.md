@@ -1,6 +1,8 @@
 # 통합 Bringup의 음성 준비와 preflight
 
-상주 음성·Manager·홈캠 통합은 [Agent 로봇 통합 안내](docs/AGENT_ROBOT_INTEGRATION.md)를 참고한다. `cloud.launch.py`는 음성을 별도 프로세스로 유지하고 로봇 실행 그룹에 `speech:=false`를 전달한다. 직접 `bringup.launch.py`를 실행하는 경우에는 아래 기존 음성 구성을 유지한다.
+`cloud.launch.py`는 cloud bridge만 실행한다. 음성과 Manager는 기존 robot Bringup이
+소유하며 Bringup 종료 시 함께 종료된다. 에이전트의 기능 요청과 홈캠 조회 연결은
+[Agent README](../malbut_agent_server/README.md#로봇-실행과-홈캠-조회)를 참고한다.
 
 실로봇은 **최초 `setup.sh` 준비 → `build.sh` 빌드 → `cloud.launch.py` 웹 연결 → 웹의
 Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `bringup.launch.py`를 사용한다.
@@ -220,7 +222,7 @@ STT 시작 중 확인된 CUDA 메모리 부족에 대한 기존 5초·10초 대�
 초기화 제한시간을 새로 적용하며, 실패가 계속되면 같은 간격으로 재시도한다.
 Agent·TTS 등 다른 모듈은 계속 실행하며 자동 재시작 대상에는 포함하지 않는다.
 음성을 소유한 launch를 종료하면 실행 중인 STT와 재시작 대기도 함께 종료한다.
-Cloud의 상주 음성은 웹 Bringup과 별도이므로 웹 Bringup 종료만으로 중단되지 않는다.
+웹에서 Bringup을 종료하면 그 Bringup이 소유한 음성도 함께 종료된다.
 재시작은 종료된 프로세스를 복구하며, USB/PulseAudio 장애 자체를 해결하거나
 오류 없이 멈춘 프로세스를 감시하지는 않는다. 실제 마이크 입력 이후에만 다시 ready가 된다.
 단독 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하며,

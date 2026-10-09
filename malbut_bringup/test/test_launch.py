@@ -29,79 +29,6 @@ def _load(name):
     return module
 
 
-def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch, launch_module):
-    """Standby owns speech, with no hardware, navigation, or local HTTP port."""
-    source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
-    spec = importlib.util.spec_from_file_location('cloud_launch', source)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setattr(module, 'shared_xfm_source', lambda _: 'xfm-source')
-    context = _context(module, backend_url='https://robot.example.com',
-                       token_file='/protected/device.token', map_directory='/maps')
-    actions = module._setup(context)
-    nodes = [action for action in actions if isinstance(action, Node)]
-    assert {node.node_executable for node in nodes} == {'robot_cloud_sync', 'system_manager'}
-    bridge = next(node for node in nodes if node.node_executable == 'robot_cloud_sync')
-    manager = next(node for node in nodes if node.node_executable == 'system_manager')
-    manager_parameters = evaluate_parameters(context, manager._Node__parameters)[0]
-    assert manager._ExecuteLocal__output == {'both': 'log'}
-    assert manager_parameters['resident_runtime'] is True
-    assert manager_parameters['initial_map'] == ''
-    assert not _includes(actions)
-    parameters = evaluate_parameters(context, bridge._Node__parameters)[0]
-    assert parameters['resident_manager_namespace'].startswith('/malbut/resident_manager_')
-    assert parameters['use_sim_time'] is False
-    assert parameters['map_topic'] == '/map'
-    assert parameters['token_file'] == '/protected/device.token'
-    assert 'token' not in parameters and 'port' not in parameters
-    speech = next(action for action in actions
-                  if isinstance(action, ExecuteProcess) and not isinstance(action, Node))
-    command = [perform_substitutions(context, part) for part in speech.cmd]
-    assert 'control_server:=none' in command
-    assert 'device_operations:=true' in command
-    assert command[1:3] == ['-m', 'malbut_bringup.resident_voice']
-    from ros2launch.api.api import parse_launch_arguments
-    arguments = dict(parse_launch_arguments(command[3:]))
-    assert 'navigation_targets' not in arguments
-    # Reap children using their default INT/TERM deadlines before killing
-    # the nested LaunchService; otherwise an orphan can retain the voice lease.
-    assert float(perform_substitutions(context, speech._ExecuteLocal__sigterm_timeout)) > 10
-    assert parameters['resident_voice_namespace'].startswith('/malbut/resident_voice_')
-    # Bridge ownership failure tears down this launch; speech failure stays isolated.
-    from launch.actions import RegisterEventHandler
-    from launch.events.process import ProcessExited
-    handlers = [action.event_handler for action in actions
-                if isinstance(action, RegisterEventHandler)]
-    assert len(handlers) == 1
-    assert handlers[0].matches(ProcessExited(
-        action=bridge, returncode=2, name='robot_cloud_sync', cmd=[], cwd=None, env={}, pid=1))
-    assert not handlers[0].matches(ProcessExited(
-        action=speech, returncode=2, name='resident_speech', cmd=[], cwd=None, env={}, pid=2))
-    shutdown = list(handlers[0].handle(ProcessExited(
-        action=bridge, returncode=2, name='robot_cloud_sync',
-        cmd=[], cwd=None, env={}, pid=1), context))
-    from launch.actions import EmitEvent
-    from launch.events import Shutdown
-    assert len(shutdown) == 1 and isinstance(shutdown[0], EmitEvent)
-    assert isinstance(shutdown[0].event, Shutdown)
-
-
-def test_failed_microphone_keeps_cloud_control(monkeypatch, launch_module):
-    """An unavailable Pulse source prevents voice startup without killing cloud."""
-    spec = importlib.util.spec_from_file_location(
-        'cloud_launch', ROOT / 'malbut_bringup/launch/cloud.launch.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def fail(_):
-        raise RuntimeError('no microphone')
-    monkeypatch.setattr(module, 'shared_xfm_source', fail)
-    actions = module._setup(_context(module))
-    assert len([item for item in actions if isinstance(item, Node)]) == 2
-    assert not any(isinstance(item, ExecuteProcess) and not isinstance(item, Node)
-                   for item in actions)
-
-
 @pytest.fixture
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
@@ -195,34 +122,28 @@ def _module_setup(name, context):
     return callback.execute(context)
 
 
-def test_cloud_only_profile_starts_outbound_bridge_without_speech(launch_module):
+def test_cloud_launch_starts_only_outbound_bridge():
     """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
     source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
     spec = importlib.util.spec_from_file_location('cloud_launch', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     context = _context(module, backend_url='https://robot.example.com',
-                       token_file='/protected/device.token', map_directory='/maps',
-                       resident_voice='false')
-    actions = module._setup(context)
+                       token_file='/protected/device.token', map_directory='/maps')
+    actions = module.generate_launch_description().entities
     nodes = [action for action in actions if isinstance(action, Node)]
-    assert {node.node_executable for node in nodes} == {'robot_cloud_sync', 'system_manager'}
-    bridge = next(node for node in nodes if node.node_executable == 'robot_cloud_sync')
-    manager = next(node for node in nodes if node.node_executable == 'system_manager')
-    manager_parameters = evaluate_parameters(context, manager._Node__parameters)[0]
-    assert manager._ExecuteLocal__output == {'both': 'log'}
-    assert manager_parameters['resident_runtime'] is True
-    assert manager_parameters['initial_map'] == ''
+    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
     assert not _includes(actions)
-    parameters = evaluate_parameters(context, bridge._Node__parameters)[0]
-    assert parameters['resident_manager_namespace'].startswith('/malbut/resident_manager_')
+    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
     assert parameters['use_sim_time'] is False
     assert parameters['map_topic'] == '/map'
     assert parameters['token_file'] == '/protected/device.token'
     assert 'token' not in parameters and 'port' not in parameters
-    assert not any(isinstance(action, ExecuteProcess) and not isinstance(action, Node)
-                   for action in actions)
-    assert parameters['resident_voice_namespace'] == ''
+    for action in actions:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['HOMECAM_BACKEND_URL'] == 'https://robot.example.com'
+    assert context.environment['HOMECAM_DEVICE_TOKEN_FILE'] == '/protected/device.token'
 
 
 def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
@@ -636,10 +557,6 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
         pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
         assert coordinator['runtime_id'] == monitor['manager_runtime_id']
         assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
-        # Depth is on by default (2026-10-08): the same pair person following uses.
-        assert (monitor['depth_topic'], monitor['camera_info_topic'], monitor['global_frame']) == (
-            '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info', 'map')
-        assert pose['depth_image_topic'] == '/depth_cam/depth0/image_raw'
 
 
 def test_fall_starts_one_non_ros_uploader_with_shared_settings(launch_module, fall_config):
@@ -813,64 +730,7 @@ def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, e
     assert 'fall_only' not in params
 
 
-def test_one_switch_gives_fall_pose_and_map_places_the_aligned_depth(launch_module, fall_config):
-    module = _load('fall')
-    context = _context(module, fall_config=str(fall_config), fall_depth_aligned_to_rgb='true',
-                       fall_camera_height_m='0.118', fall_camera_pitch_rad='0.05')
-    actions = module._setup(context)
-    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
-    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
-    assert (pose['depth_image_topic'], pose['depth_camera_info_topic'],
-            pose['depth_aligned_to_rgb']) == (
-        '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info', True)
-    assert (pose['camera_height_m'], pose['camera_pitch_rad'], pose['depth_scale_m']) == (
-        0.118, 0.05, 0.0)
-    assert (monitor['depth_topic'], monitor['camera_info_topic']) == (
-        '/depth_cam/depth0/image_raw', '/depth_cam/rgb0/camera_info')
-
-
-def test_fall_depth_and_approach_are_on_by_default(launch_module, fall_config):
-    """Person following already uses this depth/RGB pair as aligned (2026-10-08)."""
-    module = _load('fall')
-    context = _context(module, fall_config=str(fall_config))
-    actions = module._setup(context)
-    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
-    assert pose['depth_aligned_to_rgb'] is True
-    assert _nodes(actions, 'fall_approach'), 'the approach node starts without arguments'
-
-
-def test_the_measured_camera_mount_reaches_pose_and_the_map_places(launch_module, fall_config):
-    """2026-10-09 floor fit: 11.6 cm, 1.6 degrees down, left side 1.6 degrees low."""
-    module = _load('fall')
-    context = _context(module, fall_config=str(fall_config))
-    actions = module._setup(context)
-    pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
-    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
-    assert (pose['camera_height_m'], pose['camera_pitch_rad']) == (0.116, 0.028)
-    assert monitor['mount_pitch_correction_rad'] == 0.028
-    assert monitor['mount_roll_correction_rad'] == -0.028
-    assert monitor['mount_height_correction_m'] == pytest.approx(0.116 - 0.119864)
-
-
-@pytest.mark.parametrize('switch', ['false', 'true'])
-def test_fall_approach_switch_starts_the_drive_node_and_tells_the_runtime(
-        launch_module, fall_config, switch):
-    module = _load('fall')
-    context = _context(module, fall_config=str(fall_config), fall_approach=switch)
-    actions = module._setup(context)
-    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
-    assert monitor['approach_enabled'] is (switch == 'true')
-    drivers = _nodes(actions, 'fall_approach')
-    assert len(drivers) == (switch == 'true')
-    if drivers:
-        params = _parameters(context, drivers[0])
-        assert (params['global_frame'], params['robot_frame']) == ('map', 'base_footprint')
-
-
 @pytest.mark.parametrize('changes', [
-    {'fall_camera_height_m': '0'}, {'fall_camera_height_m': 'tall'},
-    {'fall_camera_pitch_rad': '1.0'}, {'fall_camera_roll_rad': '-0.6'},
-    {'fall_camera_roll_rad': 'level'},
     {'fall_pose_execution_provider': 'invalid'}, {'fall_pose_intra_op_num_threads': '-1'},
     {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},
     {'fall_pose_model_path': '/missing/pose.onnx'},
@@ -938,43 +798,3 @@ def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
     assert {'malbut_tracking', 'malbut_patrol', 'malbut_system_manager',
             'homecam_media_agent'} <= dependencies
     assert not {'malbut_gazebo', 'malbut_scenarios', 'malbut_hardware'} & dependencies
-
-
-def test_resident_child_inherits_shared_source_without_reselecting(
-        launch_module, monkeypatch):
-    """A restarted media child uses the resident STT input with child speech off."""
-    module = _load('bringup')
-    monkeypatch.setattr(module, 'shared_xfm_source',
-                        lambda _: pytest.fail('resident source must not be selected again'))
-    context = _context(module, speech='false')
-    context.environment.update(
-        HOMECAM_BACKEND_URL='https://robot.example.com',
-        MALBUT_RESIDENT_VOICE_NAMESPACE='/malbut/resident_voice_test',
-        MALBUT_SHARED_MICROPHONE='resident-xfm', PULSE_SOURCE='resident-xfm')
-    includes = _included_modules(module._setup(context))
-    assert 'homecam' in includes and 'speech' not in includes
-    assert context.environment['MALBUT_SHARED_MICROPHONE'] == 'resident-xfm'
-    assert context.environment['PULSE_SOURCE'] == 'resident-xfm'
-    homecam = _load('homecam')
-    media = dict(_includes(homecam._setup(context))[0].launch_arguments)
-    assert media['audio_source'] == 'pulse'
-
-
-def test_robot_child_can_use_resident_manager_without_duplicate(launch_module):
-    """Only the explicit resident profile skips its child's Manager process."""
-    actions = _core_actions(launch_module, _context(launch_module, manager='false'))
-    assert not _nodes(actions, 'system_manager')
-    direct = _core_actions(launch_module, _context(launch_module))
-    assert len(_nodes(direct, 'system_manager')) == 1
-
-
-def test_resident_child_observer_does_not_probe_root_manager(launch_module):
-    """Its required Action is absolute, while the resident node has a unique namespace."""
-    module = _load('bringup')
-    context = _context(module, manager='false', speech='false')
-    actions = module._setup(context)
-    observer = _nodes(actions, 'wait_for_robot')[0]
-    settings = _parameters(context, observer)
-    assert 'system_manager' not in settings['startup_nodes'].split(',')
-    assert '/malbut/mission/execute' in settings['required_actions'].split(',')
-    assert _included_modules(actions)['robot']['manager'] == 'false'

@@ -11,7 +11,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Empty, String
+from std_msgs.msg import Empty
 
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
@@ -26,34 +26,18 @@ class ManualActivity:
         self.idle_timeout_s = idle_timeout_s
         self.joy_deadzone = joy_deadzone
         self.last_active = float('-inf')
-        self._teleop_neutral_required = False
-        self._joy_neutral_required = False
-        self._joy_active = False
-
-    def stop(self) -> None:
-        """Require released controls before a stop can be followed by new motion."""
-        self._teleop_neutral_required = True
-        self._joy_neutral_required = self._joy_active
 
     def teleop(self, now: float, message: Twist) -> bool:
         """Record a velocity command; return whether it asks for motion."""
         moving = any((message.linear.x, message.linear.y, message.angular.z))
-        if not moving:
-            self._teleop_neutral_required = False
-        if self._teleop_neutral_required or self._joy_neutral_required:
-            return False
         if moving:
             self.last_active = now
         return moving
 
     def joy(self, now: float, axes) -> None:
         """Count a held stick; the vendor node publishes only on change."""
-        self._joy_active = any(abs(axes[index]) >= self.joy_deadzone
-                               for index in DRIVE_AXES if index < len(axes))
-        if not self._joy_active:
-            self._joy_neutral_required = False
-        if (self._joy_active and not self._teleop_neutral_required
-                and not self._joy_neutral_required):
+        if any(abs(axes[index]) >= self.joy_deadzone
+               for index in DRIVE_AXES if index < len(axes)):
             self.last_active = now
 
     def started(self, now: float) -> None:
@@ -80,8 +64,6 @@ class ManualControl(Node):
             float(self.declare_parameter('joy_deadzone', 0.1).value),
         )
         self.manual = False
-        self.movement_runtime_id = ''
-        self.movement_epoch = 0
         self.request_active = False
         self.last_request = float('-inf')
         self.last_preempt = float('-inf')
@@ -92,8 +74,6 @@ class ManualControl(Node):
         state_qos.reliability = ReliabilityPolicy.RELIABLE
         state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.create_subscription(SystemState, '/malbut/state', self._state, state_qos)
-        self.create_subscription(String, '/malbut/movement_stop',
-                                 lambda _: self.activity.stop(), 10)
         self.create_subscription(
             Twist, self.declare_parameter('teleop_topic', '/cmd_vel_teleop').value,
             self._teleop, 10)
@@ -103,12 +83,6 @@ class ManualControl(Node):
         self.create_timer(0.2, self._check)
 
     def _state(self, message: SystemState) -> None:
-        if (self.movement_runtime_id
-                and (self.movement_runtime_id, self.movement_epoch)
-                != (message.movement_runtime_id, message.movement_epoch)):
-            self.activity.stop()
-        self.movement_runtime_id = message.movement_runtime_id
-        self.movement_epoch = message.movement_epoch
         manual = message.control_mode == SystemState.MANUAL
         if manual and not self.manual:
             self.activity.started(time.monotonic())
@@ -120,14 +94,11 @@ class ManualControl(Node):
             return
         # Operator input takes the base; the manager cancels NORMAL motion.
         if (self.request_active or now - self.last_request < self.retry_delay_s
-                or not self.client.server_is_ready() or not self.movement_runtime_id):
+                or not self.client.server_is_ready()):
             return
         goal = ExecuteMission.Goal()
         goal.capability_id = self.capability_id
         goal.arguments_yaml = '{}'
-        goal.require_movement_epoch = True
-        goal.movement_runtime_id = self.movement_runtime_id
-        goal.movement_epoch = self.movement_epoch
         self.request_active = True
         self.last_request = now
         self.client.send_goal_async(goal).add_done_callback(self._accepted)

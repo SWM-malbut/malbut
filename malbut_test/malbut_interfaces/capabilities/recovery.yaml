@@ -17,34 +17,6 @@ input:
       type: string
       description: 추가 실행 명령은 받지 않는다.
       default: '{}'
-    require_preemption_confirmation:
-      type: bool
-      description: 하위 복구 실행은 Manager가 확인한 충돌 허가를 다시 사용하지 않는다.
-      default: false
-    confirmed_preemption_mission_ids:
-      type: string[]
-      description: 하위 복구 실행에 전달할 추가 임무 ID는 없다.
-      default: []
-    expected_localization_runtime_id:
-      type: string
-      description: 하위 복구 실행은 지도 좌표를 사용하지 않는다.
-      default: ''
-    expected_localization_transition_id:
-      type: uint64
-      description: 하위 복구 실행은 지도 전환에 바인딩하지 않는다.
-      default: 0
-    require_movement_epoch:
-      type: bool
-      description: 상위 Manager 접수에서 이동 세대를 검증한다.
-      default: false
-    movement_runtime_id:
-      type: string
-      description: 하위 실행은 상위 Manager의 이동 세대를 다시 검증하지 않는다.
-      default: ''
-    movement_epoch:
-      type: uint64
-      description: 하위 실행의 이동 세대는 사용하지 않는다.
-      default: 0
 execution:
   mode: FOREGROUND
   priority: URGENT
