@@ -22,7 +22,7 @@ import uuid
 import yaml
 
 from .drive_mode import PatrolFallStops
-from .map_check import MapCheck
+from .map_check import can_relocalize, MapCheck
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zone_override import ZoneOverride
@@ -751,7 +751,7 @@ class RosBridge:
             results = [item for item in self.data.recent_results if isinstance(item, dict)]
         view, retry = self.map_check.update(
             time.monotonic(), running=status['state'] in ('STARTING', 'RUNNING'),
-            ready=bool(status.get('ready')), localization=self.localization,
+            ready=can_relocalize(status), localization=self.localization,
             saved=self._saved_map(self.localization.get('map')),
             system=system, results=results)
         if retry:

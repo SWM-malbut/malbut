@@ -45,6 +45,24 @@ def result_match(record):
     return result.get('success') is True, ratio
 
 
+# Startup checks that only a found pose can satisfy (readiness.py wording).
+POSE_WAITS = ('TF:map->', 'TF:scan->map@')
+
+
+def can_relocalize(status):
+    """
+    Ready, or waiting only for the map pose a relocalization would give.
+
+    A pose search that failed at startup used to wait for full readiness, which
+    itself needs that pose, so the automatic retry never ran (2026-10-09).
+    """
+    if status.get('ready'):
+        return True
+    waiting = status.get('waiting') or []
+    return (status.get('state') == 'RUNNING' and bool(waiting)
+            and all(isinstance(item, str) and item.startswith(POSE_WAITS) for item in waiting))
+
+
 def _relocalizing(system):
     missions = [*(system.get('active_foreground_missions') or []),
                 *(system.get('pending_missions') or [])]

@@ -49,6 +49,11 @@ MIN_ACCEPT_DISTANCE_M = 0.5
 MIN_ACCEPT_ANGLE_RAD = 0.5
 SCAN_MAX_AGE_S = 2.0
 FULL_TURN_RAD = 2.0 * math.pi
+# Right after Bringup starts, Nav2's behavior server (Spin) comes up after
+# /relocalize; the startup search used to give up after 2 s and search without
+# turning (2026-10-09). Wait up to this, keeping time for the turn itself.
+SPIN_WAIT_S = 30.0
+SEARCH_RESERVE_S = 20.0
 # AMCL's spread around a pose fitted to the map: about 5 cm and 3 degrees.
 FITTED_COVARIANCE = [0.0025 if index in (0, 7) else 0.0027 if index == 35 else 0.0
                      for index in range(36)]
@@ -532,9 +537,21 @@ class Relocalization(Node):
             best, best_ratio = self._return_to(handle, best[1], deadline)
         return best, best_ratio
 
+    def _spin_ready(self, handle, deadline):
+        patience = min(SPIN_WAIT_S, deadline - time.monotonic() - SEARCH_RESERVE_S)
+        if patience <= 0:
+            return self.spin.wait_for_server(timeout_sec=2.0)
+        until = time.monotonic() + patience
+        while not self.spin.wait_for_server(timeout_sec=0.5):
+            self._check(handle)
+            if time.monotonic() >= until:
+                return False
+            time.sleep(0.1)
+        return True
+
     def _rotate(self, handle, deadline):
         """Turn in place once with Nav2 Spin; AMCL updates while it rotates."""
-        if not self.spin.wait_for_server(timeout_sec=2.0):
+        if not self._spin_ready(handle, deadline):
             self.get_logger().warning('Spin is unavailable; searching without rotating')
             return
         goal = Spin.Goal()

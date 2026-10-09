@@ -390,3 +390,23 @@ def test_estimate_message_round_trip():
     message = pose_message(_pose(), Time(seconds=1).to_msg())
     assert isinstance(message, PoseWithCovarianceStamped)
     assert pose_record(message)['yaw'] == pytest.approx(0.3)
+
+
+class _LateSpin(_Spin):
+    def __init__(self, ready_after):
+        super().__init__()
+        self.ready_after, self.waits = ready_after, 0
+
+    def wait_for_server(self, timeout_sec):
+        self.waits += 1
+        return self.waits > self.ready_after
+
+
+def test_search_waits_for_a_spin_server_that_comes_up_late(monkeypatch, room):
+    """2026-10-09: right after a start the search gave up on Spin and did not turn."""
+    node = _node(monkeypatch, room, spin=_LateSpin(ready_after=20))
+    node.timeout = 60.0
+    _ready(node, room)
+    assert node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH)).success
+    assert node.spin.waits == 21 and len(node.spin.goals) == 1
+    node.get_logger().warning.assert_not_called()
