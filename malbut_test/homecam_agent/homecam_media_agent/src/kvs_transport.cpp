@@ -113,6 +113,80 @@ std::int64_t SharedMediaTimeline::stamp(
   }
 }
 
+std::int64_t AudioCaptureTimeline::stamp(
+  const std::int64_t pipeline_timestamp_ns,
+  const std::int64_t steady_capture_time_ns)
+{
+  // Beyond this the capture clock no longer describes when the frame was
+  // heard: a restarted pipeline, a stalled device or slow clock drift.
+  constexpr std::int64_t maximum_skew_ns = 200'000'000;
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::int64_t candidate = std::max<std::int64_t>(steady_capture_time_ns, 1);
+  if (pipeline_timestamp_ns < 0) {
+    anchored_ = false;
+  } else {
+    const bool restarted =
+      !anchored_ || pipeline_timestamp_ns < pipeline_anchor_ns_ ||
+      pipeline_timestamp_ns - pipeline_anchor_ns_ >
+      std::numeric_limits<std::int64_t>::max() - steady_anchor_ns_;
+    const std::int64_t captured = restarted ? candidate :
+      steady_anchor_ns_ + (pipeline_timestamp_ns - pipeline_anchor_ns_);
+    if (
+      restarted || captured > candidate + maximum_skew_ns ||
+      candidate > captured + maximum_skew_ns)
+    {
+      anchored_ = true;
+      pipeline_anchor_ns_ = pipeline_timestamp_ns;
+      steady_anchor_ns_ = candidate;
+    } else {
+      candidate = captured;
+    }
+  }
+  if (candidate <= last_timestamp_ns_) {
+    candidate = last_timestamp_ns_ == std::numeric_limits<std::int64_t>::max() ?
+      last_timestamp_ns_ : last_timestamp_ns_ + 1;
+  }
+  last_timestamp_ns_ = candidate;
+  return candidate;
+}
+
+PlayoutSchedule::PlayoutSchedule(const std::int64_t delay_ns)
+: delay_ns_(std::max<std::int64_t>(delay_ns, 0))
+{
+}
+
+std::int64_t PlayoutSchedule::schedule(
+  const std::int64_t frame_ns,
+  const std::int64_t running_now_ns)
+{
+  // A sender pause or a new browser connection; a talk is one continuous stream.
+  constexpr std::int64_t maximum_lead_ns = 1'000'000'000;
+  std::int64_t playout = 0;
+  if (anchored_) {
+    const bool earlier = frame_ns < frame_anchor_ns_;
+    playout = earlier ? 0 : running_anchor_ns_ + (frame_ns - frame_anchor_ns_);
+    anchored_ = !earlier && playout >= running_now_ns &&
+      playout - running_now_ns <= delay_ns_ + maximum_lead_ns;
+  }
+  if (!anchored_) {
+    anchored_ = true;
+    frame_anchor_ns_ = frame_ns;
+    running_anchor_ns_ = running_now_ns + delay_ns_;
+    playout = running_anchor_ns_;
+  }
+  if (playout <= last_ns_) {
+    playout = last_ns_ + 1;
+  }
+  last_ns_ = playout;
+  return playout;
+}
+
+void PlayoutSchedule::reset()
+{
+  anchored_ = false;
+  last_ns_ = -1;
+}
+
 bool SessionLease::valid_at(const std::int64_t now_unix_ms) const
 {
   return !channel_arn.empty() &&

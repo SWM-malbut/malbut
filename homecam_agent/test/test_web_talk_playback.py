@@ -31,6 +31,7 @@ constexpr int GST_FLOW_OK = 0;
 std::int64_t clock_ns = 10000000000LL;
 std::int64_t allocation_completes_at = 0;
 int pushed = 0, allocated = 0, unreferenced = 0;
+GstClockTime pushed_pts = 0;
 std::int64_t steady_now_ns() { return clock_ns; }
 GstBuffer *gst_buffer_new_allocate(void *, std::size_t, void *) {
   ++allocated;
@@ -40,8 +41,14 @@ GstBuffer *gst_buffer_new_allocate(void *, std::size_t, void *) {
 void gst_buffer_fill(GstBuffer *, std::size_t, const void *, std::size_t) {}
 void gst_buffer_unref(GstBuffer *buffer) { ++unreferenced; delete buffer; }
 int gst_app_src_push_buffer(GstElement *, GstBuffer *buffer) {
-  ++pushed; delete buffer; return GST_FLOW_OK;
+  ++pushed; pushed_pts = buffer->pts; delete buffer; return GST_FLOW_OK;
 }
+// Frames play on the sender's timeline after a fixed delay (PlayoutSchedule).
+struct PlayoutSchedule {
+  std::int64_t schedule(std::int64_t frame_ns, std::int64_t running_now_ns) {
+    return running_now_ns + 120000000LL + frame_ns;
+  }
+};
 struct EncodedFrame { std::vector<std::uint8_t> payload{1, 2}; std::int64_t presentation_time_ns{0}; };
 struct Harness {
   std::mutex ptt_mutex_;
@@ -51,6 +58,8 @@ struct Harness {
   std::chrono::steady_clock::time_point next_ptt_retry_{};
   std::int64_t startup_completes_at{0};
   int stopped{0};
+  PlayoutSchedule ptt_schedule_;
+  std::int64_t ptt_running_time_locked() const { return 5; }
   bool pipeline_bus_healthy(GstElement *, const char *) { return true; }
   void stop_ptt_playback_locked() {
     ++stopped; ptt_playback_pipeline_ = ptt_source_ = nullptr;
@@ -72,8 +81,10 @@ int main() {
     if (!condition) ++failed;
   };
   reset();
-  { Harness h; h.push_ptt_audio(EncodedFrame{});
-    check(pushed == 1, "valid_live_lease_pushes_one_buffer"); }
+  { Harness h; EncodedFrame frame; frame.presentation_time_ns = 40000000LL;
+    h.push_ptt_audio(frame);
+    check(pushed == 1, "valid_live_lease_pushes_one_buffer");
+    check(pushed_pts == 5 + 120000000LL + 40000000LL, "buffer_plays_at_its_scheduled_time"); }
   reset();
   { Harness h; clock_ns = 12000000000LL; h.push_ptt_audio(EncodedFrame{});
     check(pushed == 0 && allocated == 0, "expired_entry_never_starts_or_allocates"); }

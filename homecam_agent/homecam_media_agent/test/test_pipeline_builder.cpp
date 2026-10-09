@@ -94,3 +94,13 @@ TEST(PipelineBuilder, GuardianVoiceCapsNegotiateWithOpusdec)
   EXPECT_NE(pipeline.find("name=ptt_audio_source"), std::string::npos);
   EXPECT_NE(pipeline.find("opusdec"), std::string::npos);
 }
+
+TEST(PipelineBuilder, GuardianVoicePlaysOnItsTimestamps)
+{
+  // Played as it arrived, the voice crackled whenever the network bunched it.
+  MediaConfig config;
+  const auto pipeline = build_audio_playback_pipeline(config);
+  EXPECT_EQ(pipeline.find("do-timestamp=true"), std::string::npos);
+  EXPECT_NE(pipeline.find("opusdec plc=true ! "), std::string::npos);
+  EXPECT_NE(pipeline.find(" sync=true"), std::string::npos);
+}
