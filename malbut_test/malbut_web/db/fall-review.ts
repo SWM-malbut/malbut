@@ -186,7 +186,8 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
   };
 }
 
-export async function listFallIncidentSummaries(deviceId: string, filter: IncidentFilter = "all") {
+export async function listFallIncidentSummaries(deviceId: string, filter: IncidentFilter = "all",
+  check?: ClipCheck) {
   await ensureFallReviewSchema();
   const rows = (await getPostgresPool().query(
     `SELECT ${SUMMARY_COLUMNS} FROM fall_incidents i
@@ -220,13 +221,16 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
        AND incident_id=ANY($2::text[]) AND kind='resend' AND status='accepted' GROUP BY incident_id`, [deviceId, ids],
   )).rows.map((r) => [r.incident_id, r.n as number]));
   const names = await userLabels(rows.flatMap((row) => [row.closed_by, row.reported_by]));
-  return rows.map((row) => {
+  const sceneStates = await mapLimited(rows, async (row) => {
     const first = clips.find((c) => c.incident_id === row.incident_id);
+    return first ? checkedState(iso(first.start_at)!, iso(first.end_at)!, spans, check) : null;
+  });
+  return rows.map((row, index) => {
     const level = levels.get(row.incident_id) ?? null;
     const total = level === "urgent" ? 3 : level === "check" ? 2 : 1;
     return {
       ...summary(row, names),
-      sceneState: first ? clipPlaybackState(iso(first.start_at)!, iso(first.end_at)!, spans) : null,
+      sceneState: sceneStates[index],
       linkedCount: linked.get(row.incident_id) ?? 0,
       // "알림: 긴급 · 3/3회 발송": first notification plus delivered [재발신].
       notification: level ? { level, sent: Math.min(total, 1 + (resends.get(row.incident_id) ?? 0)), total } : null,
@@ -235,6 +239,28 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
 }
 
 type RecordingSpan = { start: number; end: number | null; streamArn: string };
+export type ClipPlaybackState = ReturnType<typeof clipPlaybackState>;
+/** Checks the state the recording records give against what is really stored (KVS). */
+export type ClipCheck = (startAt: string, endAt: string, recorded: ClipPlaybackState) =>
+  Promise<ClipPlaybackState>;
+
+async function checkedState(startAt: string, endAt: string, spans: RecordingSpan[], check?: ClipCheck) {
+  const recorded = clipPlaybackState(startAt, endAt, spans);
+  return check ? check(startAt, endAt, recorded) : recorded;
+}
+
+/** Bounded parallel map: a list page checks at most this many clips at once. */
+async function mapLimited<T, R>(items: T[], work: (item: T) => Promise<R>, limit = 6): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]);
+    }
+  }));
+  return results;
+}
 
 async function recordingSpans(deviceId: string, from: string, to: string, now = Date.now()): Promise<RecordingSpan[]> {
   return (await getPostgresPool().query(
@@ -251,7 +277,8 @@ async function recordingSpans(deviceId: string, from: string, to: string, now = 
 }
 
 /** preparing / available / partial / unavailable / expired; a missing video never removes the incident. */
-export function clipPlaybackState(startAt: string, endAt: string, spans: RecordingSpan[], now = Date.now()) {
+export function clipPlaybackState(startAt: string, endAt: string,
+  spans: RecordingSpan[], now = Date.now()) {
   const start = Date.parse(startAt), end = Date.parse(endAt);
   if (start < now - RECORDING_RETENTION_MS) return "expired";
   if (now < end + CLIP_SETTLE_MS) return "preparing";
@@ -280,7 +307,7 @@ async function peopleSegments(deviceId: string, incidentId: string) {
   )).rows.map((r) => r.segment_index as number));
 }
 
-async function clipsWithState(deviceId: string, incidentId: string) {
+async function clipsWithState(deviceId: string, incidentId: string, check?: ClipCheck) {
   const rows = (await getPostgresPool().query(
     `SELECT segment_index,revision,start_at,end_at,anchor_kinds,found_down,clock_stepped
      FROM fall_incident_clips WHERE device_id=$1 AND incident_id=$2 ORDER BY segment_index`,
@@ -289,15 +316,16 @@ async function clipsWithState(deviceId: string, incidentId: string) {
   if (!rows.length) return [];
   const spans = await recordingSpans(deviceId, iso(rows[0].start_at)!, iso(rows[rows.length - 1].end_at)!);
   const people = await peopleSegments(deviceId, incidentId);
-  return rows.map((row) => {
+  return mapLimited(rows, async (row) => {
     const startAt = iso(row.start_at)!, endAt = iso(row.end_at)!;
     return { segmentIndex: row.segment_index, revision: row.revision, startAt, endAt,
       anchorKinds: row.anchor_kinds, foundDown: row.found_down, clockStepped: row.clock_stepped,
-      playbackState: clipPlaybackState(startAt, endAt, spans), hasPeople: people.has(row.segment_index) };
+      playbackState: await checkedState(startAt, endAt, spans, check),
+      hasPeople: people.has(row.segment_index) };
   });
 }
 
-export async function getFallIncidentDetail(deviceId: string, incidentId: string) {
+export async function getFallIncidentDetail(deviceId: string, incidentId: string, check?: ClipCheck) {
   await ensureFallReviewSchema();
   const pool = getPostgresPool();
   const row = (await pool.query(
@@ -305,7 +333,7 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
     [deviceId, ANALYSIS_KINDS, incidentId],
   )).rows[0];
   if (!row) return null;
-  const clips = await clipsWithState(deviceId, incidentId);
+  const clips = await clipsWithState(deviceId, incidentId, check);
   const robotEvents = (await pool.query(
     `SELECT sequence,payload_json,received_at FROM fall_incident_events
      WHERE device_id=$1 AND incident_id=$2 ORDER BY sequence`, [deviceId, incidentId],

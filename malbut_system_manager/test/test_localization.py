@@ -563,3 +563,36 @@ def test_resident_reserved_start_cannot_clear_a_concurrent_stop(monkeypatch, tmp
     target, args = workers.pop()
     target(*args)
     assert not events and not controller.pose_ready and not controller.movement_identity
+
+
+class _LateRelocalize(_Relocalize):
+    """/relocalize appears only after the robot group has come up."""
+
+    def __init__(self, ready_after):
+        super().__init__()
+        self.ready_after, self.waits = ready_after, 0
+
+    def wait_for_server(self, timeout_sec):
+        self.waits += 1
+        return self.waits > self.ready_after
+
+
+def test_resident_startup_waits_for_relocalize_before_giving_up(monkeypatch, tmp_path):
+    """2026-10-09: the first pose search ran before the robot group had /relocalize."""
+    blank = _map(tmp_path, 'default_map.yaml')
+    controller, _, _, node = _controller(monkeypatch, default_map=blank, deferred_start=True)
+    client = _LateRelocalize(ready_after=5)
+    controller._relocalize = client
+    assert controller.activate_runtime(_map(tmp_path, 'home.yaml'))
+    _wait_runtime(lambda: not controller._switch_lock.locked())
+    assert controller.pose_ready and [goal.method for goal in client.goals] == [0]
+    assert client.waits == 6
+    assert not controller._starting_runtime
+    # A later switch keeps the usual single wait.
+    late = _LateRelocalize(ready_after=5)
+    controller._relocalize = late
+    request = LoadMap.Request()
+    request.map_url = _map(tmp_path, 'other.yaml')
+    controller._load_map_request(request, LoadMap.Response())
+    assert late.waits == 1 and not late.goals
+    assert 'relocalization is unavailable' in json.loads(node.published[-1].data)['message']

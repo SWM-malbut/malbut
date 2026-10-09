@@ -2,6 +2,7 @@ import { INCIDENT_FILTERS, listFallIncidentSummaries, type IncidentFilter } from
 import { userCanViewDevice } from "../../../../../db/homecam";
 import { noStore } from "../../../../api-response";
 import { getRequestUserId } from "../../../../server-auth";
+import { clipCoverageCheck } from "../../../../fall-clip-coverage";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,8 @@ export async function GET(request: Request, context: { params: Promise<{ deviceI
     return noStore({ error: "사건 필터를 확인해 주세요." }, 400);
   }
   try {
-    return noStore({ filter, incidents: await listFallIncidentSummaries(deviceId, filter as IncidentFilter) });
+    return noStore({ filter, incidents: await listFallIncidentSummaries(deviceId, filter as IncidentFilter,
+      clipCoverageCheck(deviceId)) });
   } catch {
     return noStore({ error: "사건 목록을 불러오지 못했습니다." }, 503);
   }

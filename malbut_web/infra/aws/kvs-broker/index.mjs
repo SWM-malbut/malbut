@@ -24,6 +24,7 @@ import {
   loadDeviceResourceConfiguration,
   resolveConfiguredDevice as resolveDeviceResources,
 } from "./device-config.mjs";
+import { coveredRanges, eventStartFragment } from "./event-fragments.mjs";
 
 const region = process.env.AWS_REGION;
 const sharedSecret = process.env.BROKER_SHARED_SECRET;
@@ -37,6 +38,8 @@ const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const maxHlsPlaybackRangeMs = 60 * 60 * 1000;
 // Fall AI review: a few seconds of stills, never a clip download.
 const maxImageRangeMs = 10_000;
+// Event clips are at most a few minutes; this bounds one coverage lookup.
+const maxCoverageRangeMs = 15 * 60_000;
 const maxImageCount = 12;
 const deviceResourceConfiguration = loadDeviceResourceConfiguration(
   process.env,
@@ -80,6 +83,7 @@ export async function handler(event) {
       "JOIN_STORAGE",
       "HLS_PLAYBACK",
       "EVENT_PLAYBACK",
+      "EVENT_COVERAGE",
       "LIVE_PLAYBACK",
       "DEVICE_CREDENTIALS",
       "GET_IMAGES",
@@ -129,6 +133,24 @@ export async function handler(event) {
         return response(404, { error: "No media was found for the requested range" });
       }
       return response(502, { error: "Images could not be read" });
+    }
+  }
+
+  if (action === "EVENT_COVERAGE") {
+    const input = validateCoverageInput(payload);
+    if (!input) return response(400, { error: "Invalid coverage request" });
+    const resources = resolveDeviceResources(deviceResourceConfiguration, input.deviceId);
+    if (!resources?.streamArn || input.streamArn !== resources.streamArn) {
+      return response(403, { error: "Stream is not allowed" });
+    }
+    try {
+      return response(200, await getEventCoverage(input));
+    } catch (error) {
+      console.error("KVS coverage failed", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof Error && error.name === "ResourceNotFoundException") {
+        return response(200, { streamArn: input.streamArn, ranges: [] });
+      }
+      return response(502, { error: "Coverage could not be read" });
     }
   }
 
@@ -487,7 +509,7 @@ async function createLiveHlsPlayback({ streamArn, expiresSeconds }) {
   };
 }
 
-async function createEventPlayback(input) {
+async function eventFragments(input, startMs, endMs) {
   const listEndpoint = await kinesisVideo.send(
     new GetDataEndpointCommand({
       APIName: "LIST_FRAGMENTS",
@@ -505,43 +527,49 @@ async function createEventPlayback(input) {
     region,
     endpoint: listEndpoint.DataEndpoint,
   });
-  const requestedStartMs = Date.parse(input.startAt);
-  const result = await archivedMedia.send(
-    new ListFragmentsCommand({
-      StreamARN: input.streamArn,
-      FragmentSelector: {
-        FragmentSelectorType: "SERVER_TIMESTAMP",
-        TimestampRange: {
-          StartTimestamp: new Date(requestedStartMs - 20_000),
-          EndTimestamp: new Date(input.endAt),
-        },
+  // A fragment that began up to 20 s earlier may still hold the clip start.
+  const query = {
+    StreamARN: input.streamArn,
+    FragmentSelector: {
+      FragmentSelectorType: "SERVER_TIMESTAMP",
+      TimestampRange: {
+        StartTimestamp: new Date(startMs - 20_000),
+        EndTimestamp: new Date(endMs),
       },
-      MaxResults: 1000,
-    }),
-  );
-  const fragments = (result.Fragments ?? [])
-    .filter((fragment) => fragment.ServerTimestamp instanceof Date)
-    .sort(
-      (left, right) =>
-        left.ServerTimestamp.getTime() - right.ServerTimestamp.getTime(),
-    );
-  if (fragments.length === 0) {
+    },
+    MaxResults: 1000,
+  };
+  const fragments = [];
+  let nextToken;
+  do {
+    const result = await archivedMedia.send(new ListFragmentsCommand(
+      nextToken ? { ...query, NextToken: nextToken } : query));
+    fragments.push(...(result.Fragments ?? []));
+    nextToken = result.NextToken;
+  } while (nextToken && fragments.length < 5000);
+  return fragments;
+}
+
+async function createEventPlayback(input) {
+  const startMs = Date.parse(input.startAt), endMs = Date.parse(input.endAt);
+  // No fragment inside the clip means no video, even when one ends just before it.
+  const aligned = eventStartFragment(await eventFragments(input, startMs, endMs), startMs, endMs);
+  if (!aligned) {
     const error = new Error("No fragments found for event");
     error.name = "ResourceNotFoundException";
     throw error;
   }
-  const containing = [...fragments].reverse().find((fragment) => {
-    const fragmentStart = fragment.ServerTimestamp.getTime();
-    const duration = Number(fragment.FragmentLengthInMilliseconds ?? 0);
-    return fragmentStart <= requestedStartMs && fragmentStart + duration >= requestedStartMs;
-  });
-  const firstAfter = fragments.find(
-    (fragment) => fragment.ServerTimestamp.getTime() >= requestedStartMs,
-  );
-  const aligned = containing ?? firstAfter ?? fragments.at(-1);
   const alignedStartAt = aligned.ServerTimestamp.toISOString();
   const playback = await createHlsPlayback({ ...input, startAt: alignedStartAt });
   return { ...playback, alignedStartAt };
+}
+
+async function getEventCoverage(input) {
+  const startMs = Date.parse(input.startAt), endMs = Date.parse(input.endAt);
+  return {
+    streamArn: input.streamArn,
+    ranges: coveredRanges(await eventFragments(input, startMs, endMs), startMs, endMs),
+  };
 }
 
 async function getImages(input) {
@@ -571,6 +599,20 @@ async function getImages(input) {
     error: image.Error ?? null,
   }));
   return { streamArn: input.streamArn, images };
+}
+
+function validateCoverageInput(payload) {
+  if (!hasOnlyKeys(payload, ["action", "deviceId", "streamArn", "startAt", "endAt"])) return null;
+  if (
+    typeof payload.deviceId !== "string" || !deviceIdPattern.test(payload.deviceId) ||
+    typeof payload.streamArn !== "string" ||
+    typeof payload.startAt !== "string" || !isCanonicalTimestamp(payload.startAt) ||
+    typeof payload.endAt !== "string" || !isCanonicalTimestamp(payload.endAt)
+  ) return null;
+  const start = Date.parse(payload.startAt), end = Date.parse(payload.endAt);
+  if (end <= start || end - start > maxCoverageRangeMs) return null;
+  return { deviceId: payload.deviceId, streamArn: payload.streamArn, startAt: payload.startAt,
+    endAt: payload.endAt };
 }
 
 function validateImagesInput(payload) {

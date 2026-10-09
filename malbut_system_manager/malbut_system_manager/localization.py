@@ -24,6 +24,10 @@ from .models import LocalizationMode
 
 
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
+# A resident Manager starts localization once the robot process is up, before the
+# robot group has /relocalize (2026-10-09: no pose after every start, while a
+# later map switch found it). The first pose search waits this long for it.
+STARTUP_RELOCALIZE_WAIT_S = 180.0
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
 STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
 STATE_TOPIC = '/malbut/localization/state'
@@ -124,6 +128,7 @@ class LocalizationController:
         self._runtime_enabled = not deferred_start
         self._runtime_generation = 0
         self._standby_pending = False
+        self._starting_runtime = False
         self._started = False
         self._stop_requested = False
         self.runtime_id = uuid4().hex
@@ -213,10 +218,12 @@ class LocalizationController:
                 self._loaded_map = None
             try:
                 # Resident startup always uses a map. Only AutoSLAM starts SLAM.
+                self._starting_runtime = True
                 self._to_localization(_map_file(initial_map or self._default_map))
             except (LocalizationError, OSError) as error:
                 self._fail(str(error))
             finally:
+                self._starting_runtime = False
                 if generation == self._runtime_generation:
                     self._transition_active = False
         finally:
@@ -431,7 +438,7 @@ class LocalizationController:
         self._set(LocalizationMode.SWITCHING, map_path,
                   'saved map loaded; finding the robot pose')
         retry = 'set the initial pose before driving'
-        if not self._relocalize.wait_for_server(timeout_sec=self._timeout_s):
+        if not self._relocalize_ready():
             return f'saved map loaded; relocalization is unavailable, {retry}'
         goal = Relocalize.Goal()
         goal.method = Relocalize.Goal.AUTO
@@ -460,6 +467,16 @@ class LocalizationController:
             self.pose_ready = True
             return f'saved map loaded; {result.message}'
         return f'saved map loaded; pose not found ({result.message}), {retry}'
+
+    def _relocalize_ready(self) -> bool:
+        if not self._starting_runtime:
+            return self._relocalize.wait_for_server(timeout_sec=self._timeout_s)
+        deadline = time.monotonic() + STARTUP_RELOCALIZE_WAIT_S
+        while not self._relocalize.wait_for_server(timeout_sec=1.0):
+            self._require_runtime()
+            if self._closing or self._stop_requested or time.monotonic() >= deadline:
+                return False
+        return True
 
     def _observe_pose_goal(self, future):
         with self._movement_lock:
