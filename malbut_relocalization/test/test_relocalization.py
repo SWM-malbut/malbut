@@ -166,9 +166,46 @@ def test_moved_robot_is_found_by_global_search(monkeypatch, room):
     result = node._execute(_handle())
     assert result.success and 'found by global search' in result.message
     assert 'saved pose matched only' in result.message
-    assert node.amcl.calls[:2] == ['initialpose', 'global']
+    calls = node.amcl.calls
+    assert calls[0] == 'initialpose' and calls.index('global') < calls.index('nomotion')
     assert [goal.target_yaw for goal in node.spin.goals] == [pytest.approx(2 * math.pi)]
     assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0])
+
+
+def test_a_nearly_right_saved_pose_is_fitted_to_the_map(monkeypatch, room):
+    """A pose a few centimetres and degrees off is moved onto the walls, not searched."""
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, TRUE_POSE[0] + 0.12, TRUE_POSE[1] - 0.1, TRUE_POSE[2] + 0.07)
+    result = node._execute(_handle())
+    assert result.success and 'saved pose confirmed' in result.message
+    assert result.match_ratio > 0.95
+    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    position = result.pose.pose.pose.position
+    assert math.hypot(position.x - TRUE_POSE[0], position.y - TRUE_POSE[1]) < 0.02
+    fitted = node.publisher.publish.call_args.args[0].pose.covariance
+    assert fitted[0] == pytest.approx(0.0025) and fitted[35] == pytest.approx(0.0027)
+
+
+def test_a_search_that_ends_worse_returns_to_the_previous_pose(monkeypatch, room):
+    """A retry never trades a fitting pose for a worse search result."""
+    node = _node(monkeypatch, room, found=WRONG_POSE)
+    _ready(node, room)
+    node.amcl.estimate(*TRUE_POSE)
+    result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
+    assert result.success and result.match_ratio > 0.95
+    assert 'global search matched only' in result.message
+    assert result.message.endswith('returned to the previous pose, '
+                                   f'{result.match_ratio:.0%} of the scan matches the map')
+    assert node.amcl.calls.count('global') == 2 and node.amcl.calls[-1] == 'initialpose'
+    assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0])
+
+
+def test_a_pose_on_the_previous_map_is_not_returned_to(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    node.amcl.estimate(*TRUE_POSE)
+    _ready(node, room)
+    assert node.estimate is None
 
 
 def test_map_without_saved_pose_is_searched(monkeypatch, room):

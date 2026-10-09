@@ -1,9 +1,10 @@
 # 위치 보정
 
 저장 지도 위에서 AMCL 위치 추정을 맞추는 `/relocalize` Action 서버다.
-지금은 **기능을 Action으로 분리한 최소 구현**이다. 저장된 위치나 지정한 위치를
-`/initialpose`로 보내고, AMCL이 그 위치에서 새 추정을 낸 것까지 확인한다.
-차체를 움직이지 않으며 전역 위치 탐색·스캔 정합 같은 고도화는 아직 없다.
+저장된 위치나 지정한 위치를 `/initialpose`로 보내고, AMCL이 그 위치에서 새 추정을
+낸 것까지 확인한다. 저장 위치가 라이다와 맞지 않거나 `method=GLOBAL_SEARCH`(2)면
+AMCL 전역 위치 탐색을 켜고 Nav2 Spin으로 제자리에서 한 바퀴 돈다.
+찾은 위치는 아래 **위치 다듬기**로 지도에 맞춘 뒤 결과의 `match_ratio`로 알린다.
 
 ## 인터페이스
 
@@ -31,6 +32,24 @@
 ros2 action send_goal /malbut/mission/execute malbut_interfaces/action/ExecuteMission \
   "{capability_id: relocalize, arguments_yaml: '{method: 0}'}"
 ```
+
+## 위치 다듬기
+
+한 바퀴 돌아 찾은 AMCL 위치는 수 cm·수 도씩 어긋나고, 시작이 무작위라 같은 자리에서도
+매번 달라진다. 5 m 앞 벽은 3°만 틀어져도 26 cm 벗어나 일치율이 크게 떨어진다.
+그래서 저장 위치를 확인할 때와 한 바퀴 찾기가 끝날 때마다, 그 위치 주변
+±30 cm·±8°에서 라이다 점이 지도의 벽 면에 가장 가깝게 놓이는 위치를 찾는다
+(5 cm·1° 간격 → 1 cm·0.2° 간격, `scan_match.refine`). 로봇청소기들이 대략 찾은 뒤 스캔을
+지도에 맞추는 방식과 같다. 일치율이 오르면 그 위치를 AMCL에 다시 넣는다(약 5 cm·3° 퍼짐).
+차체는 더 움직이지 않는다.
+
+Gazebo `small_house` 지도에서 잡음 2 cm·가림 10%·빈 측정 10%를 넣은 스캔으로 60번 확인했다.
+±25 cm·±7°에서 시작해도 다듬은 뒤 위치 오차는 최대 1.3 cm, 방향 오차는 최대 0.22°였다.
+일치율 중앙값은 59%에서 91%로 올라 정답 위치의 값과 같았다. 한 번에 PC에서 약 90 ms 걸린다.
+
+`GLOBAL_SEARCH`는 요청 때의 AMCL 위치도 다듬어 둔다. 찾기 결과가 그보다 낮으면 그 위치로
+돌아가 다시 다듬고 `returned to the previous pose`라고 알린다. `SAVED_POSE`도 저장 위치보다 낮게 찾으면
+저장 위치로 돌아간다(`returned to the saved pose`). 다시 찾기가 맞던 위치를 더 나쁜 위치로 바꾸지 않게 하려는 것이다.
 
 ## 위치 기억
 
