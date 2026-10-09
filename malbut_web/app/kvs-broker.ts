@@ -202,6 +202,26 @@ export async function requestBrokerEventPlayback(input: {
   return payload as KvsBrokerEventPlayback;
 }
 
+/** Continuous ranges KVS really holds inside [startAt, endAt), oldest first. */
+export async function requestBrokerEventCoverage(input: {
+  deviceId: string;
+  streamArn: string;
+  startAt: string;
+  endAt: string;
+}): Promise<Array<{ startAt: string; endAt: string }>> {
+  const payload = (await requestBroker({ action: "EVENT_COVERAGE", ...input })) as {
+    streamArn?: unknown; ranges?: unknown;
+  };
+  if (payload.streamArn !== input.streamArn || !Array.isArray(payload.ranges) ||
+      payload.ranges.length > 5000) throw new Error("KVS_BROKER_RESPONSE_INVALID");
+  return payload.ranges.map((range) => {
+    const r = range as Record<string, unknown>;
+    if (typeof r.startAt !== "string" || typeof r.endAt !== "string" ||
+        !(Date.parse(r.startAt) < Date.parse(r.endAt))) throw new Error("KVS_BROKER_RESPONSE_INVALID");
+    return { startAt: r.startAt, endAt: r.endAt };
+  });
+}
+
 export async function requestBrokerLivePlayback(input: {
   deviceId: string;
   streamArn: string;
