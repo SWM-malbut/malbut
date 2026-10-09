@@ -4676,6 +4676,7 @@ a:focus-visible {
 .ui-map-facts dd { margin: 0; }
 .ui-map-facts dd.is-ok { color: var(--ui-ok); }
 .ui-map-facts dd.is-error { color: var(--ui-danger); }
+.ui-map-facts dd.is-strong { font-weight: 700; }
 .ui-map-room-send { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; }
 .ui-map-room-send .ui-button { min-height: 44px; padding: 0 0.375rem; word-break: keep-all; }
 .ui-map-stack { display: flex; flex-direction: column; gap: 0.5rem; }

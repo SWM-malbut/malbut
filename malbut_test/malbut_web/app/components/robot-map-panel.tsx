@@ -15,7 +15,8 @@ import { ManagedRobotDebug } from "./managed-robot-debug";
 import { ManagedRobotMap } from "./managed-robot-map";
 import { ManagedRobotTools } from "./managed-robot-tools";
 import { useManagedRobotWorkspace } from "./managed-robot-workspace";
-import { MapDrivePad, RealRobotMapManager } from "./real-robot-map-manager";
+import { MapDrivePad, RealRobotMapManager, useMapLabels } from "./real-robot-map-manager";
+import { mapCheckCard, mapCheckDriveHint, mapCheckFacts, readMapCheck } from "../robot-map-check-copy";
 import {
   NAVIGATION_ESCAPING_NOTE, NAVIGATION_ESCAPING_TITLE, NAVIGATION_FAILED_TITLE, navigationFailureCopy,
 } from "../robot-navigation-copy";
@@ -335,9 +336,16 @@ export function RobotMapPanel({
   const mappingStep = MAPPING_STEPS.findIndex(
     (step) => step.states.includes(snapshot?.state?.state ?? ""),
   );
-  const mapping = snapshot?.state && [
+  // 개발자 화면 기능을 지도 탭으로 옮긴 실로봇 화면(목업 18·19번).
+  const realRobot = snapshot?.state?.nav2.robot_interface === "malbut_manager_v1";
+  // The real robot waits for a map or for its pose without making one; only
+  // AutoSLAM (exploring) is mapping there (2026-10-08).
+  const mapping = snapshot?.state && (realRobot ? ["exploring"] : [
     "waiting_for_map", "waiting_for_navigation", "exploring", "navigating", "review", "saving",
-  ].includes(snapshot.state.state);
+  ]).includes(snapshot.state.state);
+  // 목업 24번: the last map loaded at start and how well the pose fits it.
+  const mapCheck = realRobot ? readMapCheck(snapshot?.state?.target) : null;
+  const [mapLabels] = useMapLabels(deviceId, realRobot, mapCheck?.map ?? "");
   const isOwner = device?.role === "owner";
   // The original map/editor stays unchanged. Robot controls live in their own tab.
   const managed = controlsMode === "managed";
@@ -356,8 +364,6 @@ export function RobotMapPanel({
   // The real robot reports its patrol choices: thoroughness levels, no pause, last result.
   const patrolLevels = Array.isArray(driveMode?.detail?.thoroughness_levels);
   const canPause = driveMode?.detail?.can_pause !== false;
-  // 개발자 화면 기능을 지도 탭으로 옮긴 실로봇 화면(목업 18·19번).
-  const realRobot = snapshot?.state?.nav2.robot_interface === "malbut_manager_v1";
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
@@ -1209,6 +1215,15 @@ export function RobotMapPanel({
     ? roomDrafts.find((room) => featureContains(room, localizedPose.x, localizedPose.y)) ?? null
     : null;
   const mapStateCopy = mapping ? "생성 중" : snapshot?.map ? snapshot.map.finalized ? "저장됨" : "생성 중" : "없음";
+  const targetMaps = snapshot?.state?.target?.maps;
+  const savedMapList: unknown[] = Array.isArray(targetMaps) ? targetMaps : [];
+  const mapCheckName = mapCheck ? mapLabels[mapCheck.map] ?? savedMapList.flatMap((item) => (
+    isRecord(item) && item.id === mapCheck.map && typeof item.name === "string" ? [item.name] : []
+  ))[0] ?? mapCheck.map.replace(/\.ya?ml$/, "") : "";
+  const checkCard = mapCheckCard(mapCheck, mapCheckName);
+  const showCheckCard = Boolean(checkCard && (checkCard.blocking || !(
+    navigationEscaping || navigationFailed || navigationDriving || navigationSucceeded || canStartPreview)));
+  const checkFacts = mapCheck ? mapCheckFacts(mapCheck, mapCheckName) : null;
   const zoneChecked = Boolean(previewToken || navigationDriving || navigationSucceeded);
   const noticeLine = notice ? <p className="ui-info" role="status">{notice}</p> : null;
   const spaceBanner = spaceSyncBanner(
@@ -1664,6 +1679,7 @@ export function RobotMapPanel({
             <strong className="ui-map-status-title">
               {mapping && realRobot ? "새 지도를 만들고 있어요 · 지도 관리에서 진행을 볼 수 있어요"
                 : mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
+                : showCheckCard && checkCard ? checkCard.title
                 : navigationEscaping ? NAVIGATION_ESCAPING_TITLE
                 : navigationFailed ? NAVIGATION_FAILED_TITLE
                 : navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
@@ -1672,6 +1688,25 @@ export function RobotMapPanel({
                       : navigating ? "지도에서 보낼 곳을 선택해 주세요"
                         : snapshot?.map ? "저장된 지도를 사용하고 있어요" : "아직 저장된 지도가 없어요"}
             </strong>
+            {!mapping && showCheckCard && checkCard && (
+              <>
+                <div role="status" className={`ui-map-notice is-${checkCard.tone}`}>{checkCard.note}</div>
+                {isOwner && checkCard.relocalize && (
+                  <div className="ui-two-buttons">
+                    <button
+                      type="button"
+                      className="ui-button is-strong"
+                      onClick={() => void sendCommand("mission_start", { capability: "relocalize", arguments: { method: 2 } })}
+                      disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(activeCommand) || busy}
+                    >위치 다시 찾기</button>
+                    <button type="button" className="ui-button" onClick={() => openScreen("manage")}>지도 관리</button>
+                  </div>
+                )}
+                {isOwner && checkCard.manage && !checkCard.relocalize && (
+                  <button type="button" className="ui-button" onClick={() => openScreen("manage")}>지도 관리에서 고르기</button>
+                )}
+              </>
+            )}
             {navigationEscaping && (
               <>
                 <div role="status" className="ui-map-notice is-info">{NAVIGATION_ESCAPING_NOTE}</div>
@@ -1725,8 +1760,19 @@ export function RobotMapPanel({
             <dl className="ui-map-facts">
               <dt>현재 위치</dt>
               <dd>{currentRoom ? featureName(currentRoom, "이름 없는 방") : localizationShortCopy(snapshot?.state?.localization.state)}</dd>
-              <dt>지도 상태</dt>
-              <dd>{mapStateCopy}</dd>
+              {checkFacts ? (
+                <>
+                  <dt>쓰는 지도</dt>
+                  <dd>{checkFacts.map}</dd>
+                  <dt>위치 확인</dt>
+                  <dd className={checkFacts.tone}>{checkFacts.match}</dd>
+                </>
+              ) : (
+                <>
+                  <dt>지도 상태</dt>
+                  <dd>{mapStateCopy}</dd>
+                </>
+              )}
               <dt>말벗 연결</dt>
               <dd className={snapshot?.online ? "is-ok" : "is-error"}>{snapshot?.online ? "정상" : "오프라인"}</dd>
               <dt>구역 확인</dt>
@@ -1761,7 +1807,7 @@ export function RobotMapPanel({
             <article className="ui-card">
               <h2>자율주행</h2>
               <span className="ui-caption">
-                {realRobot ? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
+                {realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
                   : "방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."}
               </span>
               {activeAutonomousMode && autonomousSession && !canPause ? (
