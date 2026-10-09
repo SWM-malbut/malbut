@@ -604,7 +604,7 @@ private:
 
     EncodedFrame frame;
     frame.payload.assign(map.data, map.data + map.size);
-    std::int64_t pipeline_timestamp_ns = 0;
+    std::int64_t pipeline_timestamp_ns = -1;
     if (GST_BUFFER_PTS_IS_VALID(buffer)) {
       pipeline_timestamp_ns =
         GST_BUFFER_PTS(buffer) >
@@ -612,8 +612,9 @@ private:
         std::numeric_limits<std::int64_t>::max() :
         static_cast<std::int64_t>(GST_BUFFER_PTS(buffer));
     }
-    frame.presentation_time_ns = media_timeline_.stamp(
-      pipeline_timestamp_ns, steady_now_ns());
+    frame.presentation_time_ns = is_video ?
+      media_timeline_.stamp(pipeline_timestamp_ns, steady_now_ns()) :
+      audio_timeline_.stamp(pipeline_timestamp_ns, steady_now_ns());
     frame.key_frame =
       !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
     gst_buffer_unmap(buffer, &map);
@@ -789,9 +790,9 @@ private:
       return;
     }
     gst_buffer_fill(buffer, 0, frame.payload.data(), frame.payload.size());
-    GST_BUFFER_PTS(buffer) =
-      static_cast<GstClockTime>(std::max<std::int64_t>(
-        frame.presentation_time_ns, 0));
+    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(ptt_schedule_.schedule(
+        std::max<std::int64_t>(frame.presentation_time_ns, 0),
+        ptt_running_time_locked()));
     // Device startup/allocation may outlast the permission checked on entry.
     if (shutting_down_.load() || steady_now_ns() >= ptt_allowed_until_ns_.load()) {
       gst_buffer_unref(buffer);
@@ -806,8 +807,22 @@ private:
     }
   }
 
+  // The playback pipeline's running time; zero until its clock starts.
+  std::int64_t ptt_running_time_locked() const
+  {
+    GstClock * const clock = gst_element_get_clock(ptt_playback_pipeline_);
+    if (clock == nullptr) {
+      return 0;
+    }
+    const GstClockTime now = gst_clock_get_time(clock);
+    gst_object_unref(clock);
+    const GstClockTime base = gst_element_get_base_time(ptt_playback_pipeline_);
+    return now > base ? static_cast<std::int64_t>(now - base) : 0;
+  }
+
   bool start_ptt_playback_locked()
   {
+    ptt_schedule_.reset();
     const std::string description = build_audio_playback_pipeline(config_);
     GError * error = nullptr;
     ptt_playback_pipeline_ = gst_parse_launch(description.c_str(), &error);
@@ -2419,6 +2434,7 @@ private:
   std::atomic<bool> camera_info_received_{false};
   std::atomic<bool> odom_received_{false};
   SharedMediaTimeline media_timeline_;
+  AudioCaptureTimeline audio_timeline_;
   std::chrono::steady_clock::time_point last_frame_time_{
     std::chrono::steady_clock::now()};
 
@@ -2432,6 +2448,8 @@ private:
   GstElement * audio_capture_pipeline_{nullptr};
   GstElement * ptt_playback_pipeline_{nullptr};
   GstElement * ptt_source_{nullptr};
+  // About six 20 ms frames: enough for Wi-Fi bunching, short enough to talk.
+  PlayoutSchedule ptt_schedule_{120'000'000};
   std::mutex ptt_mutex_;
   VideoFormat format_;
   std::chrono::steady_clock::time_point next_video_retry_{

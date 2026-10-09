@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,48 @@ public:
 
 private:
   std::atomic<std::int64_t> last_timestamp_ns_{0};
+};
+
+// ALSA hands Opus frames over in bursts, so their arrival times bunch up and
+// then gap. RTP timestamps built from arrival made the browser drop and conceal
+// live audio (it crackled while recordings were clean; 2026-10-09). Audio
+// frames follow their capture clock instead: anchored to the steady clock at
+// the first frame, and again only after a restart, a stall or drift.
+class AudioCaptureTimeline
+{
+public:
+  // A negative pipeline timestamp means the capture clock is unknown.
+  std::int64_t stamp(
+    std::int64_t pipeline_timestamp_ns,
+    std::int64_t steady_capture_time_ns);
+
+private:
+  std::mutex mutex_;
+  bool anchored_{false};
+  std::int64_t pipeline_anchor_ns_{0};
+  std::int64_t steady_anchor_ns_{0};
+  std::int64_t last_timestamp_ns_{0};
+};
+
+// The guardian's voice used to reach the speaker as soon as each Opus frame
+// arrived, so the network's bunching emptied and overflowed it (crackles).
+// Frames are now played on the sender's timeline, delay_ns after the first:
+// a frame keeps its place relative to that anchor, and a frame that would be
+// late or far ahead (a new talk, a lost stretch) starts a new anchor.
+class PlayoutSchedule
+{
+public:
+  explicit PlayoutSchedule(std::int64_t delay_ns);
+  // Return the running time at which the frame should be heard.
+  std::int64_t schedule(std::int64_t frame_ns, std::int64_t running_now_ns);
+  void reset();
+
+private:
+  std::int64_t delay_ns_;
+  bool anchored_{false};
+  std::int64_t frame_anchor_ns_{0};
+  std::int64_t running_anchor_ns_{0};
+  std::int64_t last_ns_{-1};
 };
 
 using PttAudioCallback = std::function<void (const EncodedFrame &)>;
