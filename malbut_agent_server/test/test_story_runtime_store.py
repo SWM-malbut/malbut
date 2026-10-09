@@ -729,6 +729,50 @@ def test_policy_change_cancels_exhausted_jobs_instead_of_leaving_failed_blockers
     assert runtime.store.commit(fresh, [runtime.update(fresh)])
 
 
+def test_release_claim_returns_its_batch_without_spending_a_retry(runtime):
+    runtime.allow()
+    _tokens, job = _claim_three_turns(runtime)
+    runtime.allow('bob')
+    _other_token, other = runtime.claim_turn(user='bob')
+    assert runtime.store.release_claim(job) == 3
+    assert runtime.store.stats('alice')['queued'] == 3
+    assert runtime.store.stats('alice')['running'] == 0
+    rows = runtime.conversations._connection.execute(
+        "SELECT attempts,claim,lease_until FROM story_runtime_jobs WHERE user_id='alice'",
+    ).fetchall()
+    assert all(row['attempts'] == 0 and row['claim'] is None
+               and row['lease_until'] is None for row in rows)
+    assert runtime.store.stats('bob')['running'] == 1
+    assert runtime.store.job_source(other) is not None
+    resumed = runtime.store.claim('alice', batch_size=3)
+    assert resumed is not None and resumed['claim'] != job['claim']
+    assert runtime.store.commit(resumed, [runtime.update(resumed)])
+
+
+def test_release_stale_claim_preserves_the_new_workers_claim(runtime):
+    runtime.allow()
+    _token, old = runtime.claim_turn()
+    assert runtime.store.release_claim(old) == 1
+    new = runtime.store.claim('alice')
+    assert new is not None and new['claim'] != old['claim']
+    assert runtime.store.release_claim(old) == 0
+    assert runtime.store.stats('alice')['running'] == 1
+    assert runtime.store.commit(new, [runtime.update(new)])
+
+
+@pytest.mark.parametrize('terminal', ['done', 'cancelled'])
+def test_release_claim_preserves_terminal_work(runtime, terminal):
+    runtime.allow()
+    _token, job = runtime.claim_turn()
+    if terminal == 'done':
+        assert runtime.store.commit(job, [runtime.update(job)])
+    else:
+        runtime.store.set_enabled('alice', False)
+    before = runtime.store.stats('alice')
+    assert runtime.store.release_claim(job) == 0
+    assert runtime.store.stats('alice') == before
+
+
 def test_running_lease_is_recovered_after_restart_but_not_before_expiry(runtime):
     runtime.allow()
     _token, original_job = runtime.claim_turn()

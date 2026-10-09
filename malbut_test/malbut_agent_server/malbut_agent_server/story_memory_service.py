@@ -58,6 +58,7 @@ class StoryMemoryService:
         self._last_recovery = {}
         self._stop = threading.Event()
         self._thread = None
+        self._claimed_job = None
         self._started = autostart
         # Queue state is in SQLite. Recovery only starts work already permitted
         # by a persisted policy; constructing a service never grants consent.
@@ -381,7 +382,10 @@ class StoryMemoryService:
                     with self._condition:
                         self._condition.wait(0.1)
                     continue
+                self._claimed_job = job
                 self._process(job)
+                if not self._stop.is_set():
+                    self._claimed_job = None
                 stats = self.store.stats(user)
                 with self._condition:
                     # Keep an existing batch eligible until the durable queue
@@ -432,6 +436,9 @@ class StoryMemoryService:
             thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=45)
+        if thread is not None and not thread.is_alive() and self._claimed_job is not None:
+            self.store.release_claim(self._claimed_job)
+            self._claimed_job = None
         # An uncooperative remote call may finish later. _process checks stop
         # before touching storage again; its durable claim can recover later.
         self.store.close()
