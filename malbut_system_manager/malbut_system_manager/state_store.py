@@ -22,13 +22,10 @@ class StateStore:
 
     def __init__(self) -> None:
         self.ready = False
-        self.resident_runtime = False
         self.recharging = False
         self.emergency = False
         # None: localization is not managed here, so maps never gate missions.
         self.localization: LocalizationMode | None = None
-        self.pose_ready: bool | None = None
-        self.movement_stopping = False
         self.active_foreground: OrderedDict[str, MissionRecord] = (
             OrderedDict()
         )

@@ -30,10 +30,7 @@ def test_catalog_lists_valid_images_without_modifying_maps(tmp_path):
     path = _map(catalog.directory)
     before = path.read_bytes()
     assert catalog.resolve('home.yaml') == path
-    entries = catalog.list_maps()
-    assert [{key: value for key, value in item.items() if key != 'revision'}
-            for item in entries] == [{'id': 'home.yaml', 'name': 'home', 'path': str(path)}]
-    assert len(entries[0]['revision']) == 64
+    assert catalog.list_maps() == [{'id': 'home.yaml', 'name': 'home', 'path': str(path)}]
     assert path.read_bytes() == before
     _map(catalog.directory, 'broken.yaml', resolution=-1)
     assert len(catalog.list_maps()) == 1
@@ -161,7 +158,6 @@ def test_new_start_does_not_reuse_previous_runs_unresolved_stop_future():
     supervisor._process = None
     supervisor._closed = supervisor._closing = False
     supervisor._status = {'state': 'STOPPED'}
-    supervisor.resident_manager = False
     previous_stop = Future()
     supervisor._stop_future = previous_stop
     supervisor.start('mapping')
@@ -246,31 +242,3 @@ def test_error_exposes_the_failed_node_and_a_bounded_log_tail(runtime):
         'Bringup child exited: speech_preflight-12; stop before retrying')
     assert status['log_tail'].endswith('exit code -15, cmd \'/x/manager\'].\n')
     assert len(status['log_tail'].encode()) <= 8192
-
-
-def test_resident_supervisor_never_starts_duplicate_speech(runtime):
-    """Only the resident profile disables child speech; explicit robot launch is unchanged."""
-    supervisor, popen, _, _, _ = runtime
-    supervisor.resident_voice = True
-    supervisor.start('navigation', 'home.yaml').result()
-    assert 'speech:=false' in popen.call_args.args[0]
-    assert supervisor.last_selected_map() == 'home.yaml'
-    supervisor.stop().result()
-    assert supervisor.last_selected_map() == 'home.yaml'
-
-
-def test_resident_manager_is_not_restarted_with_robot_child(runtime):
-    """Child lifetimes change while a resident Manager keeps its admission epoch."""
-    supervisor, popen, _, _, _ = runtime
-    supervisor.resident_manager = True
-    supervisor.start('navigation', 'home.yaml', movement_binding=('manager', 7)).result()
-    first = supervisor.snapshot()
-    assert 'manager:=false' in popen.call_args.args[0]
-    assert first['runtime_id'] and first['map_path'].endswith('/home.yaml')
-    supervisor.stop().result()
-    supervisor.start('mapping', movement_binding=('manager', 9)).result()
-    second = supervisor.snapshot()
-    assert second['runtime_id'] != first['runtime_id']
-    assert second['map_path'] == ''
-    assert first['movement_epoch'] == 7 and second['movement_epoch'] == 9
-    assert first['movement_runtime_id'] == second['movement_runtime_id'] == 'manager'

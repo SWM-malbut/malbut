@@ -1,5 +1,11 @@
 # Agent robot integration validation
 
+> Historical record of the resident integration, not validation of the current
+> SWM25-222 structure. Resident workflows and their evaluation scripts have been
+> removed. To reproduce the checks below, use the Git revision recorded with the
+> original result files. Current contracts are tested by `test_speech_missions.py`,
+> `test_homecam_query.py` and `test_manager_boundary_ros.py`.
+
 The original integration was recorded in `43b2b5d`, starting from `b60d0b5`,
 a snapshot preserving the existing dirty checkout. The historical sections
 below describe that source, not the later PR port on main `723c901`.

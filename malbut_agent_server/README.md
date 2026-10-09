@@ -7,45 +7,22 @@ Agent의 기준 문서는 [Malbut Agent 명세](docs/malbut_agent.md)다.
 서버 소유 Tool capability 경계를
 제공하는 ROS 2 Python 패키지다.
 
-## 상주 음성에서 기존 로봇 기능 연결
+## 로봇 실행과 홈캠 조회
 
-`speech_dialogue --enable-manager-commands --enable-device-operations`는
-기존 대화·기억 동의 흐름에 기기 운영 도구를 추가한다. Bringup의 상주 음성
-프로필에서만 켜며, 기존 직접 실행 프로필의 기본값은 그대로 꺼져 있다.
+관리자와 공개 인터페이스는 상주 통합 전 계약을 사용한다.
+cloud launch에는 cloud bridge만 있고, 관리자·음성은 robot Bringup과 함께 실행·종료한다.
 
-- 로봇·작업·최근 관측 조회, 저장 지도와 구역 조회·선택·수정
-- 로봇 깨우기·대기, 모든 이동 중지, 따라오기·순찰·지도 만들기·위치 보정·수동 제어·복구
-- 기존 소유자 위임으로 허용된 Homecam 설정·이벤트·녹화·낙상 기록 조회
-- 접수 및 최종 결과의 인증된 웹 링크 전달. 설정 저장과 실제 기기 적용은 구분한다.
+- 로봇 기능: Agent → 기존 `ExecuteMission` → Manager → 기능별 Action·Service.
+  이동·추적·순찰 외에 지도 작성·위치 보정·수동 조작·기존 복구 요청을 연결한다.
+- 취소: 기존 `cancel_voice_mission` 도구에서 표준 `CancelGoal`을 사용한다.
+  음성 접수 대기 Goal과 관측된 전면 작업(대기·중단 포함)을 취소하고 배경 작업은 유지한다.
+- 홈캠 정보: Agent의 API 클라이언트가 기존 인증·소유자 위임으로
+  상태·감지 기록·녹화 메타데이터·낙상 기록을 조회한다. Manager를 통하지 않는다.
+  `HOMECAM_BACKEND_URL`과 `HOMECAM_DEVICE_TOKEN_FILE`이 있을 때만 도구를 제공한다.
 
-이 프로필의 모든 기능 요청은 상주 Manager의 `/malbut/mission/execute`를
-통한다. 날씨·지역 변경은 기존 capability를, 기기 운영은 `device_operation`을
-사용한다. Manager가 하위 날씨 서비스와 Cloud Bridge를 호출하므로 로봇 기능이
-꺼져 있어도 같은 실행 경로를 유지한다. Agent가 하위 Action에 직접 요청하거나
-Manager가 없을 때 우회하지 않는다. 전체 이동 정지도 Manager 서비스로 요청한다.
-
-LLM은 한 가지 목적의 도구만 선택한다. ROS 소유 실행기가 현재 상태를 읽고
-필요한 준비를 순서대로 수행한다. 선택한 지도나 이전 선택이 없으면 지도를
-묻고, 이미 선택한 지도에서 위치를 잃었으면 AUTO 보정 한 번과 상태 재확인 후
-이동을 요청한다. 준비 과정에서 이미 실행한 AUTO를 다시 실행하지 않는다.
-등록된 목적지 resolver가 없으면 장소 이동 도구를 제공하지 않는다.
-
-다른 작업 종료와 지도 삭제에는 실제 작업 ID 또는 지도 내용 revision에 묶인
-확인이 필요하다. 전체 이동 중지는 이 확인을 기다리지 않으며, 늦게 접수될 수
-있는 음성 Goal도 취소하고 종료 관측을 기다린다. Manager는 이동 세대와 지도
-전환 ID를 다시 비교하므로 중지 이전이나 다른 지도 상태에서 만든 Goal을
-뒤늦게 실행하지 않는다. 건강한 프로세스를 임의로 재시작하거나 셸을 실행하는
-도구는 제공하지 않는다.
-
-각 외부 요청 전에 기존 SQLite DB의 `agent_robot_workflows`와
-`agent_robot_steps`에 입력·확인·상태 식별자·실제 Goal UUID를 저장한다.
-재시작하면 미완료 요청을 unknown으로 표시하고 재전송하거나 다음 단계를
-진행하지 않는다. Manager의 최근 결과에 정확히 같은 Goal의 실제 종료가
-남아 있을 때만 결과를 보완한다. 공개 Action 종료와 하위 이동 종료가 다른
-경우에는 unknown을 유지한다.
-
-검증 범위와 고정 자연어 평가 결과는
-[연결 검증 기록](docs/validation/agent_robot_integration/README.md)에 있다.
+Bringup 시작·지도 선택·위치 보정을 실행 명령 뒤에 숨겨서 자동으로 이어서 수행하지 않는다.
+상주 음성·관리자, 기기 운영 전용 공개 인터페이스와 workflow journal은 사용하지 않는다.
+준비되지 않은 하위 기능의 실패는 그대로 보고하며, 접수와 실제 종료를 구분한다.
 
 SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 요청·응답 규격으로 연결했다. 다음 기능을 검증할 수 있다.

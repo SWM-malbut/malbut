@@ -35,7 +35,13 @@ EMPTY_PARAMETERS: Dict[str, Any] = {
 
 SPEECH_MISSION_TOOLS = (
     'request_navigation', 'request_follow_person', 'request_patrol',
-    'cancel_voice_mission',
+    'cancel_voice_mission', 'request_mapping', 'request_relocalization',
+    'request_manual_control', 'request_recovery',
+)
+
+HOMECAM_QUERY_TOOLS = (
+    'get_homecam_status', 'get_homecam_events',
+    'get_homecam_recordings', 'get_homecam_falls',
 )
 
 
@@ -106,18 +112,19 @@ TOOL_SPECS = {
     'cancel_voice_mission': ToolSpec(
         name='cancel_voice_mission',
         description=(
-            'Request cancellation of this voice session\'s current motion '
+            'Request cancellation of current foreground Manager missions, '
+            'including pending and suspended foreground work. '
             'mission. Interpret current stop/cancel intent by meaning, including '
             '"이제 그만 따라와", "그쯤 하고 쉬어", and other paraphrases. '
-            'Never cancel weather, emergency/situation work, or another '
-            'client\'s mission. Cancellation receipt does not prove termination.'
+            'Do not cancel background monitoring or weather work. '
+            'Cancellation receipt does not prove termination.'
         ),
         parameters=EMPTY_PARAMETERS,
     ),
     'get_weather': ToolSpec(
         name='get_weather',
         description=(
-            'Query the weather service at the saved or manually configured '
+            'Ask Manager for weather at the saved or manually configured '
             'location and the today/tomorrow '
             'forecast. Read the returned data before answering weather questions. '
             'This tool takes no arguments and does not control robot movement.'
@@ -127,7 +134,7 @@ TOOL_SPECS = {
     'set_weather_location': ToolSpec(
         name='set_weather_location',
         description=(
-            'Ask the weather service to resolve and save the robot weather location in its database. '
+            'Ask Manager to resolve and save the robot weather location in its database. '
             'Use only when the user explicitly states or corrects their current location, '
             'asks to change the weather location, or answers your location clarification. '
             'Extract the new location, never the negated old location. Do not use for '
@@ -213,60 +220,48 @@ TOOL_SPECS = {
 }
 
 
-# These operations use fixed server-owned adapters; no raw ROS names or commands.
-_ROBOT_OPERATIONS = {
-    'get_robot_status': ('Read current robot, battery, runtime and active mission observations.', {}),
-    'get_robot_observations': ('Read current camera detections and tracking observations. Do not infer identity.', {}),
-    'list_saved_maps': ('List actually saved maps and the last selected map.', {}),
-    'select_saved_map': ('Select one listed saved map and wait for localization. Never invent a map name.',
-                         {'map': {'type': 'string', 'maxLength': 80}}),
-    'delete_saved_map': ('Request deletion of one listed map. The server asks a bound confirmation before deletion.',
-                         {'map': {'type': 'string', 'maxLength': 80}}),
-    'get_map_zones': ('Read existing labeled polygons and their current allow/avoid/restricted settings.', {}),
-    'update_map_zone': ('Change one existing polygon by its returned index. Null means preserve a field. '
-                        'Never invent polygon geometry or revision tokens.', {
-        'map': {'type': 'string', 'maxLength': 80},
-        'index': {'type': 'integer', 'minimum': 0, 'maximum': 1000},
-        'name': {'type': ['string', 'null'], 'maxLength': 64},
-        'behavior': {'type': ['string', 'null'], 'enum': ['allow', 'avoid', 'restricted', None]},
-    }),
-    'wake_robot': ('Prepare robot runtime using a listed map. Use null to reuse the selected map or ask if ambiguous.',
-                   {'map': {'type': ['string', 'null'], 'maxLength': 80}}),
-    'standby_robot': ('Stop the child robot runtime while keeping voice available. '
-                      'The server confirms unrelated active work before stopping.', {}),
-    'stop_robot_movement': ('Immediately request stopping ALL robot movement, including web and voice motions. '
-                            'This does not disable dialogue or memory. Wait for reported stop result.', {}),
-    'request_mapping': ('Create and save a new map through AutoSLAM. '
-                        'Use a new short filename without path or extension; never overwrite a map.',
-                        {'map_name': {'type': 'string', 'maxLength': 64}}),
-    'request_relocalization': ('Find the robot pose on the selected saved map. Use auto normally; '
-                               'global_search only when explicitly requested.',
-                               {'method': {'type': 'string', 'enum': ['auto', 'global_search']}}),
-    'request_manual_control': ('Enable the existing assisted web/joystick manual control. '
-                              'This does not itself send velocity or move a requested distance.', {}),
-    'request_recovery': ('Ask the native Bringup owner to recover failed owned components once. '
-                        'Never run shell commands or claim healthy processes were restarted.', {}),
-    'get_homecam_status': ('Read delegated Homecam camera, microphone and monitoring status.', {}),
-    'get_homecam_events': ('Read recent Homecam events, using a bounded result count.', {
-        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20},
-        'event_type': {'type': ['string', 'null'], 'enum': ['motion', 'person', 'dog', 'cat', None]},
-    }),
-    'get_homecam_recordings': ('Read recent Homecam recording metadata and authorized links.',
-                              {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}),
-    'get_homecam_falls': ('Read recent Homecam fall events; these are recorded observations, not a new diagnosis.',
-                         {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}),
-    'update_homecam_settings': ('Change only explicitly requested Homecam settings under existing owner delegation. '
-                                'Use null for unchanged fields. Never change personal or story memory consent.', {
-        key: {'type': ['boolean', 'null']} for key in
-        ('cameraEnabled', 'microphoneEnabled', 'monitoringEnabled', 'fallEnabled')
-    }),
-    'confirm_pending_operation': ('Answer the server\'s most recent explicit operation confirmation. '
-                                  'Only use for the current direct yes/no answer; no IDs or targets can be supplied.',
-                                  {'confirm': {'type': 'boolean'}}),
+# Fixed requests only: no runtime startup, map switching, or preparation chain.
+_ADDITIONAL_TOOLS = {
+    'request_mapping': (
+        'Request AutoSLAM through the existing Manager capability. '
+        'Supply a new map filename without extension or path; do not overwrite.',
+        {'map_name': {'type': 'string', 'maxLength': 64}},
+    ),
+    'request_relocalization': (
+        'Request pose correction on the already selected map. '
+        'Use auto normally, global_search only when explicitly requested. '
+        'This does not select a map or start Bringup.',
+        {'method': {'type': 'string', 'enum': ['auto', 'global_search']}},
+    ),
+    'request_manual_control': (
+        'Request existing AssistedTeleop via Manager. This enables manual input, '
+        'not a velocity or distance command.', {},
+    ),
+    'request_recovery': (
+        'Request the existing manual recovery Action via Manager once. '
+        'This does not start Bringup or invent a recovery procedure.', {},
+    ),
+    'get_homecam_status': (
+        'Query the cloud API for current Homecam settings and apply receipts. '
+        'A saved setting is not proof that the robot applied it.', {},
+    ),
+    'get_homecam_events': (
+        'Query recent Homecam events. Read the new result before answering.',
+        {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20},
+         'event_type': {'type': ['string', 'null'],
+                        'enum': ['motion', 'person', 'dog', 'cat', None]}},
+    ),
+    'get_homecam_recordings': (
+        'Query recent Homecam recording metadata, not video content.',
+        {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}},
+    ),
+    'get_homecam_falls': (
+        'Query recorded Homecam fall incidents. These are observations, '
+        'not a fresh medical diagnosis.',
+        {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}},
+    ),
 }
-ROBOT_OPERATION_TOOLS = tuple(_ROBOT_OPERATIONS)
-SPEECH_DELEGATED_TOOLS = SPEECH_MISSION_TOOLS + ROBOT_OPERATION_TOOLS
-for _name, (_description, _properties) in _ROBOT_OPERATIONS.items():
+for _name, (_description, _properties) in _ADDITIONAL_TOOLS.items():
     TOOL_SPECS[_name] = ToolSpec(_name, _description, {
         'type': 'object', 'properties': _properties,
         'required': list(_properties), 'additionalProperties': False,
@@ -362,12 +357,9 @@ def _validate_schema_value(
         if 'enum' in schema and value not in schema['enum']:
             raise ValidationError(f'{field_name} is not an allowed value')
         return
-    if non_null_types == ['boolean']:
-        if type(value) is not bool:
-            raise ValidationError(f'{field_name} must be boolean')
-        return
     if non_null_types == ['integer']:
-        if type(value) is not int or not schema.get('minimum', 0) <= value <= schema.get('maximum', 1000):
+        if (type(value) is not int
+                or not schema.get('minimum', 0) <= value <= schema.get('maximum', 1000)):
             raise ValidationError(f'{field_name} is outside its integer bounds')
         return
     raise RuntimeError(

@@ -8,7 +8,6 @@ import yaml
 
 from malbut_system_manager.mission_scheduler import MissionScheduler
 from malbut_system_manager.models import (
-    CancelReason,
     CapabilityManifest,
     CommandKind,
     ControlMode,
@@ -78,76 +77,6 @@ def _completion(effects, mission_id):
         for completion in effects.complete
         if completion.mission_id == mission_id
     )
-
-
-def test_stop_removes_waiting_movements_without_starting_them():
-    """One atomic stop cannot awaken another queued or suspended movement."""
-    state, scheduler = _ready_scheduler()
-    active, pending, suspended = (_mission(name) for name in ('active', 'pending', 'suspended'))
-    scheduler.submit(active)
-    state.add_pending(pending)
-    state.suspend(suspended)
-    weather = _mission('weather', mode=ExecutionMode.BACKGROUND)
-    state.activate(weather)
-    fall = _mission('fall', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER])
-    fall.capability = replace(fall.capability, capability_id='fall_confirmation')
-    state.activate(fall)
-    effects = scheduler.request_stop_movement()
-    assert effects.cancel == ['active']
-    assert not effects.start
-    assert {item.mission_id for item in effects.complete} == {'pending', 'suspended'}
-    assert all(item.outcome is TerminalOutcome.ABORTED for item in effects.complete)
-    assert state.get('fall') is fall and state.get('weather') is weather
-    assert not scheduler.submit(_mission('new')).start
-    done = scheduler.handle_terminal('active', TerminalOutcome.CANCELED)
-    assert _completion(done, 'active').outcome is TerminalOutcome.ABORTED
-    assert _completion(done, 'active').message == 'movement_stopped'
-
-
-def test_unconfirmed_stop_retains_movement_owner_and_blocks_replacement():
-    """Cancel rejection and response timeout cannot free an uncertain base."""
-    state, scheduler = _ready_scheduler()
-    active = _mission('active')
-    scheduler.submit(active)
-    scheduler.request_stop_movement()
-    effects = scheduler.handle_cancel_rejected('active', 'refused')
-    assert 'unconfirmed' in _completion(effects, 'active').message
-    assert state.get('active') is active and active.cancel_reason is CancelReason.STOP
-    scheduler.handle_dispatch_timeout('active', 'late')
-    assert active.cancel_reason is CancelReason.STOP
-    assert not scheduler.submit(_mission('replacement')).start
-    assert not scheduler.handle_terminal('active', TerminalOutcome.SUCCEEDED).start
-
-
-def test_preemption_confirmation_is_checked_before_any_mutation():
-    """A consented old ID does not authorize replacing a new conflicting task."""
-    state, scheduler = _ready_scheduler()
-    active = _mission('active')
-    scheduler.submit(active)
-    incoming = _mission('incoming')
-    incoming.require_preemption_confirmation = True
-    incoming.confirmed_preemption_mission_ids = frozenset({'obsolete'})
-    effects = scheduler.submit(incoming)
-    assert not effects.start and not effects.cancel
-    result = yaml.safe_load(_completion(effects, 'incoming').result_yaml)
-    assert result == {'code': 'preemption_confirmation_required',
-                      'conflicting_mission_ids': ['active']}
-    assert active.state is MissionState.RUNNING and not state.pending
-    incoming.confirmed_preemption_mission_ids = frozenset({'active'})
-    assert scheduler.submit(incoming).cancel == ['active']
-
-
-def test_selected_map_with_unconfirmed_pose_only_allows_pose_correction(manifest_directory):
-    """Loading a map does not establish a usable robot pose."""
-    state, scheduler = _ready_scheduler()
-    state.localization = LocalizationMode.LOCALIZATION
-    state.pose_ready = False
-    for capability in ('navigate_to_pose', 'follow_person', 'patrol'):
-        mission = _registered_mission(manifest_directory, capability)
-        result = _completion(scheduler.submit(mission), capability)
-        assert 'pose is not confirmed' in result.message
-    correction = _registered_mission(manifest_directory, 'relocalize')
-    assert scheduler.submit(correction).start == ['relocalize']
 
 
 def test_recovery_cannot_be_replaced_by_another_mission():

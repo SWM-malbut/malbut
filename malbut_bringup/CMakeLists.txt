@@ -20,7 +20,7 @@ install(PROGRAMS
   scripts/wait_for_robot scripts/zone_filter scripts/robot_web_panel scripts/robot_cloud_sync
   scripts/speech_preflight
   DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch config docs DESTINATION share/${PROJECT_NAME}
+install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)
 install(FILES README.md README_OPERATIONS.md README_WEB.md README_SPEECH.md
   DESTINATION share/${PROJECT_NAME})

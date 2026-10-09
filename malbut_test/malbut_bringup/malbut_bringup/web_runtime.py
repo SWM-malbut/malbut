@@ -1,7 +1,6 @@
 """List saved maps and asynchronously supervise only web-owned Bringup launches."""
 
 from concurrent.futures import Future, ThreadPoolExecutor
-import hashlib
 import math
 import os
 from pathlib import Path
@@ -11,7 +10,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import uuid
 
 import yaml
 
@@ -135,10 +133,7 @@ class SavedMapCatalog:
                 resolved = self.resolve(path.name)
             except ValueError:
                 continue
-            digest = hashlib.sha256(resolved.read_bytes())
-            digest.update(self._image(resolved).read_bytes())
-            result.append({'id': path.name, 'name': path.stem, 'path': str(resolved),
-                           'revision': digest.hexdigest()})
+            result.append({'id': path.name, 'name': path.stem, 'path': str(resolved)})
         return result
 
 
@@ -155,11 +150,8 @@ class RuntimeSupervisor:
     Neither snapshots nor submitted start/stop requests wait for process shutdown.
     """
 
-    def __init__(self, catalog, log_directory=None, shutdown_stages=None, *,
-                 resident_voice=False, resident_manager=False):
+    def __init__(self, catalog, log_directory=None, shutdown_stages=None):
         self.catalog = catalog
-        self.resident_voice = resident_voice
-        self.resident_manager = resident_manager
         self.log_directory = Path(log_directory or (
             Path.home() / '.ros/malbut/web_runtime')).expanduser()
         # AutoSLAM's owned-child cleanup may take 38 seconds before its parent
@@ -174,7 +166,7 @@ class RuntimeSupervisor:
         self._closing = False
         self._closed = False
         self._status = {'state': 'STOPPED', 'mode': None, 'map': None,
-                        'message': '', 'log_path': None, 'runtime_id': '', 'map_path': ''}
+                        'message': '', 'log_path': None}
 
     def snapshot(self):
         """Report process status; never discard ownership after a leader exits."""
@@ -192,24 +184,6 @@ class RuntimeSupervisor:
         status['log_tail'] = self._read_log_tail(8192) if status['state'] == 'ERROR' else ''
         return status
 
-    def last_selected_map(self):
-        """Reuse only a prior explicit choice that still resolves in this catalog."""
-        try:
-            name = (self.log_directory / 'last-selected-map').read_text().strip()
-            self.catalog.resolve(name)
-            return name
-        except (OSError, ValueError):
-            return None
-
-    def remember_map(self, name):
-        """Persist a validated explicit map choice, independently of robot uptime."""
-        self.catalog.resolve(name)
-        self.log_directory.mkdir(parents=True, exist_ok=True)
-        target = self.log_directory / 'last-selected-map'
-        temporary = target.with_suffix('.tmp')
-        temporary.write_text(name, encoding='utf-8')
-        temporary.replace(target)
-
     def _read_log_tail(self, size):
         path = self._status.get('log_path')
         if not path:
@@ -222,15 +196,10 @@ class RuntimeSupervisor:
         except OSError:
             return ''
 
-    def start(self, mode, map_id=None, start_hardware=True, movement_binding=None):
+    def start(self, mode, map_id=None, start_hardware=True):
         """Queue one fixed Bringup command, rejecting overlapping transitions."""
         if mode not in ('mapping', 'navigation') or type(start_hardware) is not bool:
             raise ValueError('Only mapping/navigation and a boolean start_hardware are allowed')
-        if self.resident_manager and (
-                not movement_binding
-                or not isinstance(movement_binding[0], str) or not movement_binding[0]
-                or type(movement_binding[1]) is not int or movement_binding[1] < 0):
-            raise ValueError('Resident robot start requires its Manager movement binding')
         if mode == 'mapping' and map_id is not None:
             raise ValueError('Mapping does not load a saved map')
         if mode == 'navigation':
@@ -242,15 +211,7 @@ class RuntimeSupervisor:
                     or self._status['state'] not in ('STOPPED', 'ERROR')):
                 raise RuntimeError('Stop the current Bringup before starting another')
             self._status.update(state='STARTING', mode=mode, map=map_id,
-                                message='Starting Bringup', log_path=None,
-                                runtime_id=uuid.uuid4().hex,
-                                movement_runtime_id=(movement_binding[0]
-                                                     if movement_binding else ''),
-                                movement_epoch=movement_binding[1] if movement_binding else 0,
-                                map_path=str(self.catalog.resolve(map_id))
-                                if mode == 'navigation' else '')
-            if mode == 'navigation':
-                self.remember_map(map_id)
+                                message='Starting Bringup', log_path=None)
             self._stop_future = None
             return self._worker.submit(self._start, mode, map_id, start_hardware)
 
@@ -268,10 +229,6 @@ class RuntimeSupervisor:
                        'web_panel:=false', 'publish_debug_image:=true',
                        f'start_hardware:={str(start_hardware).lower()}',
                        f'map_directory:={self.catalog.directory}']
-            if self.resident_voice:
-                command.append('speech:=false')
-            if self.resident_manager:
-                command.append('manager:=false')
             if mode == 'navigation':
                 command.append(f'map:={self.catalog.resolve(map_id)}')
             self.log_directory.mkdir(parents=True, exist_ok=True)
@@ -342,7 +299,7 @@ class RuntimeSupervisor:
                 if self._log is not None:
                     self._log.close()
                     self._log = None
-                self._status.update(state='STOPPED', mode=None, map=None, map_path='',
+                self._status.update(state='STOPPED', mode=None, map=None,
                                     message='Owned Bringup stopped')
                 return dict(self._status)
         except Exception as error:

@@ -1,17 +1,6 @@
 # Capability Manifest에 등록된 기능과 입력값을 요청한다.
 string capability_id
 string arguments_yaml
-# Trusted caller policy, separate from the capability's input fields.
-bool require_preemption_confirmation
-string[] confirmed_preemption_mission_ids
-# Optional trusted binding for coordinates and preparations on the selected map.
-# Empty runtime ID and zero transition preserve legacy unbound requests.
-string expected_localization_runtime_id
-uint64 expected_localization_transition_id
-# Bind an integrated movement request to the Manager state observed before send.
-bool require_movement_epoch
-string movement_runtime_id
-uint64 movement_epoch
 ---
 # mission_id는 이 Action Goal의 UUID를 문자열로 표현한 값이다.
 string mission_id

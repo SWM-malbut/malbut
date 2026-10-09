@@ -1,13 +1,10 @@
 """Unit tests for localization switching without Nav2 or slam_toolbox."""
 
 import json
-from threading import RLock, Thread
-import time
+from threading import RLock
 from types import SimpleNamespace
 
-from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Time
-from malbut_interfaces.srv import PrepareLocalization
 from nav2_msgs.srv import LoadMap, ManageLifecycleNodes, SetInitialPose
 import pytest
 
@@ -35,8 +32,6 @@ class _Node:
         self.published = []
 
     def create_publisher(self, *args):
-        if args[1].endswith('/status'):
-            return SimpleNamespace(publish=lambda _: None)
         return SimpleNamespace(publish=self.published.append)
 
     def create_client(self, *args, **kwargs):
@@ -56,14 +51,14 @@ class _Node:
 
 
 def _controller(monkeypatch, *, busy=False, load_result=LoadMap.Response.RESULT_SUCCESS,
-                default_map='', can_mapping=None, deferred_start=False):
+                default_map='', can_mapping=None):
     events, modes = [], []
     node = _Node()
     controller = LocalizationController(
         node, None, slam=_Slam(events), on_mode=modes.append,
         can_switch=lambda: not busy, lifecycle_service='/manage',
         map_server_load_service='/load', service_timeout_s=1.0, default_map=default_map,
-        can_mapping=can_mapping, deferred_start=deferred_start)
+        can_mapping=can_mapping)
 
     def call(client, request, label):
         if isinstance(request, ManageLifecycleNodes.Request):
@@ -90,8 +85,7 @@ def test_start_without_map_runs_only_slam(monkeypatch):
     controller, events, modes, node = _controller(monkeypatch)
     controller.start('')
     assert events == ['slam_start']
-    assert modes == [LocalizationMode.SWITCHING, LocalizationMode.SWITCHING,
-                     LocalizationMode.MAPPING]
+    assert modes == [LocalizationMode.SWITCHING, LocalizationMode.MAPPING]
     assert json.loads(node.published[-1].data)['mode'] == 'MAPPING'
 
 
@@ -110,26 +104,7 @@ def test_default_map_uses_regular_localization_without_global_search(monkeypatch
     assert pose.pose.pose.orientation.w == 1.0
     assert client.goals == []
     assert modes[-1] is LocalizationMode.LOCALIZATION
-    state = json.loads(node.published[-1].data)
-    assert state['map'] == path and state['pose_ready']
-
-
-def test_stop_during_default_initial_pose_does_not_restore_readiness(monkeypatch, tmp_path):
-    """A late AMCL service result cannot undo the concurrent movement stop."""
-    path = _map(tmp_path, 'default_map.yaml')
-    controller, _, _, node = _controller(monkeypatch, default_map=path)
-    original_call = controller._call
-
-    def call(client, request, label):
-        if isinstance(request, SetInitialPose.Request):
-            controller.stop_movement()
-        return original_call(client, request, label)
-
-    monkeypatch.setattr(controller, '_call', call)
-    controller.start(path)
-    state = json.loads(node.published[-1].data)
-    assert state['mode'] == 'LOCALIZATION' and state['map'] == path
-    assert not state['pose_ready'] and not controller.stop_pending
+    assert json.loads(node.published[-1].data)['map'] == path
 
 
 def test_real_map_keeps_existing_pose_search_when_default_map_is_configured(
@@ -178,28 +153,12 @@ def test_mapping_guard_ignores_queued_replacement_only_for_own_cleanup(capabilit
     """Queued missions cannot prevent the current AutoSLAM from releasing SLAM."""
     node = object.__new__(SystemManagerNode)
     node._lock = RLock()
-    node._resident_runtime = False
-    node._accepting_goals = True
-    node._state = SimpleNamespace(movement_stopping=False, active=lambda: [SimpleNamespace(
+    node._state = SimpleNamespace(active=lambda: [SimpleNamespace(
         resources={ExecutionResource.BASE},
         capability=SimpleNamespace(capability_id=name)) for name in capabilities])
     node._scheduler = SimpleNamespace(base_busy=lambda: True)
     assert node._mapping_can_switch() is allowed
     assert not node._base_is_free()
-
-
-@pytest.mark.parametrize('accepting,stopping', [(False, False), (True, True)])
-def test_unowned_mapping_respects_global_stop_admission(accepting, stopping):
-    """Only owned AutoSLAM cleanup may bypass the regular admission fence."""
-    node = object.__new__(SystemManagerNode)
-    node._lock = RLock()
-    node._resident_runtime = False
-    node._accepting_goals = accepting
-    node._state = SimpleNamespace(movement_stopping=stopping, active=lambda: [])
-    node._scheduler = SimpleNamespace(base_busy=lambda: False)
-    node._admissions = {}
-    node._localization = None
-    assert not node._mapping_can_switch()
 
 
 def test_selecting_a_map_stops_slam_before_amcl_and_back(monkeypatch, tmp_path):
@@ -212,8 +171,7 @@ def test_selecting_a_map_stops_slam_before_amcl_and_back(monkeypatch, tmp_path):
     assert response.result == LoadMap.Response.RESULT_SUCCESS
     assert events[1:] == ['slam_stop', ('lifecycle', ManageLifecycleNodes.Request.STARTUP),
                           ('load_map', request.map_url)]
-    state = json.loads(node.published[-1].data)
-    assert {key: state[key] for key in ('mode', 'map', 'message')} == {
+    assert json.loads(node.published[-1].data) == {
         'mode': 'LOCALIZATION', 'map': request.map_url,
         'message': 'saved map loaded; confirm the robot pose before driving'}
     response = controller._start_mapping_request(None, SimpleNamespace())
@@ -265,9 +223,6 @@ class _Done:
     def result(self):
         return self.value
 
-    def add_done_callback(self, callback):
-        callback(self)
-
 
 class _Relocalize:
     """Stand-in /relocalize client that answers immediately."""
@@ -286,8 +241,7 @@ class _Relocalize:
         self.goals.append(goal)
         return _Done(SimpleNamespace(
             accepted=self.accepted, cancel_goal_async=lambda: self.canceled.append(goal),
-            get_result_async=lambda: _Done(SimpleNamespace(
-                result=self.result, status=GoalStatus.STATUS_SUCCEEDED))))
+            get_result_async=lambda: _Done(SimpleNamespace(result=self.result))))
 
 
 def test_changing_saved_maps_restarts_amcl_without_the_old_pose(monkeypatch, tmp_path):
@@ -340,7 +294,7 @@ def test_unfinished_pose_search_is_canceled_and_reported(monkeypatch, tmp_path):
     """A stuck relocalization cannot hold the switch forever."""
     controller, _, modes, node = _controller(monkeypatch)
     client = _Relocalize()
-    pending = SimpleNamespace(done=lambda: False, add_done_callback=lambda _: None)
+    pending = SimpleNamespace(done=lambda: False)
     handle = SimpleNamespace(accepted=True, get_result_async=lambda: pending,
                              cancel_goal_async=lambda: client.canceled.append('cancel'))
     client.send_goal_async = lambda goal: _Done(handle)
@@ -350,216 +304,3 @@ def test_unfinished_pose_search_is_canceled_and_reported(monkeypatch, tmp_path):
     assert client.canceled == ['cancel']
     state = json.loads(node.published[-1].data)
     assert state['mode'] == 'LOCALIZATION' and 'finding the pose failed' in state['message']
-    assert not state['pose_ready'] and controller.stop_pending
-
-
-def test_localization_status_has_identity_and_only_verified_pose_is_ready(monkeypatch, tmp_path):
-    """A selected map and a succeeded pose check have separate readiness meaning."""
-    controller, _, _, node = _controller(monkeypatch)
-    controller._relocalize = _Relocalize()
-    path = _map(tmp_path)
-    controller.start(path)
-    first = json.loads(node.published[-1].data)
-    assert first['runtime_id'] and first['transition_id'] == 1 and first['pose_ready']
-    controller._start_mapping_request(None, SimpleNamespace())
-    second = json.loads(node.published[-1].data)
-    assert second['runtime_id'] == first['runtime_id']
-    assert second['transition_id'] == 2 and not second['pose_ready']
-
-
-class _Pending:
-    """A controllable future for the internal Action acceptance race."""
-
-    def __init__(self):
-        self.value = None
-        self.callbacks = []
-
-    def done(self):
-        return self.value is not None
-
-    def result(self):
-        return self.value
-
-    def add_done_callback(self, callback):
-        self.callbacks.append(callback)
-        if self.done():
-            callback(self)
-
-    def resolve(self, value):
-        self.value = value
-        for callback in self.callbacks:
-            callback(self)
-
-
-def test_stop_cancels_late_internal_pose_goal_and_waits_for_terminal(monkeypatch, tmp_path):
-    """Stopping during map selection must cover its late accepted rotation."""
-    controller, _, _, _ = _controller(monkeypatch)
-    accepted, terminal = _Pending(), _Pending()
-    cancels = []
-    controller._relocalize = SimpleNamespace(
-        wait_for_server=lambda **_: True, send_goal_async=lambda _: accepted)
-    thread = Thread(target=controller.start, args=(_map(tmp_path),))
-    thread.start()
-    deadline = time.monotonic() + 2.0
-    while controller._relocalize_goal_future is None and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert controller._relocalize_goal_future is accepted
-    identity = controller.movement_identity
-    controller.stop_movement()
-    assert controller.stop_pending and controller.movement_pending(identity)
-    accepted.resolve(SimpleNamespace(
-        accepted=True, cancel_goal_async=lambda: cancels.append(True),
-        get_result_async=lambda: terminal))
-    assert cancels == [True]
-    assert controller.stop_pending
-    terminal.resolve(SimpleNamespace(
-        status=GoalStatus.STATUS_CANCELED,
-        result=SimpleNamespace(success=False, message='canceled')))
-    thread.join(timeout=2.0)
-    assert not thread.is_alive()
-    assert not controller.stop_pending and not controller.pose_ready
-
-
-def test_stop_before_startup_fences_initial_pose_action(monkeypatch, tmp_path):
-    """The initial timer cannot create a rotation after a preceding stop."""
-    controller, _, _, _ = _controller(monkeypatch)
-    sent = []
-    controller._relocalize = SimpleNamespace(
-        wait_for_server=lambda **_: True, send_goal_async=sent.append)
-    identity = controller.movement_identity
-    controller.stop_movement()
-    assert identity and controller.stop_pending
-    controller.start(_map(tmp_path))
-    assert sent == [] and not controller.pose_ready
-    assert not controller.movement_pending(identity)
-    assert not controller.stop_pending
-
-
-def test_map_admission_and_switching_state_share_manager_lock(monkeypatch, tmp_path):
-    """BASE checks and reserving a switch form one admission transaction."""
-    controller, _, _, _ = _controller(monkeypatch)
-    controller.start('')
-    lock = RLock()
-    controller._admission_lock = lock
-    checks = []
-
-    def can_switch():
-        checks.append(lock._is_owned())
-        return True
-
-    controller._can_switch = can_switch
-    controller._on_mode = lambda mode: checks.append(
-        lock._is_owned() if mode is LocalizationMode.SWITCHING else True)
-    success, _ = controller._switch(_map(tmp_path))
-    assert success and checks[0:2] == [True, True]
-
-
-@pytest.mark.parametrize('mapping', [True, False])
-def test_integrated_preparation_rejects_stale_epoch_before_any_transition(
-    monkeypatch, tmp_path, mapping,
-):
-    """A queued map or mapping request cannot reserve new work after a stop."""
-    controller, events, _, _ = _controller(monkeypatch)
-    controller.start('')
-    controller._movement_state = lambda: ('manager', 3)
-    request = PrepareLocalization.Request(
-        mapping=mapping, map_url='' if mapping else _map(tmp_path),
-        movement_runtime_id='manager', movement_epoch=2)
-    response = controller._prepare_request(request, PrepareLocalization.Response())
-    assert not response.success and response.code == 'movement_epoch_changed'
-    assert events == ['slam_start']
-    assert controller.transition_id == 1 and controller.mode is LocalizationMode.MAPPING
-
-
-def test_integrated_binding_check_and_transition_reservation_are_atomic(monkeypatch, tmp_path):
-    """The epoch cannot advance between authorization and reserving the switch."""
-    controller, _, _, _ = _controller(monkeypatch)
-    controller.start('')
-    lock, checks = RLock(), []
-    controller._admission_lock = lock
-
-    def movement_state():
-        checks.append(lock._is_owned())
-        return 'manager', 3
-
-    def can_switch():
-        checks.append(lock._is_owned())
-        return True
-
-    controller._movement_state = movement_state
-    controller._can_switch = can_switch
-    controller._on_mode = lambda _: checks.append(lock._is_owned())
-    request = PrepareLocalization.Request(
-        map_url=_map(tmp_path), movement_runtime_id='manager', movement_epoch=3)
-    response = controller._prepare_request(request, PrepareLocalization.Response())
-    assert response.success and response.code == 'completed'
-    assert checks[:3] == [True, True, True]
-
-
-def _wait_runtime(predicate):
-    deadline = time.monotonic() + 2.0
-    while not predicate() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert predicate()
-
-
-def test_resident_localization_defers_every_backend_until_child_starts(monkeypatch, tmp_path):
-    path = _map(tmp_path, 'default_map.yaml')
-    controller, events, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
-    assert not events and not controller.movement_identity
-    assert not controller._start_mapping_request(None, SimpleNamespace()).success
-    assert controller.activate_runtime('')
-    _wait_runtime(lambda: not controller._switch_lock.locked())
-    assert controller.mode is LocalizationMode.LOCALIZATION
-    assert controller.map_path == path and controller.pose_ready
-    assert 'slam_start' not in events
-    controller.standby()
-    _wait_runtime(lambda: not controller._standby_pending)
-    assert controller.mode is LocalizationMode.ERROR and not controller.pose_ready
-    assert not controller._localization_started and controller._loaded_map is None
-    assert controller.activate_runtime('')
-    _wait_runtime(lambda: not controller._switch_lock.locked())
-    assert controller.pose_ready
-    assert events.count(('lifecycle', ManageLifecycleNodes.Request.STARTUP)) == 2
-
-
-def test_resident_restart_waits_for_old_localization_cleanup(monkeypatch, tmp_path):
-    from threading import Event
-
-    path = _map(tmp_path)
-    controller, _, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
-    entered, release = Event(), Event()
-    call = controller._call
-
-    def blocked(client, request, label):
-        if isinstance(request, LoadMap.Request):
-            entered.set()
-            assert release.wait(2.0)
-        return call(client, request, label)
-
-    monkeypatch.setattr(controller, '_call', blocked)
-    assert controller.activate_runtime('')
-    assert entered.wait(2.0)
-    controller.standby()
-    assert not controller.activate_runtime('')
-    assert controller._stop_requested and not controller._runtime_enabled
-    release.set()
-    _wait_runtime(lambda: not controller._standby_pending)
-    assert not controller.pose_ready and controller.mode is LocalizationMode.ERROR
-    assert controller.activate_runtime('')
-    _wait_runtime(lambda: not controller._switch_lock.locked())
-    assert controller.pose_ready
-
-
-def test_resident_reserved_start_cannot_clear_a_concurrent_stop(monkeypatch, tmp_path):
-    path = _map(tmp_path)
-    controller, events, _, _ = _controller(monkeypatch, default_map=path, deferred_start=True)
-    workers = []
-    monkeypatch.setattr('malbut_system_manager.localization.threading.Thread',
-                        lambda target, args, daemon: SimpleNamespace(
-                            start=lambda: workers.append((target, args))))
-    assert controller.activate_runtime('')
-    controller.stop_movement()
-    target, args = workers.pop()
-    target(*args)
-    assert not events and not controller.pose_ready and not controller.movement_identity
