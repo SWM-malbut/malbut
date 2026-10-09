@@ -375,6 +375,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             'tracking': bounded_value(snapshot.get('tracking'), 1024),
             'zones': bounded_value(_without_path(snapshot.get('zones')), 1024),
             'manual': bounded_value(snapshot.get('manual'), 512),
+            # 목업 24번: the pose check on the saved map (phase, match, auto-loaded).
+            'mapCheck': bounded_value(snapshot.get('runtime', {}).get('map_check'), 512),
             **(navigation or {}),
         },
         'driveMode': robot_drive_mode(

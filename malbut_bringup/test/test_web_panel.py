@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from malbut_bringup.map_check import MapCheck
 from malbut_bringup.zone_override import GLOBAL_TOGGLE, LOCAL_TOGGLE, ZoneOverride
 from malbut_bringup.web_panel import (
     image_jpeg, live_zone_map, mission_arguments, PanelData, PanelServer, RosBridge,
@@ -251,6 +252,8 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.cancel_clients = {}
     bridge.cancel_request = SimpleNamespace
     bridge.localization = {}
+    bridge.map_check = MapCheck()
+    bridge.catalog = SimpleNamespace(directory=Path('/maps'))
     bridge.load_map = Mock()
     bridge.load_map.service_is_ready.return_value = False
     bridge.load_map_request = SimpleNamespace
@@ -369,6 +372,7 @@ def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup(monkeypat
     """Never launch another driver set over existing scan/odometry publishers."""
     bridge, _ = _bridge()
     bridge.runtime = Mock()
+    bridge.runtime.last_selected_map.return_value = None
     bridge.node.get_node_names_and_namespaces.return_value = [('controller', '/')]
     bridge.node.count_publishers.side_effect = lambda name: int(name != '/map')
     bridge._start_runtime({'mode': 'mapping'})
@@ -386,6 +390,48 @@ def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup(monkeypat
     bridge.node.count_publishers.side_effect = lambda name: int(name == '/scan_raw')
     with pytest.raises(ValueError, match='partly running'):
         bridge._start_runtime({'mode': 'mapping'})
+
+
+def test_a_start_without_a_map_loads_the_last_chosen_map_and_checks_the_pose():
+    """목업 24번: no map pick after every start; a poor match searches once more."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.last_selected_map.return_value = 'home.yaml'
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': 'navigation', 'map': 'home.yaml', 'log_path': None,
+        'message': ''}
+    bridge.node.get_node_names_and_namespaces.return_value = []
+    bridge.node.count_publishers.return_value = 0
+    bridge.node.count_publishers.side_effect = None
+    bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once_with(
+        'navigation', map_id='home.yaml', start_hardware=True)
+    bridge._refresh()
+    assert bridge.data.snapshot()['runtime']['map_check'] == {
+        'phase': 'loading', 'map': 'home.yaml', 'auto': True}
+    bridge.data.system = {'system_state': 1}
+    bridge.startup_status = {'state': 'READY', 'missing': []}
+    bridge.localization = {
+        'mode': 'LOCALIZATION', 'map': '/maps/home.yaml', 'runtime_id': 'r', 'transition_id': 1,
+        'pose_ready': True, 'message': 'saved map loaded; saved pose matched only 45% of the '
+        'scan; found by global search, 58% of the scan matches the map'}
+    bridge._refresh()
+    assert bridge.data.snapshot()['runtime']['map_check']['phase'] == 'retrying'
+    _, payload = bridge.commands.get_nowait()
+    assert payload == {'command': 'start', 'capability': 'relocalize',
+                       'arguments': {'method': 2}}
+    bridge._refresh()
+    assert bridge.commands.empty(), 'one automatic retry'
+
+
+def test_a_start_without_a_remembered_map_stays_on_the_blank_map():
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.runtime.last_selected_map.return_value = None
+    bridge.node.get_node_names_and_namespaces.return_value = []
+    bridge.node.count_publishers.return_value = 0
+    bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=True)
 
 
 @pytest.mark.parametrize('name', [
@@ -1347,6 +1393,7 @@ def test_resident_manager_start_preserves_epoch_and_ignores_idle_services():
     bridge, _ = _bridge(manager_ready=True)
     bridge.runtime = Mock()
     bridge.runtime.snapshot.return_value = {'state': 'STOPPED'}
+    bridge.runtime.last_selected_map.return_value = None
     bridge.resident_manager_namespace = '/malbut/resident_manager_test'
     bridge.node.get_node_names_and_namespaces.return_value = [
         ('system_manager', bridge.resident_manager_namespace)]

@@ -69,6 +69,21 @@ function madeCopy(value: string | null, now: number) {
   return sameDay ? `오늘 ${clock} 만듦` : `${date.getMonth() + 1}월 ${date.getDate()}일 만듦`;
 }
 
+/** Names the owner gave the robot's saved maps in 지도 관리; reloaded when `refresh` changes. */
+export function useMapLabels(deviceId: string, enabled = true, refresh = "") {
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const loadLabels = useCallback(async () => {
+    const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot/map-labels`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({})) as { labels?: Record<string, string> };
+    if (response.ok && payload.labels) setLabels(payload.labels);
+  }, [deviceId]);
+  useEffect(() => {
+    if (!enabled || !deviceId) return;
+    window.queueMicrotask(() => void loadLabels());
+  }, [enabled, deviceId, refresh, loadLabels]);
+  return [labels, setLabels] as const;
+}
+
 export function RealRobotMapManager({
   deviceId, snapshot, isOwner, busy, commandActive, driveActive, roomCount, sendCommand,
 }: {
@@ -95,23 +110,15 @@ export function RealRobotMapManager({
   const mapping = Boolean(autoslam && ACTIVE.has(autoslam.state));
   const online = Boolean(snapshot?.online);
 
-  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [labels, setLabels] = useMapLabels(deviceId);
   const [draftName, setDraftName] = useState(() => newMapNames(new Date(), new Set()).label);
   const [editing, setEditing] = useState<{ map: string; name: string } | null>(null);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(0);
 
-  const loadLabels = useCallback(async () => {
-    const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot/map-labels`, { cache: "no-store" });
-    const payload = await response.json().catch(() => ({})) as { labels?: Record<string, string> };
-    if (response.ok && payload.labels) setLabels(payload.labels);
-  }, [deviceId]);
   useEffect(() => {
-    window.queueMicrotask(() => {
-      setNow(Date.now());
-      void loadLabels();
-    });
-  }, [loadLabels]);
+    window.queueMicrotask(() => setNow(Date.now()));
+  }, []);
 
   const saveLabel = async (map: string, name: string) => {
     const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot/map-labels`, {
