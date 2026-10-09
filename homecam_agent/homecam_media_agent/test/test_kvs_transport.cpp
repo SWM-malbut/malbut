@@ -6,8 +6,10 @@
 #include "homecam_media_agent/kvs_transport.hpp"
 #include "homecam_media_agent/build_features.hpp"
 
+using homecam_media_agent::AudioCaptureTimeline;
 using homecam_media_agent::EncodedFrame;
 using homecam_media_agent::KvsTimestampNormalizer;
+using homecam_media_agent::PlayoutSchedule;
 using homecam_media_agent::SessionMode;
 using homecam_media_agent::SessionRefreshDecision;
 using homecam_media_agent::SessionLease;
@@ -165,4 +167,45 @@ TEST(KvsTransport, AlignsIndependentPipelinesOnOneSteadyTimeline)
   EXPECT_EQ(video, 1'010'000'000);
   EXPECT_EQ(restarted_audio, 1'020'000'000);
   EXPECT_LT(video, restarted_audio);
+}
+
+TEST(KvsTransport, StampsAudioBurstsAtTheirCaptureCadence)
+{
+  AudioCaptureTimeline timeline;
+  // Three 20 ms frames reach the appsink together; each keeps its capture time.
+  EXPECT_EQ(timeline.stamp(0, 1'000'000'000), 1'000'000'000);
+  EXPECT_EQ(timeline.stamp(20'000'000, 1'060'000'000), 1'020'000'000);
+  EXPECT_EQ(timeline.stamp(40'000'000, 1'060'000'100), 1'040'000'000);
+  EXPECT_EQ(timeline.stamp(60'000'000, 1'060'000'200), 1'060'000'000);
+  EXPECT_EQ(timeline.stamp(80'000'000, 1'081'000'000), 1'080'000'000);
+}
+
+TEST(KvsTransport, ReanchorsAudioAfterARestartOrAStall)
+{
+  AudioCaptureTimeline timeline;
+  timeline.stamp(5'000'000'000, 1'000'000'000);
+  // The 말벗 마이크 switch restarts the capture pipeline at PTS zero.
+  EXPECT_EQ(timeline.stamp(0, 2'000'000'000), 2'000'000'000);
+  EXPECT_EQ(timeline.stamp(20'000'000, 2'030'000'000), 2'020'000'000);
+  // The device stalled for a second while its clock advanced 20 ms.
+  EXPECT_EQ(timeline.stamp(40'000'000, 3'040'000'000), 3'040'000'000);
+  // Without a capture clock the arrival time is used, still increasing.
+  EXPECT_EQ(timeline.stamp(-1, 3'000'000'000), 3'040'000'001);
+}
+
+TEST(KvsTransport, PlaysGuardianFramesOnTheirTimelineAfterADelay)
+{
+  PlayoutSchedule schedule(120'000'000);
+  // The first frame plays 120 ms later; a burst of three keeps 20 ms spacing.
+  EXPECT_EQ(schedule.schedule(5'000'000'000, 0), 120'000'000);
+  EXPECT_EQ(schedule.schedule(5'020'000'000, 60'000'000), 140'000'000);
+  EXPECT_EQ(schedule.schedule(5'040'000'000, 60'000'100), 160'000'000);
+  EXPECT_EQ(schedule.schedule(5'060'000'000, 60'000'200), 180'000'000);
+  // A frame arriving after its slot starts a new anchor rather than being dropped.
+  EXPECT_EQ(schedule.schedule(5'080'000'000, 250'000'000), 370'000'000);
+  // A sender jump far ahead, then a new talk on an unrelated timeline, start over.
+  EXPECT_EQ(schedule.schedule(15'000'000'000, 300'000'000), 420'000'000);
+  EXPECT_EQ(schedule.schedule(100, 400'000'000), 520'000'000);
+  schedule.reset();
+  EXPECT_EQ(schedule.schedule(200, 0), 120'000'000);
 }

@@ -142,13 +142,15 @@ std::string build_audio_playback_pipeline(const MediaConfig & config)
 {
   // WebRTC delivers bare Opus packets without an OpusHead. GStreamer 1.20 opusdec
   // refuses such caps unless channel-mapping-family=0 says they are plain mono/stereo.
+  // Buffers carry their playout time (PlayoutSchedule), and the sink plays them
+  // on it instead of as they arrive; opusdec conceals a missing frame.
   return
     "appsrc name=ptt_audio_source is-live=true block=false format=time "
-    "do-timestamp=true caps=audio/x-opus,rate=48000,channels=1,"
+    "caps=audio/x-opus,rate=48000,channels=1,"
     "channel-mapping-family=0 ! "
-    "queue max-size-time=200000000 leaky=downstream ! opusdec ! "
+    "queue max-size-time=500000000 leaky=downstream ! opusdec plc=true ! "
     "audioconvert ! audioresample ! alsasink device=" +
-    quote_gst(config.audio_sink) + " sync=false";
+    quote_gst(config.audio_sink) + " sync=true";
 }
 
 }  // namespace homecam_media_agent
