@@ -144,5 +144,6 @@ def test_moved_robot_is_found_by_rotating_global_search(graph, room):
     result = _run(executor, client)
     assert result.success, result.message
     assert 'found by global search' in result.message
-    assert calls[:3] == ['initialpose', 'global', 'spin'] and 'nomotion' in calls
+    assert calls[0] == 'initialpose' and 'nomotion' in calls
+    assert calls[calls.index('global') + 1] == 'spin'
     assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0], abs=1e-3)

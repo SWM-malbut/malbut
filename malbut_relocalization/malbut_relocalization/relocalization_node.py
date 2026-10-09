@@ -5,7 +5,10 @@ The system manager selects the saved map and requests /relocalize after each
 switch. AUTO first tries the pose saved for this map and checks it against the
 LiDAR scan; when it does not fit (the robot was moved while off) or no pose is
 saved, it runs AMCL's global localization while rotating in place with Nav2
-Spin. Only /initialpose, AMCL services and Spin are used; no velocity is sent.
+Spin. Every pose found is then fitted to the map (scan_match.refine) and given
+back to AMCL. A search that ends worse than the pose it started from returns
+to that pose. Only /initialpose, AMCL services and Spin are used; no velocity
+is sent.
 """
 
 import json
@@ -36,7 +39,7 @@ from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .pose_store import map_identity, read_initial_pose, valid_pose, write_pose
-from .scan_match import distance_field, match_ratio
+from .scan_match import distance_field, match_ratio, refine
 
 
 LOCALIZATION_STATE_TOPIC = '/malbut/localization/state'
@@ -46,6 +49,9 @@ MIN_ACCEPT_DISTANCE_M = 0.5
 MIN_ACCEPT_ANGLE_RAD = 0.5
 SCAN_MAX_AGE_S = 2.0
 FULL_TURN_RAD = 2.0 * math.pi
+# AMCL's spread around a pose fitted to the map: about 5 cm and 3 degrees.
+FITTED_COVARIANCE = [0.0025 if index in (0, 7) else 0.0027 if index == 35 else 0.0
+                     for index in range(36)]
 
 
 class RelocalizationError(RuntimeError):
@@ -229,6 +235,8 @@ class Relocalization(Node):
             self.map_file, self.identity, self.expected_map = map_file, identity, expected
             self.field = None
             self.latest = None
+            # An estimate on another map is no pose to return to.
+            self.estimate = None
             self.received = self.saved_received = 0.0
             self.saving = False
 
@@ -365,6 +373,8 @@ class Relocalization(Node):
             # An operator's pose is kept even when the scan disagrees; report it.
             return True, f'pose set; {ratio:.0%} of the scan matches the map', estimate, ratio
         reason = 'global search requested'
+        # (label, pose, ratio) to return to when the search ends worse.
+        start = None
         if request.method == goal.AUTO:
             with self.lock:
                 map_file, identity = self.map_file, self.identity
@@ -373,14 +383,28 @@ class Relocalization(Node):
             if saved is not None:
                 self._feedback(handle, 'CHECKING_SAVED_POSE')
                 estimate = self._apply(handle, saved, deadline)
-                ratio = self._score(handle, estimate, deadline)
+                estimate, ratio = self._refine(handle, estimate, deadline)
                 self._feedback(handle, 'CHECKING_SAVED_POSE', ratio)
                 if ratio >= minimum:
                     return (True, f'saved pose confirmed; {ratio:.0%} of the scan matches the map',
                             estimate, ratio)
                 reason = f'saved pose matched only {ratio:.0%} of the scan'
+                start = ('saved', estimate[1], ratio)
             self.get_logger().info(f'Relocalization: {reason}; searching the whole map')
+        else:
+            with self.lock:
+                current = self.estimate
+            if current is not None:
+                # A retry or a user's search may start from a pose that was nearly right.
+                pose, ratio = self._fit(handle, current, deadline)
+                start = ('previous', pose, ratio)
         estimate, ratio = self._search(handle, deadline, minimum)
+        if start is not None and start[2] > ratio:
+            label, pose, _ = start
+            estimate, kept = self._return_to(handle, pose, deadline)
+            return (kept >= minimum, f'{reason}; global search matched only {ratio:.0%} of the '
+                    f'scan; returned to the {label} pose, {kept:.0%} of the scan matches the map',
+                    estimate, kept)
         if ratio >= minimum:
             return (True, f'{reason}; found by global search, {ratio:.0%} of the scan '
                     'matches the map', estimate, ratio)
@@ -428,6 +452,45 @@ class Relocalization(Node):
 
     def _score(self, handle, estimate, deadline):
         """Match a scan taken after the estimate against the map at that pose."""
+        message, laser, field = self._observe(handle, estimate, deadline)
+        pose = estimate[1]
+        return self._ratio(field, message, laser, (pose['x'], pose['y'], pose['yaw']))
+
+    def _return_to(self, handle, pose, deadline):
+        """Put a pose from before a turn back into AMCL, fitted again to the scan."""
+        # Spin ends within a few degrees of a full turn, so fit the pose once more.
+        return self._refine(handle, self._apply(handle, pose, deadline), deadline)
+
+    def _refine(self, handle, estimate, deadline):
+        """Give AMCL the best-fitting pose near its estimate; return (estimate, ratio)."""
+        pose, ratio = self._fit(handle, estimate, deadline)
+        if pose is estimate[1]:
+            return estimate, ratio
+        estimate = self._apply(handle, pose, deadline)
+        return estimate, self._score(handle, estimate, deadline)
+
+    def _fit(self, handle, estimate, deadline):
+        """Return (pose, ratio) fitted near the estimate; its own pose when no better."""
+        message, laser, field = self._observe(handle, estimate, deadline)
+        pose = estimate[1]
+        start = (pose['x'], pose['y'], pose['yaw'])
+        ratio = self._ratio(field, message, laser, start)
+        fitted = refine(field, message, laser, start,
+                        max_range_m=self.settings['max_scan_range_m'])
+        fitted_ratio = self._ratio(field, message, laser, fitted)
+        if fitted_ratio <= ratio:
+            return pose, ratio
+        return dict(pose, x=fitted[0], y=fitted[1], yaw=fitted[2],
+                    covariance=list(FITTED_COVARIANCE)), fitted_ratio
+
+    def _ratio(self, field, scan, laser, pose):
+        ratio, beams = match_ratio(
+            field, scan, laser, pose, hit_distance_m=self.settings['match_distance_m'],
+            max_range_m=self.settings['max_scan_range_m'])
+        return ratio if beams else 0.0
+
+    def _observe(self, handle, estimate, deadline):
+        """Return a scan taken after the estimate, the laser mount and the map field."""
         while True:
             self._check(handle)
             with self.lock:
@@ -447,12 +510,7 @@ class Relocalization(Node):
         translation, q = transform.transform.translation, transform.transform.rotation
         laser = (translation.x, translation.y,
                  math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
-        pose = estimate[1]
-        ratio, beams = match_ratio(
-            field, message, laser, (pose['x'], pose['y'], pose['yaw']),
-            hit_distance_m=self.settings['match_distance_m'],
-            max_range_m=self.settings['max_scan_range_m'])
-        return ratio if beams else 0.0
+        return message, laser, field
 
     def _search(self, handle, deadline, minimum):
         """Run AMCL global localization while rotating; keep the best estimate."""
@@ -463,12 +521,15 @@ class Relocalization(Node):
             started = time.monotonic()
             self._rotate(handle, deadline)
             estimate = self._settle(handle, deadline, started)
-            ratio = self._score(handle, estimate, deadline)
-            if ratio > best_ratio or best is None:
+            estimate, ratio = self._refine(handle, estimate, deadline)
+            if ratio >= best_ratio or best is None:
                 best, best_ratio = estimate, ratio
             self._feedback(handle, 'SEARCHING', best_ratio)
             if ratio >= minimum:
                 break
+        if best is not estimate:
+            # AMCL holds the last attempt; put the better earlier one back.
+            best, best_ratio = self._return_to(handle, best[1], deadline)
         return best, best_ratio
 
     def _rotate(self, handle, deadline):
