@@ -16,12 +16,17 @@ from malbut_bringup.launch_support import (
     description, file_path as _file,
 )
 
+# Floor to the optical centre in the robot model (camera_z 0.0919 above base_link
+# + base_link 0.028 above base_footprint); the monitor corrects places from it.
+MODEL_CAMERA_HEIGHT_M = 0.119864
+
 ARGUMENTS = [
     'fall_monitor', 'fall_config', 'fall_pose_model_path', 'fall_pose_python_executable',
     'fall_pose_execution_provider', 'fall_pose_intra_op_num_threads',
     'fall_pose_opencv_num_threads', 'fall_pose_allow_spinning', 'rgb_topic', 'odom_topic',
     'depth_topic', 'global_frame', 'fall_depth_aligned_to_rgb', 'fall_depth_camera_info_topic',
-    'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_approach', 'robot_frame',
+    'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_camera_roll_rad', 'fall_approach',
+    'robot_frame',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
 ]
 
@@ -63,10 +68,12 @@ def _setup(context):
         try:
             camera_height = float(value('fall_camera_height_m'))
             camera_pitch = float(value('fall_camera_pitch_rad'))
+            camera_roll = float(value('fall_camera_roll_rad'))
         except ValueError:
-            raise RuntimeError('Invalid fall camera height or pitch') from None
-        if not 0.0 < camera_height < 1.0 or not -0.5 < camera_pitch < 0.5:
-            raise RuntimeError('Invalid fall camera height or pitch')
+            raise RuntimeError('Invalid fall camera height, pitch or roll') from None
+        if (not 0.0 < camera_height < 1.0 or not -0.5 < camera_pitch < 0.5
+                or not -0.5 < camera_roll < 0.5):
+            raise RuntimeError('Invalid fall camera height, pitch or roll')
         depth_info = value('fall_depth_camera_info_topic')
         approach_on = value('fall_approach') == 'true'
         # All or nothing: the detector refuses depth topics that are not aligned.
@@ -103,6 +110,10 @@ def _setup(context):
                          'depth_topic': value('depth_topic') if depth_on else '',
                          'camera_info_topic': depth_info if depth_on else '',
                          'global_frame': value('global_frame'),
+                         # The TF model keeps the camera level at MODEL_CAMERA_HEIGHT_M.
+                         'mount_pitch_correction_rad': camera_pitch,
+                         'mount_roll_correction_rad': camera_roll,
+                         'mount_height_correction_m': camera_height - MODEL_CAMERA_HEIGHT_M,
                          'approach_enabled': approach_on}],
             remappings=[(fall_image_topic, value('rgb_topic'))],
         )

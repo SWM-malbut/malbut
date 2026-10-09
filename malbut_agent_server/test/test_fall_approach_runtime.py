@@ -7,7 +7,8 @@ import pytest
 
 from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
 from malbut_agent_server.domain.fall_monitoring import (
-    IncidentState, PersonCheckReply, SubjectCheckState, SubjectFrame, SubjectPose,
+    CandidateKind, FallCandidate, IncidentState, PersonCheckReply, SubjectCheckState,
+    SubjectFrame, SubjectPose, VideoAssessment,
 )
 from malbut_agent_server.fall_runtime import apply_decision, event_metadata
 from test_cloud_fall_monitor import Provider, enable, frame, make
@@ -16,6 +17,7 @@ from test_fall_unidentified_verification import scan
 
 BAG = (.112, .274, .261, .496)
 SPOT = (2.0, 1.0)
+CHAIR = (.70, .30, .85, .60)
 
 
 class Places:
@@ -248,3 +250,131 @@ def test_live_provider_uses_the_person_check_wire():
         assert sent[0]['messages'][0]['content'] == PERSON_CHECK_PROMPT
 
     asyncio.run(run())
+
+
+def see(monitor, clock, box, subject='pose:0:b'):
+    """A weak Pose person: the close look itself still asks Cloud."""
+    monitor.ingest_subject_frame(SubjectFrame(clock.value, (SubjectPose(
+        subject, box, SubjectCheckState.SUSPECTED, True, False),), .5))
+
+
+def lying(clock, subject='pose:0:b', kind=CandidateKind.ALREADY_DOWN):
+    reason = ('pose_rapid_posture_change' if kind is CandidateKind.MOTION_SEEN
+              else 'pose_sustained_low_posture')
+    return FallCandidate('low:1', subject, 'yolo_pose', kind, clock.value,
+                         pose_reason=reason)
+
+
+def test_pose_at_the_spot_being_checked_is_left_to_that_check():
+    """2026-10-09: from 1 m Pose read the bag pile as a person and opened a second case."""
+    monitor, clock, provider, question, _ = setup()
+    arrive(monitor, question)
+    clock.value += 0.5
+    see(monitor, clock, BAG)
+    monitor.drain_events()
+    assert monitor.candidate(lying(clock)) is None
+    assert monitor.candidate(lying(clock, 'pose:0:new')) is None, 'not measured yet'
+    assert kinds(monitor.drain_events()) == [('candidate_rejected', 'spot_under_check')] * 2
+    clock.value += 3.5
+    monitor.ingest_rgb(frame(clock.value - .5))
+    monitor.ingest_rgb(frame(clock.value))
+    monitor.maintain_associations()
+    assert asyncio.run(monitor.run_once())
+    assert ('incident_resolved', 'not_a_person') in kinds(monitor.drain_events())
+    see(monitor, clock, BAG)
+    assert monitor.candidate(lying(clock)) is None, 'still the check while driving back'
+    assert monitor.return_result(**ids(question), outcome='returned')
+    # The detector sends it again: a person still there is a case of its own now.
+    assert monitor.candidate(lying(clock)) is not None
+
+
+@pytest.mark.parametrize('box,kind', [(CHAIR, CandidateKind.ALREADY_DOWN),
+                                      (BAG, CandidateKind.MOTION_SEEN)])
+def test_a_person_farther_than_1m_or_a_seen_fall_opens_its_own_case(box, kind):
+    monitor, clock, _, question, _ = setup()
+    monitor._place = Places({BAG: SPOT, CHAIR: (5.0, 1.0)})
+    arrive(monitor, question)
+    clock.value += 0.5
+    see(monitor, clock, box)
+    assert monitor.candidate(lying(clock, kind=kind)) is not None
+
+
+def test_a_check_ends_with_its_question_or_after_a_bound():
+    monitor, clock, _, question, _ = setup()
+    assert monitor.approach_result(**ids(question), outcome='no_path')
+    assert monitor.confirmation_failed(**ids(question)) is not None
+    clock.value += 0.5
+    see(monitor, clock, BAG)
+    assert monitor.candidate(lying(clock)) is not None
+    monitor, clock, _, question, _ = setup()
+    clock.value += 241
+    see(monitor, clock, BAG)
+    assert monitor.candidate(lying(clock)) is not None, 'a lost return report'
+
+
+class Heights(Places):
+    def __init__(self, spots):
+        super().__init__({box: spot[:2] for box, spot in spots.items()})
+        self.spots = spots
+
+    def locate3d(self, captured_at, box):
+        return self.spots.get(box)
+
+    def locate3d_near(self, observed_at, box, *, tolerance_s=0.25):
+        return self.spots.get(box)
+
+
+def test_suspected_spots_log_their_height_above_the_floor():
+    """Numbers to choose a bed/sofa threshold from, before any decision uses them."""
+    monitor, clock, _ = make()
+    provider = Looker()
+    monitor._provider = provider
+    lines = []
+    monitor._place_log = lines.append
+    monitor._place = Heights({BAG: (*SPOT, 0.52), CHAIR: (5.0, 1.0, 0.03)})
+    enable(monitor)
+    scan(monitor, clock, provider, reply(finding(BAG)))
+    assert lines[0] == 'fall place: Cloud box at map (2.00, 1.00), 52 cm above the floor'
+    monitor.ingest_subject_frame(SubjectFrame(clock.value, (SubjectPose(
+        'pose:0:c', CHAIR, SubjectCheckState.SUSPECTED, True, True),), .5))
+    iid = monitor.candidate(lying(clock, 'pose:0:c'))
+    assert lines[-1] == f'fall place: Pose case {iid[:8]} at map (5.00, 1.00), 3 cm above the floor'
+
+
+class Resting(Places):
+    """Every box measures at the same height; its lowest band is what is asked."""
+
+    def __init__(self, height):
+        super().__init__({BAG: SPOT})
+        self.height, self.asked = height, []
+
+    def locate3d(self, captured_at, box):
+        self.asked.append(box)
+        return None if self.height is None else (*SPOT, self.height)
+
+
+@pytest.mark.parametrize('height,assessment,opened', [
+    (0.52, VideoAssessment.SUSPECTED_FALL, False),
+    (0.10, VideoAssessment.SUSPECTED_FALL, True),
+    (0.52, VideoAssessment.OBSERVED_FALL, True),
+    (None, VideoAssessment.SUSPECTED_FALL, True),
+])
+def test_a_body_resting_on_a_bed_is_not_a_cloud_scene_case(height, assessment, opened):
+    """2026-10-09 18:27: a person on the bed was a fall case every minute."""
+    monitor, clock, _ = make()
+    provider = Looker()
+    monitor._provider = provider
+    lines = []
+    monitor._place_log = lines.append
+    monitor._place = place = Resting(height)
+    enable(monitor)
+    events = scan(monitor, clock, provider, reply(finding(BAG, assessment)))
+    assert any(e.kind == 'incident_opened' for e in events) is opened
+    if height is not None and assessment is not VideoAssessment.OBSERVED_FALL:
+        band = place.asked[0]
+        assert band[3] == BAG[3] and band[1] == pytest.approx(BAG[3] - (BAG[3] - BAG[1]) / 4)
+    if not opened:
+        discovery, = [e for e in events if e.kind == 'cloud_discovery']
+        assert discovery.reason == 'on_furniture' and discovery.incident_id is None
+        assert lines[-1] == ('fall place: Cloud box rests 52 cm above the floor, '
+                             'on a bed or sofa: not a fall case')

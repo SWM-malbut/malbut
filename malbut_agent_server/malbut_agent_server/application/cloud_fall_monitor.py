@@ -58,6 +58,18 @@ GUARD_FAILURES = RUNTIME_CLOUD_BLOCKS | {
 APPROACH_OUTCOMES = frozenset({'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejected'})
 # After arriving 1 m in front: Pose looks this long, then Cloud once.
 PERSON_POSE_WAIT_S = 3.0
+# While the robot drives to a spot, looks and drives back, that spot belongs to
+# the incident being checked (2026-10-09): from 1 m, Pose read the bag pile it
+# had just been sent to look at as a person lying down and opened a second
+# incident. A check normally ends with its result or return; this bounds it.
+SPOT_CHECK_MAX_S = 240.0
+# A body resting higher than this is on a bed or sofa, not on the floor: the
+# 30 cm the Pose detector already applies to the torso (maximum_floor_height_m).
+# 2026-10-09: a person lying on the bed became a Cloud scene case every minute.
+FURNITURE_HEIGHT_M = 0.30
+# The lowest quarter of a Cloud box is what the body rests on; its centre would
+# rise to 30-40 cm for someone slumped against a wall on the floor.
+SUPPORT_BAND = 0.25
 
 
 @dataclass
@@ -96,12 +108,16 @@ class CloudFallMonitor:
                  wall_clock: Callable[[], float] = time.time,
                  clip_planner: Optional[FallClipPlanner] = None,
                  people_recorder: Optional[FallPeopleRecorder] = None,
-                 place_locator=None) -> None:
+                 place_locator=None,
+                 place_log: Optional[Callable[[str], None]] = None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
             raise ValueError('local VLM providers are not allowed')
         self.device_id, self.boot_id = device_id, boot_id
+        # Heights of suspected spots above the floor, for choosing a bed/sofa
+        # threshold from real numbers before any decision uses them (2026-10-09).
+        self._place_log = place_log
         self.policy, self.buffer = policy, buffer
         self._provider, self._clock = provider, clock
         self._journal = journal
@@ -155,6 +171,8 @@ class CloudFallMonitor:
         self.approach_enabled = False
         self._running_missions = ()
         self._person_checks = {}
+        # incident_id -> (map point, since): spots the robot is checking now.
+        self._spot_checks = {}
 
     def _now(self) -> float:
         value = self._clock()
@@ -565,6 +583,12 @@ class CloudFallMonitor:
                 current.help_needed = None
                 self._emit('incident_updated', current, reason=display_reason)
             return current.incident_id
+        if (candidate.kind is not CandidateKind.MOTION_SEEN
+                and self._spot_under_check(candidate.subject_key) is not None):
+            # Its close look decides. The detector sends the candidate again,
+            # so a person still there after the check opens an incident then.
+            self._emit('candidate_rejected', reason='spot_under_check')
+            return None
         if not self._make_room():
             self._emit('candidate_rejected', reason='incident_capacity')
             return None
@@ -579,6 +603,7 @@ class CloudFallMonitor:
                 candidate.subject_key, candidate.observed_at))
         self._incidents[current.incident_id] = current
         self._emit('incident_opened', current, reason=display_reason)
+        self._log_pose_place(current)
         self._record_candidate_clip(current, candidate)
         if self._runtime_cloud_block is not None:
             current.pending = False
@@ -620,6 +645,8 @@ class CloudFallMonitor:
         incident.situation_assessment = None
         incident.help_needed = None
         incident.approach_target = self._approach_target(incident)
+        if incident.approach_target is not None:
+            self._spot_checks[incident_id] = (incident.approach_target, self._now())
         if incident.video is not None:
             self._questions[incident_id] = replace(incident)
         self._emit('question_requested', incident,
@@ -676,12 +703,40 @@ class CloudFallMonitor:
         return True
 
     def return_result(self, *, incident_id, question_id, evidence_revision, outcome):
+        self._spot_checks.pop(incident_id, None)
         incident = self._incidents.get(incident_id)
         if incident is None:
             return False
         self._emit('approach_returned', incident, question_id=question_id,
                    reason='returned' if outcome == 'returned' else 'return_failed')
         return True
+
+    def _spot_under_check(self, subject_key):
+        """The incident checking where this Pose subject is, or None (farther than 1 m)."""
+        now = self._now()
+        for iid, (_, since) in tuple(self._spot_checks.items()):
+            if iid not in self._incidents or now - since > SPOT_CHECK_MAX_S:
+                del self._spot_checks[iid]
+        if not self._spot_checks:
+            return None
+        latest = self._subject_evidence.latest(subject_key)
+        if latest is None or latest[2].box is None:
+            # Not measured yet while the robot faces the spot; it comes again with a box.
+            return next(iter(self._spot_checks))
+        stamp, _, pose = latest
+        point = None
+        if self._place is not None:
+            try:
+                point = self._place.locate_near(stamp, pose.box)
+            except Exception:
+                point = None
+        for iid, (target, _) in self._spot_checks.items():
+            if point is not None:
+                if math.dist(point, target) <= SAME_PLACE_M:
+                    return iid
+            elif 0.25 <= (pose.box[0] + pose.box[2]) / 2 <= 0.75:
+                return iid  # Same fallback as the close look: the robot faces the spot.
+        return None
 
     def _pose_sees_person(self, check):
         for stamp, poses in self._subject_evidence.frames_since(check.started):
@@ -797,6 +852,8 @@ class CloudFallMonitor:
         """
         for value in (incident_id, question_id):
             identifier(value)
+        # Asked instead of driving back: the check of the spot is over.
+        self._spot_checks.pop(incident_id, None)
         if subject_key is not None:
             identifier(subject_key)
         if (type(evidence_revision) is not int or evidence_revision < 1
@@ -874,6 +931,7 @@ class CloudFallMonitor:
 
     def confirmation_failed(self, *, incident_id, question_id, evidence_revision):
         """Record an unavailable/failed conversation without inventing an answer."""
+        self._spot_checks.pop(incident_id, None)
         current = self._incidents.get(incident_id)
         question = self._questions.get(incident_id, current)
         incident = (question if question is not None and current is not None
@@ -1171,9 +1229,12 @@ class CloudFallMonitor:
                 wait_for = self._association_wait.candidate(
                     finding, times, self._incidents, versions, now=self._now(), policy=self.policy)
             if iid is None and wait_for is None and reason != 'incident_changed_during_scan':
-                iid = self._record_unidentified_scene(request, finding, analysis=analysis)
-                if iid is None:
-                    reason = 'incident_capacity'
+                if self._on_furniture(times, finding):
+                    reason = 'on_furniture'
+                else:
+                    iid = self._record_unidentified_scene(request, finding, analysis=analysis)
+                    if iid is None:
+                        reason = 'incident_capacity'
             proof = None
             if subject_key and (measured != pose_snapshot
                                 or any(len(group) == 2 for group in measured)):
@@ -1287,6 +1348,9 @@ class CloudFallMonitor:
             if not (changed or scene_exists or self._now() >= pending.deadline):
                 continue
             d = pending.discovery
+            if self._on_furniture(d.sample_times, d.finding):
+                self._finish_pending_association(pending, 'cancelled', 'on_furniture')
+                continue
             entry = self._discoveries.get(d.discovery_id)
             iid = self._record_unidentified_observation(
                 d.sample_times, d.finding, analysis=entry.analysis if entry else None)
@@ -1659,15 +1723,69 @@ class CloudFallMonitor:
         if self._place is None:
             return ()
         points = []
+        locate3d = getattr(self._place, 'locate3d', None)
         for region in finding.regions:
             if region.frame_index < len(times):
                 try:
-                    point = self._place.locate(times[region.frame_index], region.box)
+                    if locate3d is not None:
+                        spot = locate3d(times[region.frame_index], region.box)
+                        self._log_place('Cloud box', spot)
+                        point = None if spot is None else spot[:2]
+                    else:
+                        point = self._place.locate(times[region.frame_index], region.box)
                 except Exception:
                     point = None  # Auxiliary: never stops fall handling.
                 if point is not None:
                     points.append(point)
         return tuple(dict.fromkeys(points))
+
+    def _on_furniture(self, times, finding):
+        """Every box rests clearly above the floor and no fall was seen; else as before."""
+        locate3d = getattr(self._place, 'locate3d', None)
+        if locate3d is None or finding.assessment is VideoAssessment.OBSERVED_FALL:
+            return False
+        heights = []
+        for region in finding.regions:
+            if region.frame_index >= len(times):
+                continue
+            left, top, right, bottom = region.box
+            band = (left, bottom - (bottom - top) * SUPPORT_BAND, right, bottom)
+            try:
+                spot = locate3d(times[region.frame_index], band)
+            except Exception:
+                spot = None
+            if spot is None:
+                return False  # Not measured: a fall cannot be ruled out.
+            heights.append(spot[2])
+        if not heights or min(heights) <= FURNITURE_HEIGHT_M:
+            return False
+        if self._place_log is not None:
+            try:
+                self._place_log(f'fall place: Cloud box rests {min(heights) * 100:.0f} cm above '
+                                'the floor, on a bed or sofa: not a fall case')
+            except Exception:
+                pass
+        return True
+
+    def _log_place(self, label, spot):
+        if self._place_log is None or spot is None or len(spot) != 3:
+            return
+        try:
+            self._place_log(f'fall place: {label} at map ({spot[0]:.2f}, {spot[1]:.2f}), '
+                            f'{spot[2] * 100:.0f} cm above the floor')
+        except Exception:
+            pass  # A log line never stops fall handling.
+
+    def _log_pose_place(self, incident):
+        locate3d_near = getattr(self._place, 'locate3d_near', None)
+        latest = self._subject_evidence.latest(incident.subject_key)
+        if locate3d_near is None or latest is None or latest[2].box is None:
+            return
+        try:
+            spot = locate3d_near(latest[0], latest[2].box)
+        except Exception:
+            return
+        self._log_place(f'Pose case {incident.incident_id[:8]}', spot)
 
     def _scene_case_for(self, times, boxes, points, request_id):
         """The open scene case this finding continues, or None for a new case."""

@@ -49,9 +49,13 @@ def defaults():
         # holds 0.6 m from a person with it (the fall approach stops 1 m away).
         'fall_depth_aligned_to_rgb': 'true',
         'fall_depth_camera_info_topic': '/depth_cam/rgb0/camera_info',
-        # Floor to optical centre: URDF camera_z 0.0919 above base_link + 0.028.
-        'fall_camera_height_m': '0.12',
-        'fall_camera_pitch_rad': '0.0',
+        # The camera mount measured against the floor on the robot (2026-10-09,
+        # twice: 11.5/11.6 cm, 1.6 degrees down, left side 1.6 degrees low). The
+        # model says 12.0 cm and level; Pose floor heights use these values and
+        # the monitor's map places are corrected by the difference.
+        'fall_camera_height_m': '0.116',
+        'fall_camera_pitch_rad': '0.028',
+        'fall_camera_roll_rad': '-0.028',
         # Drive 1 m in front of an uncertain suspicion before asking. Needs the
         # depth switch for map points; without a point it asks where it stands.
         'fall_approach': 'true',

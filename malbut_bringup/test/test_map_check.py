@@ -1,4 +1,4 @@
-from malbut_bringup.map_check import MapCheck, message_match, result_match
+from malbut_bringup.map_check import can_relocalize, MapCheck, message_match, result_match
 
 
 HOME = '/maps/home.yaml'
@@ -146,3 +146,16 @@ def test_the_blank_map_and_mapping_are_not_judged():
     view, _ = check.update(0.0, running=False, ready=False, localization={}, saved=False,
                            system={}, results=[])
     assert view == {'phase': None}
+
+
+def test_a_startup_without_a_pose_can_still_relocalize():
+    """Full readiness needs the map pose; waiting for it only kept the retry from running."""
+    pose_only = ['TF:map->base_footprint (set initial pose)', 'TF:scan->map@stamp']
+    assert can_relocalize({'ready': True})
+    assert can_relocalize({'state': 'RUNNING', 'ready': False, 'waiting': pose_only})
+    assert not can_relocalize({'state': 'RUNNING', 'ready': False,
+                               'waiting': [*pose_only, 'Action:/spin']})
+    assert not can_relocalize({'state': 'RUNNING', 'ready': False,
+                               'waiting': ['manager: Action server startup']})
+    assert not can_relocalize({'state': 'STARTING', 'ready': False, 'waiting': pose_only})
+    assert not can_relocalize({'state': 'RUNNING', 'ready': False, 'waiting': []})

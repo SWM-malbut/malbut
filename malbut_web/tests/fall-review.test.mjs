@@ -246,6 +246,30 @@ test("missed-fall report is −10/+20 s, recorded only, and limited to the reten
   });
 });
 
+test("a clip the records call playable follows what KVS really holds", async () => {
+  // 2026-10-09: 연속 녹화 was off, the records still said recording and the clip
+  // showed "영상 재생 가능" with nothing in KVS.
+  await withRepo(async ({ h, events, review }) => {
+    const recent = (offset) => new Date(Math.floor(Date.now() / 1000) * 1000 - 300_000 + offset).toISOString();
+    const a = notice();
+    await events.storeFallEvent("robot-a", a);
+    await review.storeFallClip("robot-a", clip({ incidentId: a.incidentId, startAt: recent(-10_000), endAt: recent(20_000) }));
+    await recording(h, "robot-a", recent(-60_000), null);
+    const asked = [];
+    const nothingStored = async (startAt, endAt, recorded) => {
+      asked.push([startAt, endAt, recorded]);
+      return "unavailable";
+    };
+    const detail = await review.getFallIncidentDetail("robot-a", a.incidentId, nothingStored);
+    assert.equal(detail.clips[0].playbackState, "unavailable");
+    assert.deepEqual(asked, [[recent(-10_000), recent(20_000), "available"]]);
+    const listed = await review.listFallIncidentSummaries("robot-a", "all", nothingStored);
+    assert.equal(listed.find((i) => i.incidentId === a.incidentId).sceneState, "unavailable");
+    // Without a check (KVS not configured), the records decide as before.
+    assert.equal((await review.getFallIncidentDetail("robot-a", a.incidentId)).clips[0].playbackState, "available");
+  });
+});
+
 test("detail shows clips, automatic judgments, notifications, all opinions and linked incidents", async () => {
   await withRepo(async ({ h, events, review }) => {
     // Playback state is computed against the real clock: use recent times.
