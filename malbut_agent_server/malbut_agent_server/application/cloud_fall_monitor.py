@@ -669,7 +669,7 @@ class CloudFallMonitor:
         self._running_missions = tuple(capability_ids)
 
     def _approach_target(self, incident):
-        """A map point when a person is not certain there; None asks right away."""
+        """A map point for a fall suspicion; None asks from the current position."""
         if not self.approach_enabled or self._place is None:
             return None
         if incident.subject_key is None:
@@ -678,8 +678,6 @@ class CloudFallMonitor:
         if latest is None or latest[2].box is None:
             return None
         stamp, _, pose = latest
-        if pose.strong is True and pose.association_usable:
-            return None  # A clear Pose person: no need to look closer.
         try:
             return self._place.locate_near(stamp, pose.box)
         except Exception:
