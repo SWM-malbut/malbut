@@ -73,17 +73,9 @@ class SpeechMissionPolicy:
         )
 
 
-def configure_speech_missions(runtime, *, navigation_enabled=False):
-    """Explicitly enable Manager proposals on this speech runtime only.
-
-    The caller must supply an actual named-target resolver before enabling
-    navigation. No ROS object, hardware state, or execution adapter is created.
-    ``runtime.speech_mission_tools`` is the allowed subset for voice requests.
-    """
-    if type(navigation_enabled) is not bool:
-        raise TypeError('navigation_enabled must be a boolean')
-    enabled = tuple(name for name in SPEECH_MISSION_TOOLS
-                    if navigation_enabled or name != 'request_navigation')
+def configure_speech_missions(runtime):
+    """Enable Manager proposals on speech; applied rooms gate navigation per turn."""
+    enabled = tuple(SPEECH_MISSION_TOOLS)
     registry = runtime.capability_registry
     entries = []
     for name in TOOL_SPECS:

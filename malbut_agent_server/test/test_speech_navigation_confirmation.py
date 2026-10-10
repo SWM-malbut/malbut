@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import sqlite3
 
 import pytest
-import yaml
 
 from malbut_agent_server import speech_dialogue
 from malbut_agent_server.config import Settings
@@ -14,7 +13,7 @@ from malbut_agent_server.schemas import AgentDecision, ProviderResult
 from malbut_agent_server.speech_dialogue import DialogueWorker
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 from malbut_agent_server.speech_missions import SpeechMissions
-from malbut_agent_server.speech_navigation import NavigationTargets
+from navigation_user_map import rewrite, rooms, write_user_map
 from test_speech_mission_dialogue import Manager, collect
 
 
@@ -44,23 +43,15 @@ class Provider:
 def navigation(tmp_path, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(speech_dialogue, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
-    (tmp_path / 'home.pgm').write_bytes(b'P5\n1 1\n255\n\xff')
-    selected = tmp_path / 'home.yaml'
-    selected.write_text('image: home.pgm\nresolution: 0.05\n', encoding='utf-8')
-    config = tmp_path / 'targets.yaml'
-    catalog = {
-        'map': str(selected), 'frame_id': 'map',
-        'locations': {'거실': {'x': 1.25, 'y': -2.5, 'yaw': 0}},
-    }
-    config.write_text(yaml.safe_dump(catalog, allow_unicode=True), encoding='utf-8')
+    config, selected, _, catalog = write_user_map(tmp_path)
     manager, provider = Manager(), Provider()
-    missions = SpeechMissions(manager, NavigationTargets(config))
+    missions = SpeechMissions(manager)
     missions.observe_localization({'mode': 'LOCALIZATION', 'map': str(selected)})
 
     def factory():
         runtime = build_orchestrator(Settings(database_path=str(tmp_path / 'dialogue.db')))
         runtime.provider = provider
-        configure_speech_missions(runtime, navigation_enabled=True)
+        configure_speech_missions(runtime)
         provider.runtimes.append(runtime)
         return runtime
 
@@ -135,8 +126,8 @@ def test_stale_or_absent_question_cannot_authorize_generic_answer(navigation, in
         run.missions.observe_localization({'mode': 'SWITCHING', 'map': str(run.selected)})
         run.missions.observe_localization({'mode': 'LOCALIZATION', 'map': str(run.selected)})
     elif invalidation == 'catalog_change':
-        run.catalog['locations']['거실']['x'] = 9
-        run.config.write_text(yaml.safe_dump(run.catalog, allow_unicode=True), encoding='utf-8')
+        rooms(run.catalog)[0]['properties']['representative_point'][0] = 9
+        rewrite(run.config, run.catalog)
     turn(run, '새 대화 시작하자. 응' if invalidation == 'new_conversation' else '응')
     assert run.provider.requests[-1].navigation_confirmation == ''
     assert run.manager.calls == []
@@ -151,8 +142,8 @@ def test_confirmation_is_rechecked_at_dispatch(navigation, change):
     if change == 'expiry':
         run.clock[0] += 31
     elif change == 'catalog':
-        run.catalog['locations']['거실']['x'] = 9
-        run.config.write_text(yaml.safe_dump(run.catalog, allow_unicode=True), encoding='utf-8')
+        rooms(run.catalog)[0]['properties']['representative_point'][0] = 9
+        rewrite(run.config, run.catalog)
     else:
         turn(run, '오늘 뭐 했어')
     run.worker.publish_reply(answer, lambda text: True)
@@ -227,4 +218,23 @@ def test_failed_next_turn_still_consumes_confirmation(navigation):
         store.resume_or_create = resume
     turn(run, '응')
     assert run.provider.requests[-1].navigation_confirmation == ''
+    assert run.manager.calls == []
+
+
+@pytest.mark.parametrize('change', ['rooms', 'map'])
+def test_map_or_web_room_changes_during_inference_do_not_rebind_the_old_request(navigation, change):
+    run = navigation
+    run.provider.release = Event()
+    assert run.worker.submit('in-flight', '거실로 가')
+    assert run.provider.entered.wait(5)
+    if change == 'rooms':
+        rooms(run.catalog)[0]['properties']['representative_point'][0] = 3
+        rewrite(run.config, run.catalog)
+    else:
+        _, other, _, _ = write_user_map(run.selected.parent, map_name='other')
+        run.missions.observe_localization({'mode': 'LOCALIZATION', 'map': str(other)})
+    run.provider.release.set()
+    reply = collect(run.worker)
+    assert '변경' in reply['text']
+    run.worker.publish_reply(reply, lambda text: True)
     assert run.manager.calls == []

@@ -28,7 +28,6 @@ from malbut_agent_server.speech_receiver import (
 from malbut_agent_server.weather_query import ManagerWeatherQuery
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 from malbut_agent_server.speech_missions import SpeechMissions
-from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.ros_situation import (
     SituationActionServer, build_situation_factory,
 )
@@ -49,7 +48,7 @@ def create_communication_node(
     dialogue_settings=None, dialogue_factory=None,
     weather_query_timeout_s=20.0,
     situation_factory=None,
-    enable_manager_commands=False, navigation_targets=None,
+    enable_manager_commands=False,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
@@ -114,21 +113,20 @@ def create_communication_node(
 
                     self._foreground_cancel = ForegroundCancellation(self)
                     self.speech_missions = SpeechMissions(
-                        self.missions, navigation_targets=navigation_targets,
+                        self.missions,
                         cancel_foreground=self._foreground_cancel,
                     )
-                    if navigation_targets is not None:
-                        from std_msgs.msg import String
+                    from std_msgs.msg import String
 
-                        state_qos = QoSProfile(depth=1)
-                        state_qos.reliability = ReliabilityPolicy.RELIABLE
-                        state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-                        self.create_subscription(
-                            String, '/malbut/localization/state',
-                            lambda message: self.speech_missions.observe_localization(
-                                message.data),
-                            state_qos,
-                        )
+                    state_qos = QoSProfile(depth=1)
+                    state_qos.reliability = ReliabilityPolicy.RELIABLE
+                    state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+                    self.create_subscription(
+                        String, '/malbut/localization/state',
+                        lambda message: self.speech_missions.observe_localization(
+                            message.data),
+                        state_qos,
+                    )
                 self.weather_query = ManagerWeatherQuery(
                     self.missions, timeout_s=weather_query_timeout_s,
                 )
@@ -141,9 +139,7 @@ def create_communication_node(
                     runtime.weather_executor = self.weather_query.execute
                     runtime.weather_location_executor = self.weather_query.set_location
                     if self.speech_missions is not None:
-                        configure_speech_missions(
-                            runtime, navigation_enabled=navigation_targets is not None,
-                        )
+                        configure_speech_missions(runtime)
                     return runtime
 
                 self.dialogue = DialogueWorker(
@@ -500,15 +496,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--user-id', default=DEFAULT_SPEECH_USER)
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--enable-manager-commands', action='store_true')
-    parser.add_argument('--navigation-targets', default='')
     args, ros_args = parser.parse_known_args(argv)
     try:
         settings = dialogue_settings_from_args(args)
-        targets = NavigationTargets(args.navigation_targets) if args.navigation_targets else None
-        if targets is not None and not args.enable_manager_commands:
-            raise ValueError('navigation targets require Manager commands')
-        if targets is not None and not Path(args.navigation_targets).expanduser().is_file():
-            raise ValueError('navigation target file does not exist')
     except (ValueError, OSError):
         print('Invalid speech dialogue settings. Check provider and paths.',
               file=sys.stderr)
@@ -534,7 +524,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             goal_response_timeout_s=args.goal_response_timeout_s,
             dialogue_settings=settings,
             enable_manager_commands=args.enable_manager_commands,
-            navigation_targets=targets,
         )
         executor.add_node(node)
         node.get_logger().info(

@@ -79,7 +79,7 @@ class VoiceLabGraph:
         self.speech = []
         self.goals = []
         self.directory = None
-        self.targets_path = None
+        self.user_map_paths = {}
         self.map_paths = {}
         self.agent = None
         self.manager = None
@@ -133,7 +133,6 @@ class VoiceLabGraph:
         from std_msgs.msg import String
         from malbut_agent_server.factory import build_orchestrator
         from malbut_agent_server.ros_communication import create_communication_node
-        from malbut_agent_server.speech_navigation import NavigationTargets
         from malbut_system_manager.system_manager_node import SystemManagerNode
 
         if rclpy.ok():
@@ -199,8 +198,6 @@ class VoiceLabGraph:
                 speech_db_path=str(self.directory / 'receipts.sqlite3'),
                 dialogue_settings=settings, dialogue_factory=runtime_factory,
                 enable_manager_commands=True,
-                navigation_targets=(NavigationTargets(self.targets_path)
-                                    if navigation_enabled else None),
                 on_event=self._mission_event,
             )
             publish_reply = self.agent.dialogue.publish_reply
@@ -255,15 +252,22 @@ class VoiceLabGraph:
                 'negate': 0, 'occupied_thresh': 0.65, 'free_thresh': 0.196,
             }))
             self.map_paths[name] = str(path)
-        self.targets_path = self.directory / 'voice-targets.yaml'
-        self.targets_path.write_text(yaml.safe_dump({
-            'map': self.map_paths['home'], 'frame_id': 'map',
-            'locations': {
-                '거실': {'x': 1.0, 'y': 1.0, 'yaw': 0.0},
-                '주방': {'x': 2.0, 'y': 1.0, 'yaw': 0.0},
-                '현관': {'x': 1.0, 'y': 2.0, 'yaw': math.pi / 2},
-            },
-        }, allow_unicode=True))
+        from malbut_agent_server.speech_navigation import NavigationTargets
+
+        for name, selected in self.map_paths.items():
+            path = Path(selected)
+            self.user_map_paths[name] = path.with_suffix('.user-map.geojson')
+            features = ([{
+                'type': 'Feature',
+                'properties': {'role': 'room', 'name': label, 'representative_point': point},
+            } for label, point in (('거실', [1.0, 1.0]), ('주방', [2.0, 1.0]),
+                                   ('현관', [1.0, 2.0]))] if name == 'home' else [])
+            self.user_map_paths[name].write_text(json.dumps({
+                'type': 'FeatureCollection', 'format': 'malbut-user-map-v1',
+                'map_id': 'test-' + name, 'frame_id': 'map',
+                'map_revision': NavigationTargets._map_binding(path)[2],
+                'features': features,
+            }, ensure_ascii=False))
 
     def _wait_for_actuators(self):
         from rclpy.action import ActionClient
@@ -358,9 +362,8 @@ class VoiceLabGraph:
         path = None if variant == 'none' else self.map_paths[variant]
         payload = {'mode': mode, 'map': path, 'message': 'synthetic laboratory map'}
         self._localization.publish(self._state_type(data=json.dumps(payload)))
-        if self.navigation_enabled:
-            self._wait(lambda: self.agent.speech_missions._localization_identity == (mode, path),
-                       'Agent did not observe synthetic map state')
+        self._wait(lambda: self.agent.speech_missions._localization_identity == (mode, path),
+                   'Agent did not observe synthetic map state')
         self._emit('system', kind='map', **payload)
         return payload
 

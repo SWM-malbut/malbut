@@ -10,6 +10,7 @@ import time
 import unicodedata
 
 from malbut_agent_server.mission_speech import event_speech
+from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
 
 
@@ -23,7 +24,6 @@ _CAPABILITIES = {
     'request_recovery': 'recovery',
 }
 _TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELED', 'REJECTED', 'UNAVAILABLE'}
-_NAV_UNAVAILABLE = '목적지 이동 설정을 확인할 수 없어 이동하지 않았어요.'
 _MAP_UNAVAILABLE = '사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.'
 _NAV_CHANGED = '지도나 목적지 설정이 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
 _UNKNOWN = '실행 요청의 상태를 확인할 수 없어요. 시작 요청을 다시 보내지는 않았어요.'
@@ -58,7 +58,7 @@ class SpeechMissions:
     """Limit voice execution to fixed capabilities and retain uncertain Goals.
 
     Construction and dispatch belong to the ROS owner. Preparation may run on
-    the dialogue worker: it reads local destination configuration but never
+    the dialogue worker: it reads the active map's applied rooms but never
     contacts Manager. Ownership and once-only dispatch records are local to
     this process, matching ManagerClient's lifecycle.
     """
@@ -68,7 +68,7 @@ class SpeechMissions:
         """Bind an existing Manager client without creating ROS entities."""
         self._manager = manager
         self._cancel_foreground = cancel_foreground
-        self._targets = navigation_targets
+        self._targets = navigation_targets if navigation_targets is not None else NavigationTargets()
         self._clock = clock
         self._owner = get_ident()
         self._issuer = object()
@@ -117,8 +117,6 @@ class SpeechMissions:
     def navigation_locations(self):
         """Expose only validated names on the currently selected map."""
         with self._lock:
-            if self._targets is None:
-                return None
             try:
                 return self._targets.names(self._active_map)
             except (OSError, ValueError):
@@ -194,8 +192,6 @@ class SpeechMissions:
                     location=location, map_path=self._active_map or '',
                     map_generation=self._map_generation,
                 )
-                if self._targets is None:
-                    return self._blocked(fields, _NAV_UNAVAILABLE)
                 if self._active_map is None:
                     return self._blocked(fields, _MAP_UNAVAILABLE)
                 try:

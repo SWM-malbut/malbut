@@ -52,45 +52,33 @@ Behavior Tree·기능 ID를 모델이 정할 수 없다. 상대 이동(앞으로
 
 ## 설정
 
-실로봇 `robot.launch.py`의 `speech_manager_commands` 기본값은 `true`다.
+실로봇 `bringup.launch.py`의 `speech_manager_commands` 기본값은 `true`다.
 `speech.launch.py`에서는 `manager_commands`에 해당한다. 단독
 `agent_communication`은 기존 동작을 유지하며 `--enable-manager-commands`를
 명시해야 한다. `--check`는 실행 노드·모델·Manager를 호출하지 않는다.
 
-장소 이동에는 `speech_navigation_targets:=/절대/경로/voice-targets.yaml`
-(단독 speech launch: `navigation_targets`, CLI: `--navigation-targets`)을 지정한다.
-미지정 시 장소 이동을 제외한 도구를 제공한다. 실제 지도에 확인된 목적지를
-관리자가 아래 형식으로 작성한다. 다음 좌표는 형식 설명용 예시이며 실제 장소가 아니다.
+장소 이동은 별도 목적지 파일이나 실행 인자가 필요하지 않다.
+Agent는 `/malbut/localization/state`의 `LOCALIZATION` 상태에서 현재 선택된
+지도 YAML을 확인하고, 해당 지도 옆의 `*.user-map.geojson`을 매 발화마다 읽는다.
+웹에서 방을 설정하면 서버의 `robot_semantic_drafts`에 초안이 저장되고,
+로봇이 `rooms_save`를 적용한 뒤 이 User Map에 반영된다. 서버의 미적용 초안은
+음성 이동에 사용하지 않는다. 지도 전환과 적용된 방 이름·좌표 수정은
+Agent 재시작 없이 다음 발화에 반영된다.
 
-```yaml
-map: /absolute/path/to/selected-map.yaml
-frame_id: map
-locations:
-  거실:
-    x: 1.25
-    y: -0.5
-    yaw: 0.0
-```
+`role: room` Feature의 이름만 LLM에 제공하고, 모델이 선택한 방의
+`properties.representative_point`를 서버에서 읽어 `map` 좌표계의 x, y로 변환한다.
+방 문서에는 도착 방향이 없으므로 yaw는 0으로 요청한다. 모델은 좌표를 만들지 않는다.
+방 이름은 공백 정리와 Unicode NFC 정규화 후 비교하며, 중복 이름은 거부한다.
+저장된 대표 좌표가 없으면 도형의 중심이나 다른 기본 좌표로 대체하지 않는다.
+User Map의 `map_revision`이 실제 지도 이미지·해상도·원점·점유 해석과 맞지 않거나,
+활성 지도·적용된 방을 확인할 수 없으면 이동하지 않는다.
 
-`map`은 Manager가 선택한 Nav2 지도 YAML의 절대 경로와 일치해야 한다.
-`yaw`는 라디안이다. 모델이 제안한 장소 이름은 공백 정리와 Unicode NFC 정규화 후
-등록 이름과 정확히 일치해야 하며 중복 이름은 거부한다. 원문과 등록 이름의 유사성 검사는
-이 제안에 확인 질문이 필요한지를 결정하고, 좌표 조회는 항상 등록된 정확한 이름으로 수행한다.
-이름·좌표·지도 파일이 잘못됐거나
-`/malbut/localization/state`가 `LOCALIZATION` 상태가 아니면 이동하지 않는다.
-시뮬레이션의 방 fixture나 금지 구역 중심점을 실제 목적지로 사용하지 않는다.
-
-목적지를 준비할 때와 Manager 전송 직전에 설정·지도 YAML·지도 이미지의
-해시를 비교한다. 지도 전환, 목적지 변경, 만료, 기억 변경, 대화 변경,
-상황 확인 대화에 의한 선점이 발생하면 아직 보내지 않은 요청을 폐기한다.
-장소 파일을 지정했다는 것만으로 실제 위치 추정이나 주행 가능성을 보장하지 않는다.
-기존 Manager와 하위 기능의 실행 검사 및 로봇 안전 제어가 계속 적용된다.
-
-구현에서는 원문에 정확한 등록 이름이 있으면 이를 우선하고, 그렇지 않으면 한글을
-Unicode NFD 자모로 나누어 이름 유사도를 비교한다. 유사도 0.8 이상이며 다음 후보와의
-차이가 0.15 이상인 경우에만 비슷한 이름으로 인정한다. 이 수치는 장소 후보 비교에만
-사용하며 실행 의도나 긍정·부정 답변을 판정하는 규칙은 아니다. 모든 오탈자를 자동 보정한다고
-보장하지 않는다. 확인을 통과해도 지도·좌표·전송 직전의 조건 검사는 계속 적용한다.
+LLM 응답을 기다리는 동안, 목적지를 준비한 뒤, 확인 대화 중에도
+지도 전환이나 User Map·지도 YAML·지도 이미지 변경을 재검증한다.
+변경, 만료, 기억 변경, 대화 변경, 상황 확인 대화에 의한 선점이 발생하면
+아직 보내지 않은 요청을 폐기한다. 대표 좌표 조회만으로 실제 위치 추정이나
+경로의 주행 가능성을 보장하지 않는다. 기존 Manager·Nav2의 실행 검사와
+로봇 안전 제어가 계속 적용된다.
 
 ## 결과·취소·중복
 

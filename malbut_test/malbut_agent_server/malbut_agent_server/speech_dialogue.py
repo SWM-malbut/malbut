@@ -32,6 +32,7 @@ MEMORY_CHANGED_RESPONSE = (
 MAX_INTERRUPTION_IDS = 128
 MAX_SPEECH_ID_LENGTH = 256
 NAVIGATION_CONFIRMATION_SECONDS = 30.0
+NAVIGATION_CHANGED_RESPONSE = '지도나 방 정보가 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
 ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
 NEW_CONVERSATION_REQUESTS = frozenset({
     '새로시작하자', '새로시작해', '새로시작해줘', '새로시작해주세요',
@@ -411,6 +412,9 @@ class DialogueWorker:
                     if (confirmation is not None
                             and confirmation.proposal.location not in (locations or ())):
                         confirmation = None
+                    navigation_binding = (self._missions.prepare(
+                        request_id, 'request_navigation', {'location': locations[0]},
+                    ) if locations else None)
                     request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
@@ -430,10 +434,15 @@ class DialogueWorker:
                     )
                     result = self._handle_with_progress(runtime, request, progress)
                     decision = result.decision
-                    if decision.type == 'tool_call' and self._missions is not None:
+                    if (navigation_binding is not None
+                            and result.raw_decision.tool_name == 'request_navigation'
+                            and not self._missions.navigation_matches(navigation_binding)):
+                        reply = self._reply(utterance_id, conversation_id,
+                                            NAVIGATION_CHANGED_RESPONSE, 'answer')
+                    elif decision.type == 'tool_call' and self._missions is not None:
                         reply = self._mission_reply(
                             runtime, request, result, utterance_id, conversation_id,
-                            confirmation=confirmation,
+                            confirmation=confirmation, navigation_binding=navigation_binding,
                         )
                     elif (decision.type not in {
                             'message', 'clarification', 'refusal',
@@ -536,7 +545,7 @@ class DialogueWorker:
         reply._on_publish = activate
 
     def _mission_reply(self, runtime, request, result, utterance_id, conversation_id,
-                       *, confirmation=None):
+                       *, confirmation=None, navigation_binding=None):
         """Bind a committed proposal; send only at the ROS publication boundary."""
         decision = result.decision
         if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
@@ -551,6 +560,9 @@ class DialogueWorker:
         )
 
         def guard():
+            if (decision.tool_name == 'request_navigation' and navigation_binding is not None
+                    and not self._missions.navigation_matches(navigation_binding)):
+                return NAVIGATION_CHANGED_RESPONSE
             if (confirmation is not None and decision.tool_name == 'request_navigation'
                     and proposal.location == confirmation.proposal.location
                     and not self._missions.navigation_matches(confirmation.proposal)):
