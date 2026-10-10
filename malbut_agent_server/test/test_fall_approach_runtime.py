@@ -7,7 +7,7 @@ import pytest
 
 from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
 from malbut_agent_server.domain.fall_monitoring import (
-    CandidateKind, FallCandidate, IncidentState, PersonCheckReply, SubjectCheckState,
+    CandidateKind, CloudFallReply, FallCandidate, IncidentState, PersonCheckReply, SubjectCheckState,
     SubjectFrame, SubjectPose, VideoAssessment,
 )
 from malbut_agent_server.fall_runtime import apply_decision, event_metadata
@@ -79,6 +79,26 @@ def test_an_uncertain_scene_question_carries_the_spot_and_records_the_stopped_pa
     assert event_metadata(question)['approach_target'] == dict(x=2.0, y=1.0, frame='map')
     assert ('approach_started', 'patrol_stopped') in kinds(events)
     replay, = [e for e in monitor.pending_questions() if e.question_id == question.question_id]
+    assert replay.approach_target == SPOT
+
+
+@pytest.mark.parametrize('strong', [True, False, None])
+def test_a_pose_fall_question_requests_approach_regardless_of_person_confidence(strong):
+    monitor, clock, provider = make()
+    monitor._place = Places({BAG: SPOT})
+    monitor.approach_enabled = True
+    enable(monitor)
+    monitor.ingest_rgb(frame(clock.value))
+    monitor.ingest_subject_frame(SubjectFrame(clock.value, (SubjectPose(
+        'pose:0:b', BAG, SubjectCheckState.SUSPECTED, True, strong),), .5))
+    incident_id = monitor.candidate(lying(clock))
+    provider.reply = CloudFallReply(VideoAssessment.SUSPECTED_FALL, '낙상 의심')
+    assert asyncio.run(monitor.run_once())
+    question, = [e for e in monitor.drain_events() if e.kind == 'question_requested']
+    assert question.incident_id == incident_id
+    assert question.subject_key == 'pose:0:b'
+    assert event_metadata(question)['approach_target'] == dict(x=2.0, y=1.0, frame='map')
+    replay, = monitor.pending_questions()
     assert replay.approach_target == SPOT
 
 
