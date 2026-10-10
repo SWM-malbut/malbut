@@ -163,8 +163,6 @@ flowchart LR
     L["LiDAR"] -.->|costmap| D
     L -.->|costmap| T
     L -.->|scan| C
-    P["Depth PointCloud2"] -.->|VoxelLayer costmap| D
-    P -.->|VoxelLayer costmap| T
 ```
 
 자율 주행의 충돌 회피는 DWB·costmap이 맡습니다.
@@ -174,14 +172,14 @@ Collision Monitor는 **수동 조작 경로에만** 연결됩니다.
 | --- | --- |
 | 지도·위치 추정 | map_server·AMCL, 지도 작성 중에는 SLAM Toolbox |
 | 경로·제어 | Navfn planner, DWB controller, velocity smoother |
-| 장애물 | Local·Global costmap에 LiDAR + 기본 VoxelLayer의 Depth 점군 |
+| 장애물 | Local·Global costmap 모두 LiDAR 기반 |
 | 차체 외곽 | 0.277×0.212 m 직사각형 footprint |
 | Zone | 지도별 금지·우회 권장 구역을 keepout 마스크로 적용 |
-| Depth | 기존 영상은 사람 위치 추정에 사용. 점군은 장애물 costmap에만 연결 |
+| Depth | 사람 위치 추정에 사용. Depth costmap·원본 점군 구독은 기본 제외 |
 
 주행 파라미터는 [nav2_params.yaml](config/nav2_params.yaml),
 SLAM 파라미터는 [slam_toolbox.yaml](config/slam_toolbox.yaml)에 있습니다.
-Depth 점군 복원 범위는 [영상·점군 운영 안내](README_OPERATIONS.md#depth-점군-장애물-입력),
+Depth costmap 제외 근거는 [영상·점군 운영 안내](README_OPERATIONS.md#depth-costmap을-쓰지-않는-이유),
 주행 설정 세부사항은 [주행 운영 안내](README_OPERATIONS.md#주행-설정장애물-입력)에 보존했습니다.
 
 ## 영상·음성·낙상 연결
@@ -191,7 +189,7 @@ STT와 홈캠이 XFM 마이크 0번을 함께 쓰는 통합 구성에서는 Puls
 
 | 설정 | 적용 범위 | 목적 |
 | --- | --- | --- |
-| [카메라 DDS XML](config/fastdds_camera.xml) | Bringup이 시작하는 제조사 하드웨어 그룹 | SHM 32 MiB, UDPv4 유지 |
+| [카메라 DDS XML](config/fastdds_camera.xml) | Bringup이 시작하는 제조사 하드웨어 그룹 | SHM 8 MiB, UDPv4 유지 |
 | [Nav2 DDS XML](config/fastdds_nav2.xml) | `nav2_container` 프로세스 | `send_buffers.dynamic=true` |
 | [마이크 입력 공유](malbut_bringup/speech_audio.py) | STT·홈캠 | 같은 입력을 두 소비자에게 전달 |
 | 낙상 전용 Python | Pose 노드 | 준비된 ONNX Runtime에서 `auto`로 CUDA 우선 선택 |

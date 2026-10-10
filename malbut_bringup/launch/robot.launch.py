@@ -40,9 +40,9 @@ def _setup(context):
         hardware_actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
-            # Restore only Nav2's depth obstacle input. Tracking/fall consumers
-            # continue to use their existing RGB/depth images.
-            'point_cloud_enable': 'true',
+            # Aurora's upstream launch accepts this inherited argument. Person
+            # tracking uses the RGB/depth images; nothing needs a point cloud.
+            'point_cloud_enable': 'false',
             # The joystick feeds manual_drive instead of the driver, so its
             # commands can no longer mix with autonomous /cmd_vel output.
             'use_joy': 'false',

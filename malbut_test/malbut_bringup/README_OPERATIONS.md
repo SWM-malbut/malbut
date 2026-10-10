@@ -264,28 +264,31 @@ Bringup은 systemd 서비스·Wi-Fi·DDS 설정을 변경하거나 다른 프로
 드라이버를 유지하려는 경우 `start_hardware:=false`로 외부 실행을 재사용한다.
 같은 Bringup을 두 번 실행하지 않는다.
 
-### Depth 점군 장애물 입력
+### Depth costmap을 쓰지 않는 이유
 
-공식 Aurora launch에 `point_cloud_enable=true`를 전달하고,
-`/depth_cam/depth0/points`를 두 costmap의 기본 `nav2_costmap_2d::VoxelLayer`에만 연결한다.
-LiDAR는 별도 ObstacleLayer로 유지하므로 수평 스캔의 clearing이 낮은 점군 장애물을
-지우지 않는다. SLAM Toolbox·사람 위치 추정·낙상·Collision Monitor의 입력은 바꾸지 않는다.
+2026-09-16 전달받은 실기기 비교에서, 약 8.2MB Depth 점군을 처리 없이
+수신하기만 해도 같은 프로세스의 TF 수신이 최대 2.5초 지연됐다.
+Nav2의 Depth 구독을 제거한 비교에서는 약 4분간 TF 누락이 없었다.
+그래서 **두 costmap은 LiDAR만 사용한다.** LiDAR보다 낮은 장애물은 costmap에 없으며,
+Collision Monitor도 같은 LiDAR를 쓰므로 이를 막지 못한다.
 
-기존 높이·거리 계약을 복원했다. marking은 바닥 위 **0.05–0.20 m**, 거리 **2.5 m**까지,
-clearing은 **-0.05–0.48 m**, 거리 **3.0 m**까지다. 바닥은 장애물로 표시하지 않되
-기존 점군 장애물을 지우는 광선에는 사용한다. 원본 점군 해상도·발행 주기는 낮추지 않는다.
+Depth를 costmap에 다시 넣을 수 있도록 만든 Bringup 내부
+[depth_costmap](depth_costmap/README.md) 플러그인(`DepthVoxelLayer`)은 소스만 남기고
+기본 빌드에서 뺐다(`-DMALBUT_DEPTH_COSTMAP=ON`으로만 빌드). 그래서 로봇 빌드에
+`ros-humble-depth-image-proc`이 필요 없다. 복원 절차와 설정값은 그 README에 있다.
+**RGB·Depth 영상 자체는 계속 사용한다.** 사람 추적이 Depth로 사람 위치를 계산한다.
 
-추가 점군 노드·커스텀 플러그인을 빌드하지 않는다. 대안으로 남겨둔 내부
-[DepthVoxelLayer](depth_costmap/README.md)는 계속 기본 빌드에서 제외한다.
-제조사 중간 launch가 인자를 덮는 버전 또는 외부 드라이버 재사용 시에는
-`ros2 topic info /depth_cam/depth0/points --verbose`로 발행자와 Nav2 구독자를 확인한다.
+하드웨어를 직접 시작할 때는 공식 Aurora launch 인자 `point_cloud_enable=false`를
+전달해 원본 점군 스트림을 끈다(제조사 파일 수정 없음). 제조사 중간 launch가 값을
+덮는 버전이라면 그 설정이 우선하므로, 원본 점군 발행 중단은 실기기에서 확인한다.
+`ros2 topic info /depth_cam/depth0/points --verbose`로 Nav2 구독자가 없는지 볼 수 있다.
 
 ### 카메라 Fast DDS 공유 메모리
 
 Bringup이 제조사 하드웨어(카메라 포함)를 시작할 때 해당 launch 그룹에만
 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`와 `FASTRTPS_DEFAULT_PROFILES_FILE`을 전달한다.
 설정 파일은 설치된 `malbut_bringup/config/fastdds_camera.xml`이며 SHM 세그먼트는
-**32 MiB (33,554,432 bytes)**, 원격 통신용 UDPv4는 유지한다. Nav2·인식·음성 등 다른
+**8 MiB (8,388,608 bytes)**, 원격 통신용 UDPv4는 유지한다. Nav2·인식·음성 등 다른
 그룹의 환경변수는 변경하지 않는다. 이 그룹의 기존 사용자 DDS XML은 대체된다.
 `RMW_FASTRTPS_USE_QOS_FROM_XML=1`은 추가하지 않는다. 토픽 QoS·발행 주기도 바꾸지 않는다.
 
@@ -295,21 +298,6 @@ Bringup이 제조사 하드웨어(카메라 포함)를 시작할 때 해당 laun
 드라이버·CUDA 재컴파일은 필요 없으며, 저장소 적용 시에는 평소 빌드로 새 XML을 설치한다.
 SHM 공간은 DDS participant마다 할당되므로 이 그룹에 속한 다른 하드웨어 프로세스도
 영향을 받는다. 실제 지연 개선 여부는 로봇에서 별도로 확인해야 한다.
-
-2026-10-10 Gazebo Fortress/Humble 비교에서는 실제 640×400 RGB·Depth·점군을
-동시에 발행했다. 네이티브 점군은 6.144 MB이며, 실기기의 과거 약 8.2 MB 조건은
-같은 측정점을 32-byte point layout으로 패딩해 재현했다. 두 기본 VoxelLayer의
-marking/clearing을 실행하고 4/8/16/32 MiB를 비교했으며 16/32 MiB는 반복했다.
-32 MiB는 약 15 Hz, 측정 구간 점군 누락 0%, 송신 직전부터 별도 수신 콜백까지의
-p95 약 6.5 ms였다. 높이 10 cm 장애물은 점군 활성화 시 두 costmap에 나타나고,
-LiDAR만 남기면 사라지는 것을 영상·실제 costmap 셀로 확인했다.
-
-기본 512 KiB 대조군에서는 점군 54.5%가 누락돼 수신이 6.7 Hz로 떨어졌다.
-4 MiB도 이 PC에서는 통과했고 64 MiB의 전달 속도 이점은 없었다.
-32 MiB는 8.2 MB 점군과 영상의 동시 전송에 여유를 주는 선택이지, 실기기의
-이전 TF 지연 원인이 SHM 하나였음을 확정하는 결과는 아니다. 초기 Gazebo 센서
-데이터 몰림에 따른 메모리 증가는 순서를 바꾼 비교에서도 나타나 크기 효과로 단정하지 않는다.
-측정 PC는 Fast DDS 2.6.11이며 Jetson의 2.6.12·실제 드라이버 성능은 별도 확인 대상이다.
 
 공식 근거: [Fast DDS SHM 설정](https://fast-dds.docs.eprosima.com/en/v2.6.11/fastdds/transport/shared_memory/shared_memory.html),
 [Humble RMW XML 설정](https://github.com/ros2/rmw_fastrtps/tree/humble#full-qos-configuration).

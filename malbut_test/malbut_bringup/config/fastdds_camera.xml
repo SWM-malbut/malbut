@@ -1,13 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Camera/vendor hardware only. Allow RGB + depth + 8.2 MB clouds in flight.
-     32 MiB leaves headroom without the unhelpful 64 MiB increase in Gazebo.
-     Keep remote UDP communication and all endpoint QoS defaults. -->
+<!-- Camera/vendor hardware processes only. Keep remote UDP communication. -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <transport_descriptors>
     <transport_descriptor>
       <transport_id>malbut_camera_shm</transport_id>
       <type>SHM</type>
-      <segment_size>33554432</segment_size>
+      <segment_size>8388608</segment_size>
     </transport_descriptor>
     <transport_descriptor>
       <transport_id>malbut_camera_udp</transport_id>

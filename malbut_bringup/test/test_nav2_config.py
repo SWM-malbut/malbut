@@ -180,7 +180,7 @@ def test_only_manual_driving_passes_the_collision_monitor(config):
 
 
 def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
-    """Depth restoration must not replace the separate planar LiDAR layer."""
+    """Retain LiDAR marking/clearing while depth obstacle processing is disabled."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
         assert 'obstacle_layer' in costmap['plugins']
@@ -195,31 +195,16 @@ def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
         assert scan['raytrace_max_range'] == 3.0
 
 
-def test_depth_points_reach_only_native_obstacle_costmaps(config):
-    """Reuse the original height/range contract; no custom projector or consumer."""
+def test_depth_points_are_not_consumed_by_nav2(config):
+    """PointCloud rollback removes the layers and subscriptions, not just marking."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
-        assert costmap['plugins'].index('depth_voxel_layer') < (
-            costmap['plugins'].index('inflation_layer'))
-        layer = costmap['depth_voxel_layer']
-        assert layer['plugin'] == 'nav2_costmap_2d::VoxelLayer'
-        assert layer['enabled'] is True
-        assert layer['publish_voxel_map'] is False
-        assert layer['origin_z'] == 0.0
-        assert layer['z_resolution'] == 0.03 and layer['z_voxels'] == 16
-        assert layer['max_obstacle_height'] == 0.20 and layer['mark_threshold'] == 0
-        assert layer['observation_sources'].split() == ['depth', 'depth_clear']
-        mark, clear = layer['depth'], layer['depth_clear']
-        for source in (mark, clear):
-            assert source['topic'] == '/depth_cam/depth0/points'
-            assert source['data_type'] == 'PointCloud2'
-        assert mark['marking'] is True and mark['clearing'] is False
-        assert (mark['min_obstacle_height'], mark['max_obstacle_height']) == (0.05, 0.20)
-        assert (mark['obstacle_min_range'], mark['obstacle_max_range']) == (0.0, 2.5)
-        assert clear['marking'] is False and clear['clearing'] is True
-        assert (clear['min_obstacle_height'], clear['max_obstacle_height']) == (-0.05, 0.48)
-        assert (clear['raytrace_min_range'], clear['raytrace_max_range']) == (0.0, 3.0)
-    # Collision Monitor still consumes only LiDAR, not a new large cloud stream.
+        expected = ['obstacle_layer', 'inflation_layer']
+        if scope == 'global_costmap':
+            expected.insert(0, 'static_layer')
+        assert costmap['plugins'] == expected
+        assert 'depth_voxel_layer' not in costmap
+    assert '/depth_cam/depth0/points' not in yaml.safe_dump(config)
     assert config['collision_monitor']['ros__parameters']['observation_sources'] == ['scan']
 
 
