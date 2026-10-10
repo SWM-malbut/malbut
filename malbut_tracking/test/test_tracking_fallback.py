@@ -26,6 +26,9 @@ def _fixture(wall_x=None, map_time=20.0):
         'goal_safe_search_radius_m': 1.0,
         'goal_maximum_cost': 80,
         'goal_pullback_step_m': 0.5,
+        'goal_initial_pullback_m': 0.0,
+        'goal_prediction_horizon_s': 0.0,
+        'goal_prediction_maximum_offset_m': 0.15,
         'planner_id': 'GridBased',
         'nav2_planning_timeout_s': 0.2,
         'tracking_controller_id': 'FollowPath',
@@ -36,7 +39,9 @@ def _fixture(wall_x=None, map_time=20.0):
     follower = SimpleNamespace(
         _latest_global_costmap=grid, _now_seconds=lambda: 20.0,
         _settings=settings, _global_frame='map', _tracking_source='camera',
+        _parameters=parameters,
         _last_motion_source_stamp_ns=20_000_000_000,
+        _last_motion_bearing_only=False, _last_motion_velocity=None,
         _line_fallback_pending=True,
         _goal_pullback_m=0.0, _goal_pullback_anchor=None,
         _path_planner=Mock(busy=True), _nav2=Mock(),
@@ -49,6 +54,27 @@ def _fixture(wall_x=None, map_time=20.0):
         ),
     )
     return follower
+
+
+@pytest.mark.parametrize('recovery', [False, True])
+def test_only_current_person_paths_require_the_person_heading(recovery):
+    """Last-seen recovery must not wait to face a person who is no longer there."""
+    params = {'tracking_controller_id': 'FollowPerson',
+              'goal_checker_id': 'person_follow_goal_checker',
+              'recovery_goal_checker_id': 'general_goal_checker'}
+    follower = SimpleNamespace(
+        _nav2=Mock(), _goal_dispatch_count=0,
+        _cancel_tracking_retry=Mock(), _publish_command_trace=Mock(),
+        _publish_track_markers=Mock(), get_logger=Mock(),
+        get_parameter=lambda name: SimpleNamespace(value=params[name]),
+    )
+    path = Path()
+    assert PersonFollowerNode._dispatch_tracking_path(
+        follower, path, Point2D(1.0, 2.0), 1.0, 'test path', 'camera', None,
+        1, 2, recovery,
+    )
+    expected = 'general_goal_checker' if recovery else 'person_follow_goal_checker'
+    follower._nav2.follow_path.assert_called_once_with(path, 'FollowPerson', expected)
 
 
 @pytest.mark.parametrize('wall_x', [None, 7])
@@ -155,6 +181,35 @@ def test_forward_plan_targets_the_person_itself_without_a_costmap():
     assert follower._path_planner.compute.call_args.args[1] == 'GridBased'
     assert follower._path_planner.compute.call_args.kwargs['timeout_seconds'] == 0.2
     follower._warn_periodically.assert_not_called()
+
+
+def test_initial_pullback_plans_before_person_cells_and_failure_advances_it():
+    """The first plan is already pulled back; failure never repeats that goal."""
+    follower = _bind(_fixture(), '_pulled_back_goal', '_raise_goal_pullback')
+    follower._parameters['goal_initial_pullback_m'] = 0.5
+    robot, person = Point2D(0.0, 0.0), Point2D(3.0, 0.0)
+    assert follower._pulled_back_goal(robot, person) == Point2D(2.5, 0.0)
+    assert follower._raise_goal_pullback(person)
+    assert follower._pulled_back_goal(robot, person) == Point2D(2.0, 0.0)
+    assert not follower._raise_goal_pullback(person)
+
+
+def test_predicted_plan_keeps_observed_person_as_execution_distance_anchor():
+    """Lookahead changes the planner input, not the standoff-cut reference."""
+    follower = _bind(_fixture(), '_pulled_back_goal')
+    follower._parameters.update(goal_initial_pullback_m=0.5, goal_prediction_horizon_s=0.3)
+    follower._last_motion_velocity = Point2D(1.0, 0.0)
+    follower._path_planner = Mock(busy=False)
+    follower._on_tracking_path = Mock()
+    robot, person = Point2D(0.0, 0.0), Point2D(3.0, 0.0)
+    decision = decide_follow_motion(robot, person, follower._settings)
+    PersonFollowerNode._request_tracking_path(
+        follower, robot, person, decision, False, 'camera', 20_000_000_000, 1,
+    )
+    pose, _, callback = follower._path_planner.compute.call_args.args
+    assert pose.pose.position.x == pytest.approx(2.65)
+    callback(Path(), 'planned')
+    assert follower._on_tracking_path.call_args.args[2] == person
 
 
 def test_pulled_back_goal_moves_toward_the_robot_and_stops_at_the_standoff():

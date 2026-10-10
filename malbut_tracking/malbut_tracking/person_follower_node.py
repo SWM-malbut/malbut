@@ -40,13 +40,17 @@ from .costmap_tracking import (
 from .follow_policy import (
     directed_recovery_turn,
     FollowCommand,
+    FollowDecision,
     FollowSettings,
     decide_follow_motion,
+    needs_camera_alignment,
 )
 from .geometry import (
+    FollowGoal,
     Point2D,
     distance,
     normalize_angle,
+    predict_follow_target,
     quaternion_to_yaw,
     yaw_to_quaternion,
 )
@@ -288,14 +292,22 @@ class PersonFollowerNode(Node):
         self._last_warning_s: dict[str, float] = {}
         self._cancel_requested_goal = None
 
-        # These timers are canceled while idle and are reset only by the event
-        # that needs them. There is no permanent polling loop in the follower.
+        # Timers are canceled while idle. Only an active follow action performs
+        # periodic motion refresh; delayed jobs and loss remain event-driven.
         self._tracking_plan_timer = self.create_timer(
             _TRACKING_PLAN_PERIOD_NS * 1e-9,
             self._on_tracking_plan_timer,
             clock=Clock(clock_type=ClockType.STEADY_TIME),
         )
         self._tracking_plan_timer.cancel()
+        # Only an active follow action refreshes motion. This also updates
+        # frozen recovery routes as the robot and live obstacles move.
+        self._motion_refresh_timer = self.create_timer(
+            _TRACKING_PLAN_PERIOD_NS * 1e-9,
+            self._on_motion_refresh,
+            clock=Clock(clock_type=ClockType.STEADY_TIME),
+        )
+        self._motion_refresh_timer.cancel()
         self._loss_timer = self.create_timer(
             max(
                 1e-3,
@@ -359,6 +371,7 @@ class PersonFollowerNode(Node):
         self.declare_parameter('planner_id', 'GridBased')
         self.declare_parameter('tracking_controller_id', 'FollowPath')
         self.declare_parameter('goal_checker_id', 'general_goal_checker')
+        self.declare_parameter('recovery_goal_checker_id', 'general_goal_checker')
         self.declare_parameter('spin_action', 'spin')
         # A too-close person is answered with Nav2's BackUp behavior: a straight,
         # footprint-checked reverse along the robot's own axis. It keeps the
@@ -398,18 +411,22 @@ class PersonFollowerNode(Node):
         self.declare_parameter('desired_distance_m', 1.00)
         self.declare_parameter('minimum_distance_m', 0.20)
         self.declare_parameter('distance_tolerance_m', 0.10)
+        self.declare_parameter('distance_hysteresis_m', 0.10)
         self.declare_parameter('alignment_angle_tolerance_rad', 0.10)
+        self.declare_parameter('align_before_translation', True)
         self.declare_parameter('approach_prediction_horizon_s', 0.75)
         self.declare_parameter('approach_speed_threshold_mps', 0.10)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
-        # Nav2's planner owns goal placement: the follower plans to the person's
-        # own position and the planner `tolerance` picks the nearest reachable
-        # cell. These two only bound the camera-ray target and the line fallback.
+        # Nav2 still resolves a blocked destination within its native tolerance.
+        # These two only bound the camera-ray target and checked line fallback.
         self.declare_parameter('goal_maximum_cost', 80)
         self.declare_parameter('goal_safe_search_radius_m', 1.00)
         # After Nav2 reports no path to the person, move the goal this far
         # toward the robot per attempt (one planner tolerance) up to the standoff.
         self.declare_parameter('goal_pullback_step_m', 0.50)
+        self.declare_parameter('goal_initial_pullback_m', 0.50)
+        self.declare_parameter('goal_prediction_horizon_s', 0.30)
+        self.declare_parameter('goal_prediction_maximum_offset_m', 0.15)
         self.declare_parameter('observation_loss_debounce_s', 0.75)
         self.declare_parameter('recovery_direction_minimum_turn_rad', 0.70)
         self.declare_parameter('recovery_waypoint_tolerance_m', 0.08)
@@ -488,6 +505,13 @@ class PersonFollowerNode(Node):
             raise ValueError('camera_rebind_margin_m must be non-negative')
         if float(self.get_parameter('prediction_horizon_s').value) < 0.0:
             raise ValueError('prediction_horizon_s must be non-negative')
+        for name in (
+            'goal_initial_pullback_m', 'goal_prediction_horizon_s',
+            'goal_prediction_maximum_offset_m',
+        ):
+            value = float(self.get_parameter(name).value)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f'{name} must be finite and non-negative')
         if float(
             self.get_parameter('recovery_direction_minimum_turn_rad').value
         ) > math.pi:
@@ -521,6 +545,9 @@ class PersonFollowerNode(Node):
             observation_loss_debounce_s=float(
                 self.get_parameter('observation_loss_debounce_s').value
             ),
+            distance_hysteresis_m=float(
+                self.get_parameter('distance_hysteresis_m').value
+            ),
         )
 
     def _settings_for_goal(self, request) -> FollowSettings:
@@ -539,6 +566,7 @@ class PersonFollowerNode(Node):
             observation_loss_debounce_s=(
                 defaults.observation_loss_debounce_s
             ),
+            distance_hysteresis_m=defaults.distance_hysteresis_m,
         )
         settings.validate()
         return settings
@@ -1366,6 +1394,7 @@ class PersonFollowerNode(Node):
             approach_speed_threshold_mps=float(
                 self.get_parameter('approach_speed_threshold_mps').value
             ),
+            previous_command=self._last_motion_command,
         )
         if decision.command == FollowCommand.NAVIGATE:
             # LiDAR improves close-range response but never initiates forward
@@ -1666,7 +1695,31 @@ class PersonFollowerNode(Node):
             approach_speed_threshold_mps=float(
                 self.get_parameter('approach_speed_threshold_mps').value
             ),
+            previous_command=self._last_motion_command,
         )
+        if (
+            decision.command == FollowCommand.NAVIGATE
+            and bool(self.get_parameter('align_before_translation').value)
+        ):
+            try:
+                _, robot_yaw = self._robot_pose()
+            except TransformException as error:
+                self._path_planner.cancel()
+                self._nav2.cancel()
+                self._warn_periodically('alignment_tf', f'Alignment TF unavailable: {error}')
+                self._schedule_tracking_navigation_retry()
+                return
+            if needs_camera_alignment(
+                decision.goal.yaw, robot_yaw,
+                float(self.get_parameter('camera_horizontal_fov_rad').value),
+                float(self.get_parameter('alignment_angle_tolerance_rad').value),
+                self._last_motion_command == FollowCommand.ALIGN,
+            ):
+                decision = FollowDecision(
+                    FollowCommand.ALIGN,
+                    FollowGoal(robot_position, decision.goal.yaw, decision.goal.target_distance),
+                    'face target before resuming translation',
+                )
         self._current_distance = decision.goal.target_distance
         previous_command = self._last_motion_command
         if decision.command != previous_command:
@@ -1841,10 +1894,14 @@ class PersonFollowerNode(Node):
     def _raise_goal_pullback(self, target_position: Point2D) -> bool:
         """Step the goal one planner tolerance toward the robot; False at the standoff."""
         limit = self._settings.desired_distance_m
-        if self._goal_pullback_m >= limit - 1e-9:
+        current = max(
+            self._goal_pullback_m,
+            min(float(self.get_parameter('goal_initial_pullback_m').value), limit),
+        )
+        if current >= limit - 1e-9:
             return False
         step = float(self.get_parameter('goal_pullback_step_m').value)
-        self._goal_pullback_m = min(limit, self._goal_pullback_m + step)
+        self._goal_pullback_m = min(limit, current + step)
         self._goal_pullback_anchor = target_position
         self.get_logger().info(
             'No Nav2 path to the person; planning to a point '
@@ -1854,7 +1911,14 @@ class PersonFollowerNode(Node):
 
     def _pulled_back_goal(self, robot_position: Point2D, target_position: Point2D) -> Point2D:
         target_distance = distance(robot_position, target_position)
-        pullback = min(self._goal_pullback_m, max(0.0, target_distance - 1e-3))
+        initial = min(
+            float(self.get_parameter('goal_initial_pullback_m').value),
+            self._settings.desired_distance_m,
+        )
+        pullback = min(
+            max(initial, self._goal_pullback_m),
+            max(0.0, target_distance - 1e-3),
+        )
         if pullback <= 0.0:
             return target_position
         fraction = pullback / target_distance
@@ -1867,12 +1931,14 @@ class PersonFollowerNode(Node):
         self, robot_position, target_position, decision, recovery,
         plan_source, plan_source_stamp_ns, plan_generation,
     ) -> None:
-        """Ask Nav2 for a path to the person's own position."""
-        # Nav2's planner tolerance moves a goal inside the person's own obstacle
-        # cells (or furniture) to the nearest reachable cell, and the route is
-        # cut at the standoff afterwards. Only a "no path" result pulls the
-        # goal toward the robot along the line of sight.
-        goal_position = self._pulled_back_goal(robot_position, target_position)
+        """Plan toward a bounded lookahead on the robot's side of the person."""
+        planning_target = predict_follow_target(
+            target_position,
+            None if self._last_motion_bearing_only else self._last_motion_velocity,
+            float(self.get_parameter('goal_prediction_horizon_s').value),
+            float(self.get_parameter('goal_prediction_maximum_offset_m').value),
+        )
+        goal_position = self._pulled_back_goal(robot_position, planning_target)
         final_pose = PoseStamped()
         final_pose.header.frame_id = self._global_frame
         final_pose.header.stamp = self.get_clock().now().to_msg()
@@ -2000,8 +2066,9 @@ class PersonFollowerNode(Node):
         source_stamp_ns: int | None,
         planning_started_ns: int,
         planning_generation: int,
+        recovery_phase: str | None = None,
     ) -> None:
-        """Dispatch a bounded tracking path or full last-seen recovery path."""
+        """Dispatch a standoff route or refresh the current recovery waypoint."""
         planning_finished_ns = _monotonic_nanoseconds()
         expected_state = (
             FollowState.RECOVERING if recovery else FollowState.TRACKING
@@ -2016,7 +2083,7 @@ class PersonFollowerNode(Node):
         if (
             recovery
             and self._recovery_phase
-            != RecoveryPhase.REACHING_LAST_POSITION
+            != (recovery_phase or RecoveryPhase.REACHING_LAST_POSITION)
         ):
             return
         if path is None or not path.poses:
@@ -2041,17 +2108,15 @@ class PersonFollowerNode(Node):
                 self._cancel_tracking_retry()
                 self._plan_latest_observation_if_pending(-1)
             return
-        if recovery:
+        if recovery and target_position is None:
             selected_path = path
             endpoint = path.poses[-1].pose.position
             waypoint_position = Point2D(float(endpoint.x), float(endpoint.y))
             travel_description = 'full recovery path'
             travel_distance_m = path_length_m(selected_path)
         else:
-            # Planning to the person gives Nav2 the complete route around
-            # furniture, but execution must stop at the requested distance.
-            # Previously the full route ran into that distance band until a
-            # later observation canceled it, then often requested a retreat.
+            # Prediction/pullback affect planning only. Stop at the observed
+            # person's requested distance along Nav2's obstacle-aware route.
             selected_path = path_to_standoff(
                 path, target_position, self._settings.desired_distance_m,
             )
@@ -2100,7 +2165,12 @@ class PersonFollowerNode(Node):
         if not self._nav2.follow_path(
             path,
             str(self.get_parameter('tracking_controller_id').value),
-            str(self.get_parameter('goal_checker_id').value),
+            # A frozen last-seen waypoint is not a currently observed person.
+            # Keep its old position-only arrival so searching can start; do
+            # not wait to face a person who has already left that waypoint.
+            str(self.get_parameter(
+                'recovery_goal_checker_id' if recovery else 'goal_checker_id'
+            ).value),
         ):
             return False
         dispatch_ns = _monotonic_nanoseconds()
@@ -2249,6 +2319,22 @@ class PersonFollowerNode(Node):
             return
         self._tracking_plan_pending = False
         self._plan_latest_observation_if_pending(-1)
+
+    def _on_motion_refresh(self) -> None:
+        """Reconsider every active motion state at 5 Hz without queuing work."""
+        if self._active_goal is None:
+            return
+        if self._state == FollowState.TRACKING:
+            # Source age is checked again; a timer cannot create observations.
+            self._plan_latest_observation_if_pending(-1)
+        elif self._state == FollowState.RECOVERING:
+            if self._path_planner.busy or not self._recovery_retry_timer.is_canceled():
+                return
+            if self._recovery_phase == RecoveryPhase.FINISHING_WAYPOINT:
+                if self._last_goal_position is not None:
+                    self._request_recovery_path(self._last_goal_position)
+            elif self._recovery_phase == RecoveryPhase.REACHING_LAST_POSITION:
+                self._request_last_seen_recovery(self._now_seconds())
 
     def _plan_latest_observation_if_pending(
         self,
@@ -2452,7 +2538,7 @@ class PersonFollowerNode(Node):
         self._request_last_seen_recovery(self._now_seconds())
 
     def _request_last_seen_recovery(self, now_s: float) -> None:
-        """Follow one complete Nav2 path to the frozen last target position."""
+        """Refresh the existing full route to the frozen last observed position."""
         self._recovery_phase = RecoveryPhase.REACHING_LAST_POSITION
         self._set_state(FollowState.RECOVERING)
         target_position = self._recovery_last_position
@@ -2462,6 +2548,12 @@ class PersonFollowerNode(Node):
                 'Last person position is unavailable; holding recovery '
                 'instead of starting search before reaching a goal',
             )
+            return
+        self._request_recovery_path(target_position)
+
+    def _request_recovery_path(self, target_position) -> None:
+        """Replan one frozen recovery destination without canceling its route."""
+        if self._path_planner.busy:
             return
         try:
             robot_position, _ = self._robot_pose()
@@ -2478,7 +2570,6 @@ class PersonFollowerNode(Node):
         recovery_pose = PoseStamped()
         recovery_pose.header.frame_id = self._global_frame
         recovery_pose.header.stamp = self.get_clock().now().to_msg()
-        # Nav2's planner tolerance handles a last position inside inflation.
         recovery_pose.pose.position.x = target_position.x
         recovery_pose.pose.position.y = target_position.y
         quaternion = yaw_to_quaternion(target_yaw)
@@ -2488,6 +2579,7 @@ class PersonFollowerNode(Node):
         recovery_pose.pose.orientation.w = quaternion[3]
         self._tracking_source = 'last_seen_recovery'
         planning_started_ns = _monotonic_nanoseconds()
+        phase = self._recovery_phase
         if self._path_planner.compute(
             recovery_pose,
             str(self.get_parameter('planner_id').value),
@@ -2500,6 +2592,7 @@ class PersonFollowerNode(Node):
                 None,
                 planning_started_ns,
                 self._motion_generation,
+                phase,
             ),
             timeout_seconds=float(self.get_parameter('nav2_planning_timeout_s').value),
         ):
@@ -2889,6 +2982,10 @@ class PersonFollowerNode(Node):
             return
         self._reset_tracking_plan_cadence()
         self._state = state
+        if state in {FollowState.TRACKING, FollowState.RECOVERING}:
+            self._motion_refresh_timer.reset()
+        else:
+            self._motion_refresh_timer.cancel()
         self.get_logger().info(f'Follow state: {state}')
         self._publish_status()
 

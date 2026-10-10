@@ -36,12 +36,14 @@ The follower's Action, target selection, fusion, navigation policy and LiDAR
 algorithm are unchanged in this packaging migration. Launch parameter scopes
 are isolated so localizer/LiDAR YAML cannot overwrite the follower YAML.
 
-## Real-robot copy
+## Benchmark
 
-This copy excludes the Gazebo benchmark and its installation targets. The
-follower, localizer, LiDAR processing, and public ROS interfaces are unchanged.
-Use the existing `malbut_bringup` launch for the complete robot startup; see
-[the deployment instructions](../README.md) before launching individual nodes.
+Simulation evaluation is isolated under `malbut_tracking/benchmark`. Select
+one of `test_arena_perimeter`, `test_arena_complex`,
+`small_house_front_door`, or `small_house_living_room` with the `scenario`
+launch argument. `world_file`, `map_file`, `actor_file`, spawn poses, duration,
+and output directory are optional overrides; a different actor SDF can be used
+to evaluate another compatible humanoid appearance without changing code.
 
 ## Runtime contract
 
@@ -83,9 +85,10 @@ depth range and for the short line fallback.
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
 continuously derives targets from current sensor observations. The follower
-asks Nav2 `ComputePathToPose` for a route to the person's own estimated
-position, selecting `FollowPersonAStar` (Navfn with `use_astar: true`) on the
-robot. Other navigation keeps `GridBased`. The person's LiDAR cells and their
+asks Nav2 `ComputePathToPose` for a route to a point pulled 0.5 m from the
+person toward the robot, selecting `FollowPersonAStar` (Navfn with `use_astar: true`) on the
+robot. Other navigation keeps `GridBased`; the Gazebo launch explicitly uses
+its existing `GridBased` Smac 2D A* planner. The person's LiDAR cells and their
 inflation make that goal cell unreachable, so Nav2's planner `tolerance`
 (0.5 m in the robot's `nav2_params.yaml`, `FollowPersonAStar`) ends the route
 at the nearest reachable cell;
@@ -93,19 +96,30 @@ the follower does not search the costmap for a goal itself. It keeps the
 route's prefix up to the first entry into the requested person-distance
 circle, with the endpoint facing the person; it never shortcuts across the
 planned detour. This prevents a full path toward the person's own position
-from continuing until a delayed observation cancels it. When Nav2 answers "no
+from continuing until a delayed observation cancels it. Planning-only velocity
+lookahead is bounded by `goal_prediction_horizon_s` and
+`goal_prediction_maximum_offset_m`; the observed person still anchors range,
+arrival orientation and the path cut. When Nav2 answers "no
 path" (someone sitting inside furniture inflation, deeper than the tolerance),
 the next attempt moves the goal `goal_pullback_step_m` (0.5 m, one planner
 tolerance) along the line of sight toward the robot, repeating up to the
 standoff point; the pullback is dropped once the person moves more than one
-step away or the motion decision changes. The measured distance band still
-decides when to advance or hold. Nav2 owns
+step away or the motion decision changes. After holding,
+`distance_hysteresis_m` widens the release band to prevent repeated
+forward/reverse switching from range noise. The hard minimum is never relaxed.
+Nav2 owns
 both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
 running `FollowPath` goal without an explicit cancel/stop gap.
 Forward/retreat reversals are different: they cancel the old motion and
 invalidate its in-flight plan before planning the newest target. Uncertain
 bearing-only depth cannot leave an earlier retreat running.
+
+Robot tracking selects `FollowPerson` DWB in the existing controller server
+and `person_follow_goal_checker` (0.08 m, 0.35 rad). General navigation still
+uses `FollowPath` and `general_goal_checker`; frozen loss-recovery waypoints
+also keep position-only arrival. Only the tracking forward-preference weight
+is reduced from 40 to 10; physical speed/acceleration limits stay unchanged.
 The follower's TF lookup never waits inside a sensor callback; only the newest pending image is retried
 briefly while the same ROS executor receives TF. Camera work keeps only the
 newest pending detection, and stamped observations older than the existing observation
@@ -211,12 +225,21 @@ velocity. RGB-D continues to own identity, visible map position, and forward
 tracking. If both sensors lose the target, the
 follower finishes the frozen waypoint (or accepts it within the recovery-only
 0.08 m tolerance), turns directly toward the final green sensor target, and
-then requests one complete Nav2 path to that last safe position. It
+then requests the existing full Nav2 route to the last observed position.
+Active translation routes in both recovery phases
+are replanned every 0.2 s without changing the frozen destination; a busy
+planner remains singly owned and failed requests retain retry backoff. It
 finally performs collision-checked 270-degree `Spin` searches in the direction
 of the person's last camera bearing until the target returns or the Action is
 explicitly canceled. A current camera observation immediately updates the
 green target even if its detector ID changed; LiDAR is used to refine its
 range and continue it through temporary camera loss.
+An active-only 0.2 s motion timer also rechecks alignment, hold and retreat
+using fresh robot TF and the original observation timestamp. It cannot extend
+sensor validity, restart an unchanged non-preemptible BackUp, or run while idle.
+With `align_before_translation`, a far target near the camera view edge also
+enters alignment before driving. The entry is the FOV half-angle minus 0.1 rad;
+release uses the existing alignment tolerance, preventing edge chatter.
 The robot advances when the person is beyond the configured distance band and
 holds inside it. When the person approaches too closely, the follower asks
 Nav2's `BackUp` behavior to reverse straight along the robot's own axis at

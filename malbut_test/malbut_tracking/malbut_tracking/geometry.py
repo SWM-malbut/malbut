@@ -71,3 +71,22 @@ def make_follow_goal(
         yaw,
         target_distance,
     )
+
+
+def predict_follow_target(
+    target: Point2D,
+    velocity: Point2D | None,
+    horizon_s: float,
+    maximum_offset_m: float,
+) -> Point2D:
+    """Bound the planning-only lookahead; never alter the observed person."""
+    if horizon_s < 0.0 or maximum_offset_m < 0.0:
+        raise ValueError('prediction bounds must be non-negative')
+    if velocity is None or horizon_s == 0.0 or maximum_offset_m == 0.0:
+        return target
+    dx, dy = velocity.x * horizon_s, velocity.y * horizon_s
+    offset = math.hypot(dx, dy)
+    if not math.isfinite(offset):
+        return target
+    scale = min(1.0, maximum_offset_m / offset) if offset > 0.0 else 1.0
+    return Point2D(target.x + dx * scale, target.y + dy * scale)

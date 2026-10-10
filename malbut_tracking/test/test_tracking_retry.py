@@ -22,8 +22,11 @@ def _follower():
         'sensor_transform_queue_timeout_s': 0.30,
         'approach_prediction_horizon_s': 0.75,
         'approach_speed_threshold_mps': 0.10,
+        'goal_initial_pullback_m': 0.0,
+        'align_before_translation': False,
     }
     node = SimpleNamespace(
+        _parameters=parameters,
         _settings=FollowSettings(1.0, 0.2, 0.1, 0.75),
         _active_goal=object(), _state=FollowState.TRACKING,
         _tracking_source='camera', _lidar_proximity_guard_until_s=0.0,
@@ -34,7 +37,8 @@ def _follower():
         _motion_generation=1,
         _tracking_retry_pending=False, _tracking_retry_context=None,
         _tracking_retry_timer=Mock(), _latest_global_costmap=None,
-        _tracking_plan_timer=Mock(), _tracking_plan_pending=False,
+        _tracking_plan_timer=Mock(), _motion_refresh_timer=Mock(),
+        _tracking_plan_pending=False,
         _next_tracking_plan_ns=0, _line_fallback_immediate=False,
         _line_fallback_pending=False,
         _goal_pullback_m=0.0, _goal_pullback_anchor=None,
@@ -87,6 +91,32 @@ def _observe(node, x=3.0, *, robot_x=0.0, now=20.0, stamp_ns=20_000_000_000):
         Point2D(robot_x, 0.0), Point2D(x, 0.0), now,
         source_stamp_ns=stamp_ns,
     )
+
+
+def test_common_motion_policy_keeps_camera_and_lidar_inside_the_hold_release_band(monkeypatch):
+    """Hysteresis must reach the final decision, not only sensor eligibility."""
+    from dataclasses import replace
+    node, _ = _cadence_follower(monkeypatch)
+    node._settings = replace(node._settings, distance_hysteresis_m=0.1)
+    node._last_motion_command = FollowCommand.ALIGN
+    _observe(node, 1.15)
+    assert node._last_motion_command == FollowCommand.ALIGN
+    node._align_with_target.assert_called_once()
+    node._request_tracking_path.assert_not_called()
+
+
+def test_far_person_near_camera_edge_aligns_before_any_forward_plan(monkeypatch):
+    """A far range is not permission to drive while the camera faces away."""
+    node, _ = _cadence_follower(monkeypatch)
+    node._parameters.update(align_before_translation=True,
+                            camera_horizontal_fov_rad=1.29,
+                            alignment_angle_tolerance_rad=0.35)
+    node._robot_pose.return_value = (Point2D(0.0, 0.0), -0.8)
+    _observe(node)
+    assert node._last_motion_command == FollowCommand.ALIGN
+    node._align_with_target.assert_called_once_with(0.0)
+    node._path_planner.compute.assert_not_called()
+    node._request_tracking_path.assert_not_called()
 
 
 def test_same_and_jittering_observations_keep_first_retry_deadline_and_baseline():
@@ -440,7 +470,7 @@ def test_person_moving_one_planner_step_clears_the_goal_pullback():
     node = _follower()
     node._cancel_tracking_retry()
     node.get_logger = Mock()
-    parameters = {'goal_pullback_step_m': 0.5}
+    parameters = {'goal_pullback_step_m': 0.5, 'goal_initial_pullback_m': 0.0}
     original = node.get_parameter
     node.get_parameter = lambda key: (
         SimpleNamespace(value=parameters[key]) if key in parameters else original(key)

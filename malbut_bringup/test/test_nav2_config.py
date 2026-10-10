@@ -50,14 +50,38 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert planner['GridBased']['use_astar'] is False
 
 
-def test_only_person_following_selects_astar_with_unchanged_safety_settings(config):
-    """Select the A* instance per goal; do not alter general navigation."""
+def test_person_astar_keeps_the_existing_live_obstacle_layers(config):
+    """Dedicated arrival/controller settings do not remove real obstacles."""
     planner = config['planner_server']['ros__parameters']
     assert planner['FollowPersonAStar'] == {**planner['GridBased'], 'use_astar': True}
+    for scope in ('global_costmap', 'local_costmap'):
+        assert 'obstacle_layer' in config[scope][scope]['ros__parameters']['plugins']
     root = Path(__file__).parents[2]
     for package in (root / 'malbut_tracking', root / 'malbut_test/malbut_tracking'):
         following = yaml.safe_load((package / 'config/person_following.yaml').read_text())
         assert following['person_follower']['ros__parameters']['planner_id'] == 'FollowPersonAStar'
+        params = following['person_follower']['ros__parameters']
+        assert params['tracking_controller_id'] == 'FollowPerson'
+        assert params['goal_checker_id'] == 'person_follow_goal_checker'
+        assert params['alignment_angle_tolerance_rad'] == (
+            config['controller_server']['ros__parameters'][
+                'person_follow_goal_checker']['yaw_goal_tolerance'])
+
+
+def test_person_controller_has_its_own_heading_checker_without_new_speed_limits(config):
+    """Only the soft forward preference and final-heading requirement differ."""
+    controller = config['controller_server']['ros__parameters']
+    assert controller['controller_plugins'] == ['FollowPath', 'FollowPerson']
+    assert controller['FollowPerson'] == {
+        **controller['FollowPath'], 'PreferForward.scale': 10.0,
+        'xy_goal_tolerance': 0.08,
+    }
+    assert controller['person_follow_goal_checker'] == {
+        **controller['general_goal_checker'], 'yaw_goal_tolerance': 0.35,
+        'xy_goal_tolerance': 0.08,
+    }
+    assert controller['general_goal_checker']['yaw_goal_tolerance'] == 6.28
+    assert controller['general_goal_checker']['xy_goal_tolerance'] == 0.12
 
 
 def test_robot_costmap_footprint_and_driver_velocity_limits(config):
@@ -182,9 +206,9 @@ def test_goals_stop_within_the_follower_distance_band(config):
 
 
 def test_autonomous_driving_prefers_forward_without_forbidding_reverse(config):
-    """The person follower retreats with BackUp, so one DWB instance is enough."""
+    """General navigation retains its soft forward preference and BackUp."""
     controller = config['controller_server']['ros__parameters']
-    assert controller['controller_plugins'] == ['FollowPath']
+    assert 'FollowPath' in controller['controller_plugins']
     follow = controller['FollowPath']
     assert follow['min_vel_x'] < 0  # Reverse stays possible when forward is blocked.
     assert follow['PreferForward.penalty'] == 1.0

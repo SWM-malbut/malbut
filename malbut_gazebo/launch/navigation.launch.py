@@ -607,7 +607,12 @@ def generate_launch_description():
                 tracking_share, 'config', 'person_following.yaml'
             ),
             # Gazebo's GridBased is already the Smac 2D A* planner.
-            {'use_sim_time': use_sim_time, 'planner_id': 'GridBased'},
+            {'use_sim_time': use_sim_time, 'planner_id': 'GridBased',
+             # This legacy demo retains its own MPPI configuration. The DWB
+             # quality trials use Bringup's complete Nav2 parameters instead.
+             'tracking_controller_id': 'FollowPath',
+             'goal_checker_id': 'general_goal_checker',
+             'alignment_angle_tolerance_rad': 0.10},
         ],
     )
     person_lidar_preprocessor = Node(

@@ -291,7 +291,16 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
         'nav2_collision_monitor::CollisionMonitor')
     for name, item in components.items():
         if not name.startswith('lifecycle_manager'):
-            assert [str(path) for path in item['parameters']] == [params], name
+            assert str(item['parameters'][0]) == params, name
+            if name == 'bt_navigator':
+                directory = ROOT / 'malbut_bringup/config'
+                assert item['parameters'][1] == {
+                    'default_nav_to_pose_bt_xml': str(directory / 'navigate_to_pose.xml'),
+                    'default_nav_through_poses_bt_xml': str(
+                        directory / 'navigate_through_poses.xml'),
+                }
+            else:
+                assert len(item['parameters']) == 1, name
             assert item['remappings']['/scan_raw'] == '/laser_raw', name
     navigation = components['lifecycle_manager_navigation']['parameters'][0]
     localization = components['lifecycle_manager_localization']['parameters'][0]
@@ -338,6 +347,31 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     assert groups[0]['parameters']['amcl']['initial_pose.x'] == 1.5
     groups = container._malbut_recovery_lifecycle({'mode': 'MAPPING'}, None)
     assert [group['manager'] for group in groups] == ['lifecycle_manager_navigation']
+
+
+def test_general_navigation_trees_select_the_position_only_checker():
+    """Two installed checkers must not make ordinary FollowPath goals ambiguous."""
+    for name in ('navigate_to_pose.xml', 'navigate_through_poses.xml'):
+        tree = ElementTree.parse(ROOT / 'malbut_bringup/config' / name)
+        goals = list(tree.iter('FollowPath'))
+        assert len(goals) == 1
+        assert goals[0].attrib['controller_id'] == 'FollowPath'
+        assert goals[0].attrib['goal_checker_id'] == 'general_goal_checker'
+
+
+def test_nav2_preserves_custom_navigation_trees(launch_module, tmp_path):
+    """A supplied tree must not be replaced by the default-checker wiring."""
+    import yaml
+    source = ROOT / 'malbut_bringup/config/nav2_params.yaml'
+    config = yaml.safe_load(source.read_text())
+    bt = config['bt_navigator']['ros__parameters']
+    bt['default_nav_to_pose_bt_xml'] = '/custom/to-pose.xml'
+    bt['default_nav_through_poses_bt_xml'] = '/custom/through-poses.xml'
+    params = tmp_path / 'nav2.yaml'
+    params.write_text(yaml.safe_dump(config))
+    context = _context(launch_module, nav2_params_file=str(params))
+    components = _components(context, _core_actions(launch_module, context))
+    assert len(components['bt_navigator']['parameters']) == 1
 
 
 @pytest.fixture
