@@ -84,8 +84,9 @@ def boundary(request, tmp_path, monkeypatch):
 
 def test_weather_does_not_bypass_missing_manager(boundary):
     if boundary.manager is None:
-        with pytest.raises(RuntimeError):
-            boundary.query.execute('weather')
+        assert boundary.query.execute('weather') == {
+            'status': 'unavailable', 'notice_id': 'get_weather.unavailable',
+        }
         assert boundary.calls == []
     else:
         assert boundary.query.execute('weather')['status'] == 'fresh'
