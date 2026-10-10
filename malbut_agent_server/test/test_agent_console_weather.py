@@ -58,8 +58,8 @@ def test_chat_selects_weather_saves_location_fetches_and_preserves_location(tmp_
     try:
         assert fetches == []
         missing = core.chat('오늘 날씨가 어때?')
-        assert missing['text'] == CATALOG['get_weather.failed.location_required']
-        assert missing['metadata']['decision']['reason'] == 'get_weather.failed.location_required'
+        assert missing['text'] == CATALOG['weather.location_required']
+        assert missing['metadata']['decision']['reason'] == 'weather.location_required'
         assert fetches == []
         assert provider.calls == [
             (['get_weather', 'set_weather_location'], None),

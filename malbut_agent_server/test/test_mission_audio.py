@@ -1,84 +1,65 @@
-"""Verify source-backed failure notices and conservative outcome handling."""
+"""Brief outcomes retain uncertainty without reading internal failure reasons."""
+
+import copy
+from pathlib import Path
 
 import pytest
 import yaml
 
-from malbut_agent_server.mission_audio import CATALOG, notice_for_event
-from malbut_agent_server.mission_audio_cases import LABELS
+from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS, notice_for_event
+from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS
 from malbut_agent_server.mission_speech import MissionAnnouncer
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, SPEECH_MISSION_TOOLS
 
 
-@pytest.mark.parametrize('capability,payload,suffix,phrase', [
-    ('patrol', {'message': 'RGB camera is stale'}, 'camera_stale', '영상이 제때'),
-    ('patrol', {'message': 'Saved /map is not available'}, 'map_missing', '지도를 받지'),
-    ('autoslam', {'message': 'Nav2 map saver failed'}, 'save_failed', '저장하지'),
-    ('get_weather', {'error_code': 'KMA_RATE_LIMITED'}, 'rate_limited', '조회 한도'),
-    ('set_weather_location', {'message': 'LOCATION_SAVE_FAILED'}, 'save_failed', '저장하지'),
-    ('enroll_person', {'message': 'At most five people can be registered'}, 'capacity', '다섯 명'),
-    ('relocalize', {'message': 'no recent LiDAR scan'}, 'scan_stale', '라이다'),
+@pytest.mark.parametrize('capability,reason,payload', [
+    ('patrol', '', 'message: RGB camera is stale'),
+    ('autoslam', '', 'message: Nav2 map saver failed'),
+    ('get_weather', '', 'error_code: KMA_RATE_LIMITED'),
+    ('enroll_person', '', 'message: At most five people can be registered'),
+    ('relocalize', '', 'message: no recent LiDAR scan'),
+    ('patrol', 'mission preempted by a replacement request', 'message: RGB camera is stale'),
+    ('future_capability', 'unrecognized failure', '!!python/object:malicious {}'),
+    ('follow_person', '', 'x' * 16385),
 ])
-def test_known_failure_selects_its_own_recording(capability, payload, suffix, phrase):
-    audio_id, text = notice_for_event(dict(
-        capability_id=capability, kind='failed', result_yaml=yaml.safe_dump(payload)))
-    assert audio_id == f'{capability}.failed.{suffix}'
-    assert phrase in text and CATALOG[audio_id] == text
+def test_failures_share_a_short_clip_and_preserve_diagnostics(capability, reason, payload):
+    event = dict(capability_id=capability, kind='failed', reason=reason, result_yaml=payload)
+    original = copy.deepcopy(event)
+    assert notice_for_event(event) == ('operation.failed', '작업을 완료하지 못했어요.')
+    assert event == original
 
 
-def test_every_registered_capability_has_a_recorded_outcome():
-    from pathlib import Path
+def test_every_registered_capability_has_all_recorded_outcomes():
     root = Path(__file__).resolve().parents[2] / 'malbut_interfaces/capabilities'
     capabilities = {yaml.safe_load(path.read_text())['capability']['id']
                     for path in root.glob('*.yaml')}
-    for capability in capabilities | set(LABELS):
-        # New capabilities can use shared outcome clips until their cases are added.
-        prefix = capability if capability in LABELS else 'operation'
-        for kind in ('succeeded', 'failed', 'canceled', 'unsupported'):
+    for capability in capabilities | {'future_capability'}:
+        for kind, expected in EVENT_AUDIO_IDS.items():
+            if capability == 'set_weather_location' and kind == 'succeeded':
+                expected = 'set_weather_location.succeeded'
             assert notice_for_event(dict(capability_id=capability, kind=kind)) == (
-                f'{prefix}.{kind}', CATALOG[f'{prefix}.{kind}'])
-    for capability in LABELS:
-        assert notice_for_event(dict(capability_id=capability, kind='unknown')) == (
-            f'{capability}.unknown', CATALOG[f'{capability}.unknown'])
+                expected, CATALOG[expected])
     assert CATALOG['operation.unsupported'] == '현재 지원하지 않아요.'
 
 
-def test_every_voice_function_has_a_recorded_start_or_cancellation_receipt():
+def test_voice_functions_keep_one_start_and_cancellation_receipt():
     tools = (set(SPEECH_MISSION_TOOLS) | set(HOMECAM_QUERY_TOOLS)
              | {'get_weather', 'set_weather_location'}) - {'cancel_voice_mission'}
     assert set(FUNCTION_STARTS) == tools
     for tool in tools:
         assert CATALOG[f'function.{tool}.starting'] == FUNCTION_STARTS[tool]
-    assert CATALOG['cancel.foreground_requested'] == (
-        '전면 작업의 취소를 요청했어요. 종료 여부를 확인할게요.')
+    assert CATALOG['cancel.requested'] == '취소를 요청했어요.'
+    assert CATALOG['cancel.unknown'] == '취소 여부를 확인하지 못했어요.'
+    assert CATALOG['operation.canceled'] == '작업이 취소됐어요.'
+    assert not any('.failed.' in key for key in CATALOG)
 
 
-@pytest.mark.parametrize('reason,expected', [
-    ('mission preempted by a replacement request', 'patrol.failed.manager_preempted'),
-    ('unrecognized failure', 'patrol.failed'),
-])
-def test_manager_reason_overrides_child_payload(reason, expected):
-    audio_id, _ = notice_for_event(dict(capability_id='patrol', kind='failed',
-                                       reason=reason, result_yaml='message: RGB camera is stale'))
-    assert audio_id == expected
-
-
-@pytest.mark.parametrize('payload', [
-    'message: RGB camera is stale', '!!python/object:malicious {}',
-    '[unrelated, data]', 'message: [list]', 'message: "quoted RGB camera is stale"',
-    'x' * 16385,
-])
-def test_foreign_or_invalid_result_does_not_invent_a_cause(payload):
-    audio_id, _ = notice_for_event(dict(capability_id='follow_person', kind='failed',
-                                       result_yaml=payload))
-    assert audio_id == 'follow_person.failed'
-
-
-def test_manager_service_error_does_not_become_a_weather_provider_failure():
-    audio_id, text = notice_for_event(dict(capability_id='get_weather', kind='failed',
-                                          reason='Downstream Service is unavailable'))
-    assert audio_id == 'get_weather.failed.manager_service_unavailable'
-    assert '기상청' not in text
+def test_existing_detailed_replies_use_short_recordings():
+    text = '전면 작업의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.'
+    assert CATALOG[TEXT_IDS[text]] == '취소 여부를 확인하지 못했어요.'
+    for text, audio_id in TEXT_IDS.items():
+        assert audio_id in CATALOG
 
 
 def test_announcer_suppresses_routine_events_and_deduplicates_results():
@@ -91,10 +72,10 @@ def test_announcer_suppresses_routine_events_and_deduplicates_results():
                  result_yaml='message: RGB camera is stale')
     assert announcer.handle(dict(event, kind='accepted')) is None
     assert announcer.handle(dict(event, kind='unknown'))
-    assert spoken[-1][1] == 'patrol.unknown'
+    assert spoken[-1][1] == 'operation.unknown'
     assert announcer.handle(event)
     assert announcer.handle(event) is None
-    assert spoken[-1][1] == 'patrol.failed.camera_stale'
+    assert spoken[-1][1] == 'operation.failed'
     assert len(spoken) == 2
 
 

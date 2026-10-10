@@ -105,7 +105,7 @@ def test_manager_failure_never_returns_weather_values(kind):
         query.drain()
         finish(done, thread)
         assert result == {'value': {
-            'status': 'unavailable', 'notice_id': f'get_weather.{kind}',
+            'status': 'unavailable', 'notice_id': 'operation.' + ('failed' if kind == 'rejected' else kind),
         }}
     finally:
         query.close()
@@ -137,7 +137,7 @@ def test_manager_failure_reason_needs_no_child_result():
     try:
         query.drain()
         finish(done, thread)
-        assert result['value']['notice_id'] == 'get_weather.failed.manager_service_unavailable'
+        assert result['value']['notice_id'] == 'operation.failed'
     finally:
         query.close()
 
@@ -208,11 +208,11 @@ def test_only_known_aborted_missing_location_requests_user_input(kind, code, exp
             assert result == {'value': {'status': expected}}
         elif kind == 'failed' and code == 'FETCH_FAILED':
             assert result == {'value': {
-                'status': 'unavailable', 'notice_id': 'get_weather.failed.fetch_failed',
+                'status': 'unavailable', 'notice_id': 'operation.failed',
             }}
         elif kind == 'unknown':
             assert result == {'value': {
-                'status': 'unavailable', 'notice_id': 'get_weather.unknown',
+                'status': 'unavailable', 'notice_id': 'operation.unknown',
             }}
         else:
             assert 'error' in result and 'value' not in result

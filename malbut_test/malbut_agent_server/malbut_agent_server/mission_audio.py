@@ -1,113 +1,58 @@
-"""Select finite prerecorded notices from actual operation outcomes."""
+"""Reuse brief outcomes and a single start announcement for each function."""
 
 import json
-import re
-
-import yaml
 
 from malbut_agent_server.conversation_progress import (
     DELAY_NOTICE, MODEL_RETRY_NOTICE,
     SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
 from malbut_agent_server.function_speech import FUNCTION_STARTS
-from malbut_agent_server.mission_audio_cases import (
-    COMMON_FAILURES, ENDPOINTS, FAILURES, FIXED_REPLIES, LABELS, PREFIX_FAILURES,
-)
+from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
 
 
 CATALOG = {
-    'operation.succeeded': '요청하신 작업이 완료됐어요.',
-    'operation.failed': '작업을 완료하지 못했어요.',
-    'operation.canceled': '작업이 취소됐어요.',
-    'operation.unsupported': '현재 지원하지 않아요.',
+    **NOTICE_TEXTS,
     'conversation.delay': DELAY_NOTICE,
     'conversation.model_retry': MODEL_RETRY_NOTICE,
     'conversation.weather_retry': WEATHER_RETRY_NOTICE,
     'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,
     **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()},
-    **FIXED_REPLIES,
 }
-OUTCOMES = {
-    'succeeded': '요청이 성공 상태로 종료됐어요.',
-    'failed': '작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.',
-    'canceled': '요청이 취소 상태로 종료됐어요.',
-    'unsupported': '기능은 현재 지원하지 않아요.',
-    'rejected': '요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.',
-    'unavailable': '요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.',
-    'unknown': '실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.',
-    'cancel_unknown': '취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.',
-    'cancel_rejected': '취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.',
-    'accepted': '요청을 접수했어요.',
-    'cancel_requested': '취소를 요청했어요. 종료 여부를 확인할게요.',
-    'cancel_accepted': '취소 요청을 접수했어요. 종료 여부를 확인할게요.',
-}
-for _capability, _label in LABELS.items():
-    for _kind, _text in OUTCOMES.items():
-        CATALOG[f'{_capability}.{_kind}'] = f'{_label} {_text}'
-    for _suffix, _, _text in (*COMMON_FAILURES, *FAILURES.get(_capability, ()),
-                              *PREFIX_FAILURES.get(_capability, ())):
-        CATALOG[f'{_capability}.failed.{_suffix}'] = f'{_label}: {_text}'
-    CATALOG[f'{_capability}.failed.manager_action_unavailable'] = (
-        f'{_label}: 기능 실행 서버에 연결하지 못했어요.')
-CATALOG['relocalize.failed.match_insufficient'] = '위치 보정: 라이다 측정과 지도가 충분히 일치하지 않아 위치를 찾지 못했어요.'
-CATALOG['set_weather_location.succeeded'] = '날씨 조회 지역을 저장했어요.'
 TEXT_IDS = {text: audio_id for audio_id, text in CATALOG.items()}
+# Existing detailed command replies use the same concise recording at publication.
+_REPLY_AUDIO_IDS = {
+    '목적지 이동 설정을 확인할 수 없어 이동하지 않았어요.': 'operation.unavailable',
+    '사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.': 'navigation.map_required',
+    '지도나 목적지 설정이 변경되어 이동하지 않았어요. 다시 말씀해 주세요.': 'navigation.changed',
+    '저장된 지도에서 그 목적지를 확인하지 못했어요. 등록된 목적지 이름을 포함해 이동 요청을 다시 말씀해 주세요.': 'navigation.target_missing',
+    '실행 요청의 상태를 확인할 수 없어요. 시작 요청을 다시 보내지는 않았어요.': 'operation.unknown',
+    '요청 조건을 확인할 수 없어 요청을 보내지 않았어요.': 'operation.unavailable',
+    '실행 요청을 보냈어요. 접수 결과를 확인할게요.': 'operation.submitted',
+    '음성으로 요청한 실행 중인 동작이 없어요.': 'cancel.none',
+    '음성으로 요청한 동작의 취소를 요청했어요. 종료 여부를 확인할게요.': 'cancel.requested',
+    '음성으로 요청한 동작의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.': 'cancel.unknown',
+    '전면 작업의 취소를 요청했어요. 종료 여부를 확인할게요.': 'cancel.requested',
+    '현재 실행 중이거나 대기 중인 전면 작업이 없어요.': 'cancel.none',
+    '전면 작업의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.': 'cancel.unknown',
+    '지금 날씨 조회 기능을 사용할 수 없어요.': 'operation.unavailable',
+    '홈캠 정보를 조회하지 못했어요. 잠시 후 다시 요청해 주세요.': 'operation.failed',
+    '지역을 찾지 못했어요. 시·구·동을 더 자세히 알려주세요.': 'weather.location_not_found',
+    '날씨 조회 위치를 저장하지 못했어요. 잠시 후 다시 알려주세요.': 'operation.failed',
+    '날씨를 확인할 지역을 먼저 알려주세요.': 'weather.location_required',
+}
+
+TEXT_IDS.update(_REPLY_AUDIO_IDS)
 
 
 def notice_for_event(event):
-    """Prefer Manager reasons, then that capability's known result fields."""
-    capability, kind = event.get('capability_id'), event.get('kind')
-    if capability not in LABELS:
-        kind = 'failed' if kind in {'rejected', 'unavailable'} else kind
-        audio_id = 'operation.' + str(kind)
-        return _notice(audio_id) if audio_id in CATALOG else None
-    if kind not in OUTCOMES:
+    """Report observed outcomes without narrating opaque implementation errors."""
+    audio_id = EVENT_AUDIO_IDS.get(event.get('kind'))
+    if audio_id is None:
         return None
-    if kind == 'failed':
-        reason = event.get('reason')
-        reason = reason if isinstance(reason, str) else ''
-        payload = {}
-        raw = event.get('result_yaml', '')
-        if isinstance(raw, str) and 0 < len(raw) <= 16384:
-            try:
-                parsed = yaml.safe_load(raw)
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except (yaml.YAMLError, ValueError, RecursionError):
-                pass
-        if reason == f'Action server {ENDPOINTS[capability]} is unavailable':
-            return _notice(f'{capability}.failed.manager_action_unavailable')
-        # Never borrow a child cause when Manager supplied a different reason.
-        candidates = [reason] if reason else [payload.get('error_code'), payload.get('message')]
-        for value in candidates:
-            if not isinstance(value, str) or not value:
-                continue
-            for suffix, expected, _ in (*COMMON_FAILURES, *FAILURES.get(capability, ())):
-                if value == expected:
-                    return _notice(f'{capability}.failed.{suffix}')
-            for suffix, prefix, _ in PREFIX_FAILURES.get(capability, ()):
-                if value.startswith(prefix):
-                    return _notice(f'{capability}.failed.{suffix}')
-            if capability == 'relocalize' and re.fullmatch(
-                    r'(global search requested|no saved pose for this map|'
-                    r'saved pose matched only [0-9]+% of the scan); '
-                    r'global search matched only [0-9]+% of the scan', value):
-                return _notice('relocalize.failed.match_insufficient')
-    return _notice(f'{capability}.{kind}')
-
-
-def _notice(audio_id):
+    if (event.get('capability_id') == 'set_weather_location'
+            and event.get('kind') == 'succeeded'):
+        audio_id = 'set_weather_location.succeeded'
     return audio_id, CATALOG[audio_id]
-
-
-# Direct command responses still use the established transport vocabulary.
-# Map those exact phrases to the same recordings as asynchronous notices.
-from malbut_agent_server.mission_speech import event_speech  # noqa: E402
-for _capability in ('follow_person', 'navigate_to_pose', 'patrol'):
-    for _kind in OUTCOMES:
-        _legacy = event_speech({'capability_id': _capability, 'kind': _kind})
-        if _legacy:
-            TEXT_IDS.setdefault(_legacy, f'{_capability}.{_kind}')
 
 
 if __name__ == '__main__':

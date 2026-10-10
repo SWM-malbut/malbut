@@ -361,9 +361,12 @@ def create_communication_node(
                 published = self.dialogue.publish_reply(
                     response, lambda text: self.say(
                         text, interim=response.get('kind') in {'progress', 'acknowledgement'},
-                        # Keep a quick final reply from dropping its start receipt.
+                        # Prerecorded TTS coalesces waiting/start notices for the
+                        # same utterance and preserves a start before a fast result.
+                        # Keep legacy synthesized receipts on their old correlation.
                         request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
-                                    if response.get('kind') == 'acknowledgement'
+                                    if (response.get('kind') == 'acknowledgement'
+                                        and not prerecorded_audio)
                                     else response.get('utterance_id', ''))))
                 if published is not None:
                     self.get_logger().info(json.dumps({
@@ -403,6 +406,8 @@ def create_communication_node(
         def destroy_node(self):
             """Release communication from the owning thread outside callbacks."""
             self.begin_shutdown()
+            if getattr(self, '_key_health', None) is not None:
+                self._key_health.close()
             if self.executor is not None and self.context.ok():
                 from rclpy.executors import ExternalShutdownException
 

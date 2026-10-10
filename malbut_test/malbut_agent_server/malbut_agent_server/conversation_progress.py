@@ -44,6 +44,8 @@ class RequestProgress:
             if not self.active or self._retried:
                 return False
             self._retried = True
+            if self._started:
+                return True
             self._retry_notice = text
         self._notice(text)
         return True
@@ -60,7 +62,9 @@ class RequestProgress:
     def can_publish(self, text):
         with self._lock:
             return (not self._aborted and text not in self._published_starts
-                    and not (text == DELAY_NOTICE and self._started)
+                    and not (self._started and text in {
+                        DELAY_NOTICE, MODEL_RETRY_NOTICE, WEATHER_RETRY_NOTICE,
+                    })
                     and (self.active or text in FUNCTION_STARTS.values()))
 
     def publish(self, publish, text):
@@ -78,7 +82,7 @@ class RequestProgress:
             # Keep the prerecorded failure notice recognizable by TTS.
             if text == SERVICE_UNAVAILABLE_NOTICE:
                 return text
-            if self._retry_notice is None or self._retry_published:
+            if self._started or self._retry_notice is None or self._retry_published:
                 return text
             self._retry_published = True
             return self._retry_notice.replace('시도할게요.', '시도했어요.') + ' ' + text

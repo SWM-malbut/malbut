@@ -190,10 +190,12 @@ class SystemManagerNode(Node):
             f'{get_package_prefix("slam_toolbox")}'
             '/lib/slam_toolbox/sync_slam_toolbox_node'
         )
+        use_sim_time = bool(self.get_parameter('use_sim_time').value)
         slam = SlamProcess([
             executable, '--ros-args', '-r', '__node:=slam_toolbox',
             '--params-file', params_file,
-            '-p', 'use_sim_time:=false', '-p', f'scan_topic:={scan_topic}',
+            '-p', f'use_sim_time:={str(use_sim_time).lower()}',
+            '-p', f'scan_topic:={scan_topic}',
         ], stop_timeout_s)
         group = ReentrantCallbackGroup()
         controller = LocalizationController(

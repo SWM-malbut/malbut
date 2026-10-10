@@ -74,10 +74,10 @@ class ManagerWeatherQuery:
                     'succeeded', 'failed', 'unavailable', 'rejected', 'unknown'}:
                 raise RuntimeError('Manager weather query did not succeed')
             if result['kind'] != 'succeeded':
+                if capability_id == 'get_weather' and _location_required(result):
+                    return {'status': 'location_required'}
                 from malbut_agent_server.mission_audio import notice_for_event
                 audio_id, _ = notice_for_event(dict(result, capability_id=capability_id))
-                if audio_id == 'get_weather.failed.location_required':
-                    return {'status': 'location_required'}
                 return {'status': 'unavailable', 'notice_id': audio_id}
             raw = result.get('result_yaml')
             if not isinstance(raw, str) or len(raw.encode('utf-8')) > 16384:
@@ -159,6 +159,25 @@ class ManagerWeatherQuery:
                     self._cancels.add(key)
                 pending.result = None
                 pending.ready.set()
+
+
+def _location_required(result):
+    """Keep an actionable missing setting independent of the voice catalog."""
+    if result.get('kind') != 'failed':
+        return False
+    reason = result.get('reason')
+    if reason:
+        return reason == 'LOCATION_REQUIRED'
+    raw = result.get('result_yaml')
+    if not isinstance(raw, str) or len(raw.encode('utf-8')) > 16384:
+        return False
+    import yaml
+
+    try:
+        payload = yaml.safe_load(raw)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return False
+    return isinstance(payload, dict) and payload.get('error_code') == 'LOCATION_REQUIRED'
 
 
 def _label(value):

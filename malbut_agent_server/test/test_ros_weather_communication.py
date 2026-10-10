@@ -407,7 +407,9 @@ def test_weather_start_recording_arrives_before_result_once(ros_weather):
         run.spin_until(lambda: len(run.replies) == 1)
         final = run.speech_messages[-1]
         assert final.request_id == utterance_id and not final.interim
-        assert start.request_id != final.request_id
+        # Prerecorded TTS uses this identity to keep exactly one audible
+        # waiting/start notice while preserving the separate final answer.
+        assert start.request_id == final.request_id
         assert final.audio_id == ''
         run.send('날씨 조회해 줘', utterance_id)
         run.spin_until(lambda: (utterance_id, '날씨 조회해 줘', 'duplicate') in run.receipts)
@@ -433,7 +435,7 @@ def test_missing_location_reaches_agent_through_manager_without_weather_http(sto
     assert yaml.safe_load(event['result_yaml'])['error_code'] == 'LOCATION_REQUIRED'
     assert len(run.provider.calls) == 2
     assert all(call['weather'] is None for call in run.provider.calls)
-    audio_id = 'get_weather.failed.location_required'
+    audio_id = 'weather.location_required'
     assert reply == CATALOG[audio_id]
     assert run.speech_messages[-1].audio_id == audio_id
 
@@ -497,7 +499,7 @@ def test_agent_location_tool_stores_through_real_manager(stored_weather):
     assert run.goals[0][0] == 'set_weather_location'
     assert run.location_queries == ['수원시 우만동']
     assert run.location_store.get() == run.location
-    assert '수원시 우만동' in reply
+    assert reply == '날씨 조회 지역을 저장했어요.'
     assert run.client.calls == 0
 
 
@@ -614,10 +616,10 @@ def test_new_speech_fetches_again_but_duplicate_id_does_not(ros_weather):
 
 
 @pytest.mark.parametrize('failure,expected,notice_id', [
-    ('fetch_error', 'FETCH_FAILED', 'get_weather.failed.fetch_failed'),
-    ('timeout', 'TIMEOUT', 'get_weather.failed.manager_goal_rejected'),
-    ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED', 'get_weather.failed'),
-    ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED', 'get_weather.failed.auth_failed'),
+    ('fetch_error', 'FETCH_FAILED', 'operation.failed'),
+    ('timeout', 'TIMEOUT', 'operation.failed'),
+    ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED', 'operation.failed'),
+    ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED', 'operation.failed'),
 ])
 def test_fetch_failure_and_timeout_reach_manager_as_aborted(
     ros_weather, failure, expected, notice_id,
@@ -710,8 +712,8 @@ def test_missing_manager_or_weather_action_never_falls_back(
     assert run.client.calls == 0
     assert len(run.provider.calls) == 1
     assert run.provider.calls[0]['weather'] is None
-    notice_id = ('get_weather.unavailable' if missing == 'manager'
-                 else 'get_weather.failed.manager_action_unavailable')
+    notice_id = ('operation.unavailable' if missing == 'manager'
+                 else 'operation.failed')
     assert reply == CATALOG[notice_id]
     assert run.speech_messages[-1].audio_id == notice_id
     assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) <= 1

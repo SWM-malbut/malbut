@@ -1,52 +1,28 @@
-"""Describe transport events without inferring physical state."""
+"""Announce observed results briefly, leaving diagnostics in event logs."""
 
 from typing import Callable, Dict, Optional
 
+from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
 
-_LABELS = {
-    'follow_person': '사람 따라가기',
-    'navigate_to_pose': '목적지 이동',
-    'patrol': '순찰',
-}
+
 _PROGRESS = {
-    'PENDING': 'Manager에서 실행을 기다리고 있어요.',
-    'RUNNING': 'Manager가 실행 중인 상태로 알려왔어요.',
-    'CANCELING': 'Manager가 취소를 처리하고 있어요.',
-    'SUSPENDED': 'Manager에서 일시 중단한 상태예요.',
+    'PENDING': '실행을 기다리고 있어요.',
+    'RUNNING': '작업을 진행하고 있어요.',
+    'CANCELING': '취소를 처리하고 있어요.',
+    'SUSPENDED': '작업이 잠시 중단됐어요.',
 }
-_MESSAGES = {
-    'accepted': 'Manager가 요청을 접수했어요.',
-    'rejected': 'Manager가 요청 접수를 거절했어요.',
-    'succeeded': 'Manager가 실행 요청을 성공 상태로 종료했다고 알려왔어요.',
-    'failed': 'Manager가 실행 요청을 실패 상태로 종료했다고 알려왔어요.',
-    'canceled': '실행 요청이 취소 상태로 종료됐어요.',
-    'unknown': '실행 상태를 확인할 수 없어요. 시작 요청을 다시 보내지는 않았어요.',
-    'unavailable': 'Manager에 연결할 수 없어 실행 요청을 보내지 못했어요.',
-    'cancel_requested': '취소를 요청했어요. 종료 여부를 확인할게요.',
-    'cancel_accepted': 'Manager가 취소 요청을 접수했어요. 아직 종료 확인 전이에요.',
-    'cancel_rejected': '취소가 접수되지 않았어요. 실행이 종료된 것으로 판단하지 않을게요.',
-    'cancel_unknown': '취소 접수 여부를 확인할 수 없어요. 종료된 것으로 판단하지 않을게요.',
-}
-_TERMINAL = {'rejected', 'succeeded', 'failed', 'canceled', 'unavailable'}
+_TERMINAL = {'rejected', 'succeeded', 'failed', 'canceled', 'unavailable', 'unsupported'}
 _ANNOUNCED = _TERMINAL | {'unknown', 'cancel_unknown', 'cancel_rejected'}
 
 
 def event_speech(event: Dict) -> Optional[str]:
-    """Describe only the Manager's reported status and supplied reason."""
+    """Use the observed status; do not read internal errors or infer results."""
     kind = event.get('kind')
     if kind == 'progress':
-        message = _PROGRESS.get(event.get('state'))
-    else:
-        message = _MESSAGES.get(kind)
-    if message is None:
-        return None
-    label = _LABELS.get(event.get('capability_id'), '기능 실행')
-    text = f'{label} 요청: {message}'
-    reason = event.get('reason')
-    if (kind == 'failed'
-            and isinstance(reason, str) and reason.strip()):
-        text += ' 전달받은 사유는 다음과 같아요. ' + reason
-    return text
+        return _PROGRESS.get(event.get('state'))
+    if kind == 'succeeded' and event.get('capability_id') == 'set_weather_location':
+        return NOTICE_TEXTS['set_weather_location.succeeded']
+    return NOTICE_TEXTS.get(EVENT_AUDIO_IDS.get(kind))
 
 
 class MissionAnnouncer:

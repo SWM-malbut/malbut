@@ -355,8 +355,7 @@ def test_location_setting_uses_manager_result_without_weather_or_robot_execution
     assert result.raw_decision.tool_name == 'set_weather_location'
     if context['status'] == 'location_set':
         assert result.decision.reason == 'weather_location_saved'
-        assert context['location'] in result.decision.message
-        assert '저장했어요' in result.decision.message
+        assert result.decision.message == '날씨 조회 지역을 저장했어요.'
     else:
         assert result.decision.type == 'clarification'
     assert result.safety.allowed and not result.state_trusted
@@ -380,8 +379,8 @@ def test_missing_saved_location_uses_fixed_notice_without_second_model_call(runt
     runtime.provider = WeatherProvider()
     runtime.weather_executor = lambda _: {'status': 'location_required'}
     result = runtime.handle(request())
-    assert '지역을 먼저 알려주세요' in result.decision.message
-    assert result.decision.reason == 'get_weather.failed.location_required'
+    assert '지역을 알려주세요' in result.decision.message
+    assert result.decision.reason == 'weather.location_required'
     assert len(runtime.provider.calls) == 1
 
 
@@ -455,10 +454,10 @@ def test_lookup_and_answer_failures_are_distinguished_without_repeating_executio
     assert (len(reads), len(child.calls)) == before
 
 
-@pytest.mark.parametrize('suffix', ['failed.rate_limited', 'unavailable', 'rejected', 'unknown'])
-def test_known_weather_failure_keeps_its_reported_cause(runtime, suffix):
+@pytest.mark.parametrize('suffix', ['failed', 'unavailable', 'unknown'])
+def test_weather_failure_uses_a_brief_recording_without_another_model_call(runtime, suffix):
     from malbut_agent_server.mission_audio import CATALOG
-    audio_id = 'get_weather.' + suffix
+    audio_id = 'operation.' + suffix
     runtime.provider = WeatherProvider()
     runtime.weather_executor = lambda _: {
         'status': 'unavailable', 'notice_id': audio_id,

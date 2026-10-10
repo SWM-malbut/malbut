@@ -10,8 +10,13 @@ from test_personal_memory_flow import Flow, pet_fact, proposed
 
 
 @pytest.fixture
-def flow(tmp_path):
+def flow(tmp_path, monkeypatch):
     """Use real consent and transactional commits in an isolated database."""
+    # ROS launch's pytest plugin installs a Logger subclass that disables
+    # propagation. Let caplog observe this test's standard Python diagnostics.
+    monkeypatch.setattr(
+        logging.getLogger('malbut_agent_server.personal_memory'), 'propagate', True,
+    )
     current = Flow(tmp_path / 'quiet-save.sqlite3')
     current.enable()
     yield current

@@ -67,9 +67,27 @@ def test_model_and_weather_share_one_request_retry(failure_first):
         assert len(set(reads)) == (1 if failure_first == 'model' else 2)
         assert notices == ([progress.MODEL_RETRY_NOTICE, FUNCTION_STARTS['get_weather']]
                            if failure_first == 'model' else
-                           [FUNCTION_STARTS['get_weather'], progress.WEATHER_RETRY_NOTICE])
+                           [FUNCTION_STARTS['get_weather']])
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize('notice', [progress.MODEL_RETRY_NOTICE, progress.WEATHER_RETRY_NOTICE])
+@pytest.mark.parametrize('retry_before_start', [False, True])
+def test_function_retry_keeps_one_start_and_an_unmodified_result(notice, retry_before_start):
+    queued, spoken = [], []
+    state = progress.RequestProgress(lambda text, _: queued.append(text))
+    if retry_before_start:
+        assert state.retry(notice)
+    state.start_function('get_weather')
+    if not retry_before_start:
+        assert state.retry(notice)
+    assert not state.retry(notice)
+    for text in queued:
+        state.publish(lambda text: spoken.append(text) or True, text)
+    state.finish()
+    assert spoken == [FUNCTION_STARTS['get_weather']]
+    assert state.final_text('작업을 완료하지 못했어요.') == '작업을 완료하지 못했어요.'
 
 
 @pytest.mark.parametrize('suspend', [False, True])

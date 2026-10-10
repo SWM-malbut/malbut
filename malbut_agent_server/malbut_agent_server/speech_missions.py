@@ -10,6 +10,7 @@ import time
 import unicodedata
 
 from malbut_agent_server.mission_speech import event_speech
+from malbut_agent_server.mission_audio_cases import NOTICE_TEXTS
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
@@ -162,8 +163,10 @@ class SpeechMissions:
             manager_arguments = {'thoroughness': levels[level]}
         elif tool_name == 'request_mapping':
             name = arguments.get('map_name')
+            if isinstance(name, str):
+                name = unicodedata.normalize('NFC', name.strip())
             if (set(arguments) != {'map_name'} or not isinstance(name, str)
-                    or re.fullmatch(r'[A-Za-z0-9가-힣][A-Za-z0-9가-힣_-]{0,63}', name) is None):
+                    or re.fullmatch(r'[A-Za-z0-9가-힣][A-Za-z0-9가-힣 _-]{0,63}', name) is None):
                 raise ValueError('mapping requires a filename without path or extension')
             manager_arguments = {'map_name': name}
         elif tool_name == 'request_relocalization':
@@ -294,7 +297,7 @@ class SpeechMissions:
             if not owned.terminal
         ]
         if not pending and self._cancel_foreground is None:
-            return '음성으로 요청한 실행 중인 동작이 없어요.'
+            return NOTICE_TEXTS['cancel.none']
         refusal = self._guard_refusal(guard)
         if refusal is not None:
             return refusal
@@ -313,13 +316,12 @@ class SpeechMissions:
             try:
                 count = self._cancel_foreground()
                 if not pending and count == 0:
-                    return '현재 실행 중이거나 대기 중인 전면 작업이 없어요.'
+                    return NOTICE_TEXTS['cancel.none']
             except Exception:
                 uncertain = True
         if uncertain:
-            return ('전면 작업의 취소를 요청했지만 접수 여부를 '
-                    '확인하지 못했어요. 종료된 것으로 판단하지 않을게요.')
-        return '전면 작업의 취소를 요청했어요. 종료 여부를 확인할게요.'
+            return NOTICE_TEXTS['cancel.unknown']
+        return NOTICE_TEXTS['cancel.requested']
 
     @staticmethod
     def _guard_refusal(guard):

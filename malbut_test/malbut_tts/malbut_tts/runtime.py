@@ -17,6 +17,18 @@ CONFIRMATION = 2
 TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
 MAX_RETIRED_PLAYBACK_IDS = 256
 MAX_FINALIZED_REQUEST_IDS = 256
+_WAITING_AUDIO_IDS = frozenset((
+    'conversation.delay', 'conversation.model_retry', 'conversation.weather_retry',
+))
+
+
+def _function_start(request):
+    return request.audio_id.startswith('function.') and request.audio_id.endswith('.starting')
+
+
+def _receipt(request):
+    return bool(request.request_id) and (
+        _function_start(request) or request.audio_id in _WAITING_AUDIO_IDS)
 
 
 @dataclass
@@ -63,6 +75,7 @@ class SpeechRuntime:
         self._pending = []
         self._retired_ids = OrderedDict()
         self._finalized_request_ids = OrderedDict()
+        self._announced_request_ids = OrderedDict()
         self._sequence = 0
         self._active = None
         self._closed = False
@@ -134,12 +147,22 @@ class SpeechRuntime:
                 request.state = 'stopped'
                 self._report_status(request, 'stopped')
                 return request.playback_id
+            if _receipt(request) and correlated_id in self._announced_request_ids:
+                # A delay/retry was already audible. Do not add a second start
+                # announcement; a terminal receipt still releases the STT turn.
+                if not interim:
+                    self._remember_finalized(correlated_id)
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+                return request.playback_id
             expired = self._expire_pending_locked(now)
             if request_type == CONFIRMATION:
                 superseded = [entry[2] for entry in self._pending]
             elif correlated_id:
                 superseded = [entry[2] for entry in self._pending
                               if entry[2].interim
+                              and not _function_start(entry[2])
                               and entry[2].request_id == correlated_id]
             rejected = len(self._pending) - len(superseded) >= self._max_pending_requests
             if not rejected:
@@ -152,15 +175,13 @@ class SpeechRuntime:
                     if request_type == CONFIRMATION or (
                             correlated_id and not interim
                             and active.request_id == correlated_id
+                            and not _function_start(active)
                             and active.interim and active.state == 'generating'):
                         previous = active
                         previous.cancel.set()
                         previous.command = 'stop'
                 if correlated_id and not interim:
-                    self._finalized_request_ids[correlated_id] = None
-                    self._finalized_request_ids.move_to_end(correlated_id)
-                    while len(self._finalized_request_ids) > MAX_FINALIZED_REQUEST_IDS:
-                        self._finalized_request_ids.popitem(last=False)
+                    self._remember_finalized(correlated_id)
                 for pending in superseded:
                     pending.cancel.set()
                     pending.state = 'stopped'
@@ -336,6 +357,12 @@ class SpeechRuntime:
         while len(self._retired_ids) > MAX_RETIRED_PLAYBACK_IDS:
             self._retired_ids.popitem(last=False)
 
+    def _remember_finalized(self, request_id):
+        self._finalized_request_ids[request_id] = None
+        self._finalized_request_ids.move_to_end(request_id)
+        while len(self._finalized_request_ids) > MAX_FINALIZED_REQUEST_IDS:
+            self._finalized_request_ids.popitem(last=False)
+
     def _status(self, request, state):
         with self._condition:
             if (self._active is not request
@@ -345,6 +372,11 @@ class SpeechRuntime:
             if request.cancel.is_set() and state not in TERMINAL_STATES:
                 return
             request.state = state
+            if state == 'playing' and _receipt(request):
+                self._announced_request_ids[request.request_id] = None
+                self._announced_request_ids.move_to_end(request.request_id)
+                while len(self._announced_request_ids) > MAX_FINALIZED_REQUEST_IDS:
+                    self._announced_request_ids.popitem(last=False)
             if ((request.command == 'pause' and state == 'paused')
                     or (request.command == 'resume' and state == 'playing')):
                 request.command = None
@@ -370,6 +402,13 @@ class SpeechRuntime:
                 self._active = None
 
     def _play(self, request):
+        with self._condition:
+            if (_receipt(request)
+                    and request.request_id in self._announced_request_ids):
+                # Recheck queued receipts after the preceding device drain.
+                request.cancel.set()
+                self._status(request, 'stopped')
+                return
         player = None
         chunks = None
         state = 'finished'

@@ -454,9 +454,11 @@ class DialogueWorker:
                         raise ValueError('Expected a non-action response')
                     else:
                         message = decision.message
-                        if (decision.type == 'refusal' and decision.reason in {
+                        if ((decision.type == 'refusal' and decision.reason in {
                                 'safety:unknown_tool', 'safety:tool_unavailable',
-                        }):
+                        }) or (decision.type == 'message' and decision.reason in {
+                                'unsupported_capability', 'unavailable_capability',
+                        })):
                             from malbut_agent_server.mission_audio import CATALOG
                             message = CATALOG['operation.unsupported']
                         reply = self._reply(
