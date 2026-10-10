@@ -68,6 +68,8 @@ def _setup(context):
                 'agent_user_id': value('speech_agent_user_id'),
                 'agent_conversation_db': value('speech_agent_conversation_db'),
                 'manager_commands': value('speech_manager_commands'),
+                'prerecorded_audio': value('speech_prerecorded_audio'),
+                'audio_directory': value('speech_audio_directory'),
                 'preflight_timeout_s': value('speech_preflight_timeout_s'),
                 'peer_timeout_s': value('speech_peer_timeout_s'),
                 'preflight_only': 'false',

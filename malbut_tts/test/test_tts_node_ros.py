@@ -348,3 +348,39 @@ def test_real_runtime_priority_controls_and_device_drain_through_ros():
         executor.shutdown(timeout_sec=0)
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def test_prerecorded_id_crosses_real_ros_without_constructing_a_synthesizer():
+    received = []
+    class Capture(ControlledRuntime):
+        def submit(self, text, request_type=0, *, interim=False, audio_id=''):
+            received.append((text, request_type, audio_id))
+            return 'audio-file'
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    tts = peer = None
+    try:
+        tts = tts_node.create_tts_node(Capture)
+        peer = Node('prerecorded_notice_test_peer')
+        executor.add_node(tts)
+        executor.add_node(peer)
+        publisher = peer.create_publisher(SpeechRequest, tts_node.RESPONSE_TOPIC, 10)
+        deadline = time.monotonic() + 5
+        while publisher.get_subscription_count() == 0 and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.01)
+        assert publisher.get_subscription_count() > 0
+        assert SpeechRequest().audio_id == ''
+        publisher.publish(SpeechRequest(
+            text='순찰: 카메라 영상이 제때 들어오지 않아요.',
+            request_type=SpeechRequest.NOTIFICATION, audio_id='patrol.failed.camera_stale'))
+        while not received and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.01)
+        assert received == [('순찰: 카메라 영상이 제때 들어오지 않아요.', 1,
+                             'patrol.failed.camera_stale')]
+    finally:
+        for node in (tts, peer):
+            if node is not None:
+                executor.remove_node(node)
+                node.destroy_node()
+        executor.shutdown()
+        rclpy.shutdown()

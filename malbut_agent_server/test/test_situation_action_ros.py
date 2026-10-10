@@ -25,7 +25,7 @@ from malbut_agent_server.ros_communication import create_communication_node  # n
 
 
 @pytest.fixture
-def rig(monkeypatch, tmp_path):
+def rig(monkeypatch, tmp_path, request):
     monkeypatch.setattr('malbut_agent_server.manager_client.ManagerClient',
                         lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None))
     rclpy.init()
@@ -35,6 +35,7 @@ def rig(monkeypatch, tmp_path):
         dialogue_settings=Settings(
             user_id='speaker', database_path=str(tmp_path / 'dialogue.sqlite3'),
         ),
+        prerecorded_audio=getattr(request, 'param', False),
     )
     voice = Node('confirmation_audio_test')
     executor.add_node(agent)
@@ -43,6 +44,7 @@ def rig(monkeypatch, tmp_path):
         agent=agent, spoken=[], controls=[], session_id='', finish=True, feedback=[],
         voice=voice, executor=executor, control_response=None, completed_controls=0,
         sessions=[],
+        prerecorded_audio=getattr(request, 'param', False),
     )
     playback = voice.create_publisher(SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
     inputs = voice.create_publisher(SpeechInputStatus, '/malbut/speech/input_status', 10)
@@ -159,6 +161,35 @@ def mission_manager(rig):
         manager.destroy_node()
 
 
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
+@pytest.mark.parametrize('audio_id', ['situation.fall.confirmation', 'situation.resolved'])
+def test_fixed_confirmation_speech_selects_file_only_when_enabled(rig, audio_id):
+    from malbut_agent_server.mission_audio import CATALOG
+
+    text = CATALOG[audio_id]
+    rig.spin_until(lambda: rig.agent.situation._speech.get_subscription_count() > 0)
+    assert rig.agent.situation.speak(text, 'fixed-fall-question')
+    rig.spin_until(lambda: len(rig.spoken) == 1)
+    message = rig.spoken[0]
+    assert message.text == text
+    assert message.playback_id == 'fixed-fall-question'
+    assert message.request_type == SpeechRequest.CONFIRMATION
+    assert message.interim is False
+    assert message.audio_id == (audio_id if rig.prerecorded_audio else '')
+    # A generated follow-up must retain its own wording and use normal TTS.
+    assert rig.agent.situation.speak('지금 괜찮으신가요?', 'dynamic-question')
+    rig.spin_until(lambda: len(rig.spoken) == 2)
+    assert rig.spoken[1].text == '지금 괜찮으신가요?'
+    assert rig.spoken[1].audio_id == ''
+    # A mission alias must not substitute a shorter recording for a question.
+    alias = '지금 날씨 조회 기능을 사용할 수 없어요.'
+    assert rig.agent.situation.speak(alias, 'unrecorded-exact-wording')
+    rig.spin_until(lambda: len(rig.spoken) == 3)
+    assert rig.spoken[2].text == alias
+    assert rig.spoken[2].audio_id == ''
+
+
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
 def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     handle = rig.start('rest-confirmation')
     assert handle.accepted
@@ -175,6 +206,8 @@ def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     assert result.result().result.help_needed is False
     assert rig.feedback == []
     rig.spin_until(lambda: len(rig.spoken) == 2)
+    assert rig.spoken[-1].text == '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.'
+    assert rig.spoken[-1].audio_id == ('situation.resolved' if rig.prerecorded_audio else '')
     assert rig.agent.situation.active
     rig.playback.publish(SpeechPlaybackStatus(
         playback_id=rig.spoken[-1].playback_id, state='finished',

@@ -44,6 +44,8 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
+    prerecorded_audio = value('prerecorded_audio') == 'true'
+    audio_directory = value('audio_directory')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     command = [python, '-m', 'malbut_bringup.speech_preflight']
@@ -97,7 +99,8 @@ def _setup(context):
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
         prefix = shlex.quote(python)
-        mission_arguments = []
+        mission_arguments = [
+            '--prerecorded-audio' if prerecorded_audio else '--no-prerecorded-audio']
         if manager_commands:
             mission_arguments.append('--enable-manager-commands')
         agent = Node(
@@ -110,7 +113,8 @@ def _setup(context):
         )
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
-            parameters=[{'backend': 'openai', 'output_device': output_device}],
+            parameters=[{'backend': 'openai', 'output_device': output_device,
+                         **({'audio_directory': audio_directory} if audio_directory else {})}],
         )
         weather = Node(
             package='malbut_agent_server', executable='weather',
@@ -167,12 +171,14 @@ def generate_launch_description():
         # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
         'manager_commands': 'true',
+        'prerecorded_audio': 'true', 'audio_directory': '',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
         'agent_provider': ['openai', 'mock'],
         'control_server': ['none', 'manager', 'autoslam'],
         'manager_commands': ['true', 'false'],
+        'prerecorded_audio': ['true', 'false'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

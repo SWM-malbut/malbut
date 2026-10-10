@@ -17,6 +17,7 @@ import wave
 import numpy as np
 
 from malbut_tts.managed_key import OpenAIKey
+from malbut_tts.voice_style import VOICE_INSTRUCTIONS
 
 NOTICE_PATH = Path(__file__).resolve().parent / 'assets' / 'notice_no_dialogue.wav'
 NOTICE_TEXT = '지금은 대화를 할 수 없어요.'
@@ -85,9 +86,9 @@ class OpenAISynthesizer:
     startup_buffer_bytes = 19200  # 400 ms to absorb the first network burst gap.
     max_audio_bytes = 24000 * 2 * 300
 
-    def __init__(self, *, model='gpt-4o-mini-tts', voice='marin',
+    def __init__(self, *, model='gpt-4o-mini-tts', voice='nova',
                  timeout_seconds=8.0, api_key=None, client_factory=None,
-                 notice_path=NOTICE_PATH):
+                 notice_path=NOTICE_PATH, instructions=VOICE_INSTRUCTIONS):
         for value in (model, voice):
             if (not isinstance(value, str)
                     or re.fullmatch(r'[a-zA-Z0-9_.:-]{1,128}', value) is None):
@@ -98,6 +99,9 @@ class OpenAISynthesizer:
             raise ValueError('API TTS timeout must be 0.1..60 seconds')
         self.model = model
         self.voice = voice
+        if not isinstance(instructions, str) or len(instructions) > 1000:
+            raise ValueError('API TTS voice instructions must be at most 1000 characters')
+        self.instructions = instructions
         self.timeout_seconds = float(timeout_seconds)
         # A fixed key string (tests, smoke), or the key the owner manages on the web.
         self.key = OpenAIKey() if api_key is None else api_key
@@ -175,7 +179,7 @@ class OpenAISynthesizer:
         """Yield PCM; a substituted notice returns a failure marker after its audio."""
         if cancel_event.is_set():
             return
-        substituted = text != NOTICE_TEXT
+        substituted = text != NOTICE_TEXT or self._notice_path is None
         if not substituted:
             notice = self._notice_audio()
             if notice is None:
@@ -226,6 +230,8 @@ class OpenAISynthesizer:
             context = client.audio.speech.with_streaming_response.create(
                 model=self.model, voice=self.voice, input=text,
                 response_format='pcm',
+                **({'instructions': self.instructions}
+                   if self.instructions and self.model not in {'tts-1', 'tts-1-hd'} else {}),
             )
             response = loop.run_until_complete(
                 self._wait(context.__aenter__(), cancel_event))

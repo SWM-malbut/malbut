@@ -304,3 +304,34 @@ def test_unfinished_pose_search_is_canceled_and_reported(monkeypatch, tmp_path):
     assert client.canceled == ['cancel']
     state = json.loads(node.published[-1].data)
     assert state['mode'] == 'LOCALIZATION' and 'finding the pose failed' in state['message']
+
+
+@pytest.mark.parametrize('use_sim_time', [False, True])
+def test_spawned_slam_uses_managers_clock(monkeypatch, use_sim_time):
+    """SLAM must timestamp transforms in the same clock as Manager/Nav2."""
+    import rclpy
+    from malbut_system_manager import system_manager_node
+
+    monkeypatch.setenv('ROS_DOMAIN_ID', '193')
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    captured = []
+
+    def controller(*args, **kwargs):
+        captured.append(kwargs['slam'])
+        return SimpleNamespace(close=lambda: None)
+
+    monkeypatch.setattr(system_manager_node, 'LocalizationController', controller)
+    rclpy.init(args=[
+        '--ros-args', '-p', 'localization_control:=true',
+        '-p', 'slam_params_file:=/test/slam.yaml',
+        '-p', f'use_sim_time:={str(use_sim_time).lower()}',
+    ])
+    node = None
+    try:
+        node = SystemManagerNode()
+        assert len(captured) == 1
+        assert f'use_sim_time:={str(use_sim_time).lower()}' in captured[0].command
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown()

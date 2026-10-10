@@ -475,7 +475,7 @@ def test_mission_announcements_are_notification_requests(node):
     })
     messages = node.sent[ros_communication.RESPONSE_TOPIC]
     assert [(message.text, message.request_type) for message in messages] == [
-        ('순찰 요청: Manager가 실행 요청을 성공 상태로 종료했다고 알려왔어요.',
+        ('요청하신 작업이 완료됐어요.',
          SpeechRequest.NOTIFICATION),
     ]
 

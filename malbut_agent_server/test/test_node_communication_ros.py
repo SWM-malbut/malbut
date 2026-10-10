@@ -227,7 +227,7 @@ def communication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SpeechReceiptStore, 'receive', receipt)
 
-    def create(*, with_manager=True, provider=None):
+    def create(*, with_manager=True, provider=None, prerecorded_audio=False):
         nonlocal manager, follow, agent_thread
         assert not nodes, 'Each test owns one isolated communication graph'
         settings = Settings(
@@ -267,6 +267,7 @@ def communication(tmp_path, monkeypatch):
                     on_event=events.append, goal_response_timeout_s=1.0,
                     dialogue_settings=settings,
                     dialogue_factory=dialogue_factory,
+                    prerecorded_audio=prerecorded_audio,
                 )
                 agent_executor.add_node(agent)
                 agent_state['node'] = agent
@@ -377,7 +378,7 @@ def test_follow_feedback_and_result_reach_real_tts_receiver(communication):
     assert final['ros_status'] == GoalStatus.STATUS_SUCCEEDED
     assert yaml.safe_load(final['result_yaml'])['message'].endswith('one')
     assert len(graph.follow.goals['one']) == 1
-    _wait_until(lambda: any('성공' in text for text in graph.speech))
+    _wait_until(lambda: any(text == '요청하신 작업이 완료됐어요.' for text in graph.speech))
 
 
 def test_invalid_capability_is_accepted_then_aborted_without_execution(
@@ -392,8 +393,8 @@ def test_invalid_capability_is_accepted_then_aborted_without_execution(
     assert final['ros_status'] == GoalStatus.STATUS_ABORTED
     assert 'Unknown capability_id' in final['reason']
     assert not graph.follow.goals
-    _wait_until(lambda: any('실패' in text for text in graph.speech))
-    assert not any('성공' in text for text in graph.speech)
+    _wait_until(lambda: any(text == '작업을 완료하지 못했어요.' for text in graph.speech))
+    assert not any(text == '요청하신 작업이 완료됐어요.' for text in graph.speech)
 
 
 def test_cancel_receipt_precedes_final_canceled_result(communication):
@@ -414,7 +415,7 @@ def test_cancel_receipt_precedes_final_canceled_result(communication):
     _wait_until(lambda: graph.agent.missions.snapshot(request_id)['terminal'])
     final = graph.agent.missions.snapshot(request_id)
     assert final['ros_status'] == GoalStatus.STATUS_CANCELED
-    _wait_until(lambda: any('취소 상태' in text for text in graph.speech))
+    _wait_until(lambda: any(text == '작업이 취소됐어요.' for text in graph.speech))
     assert len(graph.speech) == 1
     assert not any('로봇이 멈췄' in text for text in graph.speech)
 
@@ -445,7 +446,7 @@ def test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak(
         'follow_person', arguments, request_id='same-request',
     )
     assert len(graph.follow.goals['duplicate']) == 1
-    _wait_until(lambda: any('성공 상태로 종료' in text for text in graph.speech))
+    _wait_until(lambda: any(text == '요청하신 작업이 완료됐어요.' for text in graph.speech))
     assert len(graph.speech) == 1
 
 
@@ -481,7 +482,7 @@ def test_unavailable_manager_does_not_claim_execution(communication):
     assert final['mission_id'] is None
     assert not _events(graph, request_id, 'submitted')
     _wait_until(lambda: bool(graph.speech))
-    assert not any('성공' in text for text in graph.speech)
+    assert not any(text == '요청하신 작업이 완료됐어요.' for text in graph.speech)
 
 
 def _publish_transcript(graph, utterance_id, text, *, repeat=1):
@@ -619,9 +620,13 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         graph.sender.destroy_subscription(subscription)
 
 
-def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communication):
+@pytest.mark.parametrize('prerecorded_audio', [False, True])
+def test_progress_notice_and_final_reply_keep_distinct_interim_flags(
+    communication, prerecorded_audio,
+):
     provider = _DialogueProvider(blocked=True)
-    graph = communication(with_manager=False, provider=provider)
+    graph = communication(with_manager=False, provider=provider,
+                          prerecorded_audio=prerecorded_audio)
     messages = []
     subscription = graph.sender.create_subscription(
         SpeechRequest, '/malbut/speech/response', messages.append, 10)
@@ -630,10 +635,13 @@ def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communicati
         _publish_transcript(graph, 'progress-speech', '안녕')
         _wait_until(lambda: bool(messages))
         assert messages[0].interim is True and not provider.release.is_set()
+        assert messages[0].text == '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
+        assert messages[0].audio_id == ('conversation.delay' if prerecorded_audio else '')
         provider.release.set()
         _wait_until(lambda: len(messages) == 2)
         assert messages[1].text == '대화 연결 확인 응답'
         assert messages[1].interim is False
+        assert messages[1].audio_id == ''
         assert [message.request_id for message in messages] == [
             'progress-speech', 'progress-speech',
         ]
@@ -734,3 +742,19 @@ def test_shutdown_discards_late_dialogue_result_on_real_topic(communication):
     assert not graph.speech
     assert not graph.events
     assert not graph.follow.goals
+
+
+def test_prerecorded_outcome_id_and_dynamic_answer_share_speech_topic(communication):
+    graph = communication(prerecorded_audio=True)
+    messages = []
+    graph.sender.create_subscription(
+        SpeechRequest, '/malbut/speech/response', messages.append, 10)
+    _wait_until(lambda: graph.agent._speech.get_subscription_count() >= 2)
+    request_id = graph.agent.missions.submit('follow_person', _arguments('recording'))
+    _wait_until(lambda: 'recording' in graph.follow.goals)
+    graph.follow.finish['recording'].set()
+    _wait_until(lambda: graph.agent.missions.snapshot(request_id)['terminal'])
+    _wait_until(lambda: any(item.audio_id == 'operation.succeeded' for item in messages))
+    assert graph.agent.say('현재 기온은 이십 도예요.')
+    _wait_until(lambda: any(item.text == '현재 기온은 이십 도예요.' for item in messages))
+    assert next(item for item in messages if item.text == '현재 기온은 이십 도예요.').audio_id == ''

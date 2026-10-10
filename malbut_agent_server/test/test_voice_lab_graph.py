@@ -50,7 +50,7 @@ def test_mock_follow_cancel_replay_and_cleanup_are_isolated():
         cancel = graph.send('멈춰')
         assert '취소' in graph.wait_reply(cancel)['text']
         until(graph, lambda: any(event['kind'] == 'canceled' for event in graph.events))
-        until(graph, lambda: any('취소 상태' in item['text'] for item in graph.speech))
+        until(graph, lambda: any('작업이 취소됐어요.' == item['text'] for item in graph.speech))
         assert len(graph.goals) == 1
         assert all(thread == get_ident() for thread in threads)
         assert {'reply', 'mission', 'goal', 'system', 'speech'} <= {

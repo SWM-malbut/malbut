@@ -458,10 +458,15 @@ class AutoSlamNode(Node):
         while True:
             self._check(handle)
             try:
-                message, _pose = self._snapshot()
+                message, pose = self._snapshot()
                 grid = map_grid_from_message(message)
                 if self.mapping_clients and not map_statistics(grid)['known_cells']:
                     raise RuntimeError('waiting for the first observed SLAM map')
+                # AMCL's last transform can briefly outlive its map during
+                # the SLAM handoff. Wait for an observed robot cell before
+                # searching frontiers; never plan through that mismatch.
+                if not path_is_known_free(grid, [pose]):
+                    raise RuntimeError('waiting for the robot pose in known free SLAM space')
                 if (not self.navigation.server_is_ready()
                         or not self.planner.server_is_ready()
                         or not self.saver.service_is_ready()):

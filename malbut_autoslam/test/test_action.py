@@ -55,6 +55,7 @@ class _Backend(Node):
         super().__init__('autoslam_test_backend', context=context)
         self.directory = directory
         self.scene = scene
+        self.robot_xy = (1.5, 2.0)
         self.started = Event()
         self.cancel_seen = Event()
         self.release_cancel = Event()
@@ -131,8 +132,8 @@ class _Backend(Node):
         transform = TransformStamped()
         transform.header = message.header
         transform.child_frame_id = 'base_footprint'
-        transform.transform.translation.x = 1.5
-        transform.transform.translation.y = 2.0
+        transform.transform.translation.x = self.robot_xy[0]
+        transform.transform.translation.y = self.robot_xy[1]
         transform.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(transform)
 
@@ -342,6 +343,44 @@ def test_owned_slam_starts_on_request_and_stops_before_success(system_factory):
     assert result.result.success
     assert system.backend.mapping_events == ['start', 'stop']
     assert len(system.backend.save_requests) == 1
+
+
+@pytest.mark.parametrize('pose', [(-1.0, 2.0), (0.5, 0.5)])
+def test_slam_handoff_waits_for_pose_in_observed_map(system_factory, pose):
+    """A new map and the previous localizer's TF must not abort startup."""
+    system = system_factory(owned_mapping=True, scene='frontier')
+    system.backend.robot_xy = pose
+    _wait_until(lambda: system.node._snapshot()[1] == pose)
+    feedback = []
+    handle = system.request(feedback=feedback)
+    result = handle.get_result_async()
+    _wait_until(lambda: 'WAITING' in feedback)
+    assert not result.done()
+    assert not system.backend.planning_requests
+    assert not system.backend.navigation_requests
+    assert not system.backend.save_requests
+
+    system.backend.robot_xy = (1.5, 2.0)
+    assert system.backend.started.wait(TIMEOUT_S)
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert system.backend.cancel_seen.wait(TIMEOUT_S)
+    system.backend.release_cancel.set()
+    assert _result(result).status == GoalStatus.STATUS_CANCELED
+    assert system.backend.mapping_events == ['start', 'stop']
+
+
+def test_slam_handoff_pose_mismatch_expires_without_motion_or_save(system_factory):
+    """Waiting is bounded when SLAM never supplies a usable pose."""
+    system = system_factory(owned_mapping=True, ready_timeout_s=0.3)
+    system.backend.robot_xy = (-1.0, 2.0)
+    _wait_until(lambda: system.node._snapshot()[1] == (-1.0, 2.0))
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'waiting for the robot pose in known free SLAM space' in result.result.message
+    assert not system.backend.planning_requests
+    assert not system.backend.navigation_requests
+    assert not system.backend.save_requests
+    assert system.backend.mapping_events == ['start', 'stop']
 
 
 def test_owned_slam_cancel_waits_for_navigation_before_stopping(system_factory):

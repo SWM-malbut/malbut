@@ -17,6 +17,18 @@ CONFIRMATION = 2
 TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
 MAX_RETIRED_PLAYBACK_IDS = 256
 MAX_FINALIZED_REQUEST_IDS = 256
+_WAITING_AUDIO_IDS = frozenset((
+    'conversation.delay', 'conversation.model_retry', 'conversation.weather_retry',
+))
+
+
+def _function_start(request):
+    return request.audio_id.startswith('function.') and request.audio_id.endswith('.starting')
+
+
+def _receipt(request):
+    return bool(request.request_id) and (
+        _function_start(request) or request.audio_id in _WAITING_AUDIO_IDS)
 
 
 @dataclass
@@ -28,6 +40,7 @@ class _Request:
     request_type: int = DIALOGUE
     interim: bool = False
     request_id: str = ''
+    audio_id: str = ''
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -45,7 +58,7 @@ class SpeechRuntime:
 
     def __init__(self, synthesizer, player_factory, on_status, logger=None, *,
                  max_pending_requests=32, pending_timeout_s=0.0,
-                 clock=monotonic):
+                 clock=monotonic, prerecorded=None):
         if type(max_pending_requests) is not int or max_pending_requests < 1:
             raise ValueError('max_pending_requests must be a positive integer')
         if (isinstance(pending_timeout_s, bool)
@@ -54,6 +67,7 @@ class SpeechRuntime:
                 or pending_timeout_s < 0):
             raise ValueError('pending_timeout_s must be finite and nonnegative; zero disables expiry')
         self._synthesizer = synthesizer
+        self._prerecorded = prerecorded
         self._player_factory = player_factory
         self._on_status = on_status
         self._logger = logger or logging.getLogger(__name__)
@@ -61,6 +75,7 @@ class SpeechRuntime:
         self._pending = []
         self._retired_ids = OrderedDict()
         self._finalized_request_ids = OrderedDict()
+        self._announced_request_ids = OrderedDict()
         self._sequence = 0
         self._active = None
         self._closed = False
@@ -78,7 +93,7 @@ class SpeechRuntime:
             self._expiry_worker.start()
 
     def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='',
-               interim=False, request_id=''):
+               interim=False, request_id='', audio_id=''):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
@@ -88,6 +103,9 @@ class SpeechRuntime:
             return None
         if type(interim) is not bool:
             self._logger.warning('tts_request_ignored: invalid interim')
+            return None
+        if not isinstance(audio_id, str) or len(audio_id) > 128:
+            self._logger.warning('tts_request_ignored: invalid audio_id')
             return None
         if not isinstance(playback_id, str) or (playback_id and (
                 not playback_id.strip() or len(playback_id) > 200)):
@@ -122,9 +140,18 @@ class SpeechRuntime:
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
                 validate, request_type=request_type, interim=interim,
-                request_id=correlated_id,
+                request_id=correlated_id, audio_id=audio_id,
             )
             if interim and correlated_id in self._finalized_request_ids:
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+                return request.playback_id
+            if _receipt(request) and correlated_id in self._announced_request_ids:
+                # A delay/retry was already audible. Do not add a second start
+                # announcement; a terminal receipt still releases the STT turn.
+                if not interim:
+                    self._remember_finalized(correlated_id)
                 request.cancel.set()
                 request.state = 'stopped'
                 self._report_status(request, 'stopped')
@@ -135,6 +162,7 @@ class SpeechRuntime:
             elif correlated_id:
                 superseded = [entry[2] for entry in self._pending
                               if entry[2].interim
+                              and not _function_start(entry[2])
                               and entry[2].request_id == correlated_id]
             rejected = len(self._pending) - len(superseded) >= self._max_pending_requests
             if not rejected:
@@ -147,15 +175,13 @@ class SpeechRuntime:
                     if request_type == CONFIRMATION or (
                             correlated_id and not interim
                             and active.request_id == correlated_id
+                            and not _function_start(active)
                             and active.interim and active.state == 'generating'):
                         previous = active
                         previous.cancel.set()
                         previous.command = 'stop'
                 if correlated_id and not interim:
-                    self._finalized_request_ids[correlated_id] = None
-                    self._finalized_request_ids.move_to_end(correlated_id)
-                    while len(self._finalized_request_ids) > MAX_FINALIZED_REQUEST_IDS:
-                        self._finalized_request_ids.popitem(last=False)
+                    self._remember_finalized(correlated_id)
                 for pending in superseded:
                     pending.cancel.set()
                     pending.state = 'stopped'
@@ -331,6 +357,12 @@ class SpeechRuntime:
         while len(self._retired_ids) > MAX_RETIRED_PLAYBACK_IDS:
             self._retired_ids.popitem(last=False)
 
+    def _remember_finalized(self, request_id):
+        self._finalized_request_ids[request_id] = None
+        self._finalized_request_ids.move_to_end(request_id)
+        while len(self._finalized_request_ids) > MAX_FINALIZED_REQUEST_IDS:
+            self._finalized_request_ids.popitem(last=False)
+
     def _status(self, request, state):
         with self._condition:
             if (self._active is not request
@@ -340,6 +372,11 @@ class SpeechRuntime:
             if request.cancel.is_set() and state not in TERMINAL_STATES:
                 return
             request.state = state
+            if state == 'playing' and _receipt(request):
+                self._announced_request_ids[request.request_id] = None
+                self._announced_request_ids.move_to_end(request.request_id)
+                while len(self._announced_request_ids) > MAX_FINALIZED_REQUEST_IDS:
+                    self._announced_request_ids.popitem(last=False)
             if ((request.command == 'pause' and state == 'paused')
                     or (request.command == 'resume' and state == 'playing')):
                 request.command = None
@@ -365,6 +402,13 @@ class SpeechRuntime:
                 self._active = None
 
     def _play(self, request):
+        with self._condition:
+            if (_receipt(request)
+                    and request.request_id in self._announced_request_ids):
+                # Recheck queued receipts after the preceding device drain.
+                request.cancel.set()
+                self._status(request, 'stopped')
+                return
         player = None
         chunks = None
         state = 'finished'
@@ -377,11 +421,14 @@ class SpeechRuntime:
             with self._condition:
                 request.player = player
             if not request.cancel.is_set():
-                chunks = iter(self._synthesizer.generate(
-                    request.text, request.cancel,
+                source = self._prerecorded if request.audio_id else self._synthesizer
+                if source is None:
+                    raise ValueError('prerecorded audio is not configured')
+                chunks = iter(source.generate(
+                    request.audio_id or request.text, request.cancel,
                 ))
                 has_audio = False
-                sentence_mode = getattr(self._synthesizer, 'sentence_streaming', False)
+                sentence_mode = getattr(source, 'sentence_streaming', False)
                 while not request.cancel.is_set():
                     if sentence_mode:
                         # Do not start a third sentence when two are queued,
