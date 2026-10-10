@@ -1,0 +1,1988 @@
+{
+  "autoslam.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9c95e8edecff890d7845b8737e894485d7ec3f4a09149302e6dad75c81f2f137",
+    "text": "지도 만들기 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "autoslam.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "07e373180abb4078f77e2e4128e9be42c6516ea88aa7cab11611ecf0d68c94b0",
+    "text": "지도 만들기 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "autoslam.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3d6c8fd8c3a0173940b497828d56d7163ca6c857d85e93340f5514ad27406b1f",
+    "text": "지도 만들기 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "43472e2f1ff69df7ae35db6a326b081cdaa314bf20d283144432f3c5c9a18ee0",
+    "text": "지도 만들기 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "autoslam.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b61c35f95dccc452a1dcaedff6ed6f0221e5cdbf1495883fb821dc673eec2a72",
+    "text": "지도 만들기 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d738a963f3598b216bfac3edc5ed392e582917b22407d7362626b855b11f6848",
+    "text": "지도 만들기 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "1cb0b2b06cf2e8c789c69a42a934c08dbcdc79a8045c18bdcb23776b769ae4b4",
+    "text": "지도 만들기 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.frame_changed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "763aa1e76779494abad209285c6c9edb77af578821610d7cc72dfc843b3c5586",
+    "text": "지도 만들기: 이동 중 지도 좌표계가 바뀌었어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "654d57deee91820f1a4a1ced265020e24efc5f2f0a82dca9bc7957299cabcb3e",
+    "text": "지도 만들기: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e424cc9015402c5d25f98ed85cb62df535516b576b449ef8bbe6e336318b3849",
+    "text": "지도 만들기: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d6855b96b47d659e11576e0e6c3828dca16c03646e5ebac580373e631cd27884",
+    "text": "지도 만들기: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "394ec3bcbe3e9aa88281d14df199dd4a547a96efa3d9109e2af96044fc7c4499",
+    "text": "지도 만들기: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "00dfe6a6585bd4552ef23112a3dd410493c99ab8f63e2931ed5d1c6d15c124d9",
+    "text": "지도 만들기: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4739cd170f84f0d16dad91714e0e6e27470ec606d47a497cecda19e843285d91",
+    "text": "지도 만들기: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "fa9ffe20b924db91e1d599bec5c35990a1a991aefeb86a3fefc915142884c737",
+    "text": "지도 만들기: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "59f8a9a32427845706abd3fb5d7e7340b059ead5867d31dd3d60626de8805577",
+    "text": "지도 만들기: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5cb12982a2f219eca5da848c3545c785a2dd3b58a9d6739013089d0250af05e5",
+    "text": "지도 만들기: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a9603a4c03285e4f4d19ba41764cf3782ed0030f8b074018547ed9ad0d174ea6",
+    "text": "지도 만들기: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.map_exists": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "42e78c4951fa865faed35b2a84a85d9e5883e0eed8277e6d453e3535de60f068",
+    "text": "지도 만들기: 같은 이름의 지도가 있어요. 다른 이름을 사용해 주세요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.map_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "582561d0b95a4b1ea9f0594511cd64e3d133b961df69225a065d949045aaa1b1",
+    "text": "지도 만들기: 실시간 지도를 받지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.map_name": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "fa57964e096578a6d99f421c24a3fabdd2b2c063c7369a19f2f7c3795de7611f",
+    "text": "지도 만들기: 지도 이름에 경로나 확장자를 넣을 수 없어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.map_stale": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8c83dc77c712fef2f9bfb3adc56f9b61621df8d392016a7e8a722e46642ac2b6",
+    "text": "지도 만들기: 실시간 지도 갱신이 중단됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.map_update_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b2d599e34a7082638ada75ec60b9b083ecac2b78ff0c69d5bf5c24339af27775",
+    "text": "지도 만들기: 이동 후 갱신된 지도를 받지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.nav_communication": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "748749442186b44a6791fa44f32fa23876e474b075cad65b2750add09f37a372",
+    "text": "지도 만들기: 이동 기능과 통신하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.nav_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7ac4418bad42a4e1d4f7d6add14a22c0ef1e01fafbf0638f6de1ff56f87cd7c7",
+    "text": "지도 만들기: 주행, 경로 계획 또는 지도 저장 기능이 준비되지 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.orientation_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "62f7f6c8fd99ffdae8476529b8b37fdc3372b2ec59b0cc1248d9c5520ecef820",
+    "text": "지도 만들기: 로봇 방향 정보가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.plan_communication": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "22c701fdf259de76e4baca1e4115dff327ba43d5824ec91de3361d6ac8674bad",
+    "text": "지도 만들기: 경로 계획 기능과 통신하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.plan_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "81b441e8f127269bb987eeca791db27cde488323c1495de271ea57f024a9f6af",
+    "text": "지도 만들기: 경로 계획 요청이 거절됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.plan_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e1fc856f0d80fc10afff6f2f1392d8002a3a7beb7c5ed0248d2b89b34364f678",
+    "text": "지도 만들기: 경로 계획 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.position_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f92877ebecc04be936364f01114f4ebcddca3999f8f262fe9edf7106ddd836ac",
+    "text": "지도 만들기: 로봇 위치 값이 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.prerequisites": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d0231c5f71c349991309b5b3d2fa0590febe7f6af4dd099450c64faab803ed81",
+    "text": "지도 만들기: 지도 만들기에 필요한 기능이 준비되지 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.save_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "fb74c22756e01af41b996ac94db8d21d2410056c8a6439fcaa2e2f7d7f1b600d",
+    "text": "지도 만들기: 지도를 파일로 저장하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.save_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ae114ce414cc3d828a155bc1992c7d28632944a7cf64fcadd01247e6f13115ec",
+    "text": "지도 만들기: 지도 저장 후 필요한 파일을 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.save_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ffe83bced47f525d9b4130325934f2b7969ee3e849aa3512bd038d0906583593",
+    "text": "지도 만들기: 지도 저장 결과를 확인하지 못했어요. 다시 실행하기 전에 저장 파일을 확인해 주세요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.transform_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "76360604e54846753d4859bd76708e4bd405727180b85c0d331f9c6f7b1c77d9",
+    "text": "지도 만들기: 로봇 좌표 변환 값이 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "autoslam.failed.transform_stale": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5591392d86e9092fb35d1939fb4efc578527fa4ef0dc12e88b9df69021cde1aa",
+    "text": "지도 만들기: 로봇 위치 정보의 시간이 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "autoslam.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e45259d977e0646576b76cbaa7dca8976a898606cb0c87e587dd750249be8c73",
+    "text": "지도 만들기 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "autoslam.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b77050185bf3cbdbc8b6ffbd90c2c9b5bcbc1420d0355efead4b5fa1b91e05fe",
+    "text": "지도 만들기 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "autoslam.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2f85126f24072a1901e1a41ffa186c3f97cfb950b69ba076e45e68cdf3de9d45",
+    "text": "지도 만들기 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "autoslam.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "88983d06618ec16e42b51b40cfdc7d212fafc5f2fb0f65d49121ad3991b7a034",
+    "text": "지도 만들기 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "autoslam.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5cfdaf824d5a9b4bb8f12b703561f3bb3ecd80979969ec8a7f1c6d26eafcc00d",
+    "text": "지도 만들기 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "cancel.no_active_mission": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "99178f7b372fc3821532874c931a63b6cb393f3152698c9bd81efb506961d0dd",
+    "text": "음성으로 요청한 실행 중인 동작이 없어요.",
+    "voice": "marin"
+  },
+  "cancel.requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "64a3a10fc43afb8f167d57a9a699d27dd9faec08bee918c5040395d85df9ddf5",
+    "text": "음성으로 요청한 동작의 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "cancel.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "db3326029aa19672021fffa21fb59a5b2e47040554e7b11b3202ff2a6e9bd319",
+    "text": "음성으로 요청한 동작의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.",
+    "voice": "marin"
+  },
+  "enroll_person.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3b1ecb6cd7d24d7c57145e2e97b634db81461619bbd78498cdaee72bbe836911",
+    "text": "얼굴 등록 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "be85ee7d9a6f6ec0d1554fe15b2ed0e646cd878f6fa0af4e2715392badefd0ea",
+    "text": "얼굴 등록 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "enroll_person.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "59589f65ab2f9457e85cb203ded3dbb2e389b2e0dd99f0f7139d6f493581b2af",
+    "text": "얼굴 등록 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "enroll_person.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "921dc4b1d24542a1a94204b1d75c2b4178897543c4f3af178e2b0eab5d4d038a",
+    "text": "얼굴 등록 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "enroll_person.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8b8e40914c06f6de73336f9d9a560ca3d21ac8c4ab3c424323c1dc3f01e55cab",
+    "text": "얼굴 등록 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "enroll_person.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "253a18eb84e9804f1b56e4ac28f4beb8b7896bc026d450b44ce47c8a267feccd",
+    "text": "얼굴 등록 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d9abd97dbaabd46bfe79a72fd0c58dc9ebf5b4ca0141d62fc81834b28f1ef5e2",
+    "text": "얼굴 등록 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.camera_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a7428c8f58f66fb3ada051c856c78fe9b119100c8b4eff9b977707236ad44097",
+    "text": "얼굴 등록: 카메라로 얼굴을 확인하는 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.capacity": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e747ec530926386033fc35c4aca40e1696b8f0f7a86df1ca0b4b151cdeef4e10",
+    "text": "얼굴 등록: 등록 가능한 다섯 명을 모두 등록했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.duplicate_name": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "81755ce230e5465adc43f5d2a3d778cd874751dabc41c05aa9e8d2c8fb407e47",
+    "text": "얼굴 등록: 같은 이름이 이미 등록되어 있어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.face_count": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "312d34643b46d106f067759aa1f0f53e5d9b4c12fcc030ec5bc6c41062133aa7",
+    "text": "얼굴 등록: 등록할 얼굴을 하나만 선명하게 보여 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.feature_dimensions": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "95516076bce12993728662644917914634cd0fd05d7ecf1211b766958243ce12",
+    "text": "얼굴 등록: 얼굴 특징의 형식이 서로 달라요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.feature_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7c0ec5667b14c8ef018b9a3114df6ac0bc35ef347cc055365dfcc2807f219db5",
+    "text": "얼굴 등록: 추출된 얼굴 특징이 비어 있거나 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.feature_numeric": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b8903dadba3efc95b11457f05f9b0695efe6b2de26470512a1bae1e87d0b4150",
+    "text": "얼굴 등록: 얼굴 특징이 올바른 숫자 형식이 아니에요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.feature_zero": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ad199bcd5ecb439878911f777add2e2a4f032c97491a5d66566f3be33d5f3b69",
+    "text": "얼굴 등록: 얼굴 특징을 구분하지 못했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.gallery_dimensions": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "008def4354d44a38aa8e7aa42ae653a9fd8f2692ccebeb5f303616144c290c59",
+    "text": "얼굴 등록: 추출한 얼굴 특징과 기존 등록부의 형식이 달라요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7460af6f2157c335f7e18a68aeda760f239a2173d041b104305ab57feb2b67c2",
+    "text": "얼굴 등록: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ffb56fc3a677c52b7c0f124d2dc5af302457da335d6c1bd94e45fdcf10dce59e",
+    "text": "얼굴 등록: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2364c99483314260a2404f524ad509acb5429ab8cad4ca3d124ab50d48f35790",
+    "text": "얼굴 등록: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dc842031be848aaeb0b9cdf8daebf1a81e6f52aae73aa0c252f18be66f12dbdb",
+    "text": "얼굴 등록: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c275bb90c882ed78e97d42fd4c9895d193c15335ba39f7656237cb0ec8c8eaf1",
+    "text": "얼굴 등록: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a3f72efccf3d6ab84ccf27280725c7df86222788441685c287ef477a775836be",
+    "text": "얼굴 등록: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "bea81f8051dc6adc586d8ed72a360903919ccc6c08ca727968379f178e2bdb97",
+    "text": "얼굴 등록: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "eab0fb06a67fc90a7c813d58cecd51b68718e4c9d1d0bdef0dc69390fc20fe3c",
+    "text": "얼굴 등록: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e1a965e2d6f4566ca4b8cae849fabe82e285048b95c20c87d3d325deda874cca",
+    "text": "얼굴 등록: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ef7f295e540bd1c5092e1ee1113a2a76838587f0798f507009c2eb1b6573da07",
+    "text": "얼굴 등록: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.model_mismatch": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "de39a5e74c5fc19bc585c7e693122a06b72a16a261467c650dd7525714fe2c39",
+    "text": "얼굴 등록: 등록부와 얼굴 인식 모델이 달라요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.multiple_people": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "59b97e50239a7702dbe6c80ed9f74add3683503407a5d3870e58d0c906a90723",
+    "text": "얼굴 등록: 여러 분이 보여요. 등록할 분을 한 분만 선택해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.name_control": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "17d83a6835bce6a9fbaaf37eb636fab5c4a89aa0ec975e2f9daa23667fceb59c",
+    "text": "얼굴 등록: 이름에 사용할 수 없는 문자가 있어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.name_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2065fa88f39b8e5c5ad47521fc19f1f381f317a0f5f217e77d3c71d0d5bbe949",
+    "text": "얼굴 등록: 이름은 한 글자부터 백이십팔 글자까지 입력해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.overlapping_people": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "902389674bcdc73b12a1b21cdc1d0157aa1a79c02fe0fac8a013195b2987aaa5",
+    "text": "얼굴 등록: 등록할 분이 다른 분과 겹쳐 보여요. 떨어져 서 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.person_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "62b7228b2c44d70dcbaa86c5cce6c4e868306466616004e87ca7be662cc6a48c",
+    "text": "얼굴 등록: 변경할 등록 정보가 존재하지 않아요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.photo_decode": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ee32c4ac8b58b6c7fb7ba0a1bfc26cf788be7e819007e7a4afdc4e6ae8221ed6",
+    "text": "얼굴 등록: 사진을 읽을 수 없어요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.photo_format": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4443387cde0a6094d80f0f9f0424aed381939a30dd4269e4578b1eb1c1c28bdc",
+    "text": "얼굴 등록: 사진은 제이펙이나 피엔지 형식으로 보내 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.photo_pixels": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "897106552000de944172062bb9a18f46917886e0a3c9d7137ab17c214fe97b6a",
+    "text": "얼굴 등록: 사진 해상도가 너무 높아요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.photo_size": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "17c576f75c8de1d2cbe14b12f31304519b3096fd79741063bc5e77f517aa1334",
+    "text": "얼굴 등록: 사진이 비어 있거나 파일 크기가 너무 커요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.registry_changed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "37611986c61d6650933daff6af9ec113c0c1c033af214dbdd3132cd71539b21e",
+    "text": "얼굴 등록: 등록 정보가 변경됐어요. 새로 확인한 뒤 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "enroll_person.failed.sample_count": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "037e9607da90390d0ca65b33fcd1653e80ca901f29bfad361d87bcf4e47dff18",
+    "text": "얼굴 등록: 얼굴 특징의 개수가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "enroll_person.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d1d345362ee6582a6017389accab5762f38ed2f4a6df8573738082f22104b296",
+    "text": "얼굴 등록 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "enroll_person.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "eb8457f302d66f889b6407070111d0aeef2166b4315f4cd21a2bcd086d888740",
+    "text": "얼굴 등록 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "enroll_person.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a085dcc192971ddc1e7648d31ff638d32009ce5fd180242f2239de54b3e32a3f",
+    "text": "얼굴 등록 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "enroll_person.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e9d0ebd901cbeb7af155926c098314fe1d706af83720a5b798484f583978ba37",
+    "text": "얼굴 등록 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "enroll_person.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "bf44c3cfc4210d9633dbd9b01dcff9fcc4409e1d72f08f06ba2ea160dbbd162d",
+    "text": "얼굴 등록 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "enrollment.result_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "82cb012f30f4457a9198ca126e24b73b09b3821cfeddde345fc9812c9a5660e5",
+    "text": "등록 처리 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    "voice": "marin"
+  },
+  "enrollment.start_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "47183f666fa4b83016c145d70678e80553e131a8c1fc04fa3ad23740a36255b5",
+    "text": "등록 요청을 시작하지 못했어요.",
+    "voice": "marin"
+  },
+  "enrollment.target_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5b700649e1a51ba4ea3c69d5bb565823c2d589717e4ba5a20c66b004119eb52d",
+    "text": "등록할 분을 확인하지 못했어요. 카메라 앞에서 한 분씩 말씀해 주세요.",
+    "voice": "marin"
+  },
+  "enrollment.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7b5799b017cf7f670e4cd26d5b8f7becad96af39a7aab894276268c4dd8d39ef",
+    "text": "얼굴 등록 기능을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "71a4068abe144baf50db30e5d8dd4e68dd38a6ff3ef875a3a824f9cc0a24c727",
+    "text": "상황 확인 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d18953feb50751314bbeeda3f0d2b79e23a214979dc12bbf75258e67f94476ee",
+    "text": "상황 확인 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "47444147d11ed85abc86bdef0e8e73c6418d8c228d255cb1411ff7c9a94cd824",
+    "text": "상황 확인 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6a420e39fd91b6b32168d61b6e7a88a835cdf286b60911157fbb5b5989f95e7b",
+    "text": "상황 확인 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b47c0ae2d005a375a4052ec5b9823dbc6f9b54813e2ef875c0c0c3ad4de0a933",
+    "text": "상황 확인 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9ebed5c7c80bfb7d4e691d0b61401ebca77051311b3c3d90e6b64e52c89488f3",
+    "text": "상황 확인 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "27595bc360bd42ed835e2a868c1a8c68d31664fc17d156a024a836a97db5d7e1",
+    "text": "상황 확인 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c5e5c419a1d9e5a6ceb6d9df8f9e2ef4856ba071b6f60dd7265b5fcf44b0c2bc",
+    "text": "상황 확인: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "42412018e20fd472f6714936e20cd9ab4a66ea1ab4f9529da9e21aad07a967d7",
+    "text": "상황 확인: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7ab307afb8e948017afc38b959401972574615479c026ceb0b9493d40d6ee3c0",
+    "text": "상황 확인: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "acf722bac79f3cb22359dd60f814762a1e42013dee6fb0b419e8dbf80c63df88",
+    "text": "상황 확인: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "10fc18864969bacc072f9be2afb8904f387a9173bf0b8554e73fb161c52667eb",
+    "text": "상황 확인: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "651fbc8d4cf3c29a53970d94824216f5947118006368d38ea64b3e336e652166",
+    "text": "상황 확인: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d5011c7598b47c689596ef216c7d95b8740c5b6a2294d16324059c27fcafabac",
+    "text": "상황 확인: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8f530446a6bfef1c47a9a4c1c49432a5782f89914ad2f712c6c2ff7d434570c1",
+    "text": "상황 확인: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ba58e2c5be095a316a9cce07a58296b25ecfef712444e17e339dc41d2bde1e1e",
+    "text": "상황 확인: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "10431585e555fc4e41ebf7c5a05c2052b270b27b16114c97e45a8b0a44f896d6",
+    "text": "상황 확인: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f2b85b3a72a9f38341e7690cc0b1fab8a57f1def05ae9ed21c1c97ea45228f23",
+    "text": "상황 확인 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3468661505149c7340215f22f6694330b2bd3fff4a6161df1973052ab418c3ec",
+    "text": "상황 확인 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2f84c8d48abb77537aaf84bcf5c76dbe21f0b76d667a8af92e1a833b14b5b9b2",
+    "text": "상황 확인 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "66fdcceb4ee640421bee1115508cb71433b06d36065efb1912fab642d65ecfb9",
+    "text": "상황 확인 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "fall_confirmation.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9993f678627c7ac94143c193d0503261af28f5e6076fa34c732d3f344d862a7e",
+    "text": "상황 확인 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "follow_person.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ec97df7e89b561037ffe8880f842fc1e03632a0ae7f0c5e176dcae623d1db420",
+    "text": "사람 따라가기 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "follow_person.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "71e9efce22ecac71f18498a25c17a64c06dd7ee1a604596948abee1d33a13e93",
+    "text": "사람 따라가기 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "follow_person.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "66ba8dddd745a548b40d9815b84a4f155094574ce49be18b052f83b680d7bf87",
+    "text": "사람 따라가기 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "follow_person.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "636e6788541daa04e6d1816e75c36df0e40b442777cdd82d0e0fcef05d2fe35e",
+    "text": "사람 따라가기 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "follow_person.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "12da62b53cf3dd029d5652d6540a5bb2c14bf49238fb33b7015e97cd7099b10b",
+    "text": "사람 따라가기 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "follow_person.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c9b778832b6b8f046ff1f434b3cc5d305c6ddcfd3bf3828debb6d202ac34f326",
+    "text": "사람 따라가기 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dd84472e3a7efd376e8febab65c9b6ad1b8de5afee0f84c00ea03ffba5a29730",
+    "text": "사람 따라가기 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "10322d42cf81b052cd6ba0a7050cd3b1c7c27aebcf654ba608049801693128b5",
+    "text": "사람 따라가기: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "09e3fd1b85669f94180db6d8d03c08a7e3512f71b90ebbe9138b4bf92e5b73bc",
+    "text": "사람 따라가기: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "54cdc759197e21235e22ba87c495eb87095cf5f40a469560caf82fb42b606b65",
+    "text": "사람 따라가기: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "108c564f424f542dbb2359e62f98c457cc57a773ca8577905b453eee5fb02159",
+    "text": "사람 따라가기: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dd0499bde9669001bb5c9b5bf28e20578c744dafc8b6d4849652822b266f7e47",
+    "text": "사람 따라가기: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "de768d42517662de83e6617ac516a85015634d1a4b1e01c23c665d8a95176358",
+    "text": "사람 따라가기: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "35698588162733efb9bc9dcab1a36fc9e1ebf4a9dd79cc8f03234b7b547f68d8",
+    "text": "사람 따라가기: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "822a5a8ab71cee703e4ac1c9d4651881b9ff7cf588dc86890d5b856989ba8db8",
+    "text": "사람 따라가기: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e4bf0b724e2265237b82816f78700f30bd841717f396b7458a80cddf10c8335c",
+    "text": "사람 따라가기: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a3ae5c04ef75eee058d5bf8d43eb5b017ccf64b4d86176f7b4bb81e2c7bb198c",
+    "text": "사람 따라가기: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "follow_person.failed.superseded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ef6624a504041e88fd54b6f43b6e8adf00cf8f7f47afbb62cee1c3d60a250b8e",
+    "text": "사람 따라가기: 실행 전에 다른 요청으로 바뀌었어요.",
+    "voice": "marin"
+  },
+  "follow_person.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e7de62bf58344e54606246aeb49bb5f977981f38de19277436ae224d446f2d3f",
+    "text": "사람 따라가기 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "follow_person.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8524e39aa85336f3eeb7281a403b92435176cb6a09e02a4f1f4379050ba7d652",
+    "text": "사람 따라가기 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "follow_person.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f499442eaac9317a148a037a8718c923e97b5e5be949355e62e3678adff7412f",
+    "text": "사람 따라가기 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "follow_person.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c4477ce6eb3bfd0dd789debfbd860d863b32f2df9857d44441068e0db89e5a2a",
+    "text": "사람 따라가기 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "follow_person.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ef644bd5d46cf3f072c1dcd5a711457e65e570421b9bed140cfa56d707a50b07",
+    "text": "사람 따라가기 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "get_weather.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "128d8e0dcee74800c62abd8eb03644e873747e5e6e460dea153733c275438316",
+    "text": "날씨 조회 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "get_weather.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ae9f7bd611620413a250983ec8245d13279780e126d3f27de6d898511ae0ed78",
+    "text": "날씨 조회 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "get_weather.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2339d55269453d4af57575cf1317de64cd92e0bd16cab60a8bf2b852adcb8f26",
+    "text": "날씨 조회 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "get_weather.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "44137c2f5a2c244f9d50c39ba30a86a688e439c2dcac6af78d41c3e4218c0f68",
+    "text": "날씨 조회 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "get_weather.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "71530dd03e4a4a2c8bb04270ef174575f5783a0f8e78da29fa647e8349d4efc3",
+    "text": "날씨 조회 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "get_weather.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3f82897747d0584fe928fe4325e0dad19220c9c35ad5b4e1db7d14d45e70bc80",
+    "text": "날씨 조회 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c56db98540de86a0e3d2fa9609edc15af7f726873127f4970263eb3cc31e9777",
+    "text": "날씨 조회 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.auth_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dd5ac447f63454f2112413bd780159f2b1c4f31d543555ac9270335972366d89",
+    "text": "날씨 조회: 기상청 서비스 인증에 실패했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.fetch_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0bb840983d2f70d0576d1744a7b96a07626cd8ebeb8b7c56a22d94b398c2d9e8",
+    "text": "날씨 조회: 날씨 정보를 받아오지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.invalid_data": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8eab3c59b2f8041eb05ec55725bbecaafb50130669744492b8512eb61ad1697c",
+    "text": "날씨 조회: 받은 날씨 정보가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.location_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c678119a0595a5cff66bed7a1452103cca7d034556573d06fc0ba13d0f771eb4",
+    "text": "날씨 조회: 날씨를 확인할 지역을 먼저 알려주세요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d503ea40d328b9f06e4208dfed34ec37da41336891d97c2b213331a3a8b989e5",
+    "text": "날씨 조회: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5f4561c4374371c990866deef757288a336f2d15863469d4265438159d5c476e",
+    "text": "날씨 조회: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "adee5ec31aa06146e4ee5f427a3c09f2c81491091f547bed72f9eb5753bc3419",
+    "text": "날씨 조회: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9063c6e064e15ccfd65f88b017457268c84d1ac4fbec5b7d7cf7f135d1a819a6",
+    "text": "날씨 조회: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6ce19f29e00730f544f6a9936e4a89c941b2907b4506af057d6b1acdc4a9f9aa",
+    "text": "날씨 조회: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3ad04b28f4cb66ef3d07232585a2d893066308c8f8b10797f4074d98e29f042e",
+    "text": "날씨 조회: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dec7242f52a9888558ff3a6454e0461bcaf256c6e0a2741780cade9fbf3d66c2",
+    "text": "날씨 조회: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0f0e6342207ed9510055c3349578831c5930d8ae3f0f4046549bd85a19218659",
+    "text": "날씨 조회: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "107d8f1ed4d7f345e9464f9c7319a5b9e560b9e84087621f82f31ba26183de68",
+    "text": "날씨 조회: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "da78db2989e58328f7a12d605d7541ea8d0e538058a946395292d1226b1b5db9",
+    "text": "날씨 조회: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.rate_limited": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6d861e363ae736529c1eed4a3cd4047278d01406072531e9af14c27c2c61a435",
+    "text": "날씨 조회: 기상청 조회 한도에 도달했어요. 잠시 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8586ced4bf2923e3a6c94b9158957b8027ea2661226684c2d8d05b0fba8d6a63",
+    "text": "날씨 조회: 기상청 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "53381733babe3fbf448688be8ea57ddbd9b8faa30f97cfc405e3205c9b3dae70",
+    "text": "날씨 조회: 날씨 조회 기능이 종료 중이에요.",
+    "voice": "marin"
+  },
+  "get_weather.failed.timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "398f62c0edaf3176e023632a5cf0ef4d0cd3bbd85a73d96b61d5f94684a9676f",
+    "text": "날씨 조회: 날씨 정보 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "get_weather.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "aa03e8b26e9d55d39296e845dba7e6409daa9e6ea9c14844274d8ceda026121b",
+    "text": "날씨 조회 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "get_weather.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ea2ff6fa0311eedb402f20091a305192a35a4b3f870241dabebc1bfe2e1db693",
+    "text": "날씨 조회 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "get_weather.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3b5e802b3d68666f0d8d2df52de16a65b2194a96a19a2c5d955cb3f72766c2a0",
+    "text": "날씨 조회 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "get_weather.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "85627d09895ac5756871e3f94f5210ede3e1d3ef1a9ab7d58bd40ee74ada79c3",
+    "text": "날씨 조회 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "get_weather.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "81e48a904a6bd51dbca0b1ddb82c83d74465d0041af33e249783f79818903e97",
+    "text": "날씨 조회 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "manual_drive.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f7390525977f0ad60a5d399bc11027d80af4f4e53636b8b279e9d2a88f9fac7c",
+    "text": "수동 조작 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9afc41bd8408618f654a6940b289a9b098227132d2131e691bd60e09a28b7354",
+    "text": "수동 조작 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "manual_drive.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "04aa4bfc06e145dd67c700a94e651d751bb9875686843a567f527772f9b678f0",
+    "text": "수동 조작 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "manual_drive.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9571cd1fcb52bdc1261330fdebb970e252309f210375197ce0fe47c232e2bacd",
+    "text": "수동 조작 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "manual_drive.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "010d4a38adc1e6768ff024c77a138b842ae45ea8686eae92296ca74e8cfc8e9d",
+    "text": "수동 조작 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "manual_drive.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8afb8c722e89bc6e9e62d41e65a115665530a7023d729c612ce70fa55eaa61c5",
+    "text": "수동 조작 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "944735b022a76d41e41b62451c0e3a5fc8dc31c4e406ce7eadf99fa8d358865a",
+    "text": "수동 조작 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2079403ecee66228423de6795eff3c77609597b831ba3f25af29ee417a0190b4",
+    "text": "수동 조작: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "54be3b70302e93baee8d8344ab232a5ba9b92324363a90dc68ec0ba4bf996f28",
+    "text": "수동 조작: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e5d6a87e68780e75864acf2e23a3e3c0edb8b297a8a7626787d7b27770cc78f3",
+    "text": "수동 조작: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5d943bd6e8c6d1ec6cc1fee6e50cbfe3d3770ca622855027aef2ad86fe66c6bd",
+    "text": "수동 조작: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b7679b32b21ac7e29906c9c17c0e1bef815d27c6d87dc9695e4fe0c6e734b06a",
+    "text": "수동 조작: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9f6281196f855a3f999820409b565824cd960ff84278ad655f15bdbe80cc3205",
+    "text": "수동 조작: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "35b3ec221ef0eb7aa7009e88356836eb6bd615a86a2d4fc8550b502aa618aa39",
+    "text": "수동 조작: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "15f7a54f161ed9adf0a2baa62dc60fd40ef18811902b0e2544c4fad446e02a81",
+    "text": "수동 조작: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "43fa820e3391c2c45d38f8cef1a74a64d07633955abf7f1f749b11040ba73982",
+    "text": "수동 조작: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "manual_drive.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0a2e39194074a435ec480335d9f8846233f3cbd5095f1850c2b32eea4240ab34",
+    "text": "수동 조작: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "manual_drive.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "295a32d3cff8b4379a136d1e9be5075d7ba6dc78fc229cb87d5f3b20416e58ab",
+    "text": "수동 조작 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "manual_drive.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "21566fcbc52389f59bd94769faa3ce9a3f53dc3db5aa8bb68e5dff396e3eeb67",
+    "text": "수동 조작 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "manual_drive.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7401292b4a4a48961d4628b559b8bf6a8a6fcc33424e81c53152e1f4c4a06217",
+    "text": "수동 조작 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "manual_drive.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e864191cbd3f09fc93777f190d1f5809582534bc898739d9185fe239927c0c86",
+    "text": "수동 조작 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "manual_drive.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "65e30251419bf1fa57c650dcd290ef64618e837f01a03f5b6ad3d9eda21dfdde",
+    "text": "수동 조작 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "24a17f0445059d94723cb3d03ab4d2c0b77923f86c7df793fe150974de6ac154",
+    "text": "목적지 이동 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d6ae16f852e3df9f03dd972450225a3c907d5b0564be7e986c48e473d023cfa8",
+    "text": "목적지 이동 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0ff23739f0ca70dc79709e09274be6a137f991d89390ea764e0268c34cfb8a93",
+    "text": "목적지 이동 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a33e8979f363d90313044fc31b5916b020ff4e64b90a404eaba58d768dd8ec83",
+    "text": "목적지 이동 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dee098ef8ea3d2bb70fd1819a937bb5f72be526522480b09ac4f48a753bc0b15",
+    "text": "목적지 이동 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "92fcf62261ba0486c26ebcc9549f0dc469c29936d95b5256248c98410d7b3278",
+    "text": "목적지 이동 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "da69eb0996839986695729e4f6954aa6a96d7c6724b53cc73f1b07ad9c88a8e5",
+    "text": "목적지 이동 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a282f15edaf89ff98cc7316784bacdb177c8afdb476c44998d7c28b3e95f5359",
+    "text": "목적지 이동: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a51ac7a12b85d25d5348a8d3b8e2347bf2031096f4f516ae6fa9970ea270ac3a",
+    "text": "목적지 이동: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "85416ecd3d3d8c1ab1d0c05e13362db12d38b3bf88aa5b69d958da576c123f7f",
+    "text": "목적지 이동: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3390b85c62052d19a0e11fdd3b1db6700f2530a51a8fc7db80019d1a8843cba2",
+    "text": "목적지 이동: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e0a74ab6f26fe3cc1abb490340daec1cc34d951a54345411de9e82bfa169b4a7",
+    "text": "목적지 이동: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3958de3084548b1d15043a8e84f7e65941d59331ea7e422761d7804115cc1ad9",
+    "text": "목적지 이동: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d7edcfd4896f5d608288e1ac9b39d77a6241d668e065e7e5f69582588f7f7972",
+    "text": "목적지 이동: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c77f63cfe6d99ffce4d4df7004ed5848f9977b6d9933187787b90965ef1af25f",
+    "text": "목적지 이동: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ebbc63a36f177927ce4ac2656282dc1fc32a42174a369f70c80d215d7bfda3cd",
+    "text": "목적지 이동: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c2c4caff92988575c6c206e70f6ad1c4d53c549996ca6e0020a63cdc4927f070",
+    "text": "목적지 이동: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6fc57679f9b99cd79e7be9e77a370c01bd75252655a0e195a98af9080b524eb2",
+    "text": "목적지 이동 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "951d1633ce5ff586d2020b5266b4cdacf48d951a532c8d95e52086c685c37104",
+    "text": "목적지 이동 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6737be6966e4c0faa5dc986fbeb42ab01afa3846ef6b1788d07118cb9fedd530",
+    "text": "목적지 이동 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7e38b311afa033832629c295434331993a5de33e0c6691a62b56956dd4087af6",
+    "text": "목적지 이동 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "navigate_to_pose.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6882852c7f5ab26da1489eb8fd4d07e498f948322887afe9a362fb16becf70eb",
+    "text": "목적지 이동 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "navigation.changed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "fd5abb45bbdf7ffa403f55dd0e8564c90ea9c127e954b5b96ed22f83bf24c374",
+    "text": "지도나 목적지 설정이 변경되어 이동하지 않았어요. 다시 말씀해 주세요.",
+    "voice": "marin"
+  },
+  "navigation.configuration_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "50c264f4864d3a1e1e5e9f13866838053b8a5c2fda5ad4b606cabf41fc0b1da8",
+    "text": "목적지 이동 설정을 확인할 수 없어 이동하지 않았어요.",
+    "voice": "marin"
+  },
+  "navigation.map_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4f6b383551ffe3532faceec2db6a551a4e0d2f21917505f5af46c4c22f38cf90",
+    "text": "사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.",
+    "voice": "marin"
+  },
+  "navigation.target_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0433fc40fcf4555bee9ed8817458ca4bbdb3e92e6ff2173e32c7b728348819ca",
+    "text": "저장된 지도에서 그 목적지를 확인하지 못했어요. 등록된 목적지 이름을 포함해 이동 요청을 다시 말씀해 주세요.",
+    "voice": "marin"
+  },
+  "operation.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5a10697b62ce69904aa89c93909e07fe07b695c924eb6bfc7c3bd657bd35eda8",
+    "text": "작업이 취소됐어요.",
+    "voice": "marin"
+  },
+  "operation.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "740a6fc30de28a6d10fb6328d2fa57d81dc6e78662810308a7562a089e43eec0",
+    "text": "작업을 완료하지 못했어요.",
+    "voice": "marin"
+  },
+  "operation.guard_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b07efa3c50fb90f969f222e2f686c502759102e0996663b2af58e07dff3d5596",
+    "text": "요청 조건을 확인할 수 없어 요청을 보내지 않았어요.",
+    "voice": "marin"
+  },
+  "operation.submit_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "430b5b87cdf6ac6ceea9f34b31efc223e6de4764ff3aab762f3bb9012ea1601c",
+    "text": "실행 요청의 상태를 확인할 수 없어요. 시작 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "operation.submitted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2df5425d3071f225fc4f383216ffa9b7b2ffa616becaf08a8a58fe938a3b3bbc",
+    "text": "실행 요청을 보냈어요. 접수 결과를 확인할게요.",
+    "voice": "marin"
+  },
+  "operation.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "80e1e5ad175cd66e08168d1da10e107354c3540e546c2fcc9e576bba9dce44f8",
+    "text": "요청하신 작업이 완료됐어요.",
+    "voice": "marin"
+  },
+  "operation.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b40569469868bf46c47f60c423f15f2abff473df0a4bd0170e20c27884492a57",
+    "text": "현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "patrol.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5d2e0c1886d5e334bd956503fac10a9600d20a49f982b745aa430c453ce257e4",
+    "text": "순찰 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "patrol.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ba04cf2255a9ba7ec79952ef2f1b5b08dbbf6c32715e90a4be345cdd89105643",
+    "text": "순찰 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "patrol.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "604f10916091fc9111404e764e744871ce371dedb3ed44a15b94e69dd199786b",
+    "text": "순찰 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "patrol.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cb093800245fdcf87ab4eaba8f9c68135d48c9b1dd4f123dd59064387daf7ed5",
+    "text": "순찰 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "patrol.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "dc734a68973943006c4d5a2790f50378df6c8378d7b40d02988654fef29a6c8f",
+    "text": "순찰 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "patrol.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b0a6d8510217cb8e9f8bda554839b12036897ed3d4f03dc5d9f68c9e59761d15",
+    "text": "순찰 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "patrol.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e1f20be3dca2e4811e15274c5eb2269882685f2d0983e325c72a6885aacf9357",
+    "text": "순찰 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.camera_setup": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d848298cae47e59f7e5bf918d40fdd14f036894d5fb7efa9ad9d8214cd171cee",
+    "text": "순찰: 카메라 영상이나 보정 정보를 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.camera_stale": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "908983d48753fe562805bbe6cc82fe69f5c7f84174240335b16ebb65a9b9236c",
+    "text": "순찰: 카메라 영상이 제때 들어오지 않아요.",
+    "voice": "marin"
+  },
+  "patrol.failed.camera_transform": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "33f2b9f4c3f772b6163e13297bda2fd7a6e11d91eb65ed76b3bd1a68cd384b94",
+    "text": "순찰: 카메라 영상과 같은 시점의 위치 정보를 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.cancel_unconfirmed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7274176f96d68cfbd9dbcad32186691438fd3e80b8c1ad6ff588a9825903befa",
+    "text": "순찰: 이동 취소 완료를 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.costmap_stale": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "fb125bd30bc233cdc6fd8a33b50d4fcf5b4b3e9c6ec1b39e38c8100b29c44d6e",
+    "text": "순찰: 최신 장애물 지도를 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.coverage_shortfall": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ba904d48f8610984ef8d6cd1f0f70c5e6be11ca74eaa511fcdb2b0273e024ffd",
+    "text": "순찰: 남은 관측 지점으로 이동할 수 없어 요청한 범위의 관측을 마치지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.localization_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4d24b2e18d3f445913651c91a85098065e5a7dc8018352749e6a2982430c1701",
+    "text": "순찰: 로봇의 현재 위치를 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8d43869b5ef7b53130534a42bade37769f399a9388c00d59b071cc38fbe9f645",
+    "text": "순찰: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f4f6363f4695153e79d5ded8dd92da055d6d2b89f24a6488aa85c279d395c4e9",
+    "text": "순찰: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ade06beeb51a7a37ac4130231d5277a6565271f2dd0fba8dea5f5ea37cb6ab3b",
+    "text": "순찰: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "80bd37289ca2d84e995468ffa1ff705db63e3d920aa9556d73d4afd507676ef5",
+    "text": "순찰: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5ed90880aa8df7634d355bc87d5a3d0044561f344a948d96304a5b1b18973955",
+    "text": "순찰: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cfcb84bfbff7946cadc37a4e6ecc11efff2b45ecc12c4320e20b350ed97d38ed",
+    "text": "순찰: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "bdce063007ef70983ac74bcc62a8b2ab9f4eb2f053b35c2f218d28525ecdd3e6",
+    "text": "순찰: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cb33e3bc4d928a1504fb424c229e515deca00c9e6f2f87a1596feae31c32330f",
+    "text": "순찰: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "becc5dcd899b4eb84751c74c802e114da851e27e5e5376ae557c9b8db5944d41",
+    "text": "순찰: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "patrol.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "56026fb1c2507ed006d13fa292a0438340b0db848e0f76d203704195aa83d193",
+    "text": "순찰: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.map_changed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e0273a0217d716c115f424e918a735a6f6da08580cf341c85a0ca013010f0e3b",
+    "text": "순찰: 실행 중 지도가 바뀌었어요. 새 지도에서 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "patrol.failed.map_frame": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d884648f6509e3a9608b901891932b337ceb85e1dcfdfc3cf9c83be0f21f341d",
+    "text": "순찰: 장애물 지도와 저장 지도의 좌표계가 달라요.",
+    "voice": "marin"
+  },
+  "patrol.failed.map_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d1ab9b6c6a83ac5c866eefa512e5ff641c6296dc96f3418e7896c7618c00d305",
+    "text": "순찰: 저장된 지도가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "patrol.failed.map_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "252870d680ee3cb5cfa5e49bb070cdfd6bbcaadc9538c254dfe3c981c05fa40e",
+    "text": "순찰: 저장된 지도를 받지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.nav_canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cb355532f1e10d3b9eef460adab7a588a8e2798a23c488f402208f820bd615a4",
+    "text": "순찰: 이동 요청이 외부에서 취소됐어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.nav_communication": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c373962b93d2ac50d2bee564be9e9ed6fb6869d4a998f416c6759f28c6164f70",
+    "text": "순찰: 이동 기능과 통신하지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.nav_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ee6df2b55086b5576263369955d6b2e63e9e79c37960ed5a7a1f71df12bbd710",
+    "text": "순찰: 이동 요청의 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "patrol.failed.nav_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "342ce35d8505358df4e6bdaa08caa064b130ab5bd8133aa98927d0ab2e2ea434",
+    "text": "순찰: 이동이나 회전 기능이 준비되지 않았어요.",
+    "voice": "marin"
+  },
+  "patrol.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d3c7da35ab62d95401a933084271d959013d1c3621f05678c1e0a0b8e9198b45",
+    "text": "순찰 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "patrol.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4d9dde0c76e38b13c1a106bb1cf9a320f8d1c18c738450183bf9b79eee7bb08c",
+    "text": "순찰 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "patrol.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0c544ecb9e8243333919c3207f2573e5c07351a3dbb8d25fdfb7bbba2d2cd310",
+    "text": "순찰 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "patrol.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "307e7b081ab1d4add942743c592faaad2b7ca839491b6247e295f8d4fd8f3768",
+    "text": "순찰 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "patrol.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4354f1966c722524629acdb37c09586fd52f72bf1466bcf338828ae3426c874d",
+    "text": "순찰 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "relocalize.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "acd2d88641a0e31bce1b9fc089e83d9512ff68f506fde53fe53f6d38cba5c673",
+    "text": "위치 보정 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "relocalize.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a3bb8935a0b3ad7a07a23473751e029cc72f00c89cfdce6db618033549596643",
+    "text": "위치 보정 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "relocalize.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "80502c3f53ff3fcb369f026926a2201ca5fccee1db20e21cbf3a81ec6e9b353e",
+    "text": "위치 보정 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "relocalize.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "666dcedc45066e944cbd5436f94cb9159a74e5e66d0138e602273667b06cb2ff",
+    "text": "위치 보정 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "relocalize.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "b42fc039fccb7054f7e31460dbf593525dae6257ed2e8b26434e23ec55fefd1e",
+    "text": "위치 보정 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "relocalize.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d141060278f15d603a973539bb52c0e8dfafa8f0fb705345d186af13ec0d79a3",
+    "text": "위치 보정 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "598ee3b1d4dd3ea97943d347ec9d27da1be9ebb05f7f79681f38836862b21d20",
+    "text": "위치 보정 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.amcl_inactive": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "878c06926fec0265710e997763e9a24f8c4117c28bd28c72d1db4f7456df34e3",
+    "text": "위치 보정: 위치 추정 기능이 활성화되지 않았어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.amcl_update_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a8a7eaa177c502fbcda601ebac5dd0d06ad2b727b6749e07463ea61e6bf6b00a",
+    "text": "위치 보정: 위치 갱신 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.amcl_update_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d4e6f8f09f110faf79118dfc83f97fea1a46ea83afaf61daf224c02ea14432e2",
+    "text": "위치 보정: 위치 갱신 서비스를 사용할 수 없어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.global_localization_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a10f0d2bc81e00323b61546c086aabb4eab4d1619a93757bf6a2a5594b469aaa",
+    "text": "위치 보정: 전역 위치 탐색 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.global_localization_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8eea4534f6b49f7d5ad638b65e54208b2f6284673cc34d0067f5362095af439f",
+    "text": "위치 보정: 전역 위치 탐색 서비스를 사용할 수 없어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.lidar_transform": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "09d825afe21a3d776f7d7dfb3816a748e0439d644bc23f950339eba4fc149d21",
+    "text": "위치 보정: 라이다 좌표 변환을 확인하지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f676f7d2eeb95985dfc23b03543afe70a4c06b5faac1476356d4248ba6b9e3c7",
+    "text": "위치 보정: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c96aba85cf5cff9357f99cf7e8c2d8e1053ae5793dee74518688c47996a25770",
+    "text": "위치 보정: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "538036d46c66660ac89c35bb4307a73fd2250be5fd7a9b60f9faa8da8ff7ff12",
+    "text": "위치 보정: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5cf23f50e6c65bb6888022d21cf73d50cf67fb41e4971f49ddba7aa5064e5529",
+    "text": "위치 보정: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "28af642eb73a656122bb2b458eb70341124563b73293b75789c6934f680fce9a",
+    "text": "위치 보정: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "1d1e51cd775ca2f82c5efc105fab8b0b7fe43c77cf05084ab3c10dc723efdc67",
+    "text": "위치 보정: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a1790d9c43910e40950127bbd481c7d3448abf57b6b5825ffec150ff9d7fe4e2",
+    "text": "위치 보정: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ad35c9cb6cd34520aa20a7dd38f334ed61ecbbc328c42b120d28f471b194b6ad",
+    "text": "위치 보정: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c367b9ea0aef87f574c3538c656a04126c8ca0bcccd9c10247a08807efd9bbb5",
+    "text": "위치 보정: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8221673fd1d47731f5ef1a5121d6eebe233b4f2a31aeb08c89d4465b53508547",
+    "text": "위치 보정: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.map_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "30fde65f6cc67e694e4a7da9065ceca69682d9f720232e9790ce937f8dade34b",
+    "text": "위치 보정: 선택한 지도 데이터를 받지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7b4eb2e584cdc0244a97a063526f029143dfb6f75cbbcc81b3c7f343370ec043",
+    "text": "위치 보정: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.match_insufficient": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d70e2a48839e54fe0ff17a4822f4eca4be2dbe80092984176409d7b4e1f05a2d",
+    "text": "위치 보정: 라이다 측정과 지도가 충분히 일치하지 않아 위치를 찾지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.pose_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cee9e6c2cf4d5c02d6e8ddab4b6f843a7d3dffb3a0df05da276abebc8100ff30",
+    "text": "위치 보정: 입력한 초기 위치나 좌표계가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.pose_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "659305255aac11ac4069c7396fcc952b88066bf1830da34e86ea96562c79c5ae",
+    "text": "위치 보정: 지도 전체를 탐색하는 동안 위치 추정값을 받지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.pose_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d24885e7e3f80e9fae25a57ee55683129a39829cd7a123c061f32acaecd10cb6",
+    "text": "위치 보정: 보정된 위치의 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.scan_missing": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "2fd6338dc76a77e1b5b5942ca9ebce30f8c3bb5c12dd1f6d186bb9c917401419",
+    "text": "위치 보정: 위치 보정 후 라이다 측정값을 받지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.scan_stale": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "16fd50d9a6af448ec63a488a1a17c0d87f4e97f3aa21aa2af6e4c9c18a6f2cf4",
+    "text": "위치 보정: 최신 라이다 측정값을 받지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d5cbdd44518923b0445dba56690205d16f0ca65d97ed9377493858cc1fb3c747",
+    "text": "위치 보정: 위치 보정 기능이 종료 중이에요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.spin_goal_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a494fbb73321b80c6eaf4a6b74253103402c6fa4281a5506ede60895556a65fb",
+    "text": "위치 보정: 회전 요청 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.failed.spin_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "27cc051967067077b24d2907d83585082dde4e53a4030934eef03c321c27e873",
+    "text": "위치 보정: 회전 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ff71beba31703d2a971fe88bab429533cb57115f517d539322577dfb83b55d86",
+    "text": "위치 보정 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "relocalize.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0770e3a5e4e829f738e4cc8ac0123988152a3ebe67396ac05d3298ee4c347efa",
+    "text": "위치 보정 요청이 성공 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "relocalize.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "d6273b4f5fe1f94924921b0969e1810eabbbf47a5818b44301dc45cb575d666b",
+    "text": "위치 보정 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "relocalize.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "10d3ed9641c6dec9d6d66c7670f13871c6748abb4ce77d268fce98a16c5e9958",
+    "text": "위치 보정 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "relocalize.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6b2070e2a3ba17a4b089e22e9c43c6ed2d34bbf6b64da35fc0a6671a5e51a66b",
+    "text": "위치 보정 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "set_weather_location.accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "407ad88436098e2a73f8fc411a448891ca589db0668ac80c835b066bd043a69a",
+    "text": "날씨 지역 설정 요청을 접수했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.cancel_accepted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ee8a1fc8a5b5d03490dc2d69334df784f57ab5713463f27af4b4c0742eebea0c",
+    "text": "날씨 지역 설정 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "set_weather_location.cancel_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "899e2c383d8088d8d0c52aea99a911981dec967fcb88f72d1ed7134307b9981c",
+    "text": "날씨 지역 설정 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.cancel_requested": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "509f8b504f920544b9b715eaf760e8fe6c551bb4fceb98dc016e8fd87e664dbd",
+    "text": "날씨 지역 설정 취소를 요청했어요. 종료 여부를 확인할게요.",
+    "voice": "marin"
+  },
+  "set_weather_location.cancel_unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "4e8874346b60b899164b331b39165fa4a07105a902ed907b8176cfd67c1d4b73",
+    "text": "날씨 지역 설정 취소 접수 여부를 확인하지 못했어요. 종료 여부도 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.canceled": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "20e581d9568c961586ca4c975f03e7e18b2690a3c68af08b8add619a7c282ae3",
+    "text": "날씨 지역 설정 요청이 취소 상태로 종료됐어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3ffece967d70c9ee053db7dcc4ba5379ba1106a24203f86cb46b624a27a976e5",
+    "text": "날씨 지역 설정 작업을 완료하지 못했어요. 구체적인 사유는 확인되지 않았어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.fetch_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "aaff8cf697ab15121e368b5e1b2423116ceac01fd0a2a9fa9b9c5c5945bbbc5a",
+    "text": "날씨 지역 설정: 지역을 검색하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.invalid_data": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "34c2f28bc817bc48fbbdf5c4ad99867faa7d73d4b84f7abc89d0c7c7de522fd9",
+    "text": "날씨 지역 설정: 검색된 지역 정보가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.invalid_query": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "81cd4cf71cf7ab9905ce0a14e4722f8af4fe1908ef9adda1edeab1e05c260038",
+    "text": "날씨 지역 설정: 시나 동 이름으로 지역을 알려주세요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.lookup_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ad4ca411f90bbe32e70114f62f92f949484a4a4e5f86c23f396e1ff3e7ee8a43",
+    "text": "날씨 지역 설정: 지역을 검색하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.lookup_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9038ab4820bb40d957a27c4f1337fa44b763b2051abf110b3188f5eb6eebc982",
+    "text": "날씨 지역 설정: 지역 검색 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_action_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "9fff73d239cec4ddb2c8cc6d2ad5b718165a1674f2f85cc19b20aeaece09f2fc",
+    "text": "날씨 지역 설정: 기능 실행 서버에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_goal_rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "797d90eeda3c395b5dc0174b3360227a4f7d00911ed16a5534f0ef98ddb0d9af",
+    "text": "날씨 지역 설정: 기능 실행 서버가 요청을 거절했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_localization_error": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e6636f2500418b12292e26623a30ac95b468fa03d872e66da166f0f7fcc27e8a",
+    "text": "날씨 지역 설정: 현재 위치 추정에 오류가 있어 실행하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_localization_switching": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8fb1983521d85135e30564a38b4c9e1177a422b6ec6bf2fd38ccb13f7e9f2db5",
+    "text": "날씨 지역 설정: 현재 위치를 확인 중이에요. 위치 확인 후 다시 요청해 주세요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_map_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "546897aa38ae87a3781544049128b14f4538c7687c2e9a7f95fc153dd6ae5f1d",
+    "text": "날씨 지역 설정: 저장된 지도를 먼저 선택해 주세요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_mapping_required": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5eb5243c5bd0a8c9f428a6edcc64ba883177a3a134118525a8cc92a676936852",
+    "text": "날씨 지역 설정: 지도 만들기 모드로 먼저 전환해 주세요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_preempted": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7f315d55e657fc6c19fe01cd0af53592900d48b7eae6b357bd4c0771fe8341dc",
+    "text": "날씨 지역 설정: 다른 요청으로 실행이 중단됐어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_service_unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0f1f8130965adfb2e5f849bc7c96dbdd6742de199259c88dde1564e80e223afb",
+    "text": "날씨 지역 설정: 기능 실행 서비스에 연결하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ff9c886067a652de16c639dda0e7e51995641eb7e7658a36eab3f240434cc5c4",
+    "text": "날씨 지역 설정: 실행 관리자가 종료 중이에요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.manager_shutdown_timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "f293f4df51e0fd62031965f71178170d3bbc38c41034349f28611d9570eb8060",
+    "text": "날씨 지역 설정: 실행 관리자 종료 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.result_invalid": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "8c1c92150e8d738c12001048aba203c9fd52db2e7f3f3aa14f588cef4bd7823d",
+    "text": "날씨 지역 설정: 지역 조회 결과가 올바르지 않아요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.save_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e5510670ae27b53147582099fcef2ef419e5a04c6e9101e7b25c14099f2a1255",
+    "text": "날씨 지역 설정: 조회한 지역을 저장하지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.shutdown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "108a79e359087fad5489d1975afe5fa69cc77edcced16cdac133efa704d9b2af",
+    "text": "날씨 지역 설정: 지역 설정 기능이 종료 중이에요.",
+    "voice": "marin"
+  },
+  "set_weather_location.failed.timeout": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "e6d7278ccd63771b9295afbd6674dc7b3301fe634283c1dd6f4694ff2afcd371",
+    "text": "날씨 지역 설정: 지역 설정 응답 시간이 초과됐어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.rejected": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "a1b0d7f917dcc2e7c6937fe5737ec13a4e26d1541638a884722375886cf23d6d",
+    "text": "날씨 지역 설정 요청이 거절됐어요. 구체적인 사유는 전달받지 못했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.succeeded": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "ebea881e828d3de7e74cdc7d1cf7165b8fcc792772a30a01601f9bd45270b32f",
+    "text": "날씨 조회 지역을 저장했어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "5087a49b22bf4a09e6742e9dcad17bc561d8478e38a3864bd1277bbab72ca7a3",
+    "text": "날씨 지역 설정 요청을 보내지 못했어요. 실행 관리자에 연결할 수 없어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.unknown": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "c12c85c217720a91af0046a82dc2703bccf71cf45122a14b10509b30457c7a71",
+    "text": "날씨 지역 설정 실행 상태를 확인하지 못했어요. 요청을 다시 보내지는 않았어요.",
+    "voice": "marin"
+  },
+  "set_weather_location.unsupported": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "7c7dff45039123de2d84968b21b09acfb3dbce414c631391d423ca553253466c",
+    "text": "날씨 지역 설정 기능은 현재 지원하지 않아요.",
+    "voice": "marin"
+  },
+  "weather.location_failed": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "0d083b83d617d5a20a0d704a328b2057067e8f4e49c1387215a869c6fa532500",
+    "text": "날씨 조회 위치를 저장하지 못했어요. 잠시 후 다시 알려주세요.",
+    "voice": "marin"
+  },
+  "weather.location_not_found": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "cd979511914ad02666dbc4a5c821fa422dc299cb088e856cee43eb1bcbf2f389",
+    "text": "지역을 찾지 못했어요. 시·구·동을 더 자세히 알려주세요.",
+    "voice": "marin"
+  },
+  "weather.unavailable": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "3a1a51b9692f8c926b4e2bca6229e680d77cd89a29d9eda91ed2f91e627bfcf9",
+    "text": "지금 날씨 조회 기능을 사용할 수 없어요.",
+    "voice": "marin"
+  }
+}

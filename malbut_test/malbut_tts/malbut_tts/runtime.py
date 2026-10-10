@@ -28,6 +28,7 @@ class _Request:
     request_type: int = DIALOGUE
     interim: bool = False
     request_id: str = ''
+    audio_id: str = ''
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -45,7 +46,7 @@ class SpeechRuntime:
 
     def __init__(self, synthesizer, player_factory, on_status, logger=None, *,
                  max_pending_requests=32, pending_timeout_s=0.0,
-                 clock=monotonic):
+                 clock=monotonic, prerecorded=None):
         if type(max_pending_requests) is not int or max_pending_requests < 1:
             raise ValueError('max_pending_requests must be a positive integer')
         if (isinstance(pending_timeout_s, bool)
@@ -54,6 +55,7 @@ class SpeechRuntime:
                 or pending_timeout_s < 0):
             raise ValueError('pending_timeout_s must be finite and nonnegative; zero disables expiry')
         self._synthesizer = synthesizer
+        self._prerecorded = prerecorded
         self._player_factory = player_factory
         self._on_status = on_status
         self._logger = logger or logging.getLogger(__name__)
@@ -78,7 +80,7 @@ class SpeechRuntime:
             self._expiry_worker.start()
 
     def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='',
-               interim=False, request_id=''):
+               interim=False, request_id='', audio_id=''):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
@@ -88,6 +90,9 @@ class SpeechRuntime:
             return None
         if type(interim) is not bool:
             self._logger.warning('tts_request_ignored: invalid interim')
+            return None
+        if not isinstance(audio_id, str) or len(audio_id) > 128:
+            self._logger.warning('tts_request_ignored: invalid audio_id')
             return None
         if not isinstance(playback_id, str) or (playback_id and (
                 not playback_id.strip() or len(playback_id) > 200)):
@@ -122,7 +127,7 @@ class SpeechRuntime:
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
                 validate, request_type=request_type, interim=interim,
-                request_id=correlated_id,
+                request_id=correlated_id, audio_id=audio_id,
             )
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
@@ -377,11 +382,14 @@ class SpeechRuntime:
             with self._condition:
                 request.player = player
             if not request.cancel.is_set():
-                chunks = iter(self._synthesizer.generate(
-                    request.text, request.cancel,
+                source = self._prerecorded if request.audio_id else self._synthesizer
+                if source is None:
+                    raise ValueError('prerecorded audio is not configured')
+                chunks = iter(source.generate(
+                    request.audio_id or request.text, request.cancel,
                 ))
                 has_audio = False
-                sentence_mode = getattr(self._synthesizer, 'sentence_streaming', False)
+                sentence_mode = getattr(source, 'sentence_streaming', False)
                 while not request.cancel.is_set():
                     if sentence_mode:
                         # Do not start a third sentence when two are queued,

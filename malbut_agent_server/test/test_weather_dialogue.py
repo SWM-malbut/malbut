@@ -376,12 +376,13 @@ def test_location_tool_is_removed_without_manager_setter(runtime):
     assert provider.calls[0]['tools'] == []
 
 
-def test_missing_saved_location_reaches_provider_as_clarification_context(runtime):
+def test_missing_saved_location_uses_fixed_notice_without_second_model_call(runtime):
     runtime.provider = WeatherProvider()
     runtime.weather_executor = lambda _: {'status': 'location_required'}
     result = runtime.handle(request())
-    assert result.decision.message == 'location_required'
-    assert runtime.provider.calls[1]['weather'] == {'status': 'location_required'}
+    assert '지역을 먼저 알려주세요' in result.decision.message
+    assert result.decision.reason == 'get_weather.failed.location_required'
+    assert len(runtime.provider.calls) == 1
 
 
 def test_location_tool_cannot_bypass_manager_in_production_or_simulation():
@@ -452,3 +453,16 @@ def test_lookup_and_answer_failures_are_distinguished_without_repeating_executio
     before = (len(reads), len(child.calls))
     assert runtime.handle(query).decision == result.decision
     assert (len(reads), len(child.calls)) == before
+
+
+@pytest.mark.parametrize('suffix', ['failed.rate_limited', 'unavailable', 'rejected', 'unknown'])
+def test_known_weather_failure_keeps_its_reported_cause(runtime, suffix):
+    from malbut_agent_server.mission_audio import CATALOG
+    audio_id = 'get_weather.' + suffix
+    runtime.provider = WeatherProvider()
+    runtime.weather_executor = lambda _: {
+        'status': 'unavailable', 'notice_id': audio_id,
+    }
+    result = runtime.handle(request())
+    assert result.decision.message == CATALOG[audio_id]
+    assert len(runtime.provider.calls) == 1

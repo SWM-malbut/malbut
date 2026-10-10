@@ -70,8 +70,15 @@ class ManagerWeatherQuery:
                 result = pending.result
             if result is not None and result.get('kind') == 'canceled':
                 raise CancelledError('Manager weather query was canceled')
-            if result is None or result.get('kind') not in {'succeeded', 'failed'}:
+            if result is None or result.get('kind') not in {
+                    'succeeded', 'failed', 'unavailable', 'rejected', 'unknown'}:
                 raise RuntimeError('Manager weather query did not succeed')
+            if result['kind'] != 'succeeded':
+                from malbut_agent_server.mission_audio import notice_for_event
+                audio_id, _ = notice_for_event(dict(result, capability_id=capability_id))
+                if audio_id == 'get_weather.failed.location_required':
+                    return {'status': 'location_required'}
+                return {'status': 'unavailable', 'notice_id': audio_id}
             raw = result.get('result_yaml')
             if not isinstance(raw, str) or len(raw.encode('utf-8')) > 16384:
                 raise ValueError('invalid Manager weather result')
@@ -79,13 +86,6 @@ class ManagerWeatherQuery:
 
             value = yaml.safe_load(raw)
             if capability_id == 'get_weather':
-                if (result['kind'] == 'failed' and result.get('ros_status') == 6
-                        and isinstance(value, dict)
-                        and set(value) == {'weather', 'error_code', 'message'}
-                        and value['error_code'] == 'LOCATION_REQUIRED'):
-                    return {'status': 'location_required'}
-                if result['kind'] != 'succeeded':
-                    raise RuntimeError('Manager weather query did not succeed')
                 return decode_weather_result(value)
             if (result['kind'] != 'succeeded' or not isinstance(value, dict)
                     or set(value) != {'mission_id', 'result_yaml', 'message'}

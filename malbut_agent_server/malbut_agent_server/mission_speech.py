@@ -52,9 +52,10 @@ def event_speech(event: Dict) -> Optional[str]:
 class MissionAnnouncer:
     """Announce outcomes and uncertainty without narrating routine progress."""
 
-    def __init__(self, speak: Callable[[str], bool]) -> None:
+    def __init__(self, speak: Callable[[str], bool], *, speak_audio=None) -> None:
         """Use the Agent's normal text publication boundary."""
         self._speak = speak
+        self._speak_audio = speak_audio
         self._last: Dict[str, str] = {}
         self._finished = set()
 
@@ -64,12 +65,21 @@ class MissionAnnouncer:
         kind = event.get('kind')
         if request_id in self._finished or kind not in _ANNOUNCED:
             return None
-        text = event_speech(event)
+        notice = None
+        if self._speak_audio is not None:
+            from malbut_agent_server.mission_audio import notice_for_event
+            notice = notice_for_event(event)
+        if notice is not None:
+            audio_id, text = notice
+        else:
+            text = event_speech(event)
         if text is None:
             return None
         if self._last.get(request_id) == kind:
             return None
-        if not self._speak(text):
+        published = (self._speak_audio(text, audio_id)
+                     if notice is not None else self._speak(text))
+        if not published:
             return None
         self._last[request_id] = kind
         if kind in _TERMINAL:

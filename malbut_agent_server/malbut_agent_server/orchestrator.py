@@ -1161,6 +1161,19 @@ class AgentOrchestrator:
             if (setting_location or weather['status'] != 'unavailable' or attempt
                     or not claim_retry(WEATHER_RETRY_NOTICE)):
                 break
+        from malbut_agent_server.mission_audio import CATALOG
+        capability = 'set_weather_location' if setting_location else 'get_weather'
+        notice_id = weather.get('notice_id')
+        if not setting_location and weather['status'] == 'location_required':
+            notice_id = 'get_weather.failed.location_required'
+        if (isinstance(notice_id, str) and (notice_id in {
+                capability + '.' + kind for kind in ('failed', 'unavailable', 'rejected', 'unknown')}
+                or notice_id.startswith(capability + '.failed.'))
+                and notice_id in CATALOG):
+            return replace(first_result, decision=AgentDecision(
+                type='message', message=CATALOG[notice_id], reason=notice_id,
+                confidence=1.0,
+            ), memory_proposal=None)
         if setting_location:
             # A committed setting needs a receipt even if a second model call would fail.
             status = weather['status']

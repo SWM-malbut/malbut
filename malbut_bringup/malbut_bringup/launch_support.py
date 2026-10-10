@@ -74,6 +74,7 @@ def defaults():
         'speech_agent_user_id': 'speech-development-user',
         'speech_agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
         'speech_manager_commands': 'true',
+        'speech_prerecorded_audio': 'true', 'speech_audio_directory': '',
         'speech_preflight_timeout_s': '120.0',
         'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',

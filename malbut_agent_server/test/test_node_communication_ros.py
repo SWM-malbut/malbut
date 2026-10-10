@@ -227,7 +227,7 @@ def communication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SpeechReceiptStore, 'receive', receipt)
 
-    def create(*, with_manager=True, provider=None):
+    def create(*, with_manager=True, provider=None, prerecorded_audio=False):
         nonlocal manager, follow, agent_thread
         assert not nodes, 'Each test owns one isolated communication graph'
         settings = Settings(
@@ -267,6 +267,7 @@ def communication(tmp_path, monkeypatch):
                     on_event=events.append, goal_response_timeout_s=1.0,
                     dialogue_settings=settings,
                     dialogue_factory=dialogue_factory,
+                    prerecorded_audio=prerecorded_audio,
                 )
                 agent_executor.add_node(agent)
                 agent_state['node'] = agent
@@ -734,3 +735,19 @@ def test_shutdown_discards_late_dialogue_result_on_real_topic(communication):
     assert not graph.speech
     assert not graph.events
     assert not graph.follow.goals
+
+
+def test_prerecorded_outcome_id_and_dynamic_answer_share_speech_topic(communication):
+    graph = communication(prerecorded_audio=True)
+    messages = []
+    graph.sender.create_subscription(
+        SpeechRequest, '/malbut/speech/response', messages.append, 10)
+    _wait_until(lambda: graph.agent._speech.get_subscription_count() >= 2)
+    request_id = graph.agent.missions.submit('follow_person', _arguments('recording'))
+    _wait_until(lambda: 'recording' in graph.follow.goals)
+    graph.follow.finish['recording'].set()
+    _wait_until(lambda: graph.agent.missions.snapshot(request_id)['terminal'])
+    _wait_until(lambda: any(item.audio_id == 'follow_person.succeeded' for item in messages))
+    assert graph.agent.say('현재 기온은 이십 도예요.')
+    _wait_until(lambda: any(item.text == '현재 기온은 이십 도예요.' for item in messages))
+    assert next(item for item in messages if item.text == '현재 기온은 이십 도예요.').audio_id == ''

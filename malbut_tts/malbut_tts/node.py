@@ -45,6 +45,7 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('speaker', 'Sohee')
                 self.declare_parameter('language', 'Korean')
                 self.declare_parameter('output_device', -1)
+                self.declare_parameter('audio_directory', '')
                 self.declare_parameter('max_pending_requests', 32)
                 self.declare_parameter('pending_timeout_s', 0.0)
                 qos = QoSProfile(
@@ -87,6 +88,7 @@ def create_tts_node(runtime_factory=None):
             from malbut_tts.audio import StreamingPlayer
             from malbut_tts.runtime import SpeechRuntime
             from malbut_tts.backends import create_synthesizer
+            from malbut_tts.prerecorded import PrerecordedAudio
 
             synthesizer = create_synthesizer(
                 model_path,
@@ -118,6 +120,7 @@ def create_tts_node(runtime_factory=None):
                 logger=self.get_logger(),
                 max_pending_requests=self.get_parameter('max_pending_requests').value,
                 pending_timeout_s=self.get_parameter('pending_timeout_s').value,
+                prerecorded=PrerecordedAudio(self.get_parameter('audio_directory').value or None),
             )
 
         def _watch_key(self, key):
@@ -156,6 +159,9 @@ def create_tts_node(runtime_factory=None):
                 request_id = getattr(message, 'request_id', '')
                 if request_id:
                     options['request_id'] = request_id
+                audio_id = getattr(message, 'audio_id', '')
+                if audio_id:
+                    options['audio_id'] = audio_id
                 self._runtime.submit(
                     message.text, message.request_type, interim=message.interim, **options,
                 )

@@ -102,6 +102,7 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     assert command == [
         '--provider', 'mock', '--user-id', 'trial-user',
         '--conversation-db', '/trial records/session.sqlite3',
+        '--prerecorded-audio',
         '--enable-manager-commands', '--ros-args']
     assert evaluate_parameters(context, tts._Node__parameters) == (
         {'backend': 'openai', 'output_device': 3},)
@@ -220,3 +221,15 @@ def test_real_launch_exit_status_for_explicit_diagnostic(speech, tmp_path, mode,
         'stt_library_path:=unused', 'preflight_only:=true', 'preflight_timeout_s:=0.2',
     ], capture_output=True, text=True, timeout=15)
     assert result.returncode == expected_code, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('enabled', ['true', 'false'])
+def test_prerecorded_option_routes_catalog_ids_and_custom_audio_directory(speech, enabled):
+    context = _context(speech, prerecorded_audio=enabled, audio_directory='/robot/notices')
+    actions = speech._setup(context)
+    agent, tts, *_ = [action for action in actions if isinstance(action, Node)]
+    command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
+    assert ('--prerecorded-audio' in command) is (enabled == 'true')
+    assert ('--no-prerecorded-audio' in command) is (enabled == 'false')
+    parameters = evaluate_parameters(context, tts._Node__parameters)
+    assert parameters[0]['audio_directory'] == '/robot/notices'

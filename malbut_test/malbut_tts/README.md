@@ -131,6 +131,44 @@ PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
 
 ## ROS 노드
 
+### 기능별 사전 생성 안내
+
+Agent는 기본적으로 기능별 성공·실패·취소·미지원·접수·
+결과 미확인 안내와 코드에 정의된 실패 사유를 WAV로 재생한다. 문구와 매핑은
+`malbut_agent_server/mission_audio.py`, `mission_audio_cases.py`에 있다.
+예를 들어 순찰의 카메라 지연, 지도 작성의 저장 실패, 얼굴 등록의 인원 초과,
+날씨의 조회 한도 초과를 각각 다른 파일로 안내한다. 상세 원문은 이벤트 로그에 남는다.
+정의되지 않은 사유는 기능별 원인 미확인 안내를 사용한다. Nav2 Humble의
+`NavigateToPose`처럼 Result에 사유가 없는 기능은 없는 실패 원인을 추측하지 않는다.
+카탈로그에 아직 없는 추가 기능은 공통 성공·실패·취소·미지원 음성을 사용한다.
+날씨 수치·지역 후보·일반 대화처럼 값이 바뀌는 답변은 기존 TTS를 사용한다.
+
+저장소 루트에서 기존 API 키가 **실행 환경에 설정된 상태**로 한 번 생성한다.
+키를 명령줄 인자나 저장소에 넣지 않는다. 아래 생성 명령만 TTS API를 호출하며,
+이미 준비한 파일은 문구·모델·목소리·해시가 일치하면 다시 합성하지 않는다.
+
+```bash
+PYTHONPATH=malbut_agent_server python3 -m malbut_agent_server.mission_audio > /tmp/malbut-notices.json
+PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
+  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio
+PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
+  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio --check
+```
+
+기본값은 기존 대화와 같은 `gpt-4o-mini-tts` / `marin`이다. 출력은
+mono 24 kHz PCM16 WAV와 `manifest.json`이며 패키지에 함께 설치된다.
+별도 배포 폴더는 TTS의 `audio_directory` ROS parameter로 지정한다.
+생성 후 `malbut_interfaces`, Agent, TTS를 함께 다시 빌드하고 재시작한다.
+`SpeechRequest.audio_id`가 추가되어 이전 인터페이스와 혼용할 수 없다.
+실로봇 복사본을 사용할 때는 동일한 WAV 폴더를 그 복사본의
+`malbut_tts/malbut_tts/audio`에도 배포하거나 공통 `audio_directory`를 지정한다.
+
+`speech.launch.py`의 `prerecorded_audio`와 `bringup.launch.py`의
+`speech_prerecorded_audio`는 기본값이 `true`다. 필요하면 `false`로 끄거나
+Agent CLI의 `--no-prerecorded-audio`를 사용한다. 별도 경로는 각각
+`audio_directory` / `speech_audio_directory`다. 파일 누락·손상은 `failed`로 보고하고
+자동 TTS 호출로 대체하지 않는다. 기존 재생 큐·중지·일시정지·STT 재생 차단을 사용한다.
+
 `tts_node`는 ROS 어댑터, `tts_smoke`는 같은 런타임을 사용하는 터미널 시험기다.
 기존 `tts_receiver`는 합성 없이 수신 로그만 남기는 통신 확인용으로 유지한다.
 

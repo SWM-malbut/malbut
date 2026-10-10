@@ -450,9 +450,15 @@ class DialogueWorker:
                             or not decision.message.strip()):
                         raise ValueError('Expected a non-action response')
                     else:
+                        message = decision.message
+                        if (decision.type == 'refusal' and decision.reason in {
+                                'safety:unknown_tool', 'safety:tool_unavailable',
+                        }):
+                            from malbut_agent_server.mission_audio import CATALOG
+                            message = CATALOG['operation.unsupported']
                         reply = self._reply(
                             utterance_id, conversation_id,
-                            decision.message, 'answer',
+                            message, 'answer',
                             getattr(result, 'memory_validator', None),
                         )
                         if (self._missions is not None
@@ -484,7 +490,9 @@ class DialogueWorker:
                             self._outstanding -= 1
                         else:
                             reply._generation = generation
-                            reply['text'] = progress.final_text(reply['text'])
+                            from malbut_agent_server.mission_audio import TEXT_IDS
+                            if reply['text'] not in TEXT_IDS:
+                                reply['text'] = progress.final_text(reply['text'])
                             self._results.append(reply)
         finally:
             with self._condition:
