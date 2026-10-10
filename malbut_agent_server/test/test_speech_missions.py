@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.speech_missions import SpeechMissions
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 
 
 class FakeManager:
@@ -72,7 +73,8 @@ class Targets:
 def test_added_commands_submit_only_the_existing_manifest(tool, arguments, capability, expected):
     manager = FakeManager()
     dispatcher = SpeechMissions(manager)
-    dispatcher.dispatch(dispatcher.prepare('leaf-request', tool, arguments))
+    assert dispatcher.dispatch(dispatcher.prepare('leaf-request', tool, arguments)) == (
+        FUNCTION_STARTS[tool])
     assert len(manager.submissions) == 1
     assert manager.submissions[0][:2] == (capability, expected)
 
@@ -114,7 +116,7 @@ def test_preparation_is_immutable_and_submission_uses_ros_owner(harness):
     with pytest.raises(FrozenInstanceError):
         proposal.tool_name = 'arbitrary_action'
     response = dispatcher.dispatch(proposal)
-    assert response == '실행 요청을 보냈어요. 접수 결과를 확인할게요.'
+    assert response == FUNCTION_STARTS['request_follow_person']
     assert manager.submissions == [(
         'follow_person', {
             'target_mode': 0, 'target_person_id': '',
@@ -174,7 +176,7 @@ def test_duplicate_ids_never_submit_again_even_after_submit_failure(harness):
     ('UNAVAILABLE', 'unavailable', '요청을 보내지 못했어요'),
     ('REJECTED', 'rejected', '접수를 거절했어요'),
     ('UNKNOWN', 'unknown', '확인할 수 없어요'),
-    ('ACCEPTED', 'accepted', '요청을 접수했어요'),
+    ('ACCEPTED', 'accepted', FUNCTION_STARTS['request_follow_person']),
 ])
 def test_immediate_response_uses_actual_manager_observation(
     harness, state, kind, text,

@@ -10,6 +10,7 @@ import time
 import unicodedata
 
 from malbut_agent_server.mission_speech import event_speech
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
 
@@ -279,6 +280,8 @@ class SpeechMissions:
                     or snapshot.get('capability_id') != capability):
                 raise ValueError('Manager observation identity changed')
             self.handle(snapshot)
+            if snapshot.get('kind') in {'submitted', 'accepted', 'progress'}:
+                return FUNCTION_STARTS[proposal.tool_name]
             speech = event_speech(snapshot)
             return speech or '실행 요청을 보냈어요. 접수 결과를 확인할게요.'
         except Exception:

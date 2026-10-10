@@ -6,6 +6,8 @@ import yaml
 from malbut_agent_server.mission_audio import CATALOG, notice_for_event
 from malbut_agent_server.mission_audio_cases import LABELS
 from malbut_agent_server.mission_speech import MissionAnnouncer
+from malbut_agent_server.function_speech import FUNCTION_STARTS
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, SPEECH_MISSION_TOOLS
 
 
 @pytest.mark.parametrize('capability,payload,suffix,phrase', [
@@ -39,6 +41,16 @@ def test_every_registered_capability_has_a_recorded_outcome():
         assert notice_for_event(dict(capability_id=capability, kind='unknown')) == (
             f'{capability}.unknown', CATALOG[f'{capability}.unknown'])
     assert CATALOG['operation.unsupported'] == '현재 지원하지 않아요.'
+
+
+def test_every_voice_function_has_a_recorded_start_or_cancellation_receipt():
+    tools = (set(SPEECH_MISSION_TOOLS) | set(HOMECAM_QUERY_TOOLS)
+             | {'get_weather', 'set_weather_location'}) - {'cancel_voice_mission'}
+    assert set(FUNCTION_STARTS) == tools
+    for tool in tools:
+        assert CATALOG[f'function.{tool}.starting'] == FUNCTION_STARTS[tool]
+    assert CATALOG['cancel.foreground_requested'] == (
+        '전면 작업의 취소를 요청했어요. 종료 여부를 확인할게요.')
 
 
 @pytest.mark.parametrize('reason,expected', [

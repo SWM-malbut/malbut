@@ -104,7 +104,7 @@ Agent·STT·TTS 프로세스도 종료 후 새로 시작한다.
 ## 실행과 장치 선택
 
 현재 Agent의 기본 provider와 TTS backend는 `openai`이며 TTS 모델은
-`gpt-4o-mini-tts`, 목소리는 `marin`이다. 실제 대화에서는 텍스트가 유료 외부 API로
+`gpt-4o-mini-tts`, 목소리는 `shimmer`이다. 실제 대화에서는 텍스트가 유료 외부 API로
 전달되며 출력 음성은 AI가 생성한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
 실행 터미널에 미리 export한다. 키를 launch 인자나 YAML에 넣지 않는다.
 launch는 `.env` 파일을 자동 로드하지 않는다.

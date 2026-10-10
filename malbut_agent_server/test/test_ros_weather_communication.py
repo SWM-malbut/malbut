@@ -206,7 +206,7 @@ def ros_weather(tmp_path, monkeypatch):
     run = SimpleNamespace(
         client=client, provider=provider, replies=replies, receipts=receipts,
         events=events, goals=goals, spin_until=spin_until, responses=[], speech_messages=[],
-        agent=None, manager=None, weather=None,
+        agent=None, manager=None, weather=None, start_messages=[], acknowledgements=[],
         location_db_path=location_db_path, location_store=location_store,
         resolve_location=None,
     )
@@ -217,6 +217,9 @@ def ros_weather(tmp_path, monkeypatch):
     )
 
     def receive_speech(message):
+        if message.audio_id.startswith('function.'):
+            run.start_messages.append(message)
+            return
         replies.append(message.text)
         run.speech_messages.append(message)
 
@@ -262,7 +265,8 @@ def ros_weather(tmp_path, monkeypatch):
         def publish_reply(response, publish):
             published = original_publish(response, publish)
             if published is not None:
-                run.responses.append(published)
+                (run.acknowledgements if published['kind'] == 'acknowledgement'
+                 else run.responses).append(published)
             return published
 
         monkeypatch.setattr(run.agent.dialogue, 'publish_reply', publish_reply)
@@ -383,6 +387,33 @@ def test_startup_and_general_dialogue_never_fetch_weather(ros_weather):
     assert run.provider.calls[0]['weather'] is None
     assert run.client.calls == 0
     assert run.goals == []
+    assert run.start_messages == []
+
+
+def test_weather_start_recording_arrives_before_result_once(ros_weather):
+    run = ros_weather
+    run.client.block = True
+    run.start()
+    utterance_id = run.send('날씨 조회해 줘')
+    try:
+        run.spin_until(lambda: run.client.started.is_set() and len(run.start_messages) == 1)
+        start = run.start_messages[0]
+        assert start.text == '네, 날씨 조회를 시작하겠습니다.'
+        assert start.audio_id == 'function.get_weather.starting'
+        assert start.interim is True
+        assert start.request_type == SpeechRequest.DIALOGUE
+        assert run.replies == []
+        run.client.release.set()
+        run.spin_until(lambda: len(run.replies) == 1)
+        final = run.speech_messages[-1]
+        assert final.request_id == utterance_id and not final.interim
+        assert start.request_id != final.request_id
+        assert final.audio_id == ''
+        run.send('날씨 조회해 줘', utterance_id)
+        run.spin_until(lambda: (utterance_id, '날씨 조회해 줘', 'duplicate') in run.receipts)
+        assert len(run.start_messages) == run.client.calls == 1
+    finally:
+        run.client.release.set()
 
 
 def test_missing_location_reaches_agent_through_manager_without_weather_http(stored_weather):
@@ -572,10 +603,12 @@ def test_new_speech_fetches_again_but_duplicate_id_does_not(ros_weather):
     duplicate = (utterance_id, original, 'duplicate')
     run.spin_until(lambda: duplicate in run.receipts)
     assert len(run.goals) == len(run.replies) == run.client.calls == 1
+    assert len(run.start_messages) == 1
     assert len(run.provider.calls) == 2
     next_id, reply = run.say(original)
     assert next_id != utterance_id
     assert len(run.goals) == len(run.replies) == run.client.calls == 2
+    assert len(run.start_messages) == 2
     assert len(run.provider.calls) == 4
     assert reply == '시험 지역 현재 기온은 19.0도예요.'
 

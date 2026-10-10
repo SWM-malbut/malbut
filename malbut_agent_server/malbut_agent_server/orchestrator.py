@@ -19,7 +19,8 @@ from malbut_agent_server.conversation import (
     SQLiteConversationStore,
 )
 from malbut_agent_server.conversation_progress import (
-    claim_retry, conversation_request, SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
+    announce_function_start, claim_retry, conversation_request,
+    SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
 from malbut_agent_server.conversation_ownership import (
     owned_conversation_request, recover_abandoned_turns,
@@ -1094,6 +1095,7 @@ class AgentOrchestrator:
         try:
             if executor is None or not accepts_memory_context(self.provider):
                 raise RuntimeError('homecam query unavailable')
+            announce_function_start(first_result.decision.tool_name)
             result = executor(first_result.decision.tool_name, first_result.decision.arguments)
         except CancelledError:
             raise
@@ -1145,6 +1147,7 @@ class AgentOrchestrator:
                 type='message', message=SERVICE_UNAVAILABLE_NOTICE,
                 reason='weather_unavailable', confidence=1.0,
             ), memory_proposal=None)
+        announce_function_start(first_result.decision.tool_name)
         for attempt in range(2):
             try:
                 if setting_location:

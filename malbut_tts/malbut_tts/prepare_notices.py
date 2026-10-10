@@ -11,6 +11,7 @@ import wave
 import numpy as np
 
 from malbut_tts.prerecorded import PrerecordedAudio, valid_audio_id
+from malbut_tts.voice_style import VOICE_INSTRUCTIONS
 
 
 def read_catalog(path):
@@ -25,7 +26,7 @@ def read_catalog(path):
 
 
 def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
-            voice='marin', check_only=False):
+            voice='shimmer', instructions=VOICE_INSTRUCTIONS, check_only=False):
     """Resume matching WAVs; never silently reuse stale or changed recordings."""
     directory = Path(directory)
     manifest_path = directory / 'manifest.json'
@@ -37,7 +38,7 @@ def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
         if not valid_audio_id(audio_id) or not isinstance(text, str) or not text.strip():
             raise ValueError('invalid notice catalog')
         path = directory / (audio_id + '.wav')
-        expected = {'text': text, 'model': model, 'voice': voice}
+        expected = {'text': text, 'model': model, 'voice': voice, 'instructions': instructions}
         entry = manifest.get(audio_id, {})
         if path.exists():
             if (any(entry.get(key) != value for key, value in expected.items())
@@ -100,7 +101,8 @@ def main(argv=None):
     parser.add_argument('--catalog', required=True)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--model', default='gpt-4o-mini-tts')
-    parser.add_argument('--voice', default='marin')
+    parser.add_argument('--voice', default='shimmer')
+    parser.add_argument('--instructions', default=VOICE_INSTRUCTIONS)
     parser.add_argument('--check', action='store_true',
                         help='Validate all files without using TTS')
     args = parser.parse_args(argv)
@@ -109,10 +111,12 @@ def main(argv=None):
         synthesizer = None
         if not args.check:
             from malbut_tts.api_synthesis import OpenAISynthesizer
-            synthesizer = OpenAISynthesizer(model=args.model, voice=args.voice, timeout_seconds=30)
+            synthesizer = OpenAISynthesizer(
+                model=args.model, voice=args.voice, instructions=args.instructions,
+                timeout_seconds=30, notice_path=None)
             synthesizer.load()
         count = prepare(catalog, args.output_dir, synthesizer, model=args.model,
-                        voice=args.voice, check_only=args.check)
+                        voice=args.voice, instructions=args.instructions, check_only=args.check)
     except Exception as error:
         # API response details and credentials never reach console output.
         print(f'Notice preparation failed: {type(error).__name__}')

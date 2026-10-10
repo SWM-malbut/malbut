@@ -97,6 +97,34 @@ def test_preparation_resumes_valid_files_and_detects_changed_text(tmp_path):
     assert prepare(catalog, tmp_path) == 0
     with pytest.raises(ValueError, match='does not match'):
         prepare({'notice': '바뀐 안내'}, tmp_path, Synth())
+    with pytest.raises(ValueError, match='does not match'):
+        prepare(catalog, tmp_path, Synth(), instructions='A different voice style')
+
+
+def test_queued_start_recording_plays_before_fast_final_without_synthesis(tmp_path):
+    from test_runtime import Harness
+    write_wav(tmp_path / 'start.wav')
+    harness = Harness(prerecorded=PrerecordedAudio(tmp_path))
+    try:
+        blocker = harness.runtime.submit('earlier speech')
+        first = harness.players.get(timeout=3)
+        assert first.finishing.wait(3)
+        start = harness.runtime.submit('네, 날씨 조회를 시작하겠습니다.', audio_id='start',
+                                       interim=True, request_id='ack:weather')
+        final = harness.runtime.submit('맑아요.', request_id='weather')
+        first.drain.set()
+        harness.wait(blocker, 'finished')
+        player = harness.players.get(timeout=3)
+        assert player.finishing.wait(3)
+        assert harness.synth.texts == ['earlier speech']
+        player.drain.set()
+        harness.wait(start, 'finished')
+        player = harness.players.get(timeout=3)
+        player.drain.set()
+        harness.wait(final, 'finished')
+        assert harness.synth.texts == ['earlier speech', '맑아요.']
+    finally:
+        harness.runtime.close()
 
 
 def test_api_failure_notice_is_not_saved_as_the_requested_recording(tmp_path):

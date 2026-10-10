@@ -6,6 +6,7 @@ import threading
 import pytest
 
 from malbut_agent_server import conversation_progress as progress
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.config import Settings
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.providers.base import ProviderError
@@ -64,10 +65,61 @@ def test_model_and_weather_share_one_request_retry(failure_first):
             runtime.handle(request())
         assert provider.attempts == (2 if failure_first == 'model' else 1)
         assert len(set(reads)) == (1 if failure_first == 'model' else 2)
-        assert notices == [progress.MODEL_RETRY_NOTICE if failure_first == 'model'
-                           else progress.WEATHER_RETRY_NOTICE]
+        assert notices == ([progress.MODEL_RETRY_NOTICE, FUNCTION_STARTS['get_weather']]
+                           if failure_first == 'model' else
+                           [FUNCTION_STARTS['get_weather'], progress.WEATHER_RETRY_NOTICE])
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize('suspend', [False, True])
+def test_fast_function_receipt_survives_answer_but_not_suspension(suspend):
+    def answer(request, history):
+        progress.announce_function_start('get_weather')
+        progress.announce_function_start('get_weather')
+        return FixedProvider.answer(request, history)
+
+    worker = DialogueWorker(RuntimeFactory(FixedProvider(answer)), 'user', capacity=1)
+    try:
+        assert worker.submit('quick-weather', '날씨 조회해 줘')
+        wait_until(lambda: len(worker._results) == 2)
+        replies = worker.drain()
+        assert [reply['kind'] for reply in replies] == ['acknowledgement', 'answer']
+        assert worker.has_capacity()
+        if suspend:
+            worker.suspend()
+            worker.resume()
+        spoken = []
+        for reply in replies:
+            worker.publish_reply(reply, lambda text: spoken.append(text) or True)
+        assert spoken == ([] if suspend else [FUNCTION_STARTS['get_weather'], replies[1]['text']])
+        assert worker.publish_reply(replies[0], lambda text: spoken.append(text) or True) is None
+    finally:
+        worker.close()
+
+
+def test_cancelled_function_receipt_cannot_publish_after_scope():
+    notices = []
+    with pytest.raises(CancelledError):
+        with progress.request_scope(lambda text, state: notices.append((text, state))):
+            progress.announce_function_start('get_weather')
+            raise CancelledError()
+    assert len(notices) == 1
+    text, state = notices[0]
+    assert not state.publish(lambda _: pytest.fail('cancelled receipt published'), text)
+
+
+def test_function_start_suppresses_pending_delay_and_repeated_start():
+    notices = []
+    state = progress.RequestProgress(lambda text, _: notices.append(text))
+    try:
+        state.start_function('get_weather')
+        state.start_function('get_weather')
+        assert state._timer.finished.is_set()
+        assert notices == [FUNCTION_STARTS['get_weather']]
+        assert not state.publish(lambda _: pytest.fail('extra delay notice'), progress.DELAY_NOTICE)
+    finally:
+        state.finish()
 
 
 class Timer:

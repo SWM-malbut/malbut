@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import time
 from typing import Optional, Sequence
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
@@ -360,8 +360,11 @@ def create_communication_node(
                     continue
                 published = self.dialogue.publish_reply(
                     response, lambda text: self.say(
-                        text, interim=response.get('kind') == 'progress',
-                        request_id=response.get('utterance_id', '')))
+                        text, interim=response.get('kind') in {'progress', 'acknowledgement'},
+                        # Keep a quick final reply from dropping its start receipt.
+                        request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
+                                    if response.get('kind') == 'acknowledgement'
+                                    else response.get('utterance_id', ''))))
                 if published is not None:
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,

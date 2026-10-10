@@ -15,6 +15,7 @@ from malbut_agent_server.conversation import (
     ConversationNotFoundError, ConversationStateError,
 )
 from malbut_agent_server.conversation_progress import RequestProgress, request_scope
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import (
     MAX_SPEECH_TRANSCRIPT_LENGTH, RobotState, SpeechAgentRequest,
@@ -233,9 +234,11 @@ class DialogueWorker:
         with self._condition:
             results = list(self._results)
             self._results.clear()
-            self._outstanding -= sum(item['kind'] != 'progress' for item in results)
-            results = [item for item in results if item['kind'] != 'progress'
-                       or item._progress.active]
+            self._outstanding -= sum(item['kind'] not in {'progress', 'acknowledgement'}
+                                     for item in results)
+            results = [item for item in results
+                       if item['kind'] not in {'progress', 'acknowledgement'}
+                       or item._progress.can_publish(item['text'])]
             for reply in results:
                 self._refresh_reply(reply)
             return results
@@ -249,7 +252,7 @@ class DialogueWorker:
                 return None
             if reply.get('kind') == 'addressee':
                 return None
-            if reply.get('kind') == 'progress':
+            if reply.get('kind') in {'progress', 'acknowledgement'}:
                 return dict(reply) if reply._progress.publish(publish, reply['text']) else None
             self._refresh_reply(reply)
             dispatch = getattr(reply, '_mission_callback', None)
@@ -276,10 +279,10 @@ class DialogueWorker:
             self._navigation_confirmation = None
             self._generation += 1
             if self._active_progress is not None:
-                self._active_progress.finish()
+                self._active_progress.finish(cancelled=True)
             for _, _, _, progress in self._pending:
                 if progress is not None:
-                    progress.finish()
+                    progress.finish(cancelled=True)
             self._pending.clear()
             self._results.clear()
             self._interruptions.clear()
@@ -317,10 +320,10 @@ class DialogueWorker:
             self._closing = True
             self._navigation_confirmation = None
             if self._active_progress is not None:
-                self._active_progress.finish()
+                self._active_progress.finish(cancelled=True)
             for _, _, _, progress in self._pending:
                 if progress is not None:
-                    progress.finish()
+                    progress.finish(cancelled=True)
             self._pending.clear()
             self._results.clear()
             self._interruptions.clear()
@@ -349,7 +352,7 @@ class DialogueWorker:
                         while self._pending:
                             utterance_id, _text, playback_id, progress = self._pending.popleft()
                             if progress is not None:
-                                progress.finish()
+                                progress.finish(cancelled=True)
                             if playback_id is not None:
                                 self._results.append(self._addressee_reply(
                                     utterance_id, playback_id, 'unknown',
@@ -481,7 +484,7 @@ class DialogueWorker:
                         utterance_id, conversation_id, ERROR_RESPONSE, 'error',
                     )
                 finally:
-                    progress.finish()
+                    progress.finish(cancelled=reply is None)
                 with self._condition:
                     self._active_progress = None
                     self._running = False
@@ -602,8 +605,10 @@ class DialogueWorker:
         with self._condition:
             if self._closing or not progress.active:
                 return
-            reply = self._reply(utterance_id, None, text, 'progress')
+            kind = 'acknowledgement' if text in FUNCTION_STARTS.values() else 'progress'
+            reply = self._reply(utterance_id, None, text, kind)
             reply._progress = progress
+            reply._generation = self._generation
             self._results.append(reply)
 
     @staticmethod

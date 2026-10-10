@@ -10,6 +10,7 @@ import pytest
 
 from malbut_tts.api_synthesis import ApiTtsError, OpenAISynthesizer
 from malbut_tts.runtime import SpeechRuntime
+from malbut_tts.voice_style import VOICE_INSTRUCTIONS
 
 
 class Client:
@@ -72,12 +73,29 @@ def test_pcm_alignment_streaming_and_one_request():
                                   [-1.0, 32767 / 32768, 0.0])
     assert all(x.dtype == np.float32 and x.ndim == 1 for x, _ in output)
     assert [rate for _, rate in output] == [24000]
-    assert client.calls == [{'model': 'gpt-4o-mini-tts', 'voice': 'marin',
-                             'input': '공개 시험 문장', 'response_format': 'pcm'}]
+    assert client.calls == [{'model': 'gpt-4o-mini-tts', 'voice': 'shimmer',
+                             'input': '공개 시험 문장', 'response_format': 'pcm',
+                             'instructions': VOICE_INSTRUCTIONS}]
     assert options == [{'api_key': 'private-test-key',
                         'base_url': 'https://api.openai.com/v1',
                         'max_retries': 0, 'timeout': 8.0}]
     assert client.closed and client.context_closed
+
+
+def test_recording_generation_synthesizes_even_the_fixed_failure_text():
+    client = Client([b'\x00\x10' * 2400])
+    synth, _ = engine(client)
+    list(synth.generate('지금은 대화를 할 수 없어요.', Event()))
+    assert len(client.calls) == 1
+    assert client.calls[0]['input'] == '지금은 대화를 할 수 없어요.'
+
+
+@pytest.mark.parametrize('model', ['tts-1', 'tts-1-hd'])
+def test_legacy_models_do_not_receive_unsupported_voice_instructions(model):
+    client = Client([b'\x00\x10' * 2400])
+    synth, _ = engine(client, model=model)
+    list(synth.generate('안녕하세요.', Event()))
+    assert 'instructions' not in client.calls[0]
 
 
 def test_first_pcm_yield_does_not_wait_for_complete_body():

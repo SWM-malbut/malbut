@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from functools import wraps
 from threading import RLock, Timer
 
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 
 DELAY_SECONDS = 5.0
 DELAY_NOTICE = '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
@@ -18,6 +19,9 @@ class RequestProgress:
     def __init__(self, notify=None):
         self._lock = RLock()
         self.active = True
+        self._aborted = False
+        self._started = set()
+        self._published_starts = set()
         self._retried = False
         self._retry_notice = None
         self._retry_published = False
@@ -44,9 +48,26 @@ class RequestProgress:
         self._notice(text)
         return True
 
+    def start_function(self, tool):
+        with self._lock:
+            if not self.active or tool not in FUNCTION_STARTS or tool in self._started:
+                return
+            self._started.add(tool)
+            if self._timer is not None:
+                self._timer.cancel()
+        self._notice(FUNCTION_STARTS[tool])
+
+    def can_publish(self, text):
+        with self._lock:
+            return (not self._aborted and text not in self._published_starts
+                    and not (text == DELAY_NOTICE and self._started)
+                    and (self.active or text in FUNCTION_STARTS.values()))
+
     def publish(self, publish, text):
         with self._lock:
-            published = self.active and publish(text)
+            published = self.can_publish(text) and publish(text)
+            if published and text in FUNCTION_STARTS.values():
+                self._published_starts.add(text)
             if published and text == self._retry_notice:
                 self._retry_published = True
             return published
@@ -62,11 +83,19 @@ class RequestProgress:
             self._retry_published = True
             return self._retry_notice.replace('시도할게요.', '시도했어요.') + ' ' + text
 
-    def finish(self):
+    def finish(self, *, cancelled=False):
         with self._lock:
             self.active = False
+            self._aborted = self._aborted or cancelled
             if self._timer is not None:
                 self._timer.cancel()
+
+
+def announce_function_start(tool):
+    """Emit one fixed receipt per function, even when a read is retried."""
+    progress = _current.get()
+    if progress is not None:
+        progress.start_function(tool)
 
 
 def claim_retry(text):
@@ -89,6 +118,9 @@ def request_scope(notify=None, *, progress=None):
     token = _current.set(progress)
     try:
         yield progress
+    except BaseException:
+        progress.finish(cancelled=True)
+        raise
     finally:
         progress.finish()
         _current.reset(token)

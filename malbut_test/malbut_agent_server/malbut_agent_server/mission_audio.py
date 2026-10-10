@@ -5,7 +5,11 @@ import re
 
 import yaml
 
-from malbut_agent_server.conversation_progress import DELAY_NOTICE
+from malbut_agent_server.conversation_progress import (
+    DELAY_NOTICE, MODEL_RETRY_NOTICE,
+    SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
+)
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.mission_audio_cases import (
     COMMON_FAILURES, ENDPOINTS, FAILURES, FIXED_REPLIES, LABELS, PREFIX_FAILURES,
 )
@@ -17,6 +21,10 @@ CATALOG = {
     'operation.canceled': '작업이 취소됐어요.',
     'operation.unsupported': '현재 지원하지 않아요.',
     'conversation.delay': DELAY_NOTICE,
+    'conversation.model_retry': MODEL_RETRY_NOTICE,
+    'conversation.weather_retry': WEATHER_RETRY_NOTICE,
+    'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,
+    **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()},
     **FIXED_REPLIES,
 }
 OUTCOMES = {
