@@ -288,7 +288,7 @@ Depth를 costmap에 다시 넣을 수 있도록 만든 Bringup 내부
 Bringup이 제조사 하드웨어(카메라 포함)를 시작할 때 해당 launch 그룹에만
 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`와 `FASTRTPS_DEFAULT_PROFILES_FILE`을 전달한다.
 설정 파일은 설치된 `malbut_bringup/config/fastdds_camera.xml`이며 SHM 세그먼트는
-**4 MiB (4,194,304 bytes)**, 원격 통신용 UDPv4는 유지한다. Nav2·인식·음성 등 다른
+**8 MiB (8,388,608 bytes)**, 원격 통신용 UDPv4는 유지한다. Nav2·인식·음성 등 다른
 그룹의 환경변수는 변경하지 않는다. 이 그룹의 기존 사용자 DDS XML은 대체된다.
 `RMW_FASTRTPS_USE_QOS_FROM_XML=1`은 추가하지 않는다. 토픽 QoS·발행 주기도 바꾸지 않는다.
 

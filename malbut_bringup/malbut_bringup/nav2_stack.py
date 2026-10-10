@@ -11,6 +11,8 @@ costmaps through the keepout filter servers.
 import math
 from pathlib import Path
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode
@@ -83,8 +85,24 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
                 'ros-humble-' + name.replace('_', '-') for name in absent) + ')')
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static'),
                   ('/scan_raw', scan_topic), ('/odom', odom_topic)]
+    parameters = yaml.safe_load(Path(params_file).read_text()) or {}
+    checkers = parameters.get('controller_server', {}).get(
+        'ros__parameters', {}).get('goal_checker_plugins', [])
+    bt_parameters = parameters.get('bt_navigator', {}).get('ros__parameters', {})
+    bt_defaults = {}
+    if len(checkers) > 1 and 'general_goal_checker' in checkers:
+        # Humble's default BT omits the ID, which is ambiguous with two
+        # checkers. Preserve custom trees and the ordinary position-only goal.
+        share = Path(get_package_share_directory('malbut_bringup')) / 'config'
+        for key, filename in (
+                ('default_nav_to_pose_bt_xml', 'navigate_to_pose.xml'),
+                ('default_nav_through_poses_bt_xml', 'navigate_through_poses.xml')):
+            if not bt_parameters.get(key):
+                bt_defaults[key] = str(share / filename)
 
     def component(name, overrides=None):
+        if name == 'bt_navigator' and bt_defaults:
+            overrides = {**bt_defaults, **(overrides or {})}
         package, plugin = COMPONENTS[name]
         return ComposableNode(
             package=package, plugin=plugin, name=name,

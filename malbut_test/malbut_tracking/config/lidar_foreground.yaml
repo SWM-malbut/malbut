@@ -7,7 +7,7 @@ lidar_foreground_preprocessor:
     processing_trace_topic: /perception/sensor_processing_trace
     global_frame: map
     static_occupied_threshold: 65
-    static_exclusion_radius_m: 0.20
+    static_exclusion_radius_m: 0.10
     cluster_gap_m: 0.20
     minimum_cluster_points: 3
     minimum_cluster_density_points_per_m: 5.0
