@@ -1,7 +1,6 @@
 """Voice commands cross the real Manager Action using isolated fake actuators."""
 
 import json
-import math
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -31,6 +30,7 @@ from malbut_agent_server.factory import build_orchestrator  # noqa: E402
 from malbut_agent_server.schemas import AgentDecision, ProviderResult  # noqa: E402
 from malbut_agent_server.speech_navigation import NavigationTargets  # noqa: E402
 from malbut_system_manager.system_manager_node import SystemManagerNode  # noqa: E402
+from navigation_user_map import rewrite, room, rooms, write_user_map  # noqa: E402
 
 
 TIMEOUT_S = 10.0
@@ -62,6 +62,9 @@ class _Provider:
             '우리 거실로 가볼까': ('request_navigation', {'location': '거실'}),
             '거실로 와바라': ('request_navigation', {'location': '거실'}),
             '거실': ('request_navigation', {'location': '거실'}),
+            '기실로 가': ('request_navigation', {'location': '거실'}),
+            '베란다로 가': ('request_navigation', {'location': '거실'}),
+            '응': ('request_navigation', {'location': '거실'}),
             '꼼꼼히 순찰해': ('request_patrol', {'thoroughness': 'thorough'}),
         }
         noncommands = {
@@ -71,6 +74,7 @@ class _Provider:
             '"거실로 가볼까?"라는 문장을 설명해': ('message', '거실 이동을 제안하는 문장이에요.'),
             '와바라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
             '이리 오너라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
+            '아니 가지 마': ('message', '이동하지 않을게요.'),
         }
         if request.utterance in self.overrides:
             decision = self.overrides[request.utterance]
@@ -199,7 +203,7 @@ def speech_graph(tmp_path, monkeypatch):
         runtime.provider = provider
         return runtime
 
-    def start(navigation_targets=None):
+    def start():
         assert run.agent is None, 'one isolated graph per test'
         directory = tmp_path / 'manifests'
         directory.mkdir()
@@ -218,7 +222,7 @@ def speech_graph(tmp_path, monkeypatch):
         run.agent = ros_communication.create_communication_node(
             speech_db_path=str(tmp_path / 'receipts.sqlite3'),
             dialogue_settings=settings, dialogue_factory=create_runtime,
-            enable_manager_commands=True, navigation_targets=navigation_targets,
+            enable_manager_commands=True,
             on_event=run.events.append, goal_response_timeout_s=2.0,
         )
         original_publish = run.agent.dialogue.publish_reply
@@ -328,19 +332,8 @@ def test_transcript_follow_and_next_spoken_cancel_cross_manager_once(speech_grap
 
 
 def _registered_navigation(tmp_path):
-    image = tmp_path / 'fixture.pgm'
-    image.write_bytes(b'P5\n1 1\n255\n\xff')
-    selected = tmp_path / 'fixture.yaml'
-    selected.write_text(yaml.safe_dump({
-        'image': image.name, 'resolution': 0.05, 'origin': [0.0, 0.0, 0.0],
-        'negate': 0, 'occupied_thresh': 0.65, 'free_thresh': 0.196,
-    }))
-    config = tmp_path / 'destinations.yaml'
-    config.write_text(yaml.safe_dump({
-        'map': str(selected), 'frame_id': 'map',
-        'locations': {'거실': {'x': 1.25, 'y': -2.5, 'yaw': math.pi / 2}},
-    }, allow_unicode=True))
-    return NavigationTargets(config), selected
+    _, selected, _, _ = write_user_map(tmp_path)
+    return NavigationTargets(), selected
 
 
 @pytest.mark.parametrize('utterance', [
@@ -351,7 +344,7 @@ def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
 ):
     run = speech_graph
     targets, selected = _registered_navigation(tmp_path)
-    run.start(targets)
+    run.start()
     _, reply = run.say(utterance)
     assert '지도' in reply
     assert run.manager_goals == []
@@ -367,8 +360,8 @@ def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
     assert goal.pose.pose.position.y == -2.5
     assert goal.pose.pose.position.z == 0.0
     assert goal.pose.pose.orientation.x == goal.pose.pose.orientation.y == 0.0
-    assert goal.pose.pose.orientation.z == pytest.approx(math.sin(math.pi / 4))
-    assert goal.pose.pose.orientation.w == pytest.approx(math.cos(math.pi / 4))
+    assert goal.pose.pose.orientation.z == 0.0
+    assert goal.pose.pose.orientation.w == 1.0
     assert goal.behavior_tree == ''
     run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
 
@@ -382,7 +375,7 @@ def test_message_and_clarification_transport_never_creates_manager_goals(
 ):
     run = speech_graph
     targets, selected = _registered_navigation(tmp_path)
-    run.start(targets)
+    run.start()
     run.observe_map(selected)
     _, reply = run.say(utterance)
     assert len(run.provider.calls) == 1
@@ -397,7 +390,7 @@ def test_model_proposal_after_destination_clarification_uses_same_conversation(
 ):
     run = speech_graph
     targets, selected = _registered_navigation(tmp_path)
-    run.start(targets)
+    run.start()
     run.observe_map(selected)
     run.say('와바라')
     assert run.manager_goals == []
@@ -408,6 +401,136 @@ def test_model_proposal_after_destination_clarification_uses_same_conversation(
     assert run.manager_goals == [('navigate_to_pose', targets.resolve(
         '거실', str(selected)).arguments)]
     run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+
+def test_similar_navigation_name_uses_registered_catalog_without_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start()
+    run.observe_map(selected)
+    _, reply = run.say('기실로 가')
+    assert '말씀하신 건가요' not in reply
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '거실', str(selected)).arguments)]
+    request = run.provider.calls[0]
+    assert request.navigation_locations == ('거실',)
+    assert request.navigation_confirmation == ''
+    body = request.to_dict()
+    assert body['navigation_locations'] == ['거실']
+    encoded = json.dumps(body)
+    assert str(selected) not in encoded
+    assert not any(field in encoded for field in ('"pose"', '"x"', '"y"', '"yaw"'))
+
+
+def test_distant_navigation_name_requires_published_confirmation_once(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start()
+    run.observe_map(selected)
+    _, question = run.say('베란다로 가')
+    assert '거실' in question and '말씀하신 건가요' in question
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+    run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '거실', str(selected)).arguments)]
+    run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+    _, repeated = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in repeated
+    assert len(run.manager_goals) == len(run.actuators.goals['navigate_to_pose']) == 1
+
+
+def test_navigation_confirmation_denial_does_not_authorize_a_later_generic_answer(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start()
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    _, reply = run.say('아니 가지 마')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    assert reply == '이동하지 않을게요.'
+    assert run.manager_goals == []
+
+    _, later = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in later
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_navigation_catalog_change_invalidates_pending_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start()
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    config = selected.with_suffix('.user-map.geojson')
+    updated = json.loads(config.read_text())
+    rooms(updated)[0]['properties']['representative_point'][0] = 3.0
+    rewrite(config, updated)
+
+    _, reply = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in reply
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_similar_navigation_name_with_competing_registered_name_requires_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    config = selected.with_suffix('.user-map.geojson')
+    updated = json.loads(config.read_text())
+    updated['features'].append(room('교실', 4.0, 1.0, 'room-2'))
+    rewrite(config, updated)
+    run.start()
+    run.observe_map(selected)
+
+    _, reply = run.say('기실로 가')
+    assert set(run.provider.calls[-1].navigation_locations) == {'거실', '교실'}
+    assert '말씀하신 건가요' in reply
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_confirmation_reply_can_explicitly_change_to_another_registered_destination(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    config = selected.with_suffix('.user-map.geojson')
+    updated = json.loads(config.read_text())
+    updated['features'].append(room('주방', 4.0, 1.0, 'room-2'))
+    rewrite(config, updated)
+    run.provider.overrides['아니 주방으로 가'] = AgentDecision(
+        type='tool_call', tool_name='request_navigation', arguments={'location': '주방'},
+        message='모델이 만든 실행 완료 주장',
+    )
+    run.start()
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    assert run.manager_goals == []
+    run.say('아니 주방으로 가')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '주방', str(selected)).arguments)]
 
 
 def test_patrol_thoroughness_reaches_downstream_through_manager(speech_graph):
@@ -435,7 +558,7 @@ def test_invalid_structured_proposal_never_reaches_manager(
         type='tool_call', tool_name=tool, arguments=arguments,
         message='모델이 만든 실행 완료 주장',
     )
-    run.start(targets)
+    run.start()
     run.observe_map(selected)
     run.say('따라와')
     assert len(run.provider.calls) == 1
@@ -444,7 +567,7 @@ def test_invalid_structured_proposal_never_reaches_manager(
     assert all(not goals for goals in run.actuators.goals.values())
 
 
-def test_model_cannot_reenable_navigation_when_target_configuration_is_disabled(speech_graph):
+def test_model_cannot_navigate_without_a_current_map_and_applied_rooms(speech_graph):
     run = speech_graph
     run.provider.overrides['거실로 가'] = AgentDecision(
         type='tool_call', tool_name='request_navigation', arguments={'location': '거실'},
@@ -453,7 +576,45 @@ def test_model_cannot_reenable_navigation_when_target_configuration_is_disabled(
     run.start()
     run.say('거실로 가')
     assert len(run.provider.calls) == 1
-    assert 'request_navigation' not in run.provider.calls[0].available_tools
+    assert 'request_navigation' in run.provider.calls[0].available_tools
+    assert run.provider.calls[0].navigation_locations == ()
     assert run.manager_goals == []
     assert run.events == []
     assert all(not goals for goals in run.actuators.goals.values())
+
+
+def test_default_speech_navigation_reads_web_room_edits_and_map_switches(
+    speech_graph, tmp_path,
+):
+    from navigation_user_map import save_rooms
+
+    run = speech_graph
+    _, selected, _, document = write_user_map(tmp_path, rooms=[room('안방', 2, 3)])
+    _, other, _, _ = write_user_map(tmp_path, map_name='other', rooms=[room('거실', 1, 2)])
+    run.provider.overrides['안방까지 가'] = AgentDecision(
+        type='tool_call', tool_name='request_navigation', arguments={'location': '안방'}, message='',
+    )
+    run.start()
+    run.observe_map(selected)
+    run.say('안방까지 가')
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.provider.calls[-1].navigation_locations == ('안방',)
+    assert run.actuators.goals['navigate_to_pose'][-1].pose.pose.position.x == 2
+    run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+    save_rooms(selected, document['map_id'], {
+        'map_id': document['map_id'], 'map_revision': document['map_revision'],
+        'rooms': [room('거실', 3, 4)],
+    })
+    run.say('기실로 가')
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 2)
+    assert run.provider.calls[-1].navigation_locations == ('거실',)
+    assert run.actuators.goals['navigate_to_pose'][-1].pose.pose.position.x == 3
+    run.spin_until(lambda: sum(event['kind'] == 'succeeded' for event in run.events) == 2)
+
+    run.observe_map(other)
+    run.say('거실로 가')
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 3)
+    goal = run.actuators.goals['navigate_to_pose'][-1]
+    assert (goal.pose.pose.position.x, goal.pose.pose.position.y) == (1, 2)
+    run.spin_until(lambda: sum(event['kind'] == 'succeeded' for event in run.events) == 3)

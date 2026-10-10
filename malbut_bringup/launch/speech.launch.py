@@ -44,7 +44,6 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
-    navigation_targets = value('navigation_targets')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     command = [python, '-m', 'malbut_bringup.speech_preflight']
@@ -101,8 +100,6 @@ def _setup(context):
         mission_arguments = []
         if manager_commands:
             mission_arguments.append('--enable-manager-commands')
-            if navigation_targets.strip():
-                mission_arguments.extend(['--navigation-targets', navigation_targets])
         agent = Node(
             package='malbut_agent_server', executable='agent_communication',
             prefix=prefix, output='screen', arguments=[
@@ -169,7 +166,7 @@ def generate_launch_description():
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
         # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
-        'manager_commands': 'true', 'navigation_targets': '',
+        'manager_commands': 'true',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],

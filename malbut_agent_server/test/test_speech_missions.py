@@ -321,14 +321,14 @@ def test_latched_localization_has_no_artificial_heartbeat_expiry(harness):
     assert len(harness.manager.submissions) == 1
 
 
-def test_missing_navigation_configuration_refuses_without_guessing():
+def test_missing_active_map_refuses_without_guessing():
     manager = FakeManager()
     dispatcher = SpeechMissions(manager)
     proposal = dispatcher.prepare(
         'navigate', 'request_navigation', {'location': '거실'},
     )
     assert proposal.blocked
-    assert '목적지 이동 설정' in dispatcher.dispatch(proposal)
+    assert '사용 중인 저장 지도' in dispatcher.dispatch(proposal)
     assert manager.submissions == []
 
 

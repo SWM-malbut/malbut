@@ -1005,7 +1005,8 @@ class AgentOrchestrator:
         decision = raw_decision
         if not safety.allowed:
             decision = AgentDecision(
-                type='refusal',
+                type=('clarification' if safety.code == 'navigation_confirmation_required'
+                      else 'refusal'),
                 message=safety.reason,
                 reason=f'safety:{safety.code}',
                 confidence=1.0,

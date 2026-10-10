@@ -7,8 +7,10 @@ import re
 from pathlib import Path
 from threading import RLock, get_ident
 import time
+import unicodedata
 
 from malbut_agent_server.mission_speech import event_speech
+from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
 
 
@@ -22,7 +24,6 @@ _CAPABILITIES = {
     'request_recovery': 'recovery',
 }
 _TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELED', 'REJECTED', 'UNAVAILABLE'}
-_NAV_UNAVAILABLE = '목적지 이동 설정을 확인할 수 없어 이동하지 않았어요.'
 _MAP_UNAVAILABLE = '사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.'
 _NAV_CHANGED = '지도나 목적지 설정이 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
 _UNKNOWN = '실행 요청의 상태를 확인할 수 없어요. 시작 요청을 다시 보내지는 않았어요.'
@@ -57,7 +58,7 @@ class SpeechMissions:
     """Limit voice execution to fixed capabilities and retain uncertain Goals.
 
     Construction and dispatch belong to the ROS owner. Preparation may run on
-    the dialogue worker: it reads local destination configuration but never
+    the dialogue worker: it reads the active map's applied rooms but never
     contacts Manager. Ownership and once-only dispatch records are local to
     this process, matching ManagerClient's lifecycle.
     """
@@ -67,7 +68,7 @@ class SpeechMissions:
         """Bind an existing Manager client without creating ROS entities."""
         self._manager = manager
         self._cancel_foreground = cancel_foreground
-        self._targets = navigation_targets
+        self._targets = navigation_targets if navigation_targets is not None else NavigationTargets()
         self._clock = clock
         self._owner = get_ident()
         self._issuer = object()
@@ -113,6 +114,28 @@ class SpeechMissions:
             self._localization_identity = identity
             self._active_map = active_map
 
+    def navigation_locations(self):
+        """Expose only validated names on the currently selected map."""
+        with self._lock:
+            try:
+                return self._targets.names(self._active_map)
+            except (OSError, ValueError):
+                return ()
+
+    def navigation_matches(self, proposal):
+        """Recheck a prepared destination without submitting a Manager Goal."""
+        with self._lock:
+            if (proposal.blocked or self._active_map != proposal.map_path
+                    or self._map_generation != proposal.map_generation):
+                return False
+            try:
+                target = self._targets.resolve(proposal.location, self._active_map)
+                return (target.map_path == proposal.map_path
+                        and target.digest == proposal.target_digest
+                        and self._encode(target.arguments) == proposal.arguments_json)
+            except (OSError, ValueError):
+                return False
+
     def prepare(self, request_id, tool_name, arguments):
         """Validate inputs and bind a destination without executing it."""
         if not isinstance(request_id, str) or not request_id.strip():
@@ -127,7 +150,7 @@ class SpeechMissions:
                 arguments['location'], str,
             ) or not arguments['location'].strip():
                 raise ValueError('navigation requires exactly one location')
-            location = arguments['location']
+            location = unicodedata.normalize('NFC', arguments['location'].strip())
         elif tool_name == 'request_patrol':
             levels = {'light': 0, 'normal': 1, 'thorough': 2}
             level = arguments.get('thoroughness')
@@ -169,8 +192,6 @@ class SpeechMissions:
                     location=location, map_path=self._active_map or '',
                     map_generation=self._map_generation,
                 )
-                if self._targets is None:
-                    return self._blocked(fields, _NAV_UNAVAILABLE)
                 if self._active_map is None:
                     return self._blocked(fields, _MAP_UNAVAILABLE)
                 try:
@@ -235,24 +256,9 @@ class SpeechMissions:
             return proposal.message
         if proposal.tool_name == 'cancel_voice_mission':
             return self._cancel(guard)
-        if proposal.tool_name == 'request_navigation':
-            if (self._active_map != proposal.map_path
-                    or self._map_generation != proposal.map_generation):
-                return _NAV_CHANGED
-            try:
-                target = self._targets.resolve(
-                    proposal.location, self._active_map,
-                )
-                unchanged = (
-                    target.map_path == proposal.map_path
-                    and target.digest == proposal.target_digest
-                    and self._encode(target.arguments)
-                    == proposal.arguments_json
-                )
-            except (OSError, ValueError):
-                unchanged = False
-            if not unchanged:
-                return _NAV_CHANGED
+        if (proposal.tool_name == 'request_navigation'
+                and not self.navigation_matches(proposal)):
+            return _NAV_CHANGED
         capability = _CAPABILITIES[proposal.tool_name]
         manager_id = 'speech-mission:' + hashlib.sha256(
             proposal.request_id.encode('utf-8'),

@@ -1,7 +1,8 @@
 """Validated request and response types for the Malbut agent boundary."""
 
 import math
-from dataclasses import dataclass, field
+import unicodedata
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 
@@ -253,10 +254,61 @@ class AgentRequest:
         }
 
 
+@dataclass(frozen=True)
 class SpeechAgentRequest(AgentRequest):
     """An internal final speech turn; HTTP requests keep their shorter limit."""
 
     max_utterance_chars: ClassVar[int] = MAX_SPEECH_TRANSCRIPT_LENGTH
+    navigation_locations: Optional[Tuple[str, ...]] = None
+    navigation_confirmation: str = ''
+
+    def __post_init__(self) -> None:
+        """Validate server-owned names independently of the public HTTP schema."""
+        locations = self.navigation_locations
+        if locations is not None:
+            if not isinstance(locations, (list, tuple)) or len(locations) > 128:
+                raise ValidationError('navigation_locations must contain at most 128 names')
+            normalized = tuple(self._navigation_name(name) for name in locations)
+            if len(set(normalized)) != len(normalized):
+                raise ValidationError('navigation_locations must not contain duplicates')
+            object.__setattr__(self, 'navigation_locations', normalized)
+        if not isinstance(self.navigation_confirmation, str):
+            raise ValidationError('navigation_confirmation must be a string')
+        if self.navigation_confirmation:
+            candidate = self._navigation_name(self.navigation_confirmation)
+            if candidate not in (self.navigation_locations or ()):
+                raise ValidationError('navigation_confirmation must be a registered name')
+            object.__setattr__(self, 'navigation_confirmation', candidate)
+
+    @staticmethod
+    def _navigation_name(value: Any) -> str:
+        name = _required_string(value, 'navigation location', 128)
+        if any(unicodedata.category(char).startswith('C') for char in value):
+            raise ValidationError('navigation location must not contain control characters')
+        return unicodedata.normalize('NFC', name)
+
+    @classmethod
+    def from_dict(cls, value: Any) -> 'SpeechAgentRequest':
+        """Preserve internal navigation context through orchestrator copies."""
+        if not isinstance(value, dict):
+            raise ValidationError('request body must be an object')
+        body = dict(value)
+        locations = body.pop('navigation_locations', None)
+        confirmation = body.pop('navigation_confirmation', '')
+        return replace(
+            super().from_dict(body),
+            navigation_locations=locations,
+            navigation_confirmation=confirmation,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Keep the legacy request shape when navigation context is absent."""
+        value = super().to_dict()
+        if self.navigation_locations is not None:
+            value['navigation_locations'] = list(self.navigation_locations)
+        if self.navigation_confirmation:
+            value['navigation_confirmation'] = self.navigation_confirmation
+        return value
 
 
 @dataclass
