@@ -5,6 +5,7 @@ import re
 
 import yaml
 
+from malbut_agent_server.conversation_progress import DELAY_NOTICE
 from malbut_agent_server.mission_audio_cases import (
     COMMON_FAILURES, ENDPOINTS, FAILURES, FIXED_REPLIES, LABELS, PREFIX_FAILURES,
 )
@@ -15,6 +16,7 @@ CATALOG = {
     'operation.failed': '작업을 완료하지 못했어요.',
     'operation.canceled': '작업이 취소됐어요.',
     'operation.unsupported': '현재 지원하지 않아요.',
+    'conversation.delay': DELAY_NOTICE,
     **FIXED_REPLIES,
 }
 OUTCOMES = {

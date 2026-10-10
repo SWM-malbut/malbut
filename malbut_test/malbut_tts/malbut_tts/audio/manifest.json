@@ -263,6 +263,12 @@
     "text": "음성으로 요청한 동작의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.",
     "voice": "marin"
   },
+  "conversation.delay": {
+    "model": "gpt-4o-mini-tts",
+    "sha256": "6f369fee70235c6d8080e6e0c8114d94afccceeb5b97f008316729c97d5d9696",
+    "text": "답변을 준비하는 데 조금 시간이 걸리고 있어요.",
+    "voice": "marin"
+  },
   "enroll_person.accepted": {
     "model": "gpt-4o-mini-tts",
     "sha256": "3b1ecb6cd7d24d7c57145e2e97b634db81461619bbd78498cdaee72bbe836911",

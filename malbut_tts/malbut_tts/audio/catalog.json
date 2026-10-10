@@ -43,6 +43,7 @@
   "cancel.no_active_mission": "음성으로 요청한 실행 중인 동작이 없어요.",
   "cancel.requested": "음성으로 요청한 동작의 취소를 요청했어요. 종료 여부를 확인할게요.",
   "cancel.unknown": "음성으로 요청한 동작의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.",
+  "conversation.delay": "답변을 준비하는 데 조금 시간이 걸리고 있어요.",
   "enroll_person.accepted": "얼굴 등록 요청을 접수했어요.",
   "enroll_person.cancel_accepted": "얼굴 등록 취소 요청을 접수했어요. 종료 여부를 확인할게요.",
   "enroll_person.cancel_rejected": "얼굴 등록 취소 요청이 거절됐어요. 종료 여부는 확인되지 않았어요.",

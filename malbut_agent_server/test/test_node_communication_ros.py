@@ -620,9 +620,13 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         graph.sender.destroy_subscription(subscription)
 
 
-def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communication):
+@pytest.mark.parametrize('prerecorded_audio', [False, True])
+def test_progress_notice_and_final_reply_keep_distinct_interim_flags(
+    communication, prerecorded_audio,
+):
     provider = _DialogueProvider(blocked=True)
-    graph = communication(with_manager=False, provider=provider)
+    graph = communication(with_manager=False, provider=provider,
+                          prerecorded_audio=prerecorded_audio)
     messages = []
     subscription = graph.sender.create_subscription(
         SpeechRequest, '/malbut/speech/response', messages.append, 10)
@@ -631,10 +635,13 @@ def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communicati
         _publish_transcript(graph, 'progress-speech', '안녕')
         _wait_until(lambda: bool(messages))
         assert messages[0].interim is True and not provider.release.is_set()
+        assert messages[0].text == '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
+        assert messages[0].audio_id == ('conversation.delay' if prerecorded_audio else '')
         provider.release.set()
         _wait_until(lambda: len(messages) == 2)
         assert messages[1].text == '대화 연결 확인 응답'
         assert messages[1].interim is False
+        assert messages[1].audio_id == ''
         assert [message.request_id for message in messages] == [
             'progress-speech', 'progress-speech',
         ]
