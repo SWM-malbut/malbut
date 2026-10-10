@@ -13,9 +13,11 @@ binding, not localization quality or path reachability; Manager/Nav2 own those.
 """
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 import hashlib
 import math
 from pathlib import Path
+import re
 import unicodedata
 
 import yaml
@@ -129,6 +131,75 @@ def _label(value, code):
     return unicodedata.normalize('NFC', value.strip())
 
 
+def explicitly_names_location(utterance, location, locations):
+    """Bind a proposed name to a source span, without interpreting action intent."""
+    text = unicodedata.normalize('NFC', utterance.strip())
+    key = _label(location, 'target_invalid')
+    names = tuple(_label(name, 'catalog_invalid') for name in locations)
+    if key not in names:
+        return False
+    start = text.find(key)
+    while start >= 0:
+        end = start + len(key)
+        left = text[start - 1] if start else ''
+        tail = text[end:]
+        right_boundary = (
+            not tail or not (tail[0].isalnum() or tail[0] == '_')
+            or tail.startswith(('으로', '로', '에', '까지'))
+        )
+        covered = False
+        for name in names:
+            if len(name) <= len(key):
+                continue
+            position = text.find(name, max(0, end - len(name)), start + len(name))
+            if position >= 0 and position <= start and position + len(name) >= end:
+                covered = True
+                break
+        if not (left.isalnum() or left == '_') and right_boundary and not covered:
+            return True
+        start = text.find(key, start + 1)
+    return False
+
+
+def matches_navigation_location(utterance, location, locations):
+    """Accept an exact name or one unambiguous, closely matching source name."""
+    if explicitly_names_location(utterance, location, locations):
+        return True
+    text = unicodedata.normalize('NFC', utterance.strip())
+    key = _label(location, 'target_invalid')
+    names = tuple(_label(name, 'catalog_invalid') for name in locations)
+    if key not in names:
+        return False
+    sources = set()
+    for word in re.findall(r'\w+', text):
+        cuts = [position for particle in ('으로', '로', '에', '까지')
+                if (position := word.find(particle)) > 0]
+        if cuts:
+            sources.add(word[:min(cuts)])
+        elif word == text:
+            sources.add(word)
+    for source in sources:
+        if (source in names or len(source) > MAX_LOCATION_CHARS
+                or not explicitly_names_location(text, source, names + (source,))):
+            continue
+        # Room numbers and other non-Hangul identifiers are never corrected.
+        identifier = ''.join(char for char in source if not '\uac00' <= char <= '\ud7a3')
+        scores = {}
+        for name in names:
+            if identifier != ''.join(char for char in name
+                                     if not '\uac00' <= char <= '\ud7a3'):
+                scores[name] = 0.0
+            else:
+                scores[name] = SequenceMatcher(
+                    None, unicodedata.normalize('NFD', source),
+                    unicodedata.normalize('NFD', name), autojunk=False,
+                ).ratio()
+        runner_up = max((score for name, score in scores.items() if name != key), default=0.0)
+        if scores[key] >= 0.8 and scores[key] - runner_up >= 0.15:
+            return True
+    return False
+
+
 def _absolute_map(value, code):
     if (not isinstance(value, str) or not value or len(value) > 4096
             or any(ord(char) < 32 or ord(char) == 127 for char in value)):
@@ -188,6 +259,25 @@ class NavigationTargets:
     def resolve(self, location: str, active_map: str | None) -> NavigationTarget:
         """Bind one exact name to the selected map, or raise a stable error."""
         key = _label(location, 'target_invalid')
+        raw, map_path, poses = self._catalog(active_map)
+        if key not in poses:
+            raise NavigationTargetError('target_not_found')
+        map_raw, image_path, image_digest = self._map_binding(map_path)
+        digest = hashlib.sha256()
+        for part in (b'malbut-speech-navigation-v1', raw, str(map_path).encode(),
+                     map_raw, str(image_path).encode(), image_digest, key.encode()):
+            digest.update(len(part).to_bytes(8, 'big'))
+            digest.update(part)
+        x, y, yaw = poses[key]
+        return NavigationTarget(key, str(map_path), 'map', x, y, yaw, digest.hexdigest())
+
+    def names(self, active_map: str | None) -> tuple[str, ...]:
+        """Expose only names from the same valid catalog and selected map."""
+        _, map_path, poses = self._catalog(active_map)
+        self._map_binding(map_path)
+        return tuple(poses)
+
+    def _catalog(self, active_map):
         if not active_map:
             raise NavigationTargetError('map_unavailable')
         active_path = _absolute_map(active_map, 'map_unavailable')
@@ -213,9 +303,10 @@ class NavigationTargets:
                 _coordinate(pose['y'], MAX_ABS_COORDINATE_M),
                 _coordinate(pose['yaw'], math.pi),
             )
-        if key not in poses:
-            raise NavigationTargetError('target_not_found')
+        return raw, map_path, poses
 
+    @staticmethod
+    def _map_binding(map_path):
         map_raw = _read(map_path, MAX_MAP_BYTES, 'catalog_unavailable')
         map_data = _document(map_raw)
         image = map_data.get('image')
@@ -227,10 +318,4 @@ class NavigationTargets:
         except (OSError, RuntimeError, ValueError) as error:
             raise NavigationTargetError('catalog_unavailable') from error
         image_digest = _digest_image(image_path)
-        digest = hashlib.sha256()
-        for part in (b'malbut-speech-navigation-v1', raw, str(map_path).encode(),
-                     map_raw, str(image_path).encode(), image_digest, key.encode()):
-            digest.update(len(part).to_bytes(8, 'big'))
-            digest.update(part)
-        x, y, yaw = poses[key]
-        return NavigationTarget(key, str(map_path), 'map', x, y, yaw, digest.hexdigest())
+        return map_raw, image_path, image_digest

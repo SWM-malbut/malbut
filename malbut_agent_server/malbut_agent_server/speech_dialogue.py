@@ -2,10 +2,13 @@
 
 from collections import OrderedDict, deque
 from concurrent.futures import CancelledError
+from dataclasses import dataclass
 import hashlib
 import math
 import re
+import sqlite3
 from threading import Condition, Thread
+import time
 from typing import Callable, Optional
 
 from malbut_agent_server.conversation import (
@@ -28,6 +31,7 @@ MEMORY_CHANGED_RESPONSE = (
 )
 MAX_INTERRUPTION_IDS = 128
 MAX_SPEECH_ID_LENGTH = 256
+NAVIGATION_CONFIRMATION_SECONDS = 30.0
 ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
 NEW_CONVERSATION_REQUESTS = frozenset({
     '새로시작하자', '새로시작해', '새로시작해줘', '새로시작해주세요',
@@ -55,6 +59,16 @@ class _DialogueReply(dict):
         super().__init__(fields)
         self._memory_validator = memory_validator
         self._mission_callback = None
+        self._on_publish = None
+
+
+@dataclass(frozen=True)
+class _NavigationConfirmation:
+    proposal: object
+    conversation_id: str
+    generation: int
+    revision: int
+    expires_at: float
 
 
 class SpeechInputTooLongError(ValueError):
@@ -111,6 +125,7 @@ class DialogueWorker:
             raise ValueError('capacity must be a positive integer')
         self._factory = runtime_factory
         self._missions = missions
+        self._navigation_confirmation = None
         self._user_id = validate_user_id(user_id)
         self._capacity = capacity
         self._condition = Condition()
@@ -246,6 +261,10 @@ class DialogueWorker:
                     reply['text'] = '실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.'
                     reply['kind'] = 'error'
             if publish(reply['text']):
+                activate = reply._on_publish
+                reply._on_publish = None
+                if activate is not None:
+                    activate()
                 return dict(reply)
             return None
 
@@ -253,6 +272,7 @@ class DialogueWorker:
         """Preempt ordinary speech and invalidate queued or in-flight replies."""
         with self._condition:
             self._suspended = True
+            self._navigation_confirmation = None
             self._generation += 1
             if self._active_progress is not None:
                 self._active_progress.finish()
@@ -282,16 +302,19 @@ class DialogueWorker:
             reply['kind'] = 'error'
             reply._memory_validator = None
             reply._mission_callback = None
+            reply._on_publish = None
         except Exception:
             reply['text'] = ERROR_RESPONSE
             reply['kind'] = 'error'
             reply._memory_validator = None
             reply._mission_callback = None
+            reply._on_publish = None
 
     def close(self) -> None:
         """Discard waiting and late replies; let the running call finish."""
         with self._condition:
             self._closing = True
+            self._navigation_confirmation = None
             if self._active_progress is not None:
                 self._active_progress.finish()
             for _, _, _, progress in self._pending:
@@ -344,6 +367,10 @@ class DialogueWorker:
                     if self._closing:
                         return
                     utterance_id, text, playback_id, progress = self._pending.popleft()
+                    confirmation = None
+                    if playback_id is None:
+                        confirmation = self._navigation_confirmation
+                        self._navigation_confirmation = None
                     generation = self._generation
                     self._running = True
                     self._active_progress = progress
@@ -378,6 +405,12 @@ class DialogueWorker:
                         self._user_id, conversation_id, start_new=start_new,
                     )
                     conversation_id = session.conversation_id
+                    confirmation = self._valid_navigation_confirmation(session, confirmation)
+                    locations = (self._missions.navigation_locations()
+                                 if self._missions is not None else None)
+                    if (confirmation is not None
+                            and confirmation.proposal.location not in (locations or ())):
+                        confirmation = None
                     request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
@@ -391,12 +424,16 @@ class DialogueWorker:
                             if getattr(runtime, 'weather_executor', None)
                             is not None else ()
                         ),
+                        navigation_locations=locations,
+                        navigation_confirmation=(confirmation.proposal.location
+                                                 if confirmation is not None else ''),
                     )
                     result = self._handle_with_progress(runtime, request, progress)
                     decision = result.decision
                     if decision.type == 'tool_call' and self._missions is not None:
                         reply = self._mission_reply(
                             runtime, request, result, utterance_id, conversation_id,
+                            confirmation=confirmation,
                         )
                     elif (decision.type not in {
                             'message', 'clarification', 'refusal',
@@ -409,6 +446,9 @@ class DialogueWorker:
                             decision.message, 'answer',
                             getattr(result, 'memory_validator', None),
                         )
+                        if (self._missions is not None
+                                and result.safety.code == 'navigation_confirmation_required'):
+                            self._prepare_navigation_confirmation(runtime, request, result, reply)
                 except CancelledError:
                     reply = None
                 except (ConversationNotFoundError, ConversationStateError):
@@ -451,7 +491,52 @@ class DialogueWorker:
                     finally:
                         runtime.memory_store.close()
 
-    def _mission_reply(self, runtime, request, result, utterance_id, conversation_id):
+    def _valid_navigation_confirmation(self, session, pending):
+        """Validate the confirmation consumed by this ordinary turn at dequeue."""
+        with self._condition:
+            if (pending is not None and time.monotonic() < pending.expires_at
+                    and session.status == 'active'
+                    and session.conversation_id == pending.conversation_id
+                    and session.generation == pending.generation
+                    and session.revision == pending.revision
+                    and self._missions.navigation_matches(pending.proposal)):
+                return pending
+            return None
+
+    def _prepare_navigation_confirmation(self, runtime, request, result, reply):
+        """Bind the question to its target and activate only after publication."""
+        if result.raw_decision.type != 'tool_call':
+            # A cached clarification has no fresh proposal and cannot re-arm it.
+            return
+        proposal = self._missions.prepare(
+            request.request_id, 'request_navigation', result.raw_decision.arguments,
+        )
+
+        def activate():
+            expires_at = time.monotonic() + NAVIGATION_CONFIRMATION_SECONDS
+            if self._running or self._pending:
+                # An answer received before this question is not confirmation.
+                return
+            try:
+                session = runtime.conversation_store.snapshot(
+                    self._user_id, request.conversation_id, limit=1,
+                ).session
+            except (ConversationNotFoundError, ConversationStateError, sqlite3.Error):
+                return
+            if (session.status == 'active'
+                    and session.generation == result.conversation_generation
+                    and session.revision == result.conversation_revision
+                    and self._missions.navigation_matches(proposal)
+                    and time.monotonic() < expires_at):
+                self._navigation_confirmation = _NavigationConfirmation(
+                    proposal, request.conversation_id, session.generation, session.revision,
+                    expires_at,
+                )
+
+        reply._on_publish = activate
+
+    def _mission_reply(self, runtime, request, result, utterance_id, conversation_id,
+                       *, confirmation=None):
         """Bind a committed proposal; send only at the ROS publication boundary."""
         decision = result.decision
         if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
@@ -466,6 +551,10 @@ class DialogueWorker:
         )
 
         def guard():
+            if (confirmation is not None and decision.tool_name == 'request_navigation'
+                    and proposal.location == confirmation.proposal.location
+                    and not self._missions.navigation_matches(confirmation.proposal)):
+                return '확인 중 지도나 목적지가 변경되었거나 시간이 지났어요. 다시 요청해 주세요.'
             if result.memory_validator is not None:
                 result.memory_validator()
             session = runtime.conversation_store.snapshot(
@@ -480,6 +569,10 @@ class DialogueWorker:
             if (not math.isfinite(now) or now < result.issued_at
                     or now >= result.expires_at):
                 return '요청의 유효 시간이 지나 실행하지 않았어요. 다시 말씀해 주세요.'
+            if (confirmation is not None and decision.tool_name == 'request_navigation'
+                    and proposal.location == confirmation.proposal.location
+                    and time.monotonic() >= confirmation.expires_at):
+                return '목적지 확인 시간이 지났어요. 다시 요청해 주세요.'
             return None
 
         reply._mission_callback = lambda: self._missions.dispatch(proposal, guard=guard)

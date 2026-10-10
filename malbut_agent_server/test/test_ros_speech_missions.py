@@ -62,6 +62,9 @@ class _Provider:
             '우리 거실로 가볼까': ('request_navigation', {'location': '거실'}),
             '거실로 와바라': ('request_navigation', {'location': '거실'}),
             '거실': ('request_navigation', {'location': '거실'}),
+            '기실로 가': ('request_navigation', {'location': '거실'}),
+            '베란다로 가': ('request_navigation', {'location': '거실'}),
+            '응': ('request_navigation', {'location': '거실'}),
             '꼼꼼히 순찰해': ('request_patrol', {'thoroughness': 'thorough'}),
         }
         noncommands = {
@@ -71,6 +74,7 @@ class _Provider:
             '"거실로 가볼까?"라는 문장을 설명해': ('message', '거실 이동을 제안하는 문장이에요.'),
             '와바라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
             '이리 오너라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
+            '아니 가지 마': ('message', '이동하지 않을게요.'),
         }
         if request.utterance in self.overrides:
             decision = self.overrides[request.utterance]
@@ -408,6 +412,136 @@ def test_model_proposal_after_destination_clarification_uses_same_conversation(
     assert run.manager_goals == [('navigate_to_pose', targets.resolve(
         '거실', str(selected)).arguments)]
     run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+
+def test_similar_navigation_name_uses_registered_catalog_without_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    _, reply = run.say('기실로 가')
+    assert '말씀하신 건가요' not in reply
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '거실', str(selected)).arguments)]
+    request = run.provider.calls[0]
+    assert request.navigation_locations == ('거실',)
+    assert request.navigation_confirmation == ''
+    body = request.to_dict()
+    assert body['navigation_locations'] == ['거실']
+    encoded = json.dumps(body)
+    assert str(selected) not in encoded
+    assert not any(field in encoded for field in ('"pose"', '"x"', '"y"', '"yaw"'))
+
+
+def test_distant_navigation_name_requires_published_confirmation_once(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    _, question = run.say('베란다로 가')
+    assert '거실' in question and '말씀하신 건가요' in question
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+    run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '거실', str(selected)).arguments)]
+    run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+    _, repeated = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in repeated
+    assert len(run.manager_goals) == len(run.actuators.goals['navigate_to_pose']) == 1
+
+
+def test_navigation_confirmation_denial_does_not_authorize_a_later_generic_answer(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    _, reply = run.say('아니 가지 마')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    assert reply == '이동하지 않을게요.'
+    assert run.manager_goals == []
+
+    _, later = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in later
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_navigation_catalog_change_invalidates_pending_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    config = tmp_path / 'destinations.yaml'
+    updated = yaml.safe_load(config.read_text())
+    updated['locations']['거실']['x'] = 3.0
+    config.write_text(yaml.safe_dump(updated, allow_unicode=True))
+
+    _, reply = run.say('응')
+    assert run.provider.calls[-1].navigation_confirmation == ''
+    assert '말씀하신 건가요' in reply
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_similar_navigation_name_with_competing_registered_name_requires_confirmation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    config = tmp_path / 'destinations.yaml'
+    updated = yaml.safe_load(config.read_text())
+    updated['locations']['교실'] = {'x': 4.0, 'y': 1.0, 'yaw': 0.0}
+    config.write_text(yaml.safe_dump(updated, allow_unicode=True))
+    run.start(targets)
+    run.observe_map(selected)
+
+    _, reply = run.say('기실로 가')
+    assert set(run.provider.calls[-1].navigation_locations) == {'거실', '교실'}
+    assert '말씀하신 건가요' in reply
+    assert run.manager_goals == []
+    assert run.actuators.goals['navigate_to_pose'] == []
+
+
+def test_confirmation_reply_can_explicitly_change_to_another_registered_destination(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    config = tmp_path / 'destinations.yaml'
+    updated = yaml.safe_load(config.read_text())
+    updated['locations']['주방'] = {'x': 4.0, 'y': 1.0, 'yaw': 0.0}
+    config.write_text(yaml.safe_dump(updated, allow_unicode=True))
+    run.provider.overrides['아니 주방으로 가'] = AgentDecision(
+        type='tool_call', tool_name='request_navigation', arguments={'location': '주방'},
+        message='모델이 만든 실행 완료 주장',
+    )
+    run.start(targets)
+    run.observe_map(selected)
+    run.say('베란다로 가')
+    assert run.manager_goals == []
+    run.say('아니 주방으로 가')
+    assert run.provider.calls[-1].navigation_confirmation == '거실'
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '주방', str(selected)).arguments)]
 
 
 def test_patrol_thoroughness_reaches_downstream_through_manager(speech_graph):

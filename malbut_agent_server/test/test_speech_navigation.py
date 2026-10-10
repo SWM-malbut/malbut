@@ -8,7 +8,7 @@ import yaml
 
 from malbut_agent_server import speech_navigation
 from malbut_agent_server.speech_navigation import (
-    NavigationTargetError, NavigationTargets,
+    NavigationTargetError, NavigationTargets, explicitly_names_location, matches_navigation_location,
 )
 
 
@@ -192,3 +192,98 @@ def test_invalid_or_missing_map_image_refuses_resolution(catalog):
     fails('catalog_unavailable', targets, '거실', str(map_path))
     map_path.write_text('image: [home.pgm]\n')
     fails('catalog_invalid', targets, '거실', str(map_path))
+
+
+def test_names_exposes_only_normalized_labels_and_reloads_changes(catalog):
+    config, map_path, _, value = catalog
+    targets = NavigationTargets(config)
+    assert targets.names(str(map_path)) == ('거실',)
+    value['locations'] = {' 카페 ': {'x': 1, 'y': 2, 'yaw': 0}}
+    rewrite(config, value)
+    assert targets.names(str(map_path)) == ('카페',)
+
+
+@pytest.mark.parametrize('failure', [
+    'map_unavailable', 'map_mismatch', 'catalog_invalid', 'catalog_unavailable',
+    'image_unavailable', 'image_invalid', 'target_ambiguous',
+])
+def test_names_requires_valid_catalog_selected_map_and_image(catalog, tmp_path, failure):
+    config, map_path, image, value = catalog
+    active_map = str(map_path)
+    if failure == 'map_unavailable':
+        active_map = None
+    elif failure == 'map_mismatch':
+        other = tmp_path / 'other.yaml'
+        other.write_text('image: home.pgm\n', encoding='utf-8')
+        active_map = str(other)
+    elif failure == 'catalog_invalid':
+        value['locations']['거실']['x'] = 'invalid'
+        rewrite(config, value)
+    elif failure == 'catalog_unavailable':
+        config.unlink()
+    elif failure == 'image_unavailable':
+        image.unlink()
+    elif failure == 'image_invalid':
+        map_path.write_text('image: [home.pgm]\n', encoding='utf-8')
+    elif failure == 'target_ambiguous':
+        value['locations'][' 거실 '] = {'x': 0, 'y': 0, 'yaw': 0}
+        rewrite(config, value)
+    with pytest.raises(NavigationTargetError) as caught:
+        NavigationTargets(config).names(active_map)
+    assert caught.value.code == failure.replace('image_', 'catalog_')
+
+
+@pytest.mark.parametrize('utterance,location,locations,expected', [
+    ('거실로가', '거실', ('거실',), True),
+    ('우리 거실로 좀 가주이소', '거실', ('거실',), True),
+    ('거실로 가', '거실', ('거실',), True),
+    (' 거실 ', ' 거실 ', ('거실',), True),
+    ('카페로 가', '카페', ('카페',), True),
+    ('거실로, 아니 주방으로 가', '주방', ('거실', '주방'), True),
+    ('기실로 가', '거실', ('거실',), False),
+    ('거실로 가', '거실', ('주방',), False),
+    ('거실2로 가', '거실', ('거실',), False),
+    ('안방으로 가', '방', ('방', '안방'), False),
+    ('작은 거실로 가', '거실', ('거실', '작은 거실'), False),
+    ('거실 2로 가', '거실', ('거실', '거실 2'), False),
+    ('거실로비로 가', '거실', ('거실', '거실로비'), False),
+    ('작은 거실 말고 거실로 가', '거실', ('거실', '작은 거실'), True),
+    ('거실로 가지 마', '거실', ('거실',), True),
+])
+def test_explicit_name_binding_preserves_exact_source_spans_without_parsing_intent(
+    utterance, location, locations, expected,
+):
+    assert explicitly_names_location(utterance, location, locations) is expected
+
+
+@pytest.mark.parametrize('utterance,location,locations,expected', [
+    ('거실로 가', '거실', ('거실', '주방'), True),
+    ('기실로 가', '거실', ('거실', '주방'), True),
+    ('기실로가', '거실', ('거실', '주방'), True),
+    ('거슬로 가', '거실', ('거실', '주방'), True),
+    ('기실으로 가', '거실', ('거실', '주방'), True),
+    ('기실로 가', '거실', ('거실', '주방'), True),
+    ('기실', '거실', ('거실', '주방'), True),
+    ('기실로, 아니 주방으로 가', '주방', ('거실', '주방'), True),
+    ('베란다로 가', '거실', ('거실', '주방'), False),
+    ('기실로 가', '거실', ('거실', '고실'), False),
+    ('기실로 가', '거실', ('거실', '길'), False),
+    ('기실로 가', '거실', ('거실', '기실'), False),
+    ('기실로 가', '기실', ('거실', '고실', '기실'), True),
+    ('거실로 가', '거실', ('거실', '고실', '기실'), True),
+    ('거실2로 가', '거실', ('거실',), False),
+    ('기실2로 가', '거실', ('거실',), False),
+    ('기실2로 가', '거실2', ('거실2',), True),
+    ('거실x로 가', '거실', ('거실',), False),
+    ('안방으로 가', '방', ('방', '안방'), False),
+    ('안방으로 가', '방', ('방',), False),
+    ('작은 기실로 가', '거실', ('거실', '작은 기실'), False),
+    ('작은 거실로 가', '거실', ('거실', '작은 거실'), False),
+    ('기실 이야기를 하다가 주방으로 가', '거실', ('거실', '주방'), False),
+    ('기실 쪽으로 가', '거실', ('거실', '주방'), False),
+    ('기실로 가지 마', '거실', ('거실',), True),
+])
+def test_navigation_name_similarity_requires_one_close_source_candidate(
+    utterance, location, locations, expected,
+):
+    assert matches_navigation_location(utterance, location, locations) is expected

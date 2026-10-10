@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from threading import RLock, get_ident
 import time
+import unicodedata
 
 from malbut_agent_server.mission_speech import event_speech
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
@@ -113,6 +114,30 @@ class SpeechMissions:
             self._localization_identity = identity
             self._active_map = active_map
 
+    def navigation_locations(self):
+        """Expose only validated names on the currently selected map."""
+        with self._lock:
+            if self._targets is None:
+                return None
+            try:
+                return self._targets.names(self._active_map)
+            except (OSError, ValueError):
+                return ()
+
+    def navigation_matches(self, proposal):
+        """Recheck a prepared destination without submitting a Manager Goal."""
+        with self._lock:
+            if (proposal.blocked or self._active_map != proposal.map_path
+                    or self._map_generation != proposal.map_generation):
+                return False
+            try:
+                target = self._targets.resolve(proposal.location, self._active_map)
+                return (target.map_path == proposal.map_path
+                        and target.digest == proposal.target_digest
+                        and self._encode(target.arguments) == proposal.arguments_json)
+            except (OSError, ValueError):
+                return False
+
     def prepare(self, request_id, tool_name, arguments):
         """Validate inputs and bind a destination without executing it."""
         if not isinstance(request_id, str) or not request_id.strip():
@@ -127,7 +152,7 @@ class SpeechMissions:
                 arguments['location'], str,
             ) or not arguments['location'].strip():
                 raise ValueError('navigation requires exactly one location')
-            location = arguments['location']
+            location = unicodedata.normalize('NFC', arguments['location'].strip())
         elif tool_name == 'request_patrol':
             levels = {'light': 0, 'normal': 1, 'thorough': 2}
             level = arguments.get('thoroughness')
@@ -235,24 +260,9 @@ class SpeechMissions:
             return proposal.message
         if proposal.tool_name == 'cancel_voice_mission':
             return self._cancel(guard)
-        if proposal.tool_name == 'request_navigation':
-            if (self._active_map != proposal.map_path
-                    or self._map_generation != proposal.map_generation):
-                return _NAV_CHANGED
-            try:
-                target = self._targets.resolve(
-                    proposal.location, self._active_map,
-                )
-                unchanged = (
-                    target.map_path == proposal.map_path
-                    and target.digest == proposal.target_digest
-                    and self._encode(target.arguments)
-                    == proposal.arguments_json
-                )
-            except (OSError, ValueError):
-                unchanged = False
-            if not unchanged:
-                return _NAV_CHANGED
+        if (proposal.tool_name == 'request_navigation'
+                and not self.navigation_matches(proposal)):
+            return _NAV_CHANGED
         capability = _CAPABILITIES[proposal.tool_name]
         manager_id = 'speech-mission:' + hashlib.sha256(
             proposal.request_id.encode('utf-8'),
