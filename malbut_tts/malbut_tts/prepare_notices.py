@@ -26,7 +26,7 @@ def read_catalog(path):
 
 
 def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
-            voice='shimmer', instructions=VOICE_INSTRUCTIONS, check_only=False):
+            voice='nova', instructions=VOICE_INSTRUCTIONS, check_only=False):
     """Resume matching WAVs; never silently reuse stale or changed recordings."""
     directory = Path(directory)
     manifest_path = directory / 'manifest.json'
@@ -101,7 +101,7 @@ def main(argv=None):
     parser.add_argument('--catalog', required=True)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--model', default='gpt-4o-mini-tts')
-    parser.add_argument('--voice', default='shimmer')
+    parser.add_argument('--voice', default='nova')
     parser.add_argument('--instructions', default=VOICE_INSTRUCTIONS)
     parser.add_argument('--check', action='store_true',
                         help='Validate all files without using TTS')

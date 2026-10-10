@@ -258,7 +258,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
     assert received == dict(
         path='/local/cuda-model', backend='qwen-cuda', cuda_dtype='float16',
         cuda_sentence_mode=True, sentence_max_chars=80,
-        api_model='gpt-4o-mini-tts', api_voice='shimmer', api_timeout_seconds=8.0,
+        api_model='gpt-4o-mini-tts', api_voice='nova', api_timeout_seconds=8.0,
         speaker='Sohee', language='Korean', device=3,
         max_pending_requests=8, pending_timeout_s=12.0,
     )
@@ -268,7 +268,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
 
 
 @pytest.mark.parametrize('options,model,voice,timeout', [
-    ({}, 'gpt-4o-mini-tts', 'shimmer', 8.0),
+    ({}, 'gpt-4o-mini-tts', 'nova', 8.0),
     ({'api_model': 'tts-1', 'api_voice': 'alloy', 'api_timeout_seconds': 4.5},
      'tts-1', 'alloy', 4.5),
 ])

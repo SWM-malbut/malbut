@@ -14,7 +14,7 @@ def main(argv=None):
     parser.add_argument('--backend', choices=('qwen-cuda', 'openai'),
                         default='openai')
     parser.add_argument('--api-model', default='gpt-4o-mini-tts')
-    parser.add_argument('--api-voice', default='shimmer')
+    parser.add_argument('--api-voice', default='nova')
     parser.add_argument('--api-timeout-seconds', type=float, default=8.0)
     parser.add_argument('--cuda-dtype', choices=('float32', 'float16'),
                         default='float32')

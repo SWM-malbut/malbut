@@ -74,7 +74,7 @@ def test_openai_is_default_without_local_model_or_sentence_wrapper(monkeypatch):
         monkeypatch.setitem(sys.modules, f'malbut_tts.{module}', None)
     assert create_synthesizer() is factory.return_value
     factory.assert_called_once_with(
-        model='gpt-4o-mini-tts', voice='shimmer', timeout_seconds=8.0,
+        model='gpt-4o-mini-tts', voice='nova', timeout_seconds=8.0,
     )
     factory.return_value.load.assert_not_called()
 

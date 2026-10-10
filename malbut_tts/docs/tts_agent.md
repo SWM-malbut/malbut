@@ -114,7 +114,7 @@ sequenceDiagram
   모은 뒤 재생을 시작하고, 앞부분을 재생하는 동안 나머지 PCM을 계속 수신한다.
 - 400 ms는 네트워크 응답 시간 보장이 아니라 재생 전 음성 버퍼 크기다. 첫 PCM이
   도착하기까지의 네트워크·provider 지연은 별도로 남는다.
-- 기본 API 설정은 `gpt-4o-mini-tts`, `shimmer`, PCM이다. 배포 설정에서 값을 바꿀 수
+- 기본 API 설정은 `gpt-4o-mini-tts`, `nova`, PCM이다. 배포 설정에서 값을 바꿀 수
   있지만 요청 단위와 상태 계약은 유지한다.
 - API 요청을 자동으로 재시도하지 않고 로컬 backend로 자동 fallback하지 않는다.
   일부 PCM을 이미 재생한 뒤 API가 실패해도 `finished`로 처리하지 않고 `failed`를

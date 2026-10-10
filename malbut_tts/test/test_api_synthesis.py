@@ -73,7 +73,7 @@ def test_pcm_alignment_streaming_and_one_request():
                                   [-1.0, 32767 / 32768, 0.0])
     assert all(x.dtype == np.float32 and x.ndim == 1 for x, _ in output)
     assert [rate for _, rate in output] == [24000]
-    assert client.calls == [{'model': 'gpt-4o-mini-tts', 'voice': 'shimmer',
+    assert client.calls == [{'model': 'gpt-4o-mini-tts', 'voice': 'nova',
                              'input': '공개 시험 문장', 'response_format': 'pcm',
                              'instructions': VOICE_INSTRUCTIONS}]
     assert options == [{'api_key': 'private-test-key',

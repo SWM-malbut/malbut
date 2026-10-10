@@ -61,7 +61,7 @@ Agent·TTS·STT·모니터 등 관련 발행·수신 노드를 같은 정의로 
 OpenAI는 CLI와 ROS node의 기본 backend다. `--backend`/`backend`를 생략하면
 기존 Agent·STT를 바꾸지 않고 TTS 합성만 API로 처리한다. 로컬 모델 경로,
 CUDA, PyTorch는 이 backend에 필요하지 않다. 기본 설정은
-`gpt-4o-mini-tts`, `shimmer`, PCM이다.
+`gpt-4o-mini-tts`, `nova`, PCM이다.
 공식 SDK의 스트리밍 응답을 받아 24 kHz signed 16-bit little-endian PCM을
 기존 재생기가 사용하는 mono float32 조각으로 변환한다.
 
@@ -113,12 +113,12 @@ flowchart LR
 ```bash
 /absolute/external/venv/bin/python -m pip install -r malbut_tts/requirements-api.txt
 PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
-  --api-model gpt-4o-mini-tts --api-voice shimmer \
+  --api-model gpt-4o-mini-tts --api-voice nova \
   --api-timeout-seconds 8 --text '안녕하세요. 말벗이에요.'
 
 # ROS 및 외부 install overlay를 적용한 같은 Python 환경:
 /absolute/external/venv/bin/python -m malbut_tts.node --ros-args \
-  -p api_model:=gpt-4o-mini-tts -p api_voice:=shimmer \
+  -p api_model:=gpt-4o-mini-tts -p api_voice:=nova \
   -p api_timeout_seconds:=8.0
 ```
 
@@ -172,7 +172,7 @@ PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
   --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio --check
 ```
 
-기본값은 기존 대화와 같은 `gpt-4o-mini-tts` / `shimmer`이다. 출력은
+기본값은 기존 대화와 같은 `gpt-4o-mini-tts` / `nova`이다. 출력은
 mono 24 kHz PCM16 WAV와 `manifest.json`이며 패키지에 함께 설치된다.
 실시간 TTS와 모든 안내 파일에 `voice_style.py`의 한국어 여성 음색 지시를 적용한다.
 말투 제어는 [OpenAI Speech API의 instructions](https://developers.openai.com/api/docs/guides/text-to-speech)를 사용한다.

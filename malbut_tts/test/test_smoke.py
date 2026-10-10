@@ -37,7 +37,7 @@ def test_single_request_uses_selected_backend_and_same_runtime(
                        *options]) == 0
     factory.assert_called_once_with(tmp_path, backend=backend, cuda_dtype=dtype,
                                     cuda_sentence_mode=True, sentence_max_chars=80,
-                                    api_model='gpt-4o-mini-tts', api_voice='shimmer',
+                                    api_model='gpt-4o-mini-tts', api_voice='nova',
                                     api_timeout_seconds=8.0)
     assert received == {'synth': factory.return_value,
                         'text': ' 원문 ', 'closed': True}
@@ -53,7 +53,7 @@ def test_unknown_backend_fails_before_runtime_creation(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('options,model,voice,timeout', [
-    ([], 'gpt-4o-mini-tts', 'shimmer', 8.0),
+    ([], 'gpt-4o-mini-tts', 'nova', 8.0),
     (['--api-model', 'tts-1', '--api-voice', 'alloy',
       '--api-timeout-seconds', '3.5'], 'tts-1', 'alloy', 3.5),
 ])

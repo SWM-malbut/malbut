@@ -37,7 +37,7 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'openai')
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
-                self.declare_parameter('api_voice', 'shimmer')
+                self.declare_parameter('api_voice', 'nova')
                 self.declare_parameter('api_timeout_seconds', 8.0)
                 self.declare_parameter('cuda_dtype', 'float32')
                 self.declare_parameter('cuda_sentence_mode', True)
