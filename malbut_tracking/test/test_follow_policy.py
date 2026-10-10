@@ -9,7 +9,6 @@ from malbut_tracking.follow_policy import (
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
-    needs_camera_alignment,
 )
 from malbut_tracking.geometry import Point2D
 
@@ -131,13 +130,12 @@ def test_recovery_turn_uses_the_last_camera_exit_side_first():
     assert directed_recovery_turn(0.0, -0.90, 0.70) == pytest.approx(-0.90)
 
 
-@pytest.mark.parametrize('target_x', [0.81, 0.89, 1.11, 1.19])
-def test_stopped_target_has_wider_release_band(target_x):
-    """Range noise cannot restart translation immediately after stopping."""
-    settings = FollowSettings(1.0, 0.2, 0.1, 0.75, distance_hysteresis_m=0.1)
+@pytest.mark.parametrize('target_x', [0.8, 0.81, 0.89, 1.0, 1.11, 1.19, 1.2])
+def test_target_inside_the_single_twenty_centimetre_band_does_not_translate(target_x):
+    """Both exact boundaries and the whole requested band permit alignment only."""
+    settings = FollowSettings(1.0, 0.2, 0.2, 0.75)
     decision = decide_follow_motion(
         Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
-        previous_command=FollowCommand.ALIGN,
     )
     assert decision.command == FollowCommand.ALIGN
 
@@ -146,31 +144,22 @@ def test_stopped_target_has_wider_release_band(target_x):
     (0.79, FollowCommand.RETREAT), (1.21, FollowCommand.NAVIGATE),
     (0.19, FollowCommand.RETREAT),
 ])
-def test_hold_releases_outside_the_wider_band_or_at_hard_minimum(target_x, expected):
-    """Hysteresis never suppresses a real range violation."""
-    settings = FollowSettings(1.0, 0.2, 0.1, 0.75, distance_hysteresis_m=0.1)
+def test_motion_outside_the_single_band_preserves_the_hard_minimum(target_x, expected):
+    """There is no separate entry/release threshold depending on prior motion."""
+    settings = FollowSettings(1.0, 0.2, 0.2, 0.75)
     assert decide_follow_motion(
         Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
-        previous_command=FollowCommand.ALIGN,
     ).command == expected
 
 
-@pytest.mark.parametrize('previous,target_x', [
-    (FollowCommand.NAVIGATE, 1.09), (FollowCommand.RETREAT, 0.91),
+@pytest.mark.parametrize('desired,target_x,expected', [
+    (0.6, 0.4, FollowCommand.ALIGN), (0.6, 0.8, FollowCommand.ALIGN),
+    (0.6, 0.39, FollowCommand.RETREAT), (0.6, 0.81, FollowCommand.NAVIGATE),
+    (0.3, 0.15, FollowCommand.RETREAT),
 ])
-def test_translation_stops_at_inner_band(previous, target_x):
-    """Drive/back-up enter hold before crossing the wider release threshold."""
-    settings = FollowSettings(1.0, 0.2, 0.1, 0.75, distance_hysteresis_m=0.1)
+def test_single_band_follows_requested_distance_and_keeps_minimum(desired, target_x, expected):
+    """The same +/-0.20 m rule also applies to non-default Action distances."""
+    settings = FollowSettings(desired, 0.2, 0.2, 0.75)
     assert decide_follow_motion(
         Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
-        previous_command=previous,
-    ).command == FollowCommand.ALIGN
-
-
-@pytest.mark.parametrize('bearing,aligning,expected', [
-    (0.40, False, False), (0.60, False, True), (-0.60, False, True),
-    (0.40, True, True), (0.30, True, False),
-])
-def test_camera_edge_alignment_has_separate_entry_and_release(bearing, aligning, expected):
-    """Heading first changes the state, not the DWB weight or person estimate."""
-    assert needs_camera_alignment(bearing, 0.0, 1.29, 0.35, aligning) == expected
+    ).command == expected

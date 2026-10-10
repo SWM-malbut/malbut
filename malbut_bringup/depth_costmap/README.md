@@ -1,9 +1,10 @@
 # Bringup depth costmap plugin
 
-**Status: kept for later use, not built or loaded.** On the robot, depth input
-delayed TF (2026-09-16/17), so both costmaps are LiDAR-only and the default
-build skips this plugin. The Aurora depth image itself is still used by person
-tracking; only this costmap path is off. To restore it:
+**Status: legacy alternative, not built or loaded.** Default costmaps now use
+the camera driver's PointCloud2 with native `nav2_costmap_2d::VoxelLayer`.
+This in-process depth-image projector remains disabled: do not add it alongside
+the native cloud layer, which would duplicate obstacle processing. To try this
+alternative instead:
 
 1. Add these back to `malbut_bringup/package.xml` as `<depend>` and install them
    with rosdep: `depth_image_proc`, `image_geometry`, `libopencv-dev`,
@@ -11,9 +12,8 @@ tracking; only this costmap path is off. To restore it:
    `tf2_ros`.
 2. Build with `--cmake-args -DMALBUT_DEPTH_COSTMAP=ON`. This also builds the
    `test_depth_projector` and `test_depth_voxel_layer` gtests.
-3. Add `depth_voxel_layer` to both costmaps' `plugins` in
-   `config/nav2_params.yaml` with the settings below, then measure TF delay on
-   the robot again.
+3. Replace the existing `depth_voxel_layer` settings in `config/nav2_params.yaml`
+   with the settings below, then measure TF delay on the robot again.
 
 ```yaml
       depth_voxel_layer:

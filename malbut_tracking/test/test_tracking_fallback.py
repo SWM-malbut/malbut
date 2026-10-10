@@ -27,8 +27,6 @@ def _fixture(wall_x=None, map_time=20.0):
         'goal_maximum_cost': 80,
         'goal_pullback_step_m': 0.5,
         'goal_initial_pullback_m': 0.0,
-        'goal_prediction_horizon_s': 0.0,
-        'goal_prediction_maximum_offset_m': 0.15,
         'planner_id': 'GridBased',
         'nav2_planning_timeout_s': 0.2,
         'tracking_controller_id': 'FollowPath',
@@ -194,10 +192,10 @@ def test_initial_pullback_plans_before_person_cells_and_failure_advances_it():
     assert not follower._raise_goal_pullback(person)
 
 
-def test_predicted_plan_keeps_observed_person_as_execution_distance_anchor():
+def test_plan_uses_observed_person_without_velocity_lookahead():
     """Lookahead changes the planner input, not the standoff-cut reference."""
     follower = _bind(_fixture(), '_pulled_back_goal')
-    follower._parameters.update(goal_initial_pullback_m=0.5, goal_prediction_horizon_s=0.3)
+    follower._parameters['goal_initial_pullback_m'] = 0.5
     follower._last_motion_velocity = Point2D(1.0, 0.0)
     follower._path_planner = Mock(busy=False)
     follower._on_tracking_path = Mock()
@@ -207,7 +205,7 @@ def test_predicted_plan_keeps_observed_person_as_execution_distance_anchor():
         follower, robot, person, decision, False, 'camera', 20_000_000_000, 1,
     )
     pose, _, callback = follower._path_planner.compute.call_args.args
-    assert pose.pose.position.x == pytest.approx(2.65)
+    assert pose.pose.position.x == pytest.approx(2.5)
     callback(Path(), 'planned')
     assert follower._on_tracking_path.call_args.args[2] == person
 

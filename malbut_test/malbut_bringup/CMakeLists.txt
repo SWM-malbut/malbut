@@ -7,9 +7,8 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# The Nav2 depth costmap plugin is kept for later use but not built: its depth
-# input delayed TF on the robot, so both costmaps are LiDAR-only for now.
-# See depth_costmap/README.md before building it with -DMALBUT_DEPTH_COSTMAP=ON.
+# The legacy in-process projector stays off. Default costmaps consume the
+# camera driver's PointCloud2 with Nav2's native VoxelLayer; no extra library.
 option(MALBUT_DEPTH_COSTMAP "Build the unused Nav2 depth costmap plugin" OFF)
 
 find_package(ament_cmake REQUIRED)

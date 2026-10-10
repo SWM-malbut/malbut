@@ -40,17 +40,13 @@ from .costmap_tracking import (
 from .follow_policy import (
     directed_recovery_turn,
     FollowCommand,
-    FollowDecision,
     FollowSettings,
     decide_follow_motion,
-    needs_camera_alignment,
 )
 from .geometry import (
-    FollowGoal,
     Point2D,
     distance,
     normalize_angle,
-    predict_follow_target,
     quaternion_to_yaw,
     yaw_to_quaternion,
 )
@@ -410,10 +406,8 @@ class PersonFollowerNode(Node):
         self.declare_parameter('lidar_proximity_camera_guard_s', 0.30)
         self.declare_parameter('desired_distance_m', 1.00)
         self.declare_parameter('minimum_distance_m', 0.20)
-        self.declare_parameter('distance_tolerance_m', 0.10)
-        self.declare_parameter('distance_hysteresis_m', 0.10)
+        self.declare_parameter('distance_tolerance_m', 0.20)
         self.declare_parameter('alignment_angle_tolerance_rad', 0.10)
-        self.declare_parameter('align_before_translation', True)
         self.declare_parameter('approach_prediction_horizon_s', 0.75)
         self.declare_parameter('approach_speed_threshold_mps', 0.10)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
@@ -425,8 +419,6 @@ class PersonFollowerNode(Node):
         # toward the robot per attempt (one planner tolerance) up to the standoff.
         self.declare_parameter('goal_pullback_step_m', 0.50)
         self.declare_parameter('goal_initial_pullback_m', 0.50)
-        self.declare_parameter('goal_prediction_horizon_s', 0.30)
-        self.declare_parameter('goal_prediction_maximum_offset_m', 0.15)
         self.declare_parameter('observation_loss_debounce_s', 0.75)
         self.declare_parameter('recovery_direction_minimum_turn_rad', 0.70)
         self.declare_parameter('recovery_waypoint_tolerance_m', 0.08)
@@ -505,13 +497,9 @@ class PersonFollowerNode(Node):
             raise ValueError('camera_rebind_margin_m must be non-negative')
         if float(self.get_parameter('prediction_horizon_s').value) < 0.0:
             raise ValueError('prediction_horizon_s must be non-negative')
-        for name in (
-            'goal_initial_pullback_m', 'goal_prediction_horizon_s',
-            'goal_prediction_maximum_offset_m',
-        ):
-            value = float(self.get_parameter(name).value)
-            if not math.isfinite(value) or value < 0.0:
-                raise ValueError(f'{name} must be finite and non-negative')
+        pullback = float(self.get_parameter('goal_initial_pullback_m').value)
+        if not math.isfinite(pullback) or pullback < 0.0:
+            raise ValueError('goal_initial_pullback_m must be finite and non-negative')
         if float(
             self.get_parameter('recovery_direction_minimum_turn_rad').value
         ) > math.pi:
@@ -545,9 +533,6 @@ class PersonFollowerNode(Node):
             observation_loss_debounce_s=float(
                 self.get_parameter('observation_loss_debounce_s').value
             ),
-            distance_hysteresis_m=float(
-                self.get_parameter('distance_hysteresis_m').value
-            ),
         )
 
     def _settings_for_goal(self, request) -> FollowSettings:
@@ -566,7 +551,6 @@ class PersonFollowerNode(Node):
             observation_loss_debounce_s=(
                 defaults.observation_loss_debounce_s
             ),
-            distance_hysteresis_m=defaults.distance_hysteresis_m,
         )
         settings.validate()
         return settings
@@ -1394,7 +1378,6 @@ class PersonFollowerNode(Node):
             approach_speed_threshold_mps=float(
                 self.get_parameter('approach_speed_threshold_mps').value
             ),
-            previous_command=self._last_motion_command,
         )
         if decision.command == FollowCommand.NAVIGATE:
             # LiDAR improves close-range response but never initiates forward
@@ -1695,31 +1678,7 @@ class PersonFollowerNode(Node):
             approach_speed_threshold_mps=float(
                 self.get_parameter('approach_speed_threshold_mps').value
             ),
-            previous_command=self._last_motion_command,
         )
-        if (
-            decision.command == FollowCommand.NAVIGATE
-            and bool(self.get_parameter('align_before_translation').value)
-        ):
-            try:
-                _, robot_yaw = self._robot_pose()
-            except TransformException as error:
-                self._path_planner.cancel()
-                self._nav2.cancel()
-                self._warn_periodically('alignment_tf', f'Alignment TF unavailable: {error}')
-                self._schedule_tracking_navigation_retry()
-                return
-            if needs_camera_alignment(
-                decision.goal.yaw, robot_yaw,
-                float(self.get_parameter('camera_horizontal_fov_rad').value),
-                float(self.get_parameter('alignment_angle_tolerance_rad').value),
-                self._last_motion_command == FollowCommand.ALIGN,
-            ):
-                decision = FollowDecision(
-                    FollowCommand.ALIGN,
-                    FollowGoal(robot_position, decision.goal.yaw, decision.goal.target_distance),
-                    'face target before resuming translation',
-                )
         self._current_distance = decision.goal.target_distance
         previous_command = self._last_motion_command
         if decision.command != previous_command:
@@ -1931,14 +1890,8 @@ class PersonFollowerNode(Node):
         self, robot_position, target_position, decision, recovery,
         plan_source, plan_source_stamp_ns, plan_generation,
     ) -> None:
-        """Plan toward a bounded lookahead on the robot's side of the person."""
-        planning_target = predict_follow_target(
-            target_position,
-            None if self._last_motion_bearing_only else self._last_motion_velocity,
-            float(self.get_parameter('goal_prediction_horizon_s').value),
-            float(self.get_parameter('goal_prediction_maximum_offset_m').value),
-        )
-        goal_position = self._pulled_back_goal(robot_position, planning_target)
+        """Plan on the robot's side of the observed person, without lookahead."""
+        goal_position = self._pulled_back_goal(robot_position, target_position)
         final_pose = PoseStamped()
         final_pose.header.frame_id = self._global_frame
         final_pose.header.stamp = self.get_clock().now().to_msg()
@@ -2115,7 +2068,7 @@ class PersonFollowerNode(Node):
             travel_description = 'full recovery path'
             travel_distance_m = path_length_m(selected_path)
         else:
-            # Prediction/pullback affect planning only. Stop at the observed
+            # Pullback affects planning only. Stop at the observed
             # person's requested distance along Nav2's obstacle-aware route.
             selected_path = path_to_standoff(
                 path, target_position, self._settings.desired_distance_m,

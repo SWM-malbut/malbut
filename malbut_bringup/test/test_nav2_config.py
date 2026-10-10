@@ -63,9 +63,10 @@ def test_person_astar_keeps_the_existing_live_obstacle_layers(config):
         params = following['person_follower']['ros__parameters']
         assert params['tracking_controller_id'] == 'FollowPerson'
         assert params['goal_checker_id'] == 'person_follow_goal_checker'
-        assert params['alignment_angle_tolerance_rad'] == (
-            config['controller_server']['ros__parameters'][
-                'person_follow_goal_checker']['yaw_goal_tolerance'])
+        assert params['alignment_angle_tolerance_rad'] == 0.10
+        assert params['distance_tolerance_m'] == 0.20
+        assert not {'goal_prediction_horizon_s', 'goal_prediction_maximum_offset_m',
+                    'distance_hysteresis_m', 'align_before_translation'} & params.keys()
 
 
 def test_person_controller_has_its_own_heading_checker_without_new_speed_limits(config):
@@ -179,7 +180,7 @@ def test_only_manual_driving_passes_the_collision_monitor(config):
 
 
 def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
-    """Retain LiDAR marking/clearing while depth obstacle processing is disabled."""
+    """Depth restoration must not replace the separate planar LiDAR layer."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
         assert 'obstacle_layer' in costmap['plugins']
@@ -192,6 +193,34 @@ def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
         assert scan['obstacle_min_range'] == scan['raytrace_min_range'] == 0.0
         assert scan['obstacle_max_range'] == 2.5
         assert scan['raytrace_max_range'] == 3.0
+
+
+def test_depth_points_reach_only_native_obstacle_costmaps(config):
+    """Reuse the original height/range contract; no custom projector or consumer."""
+    for scope in ('local_costmap', 'global_costmap'):
+        costmap = config[scope][scope]['ros__parameters']
+        assert costmap['plugins'].index('depth_voxel_layer') < (
+            costmap['plugins'].index('inflation_layer'))
+        layer = costmap['depth_voxel_layer']
+        assert layer['plugin'] == 'nav2_costmap_2d::VoxelLayer'
+        assert layer['enabled'] is True
+        assert layer['publish_voxel_map'] is False
+        assert layer['origin_z'] == 0.0
+        assert layer['z_resolution'] == 0.03 and layer['z_voxels'] == 16
+        assert layer['max_obstacle_height'] == 0.20 and layer['mark_threshold'] == 0
+        assert layer['observation_sources'].split() == ['depth', 'depth_clear']
+        mark, clear = layer['depth'], layer['depth_clear']
+        for source in (mark, clear):
+            assert source['topic'] == '/depth_cam/depth0/points'
+            assert source['data_type'] == 'PointCloud2'
+        assert mark['marking'] is True and mark['clearing'] is False
+        assert (mark['min_obstacle_height'], mark['max_obstacle_height']) == (0.05, 0.20)
+        assert (mark['obstacle_min_range'], mark['obstacle_max_range']) == (0.0, 2.5)
+        assert clear['marking'] is False and clear['clearing'] is True
+        assert (clear['min_obstacle_height'], clear['max_obstacle_height']) == (-0.05, 0.48)
+        assert (clear['raytrace_min_range'], clear['raytrace_max_range']) == (0.0, 3.0)
+    # Collision Monitor still consumes only LiDAR, not a new large cloud stream.
+    assert config['collision_monitor']['ros__parameters']['observation_sources'] == ['scan']
 
 
 def test_goals_stop_within_the_follower_distance_band(config):

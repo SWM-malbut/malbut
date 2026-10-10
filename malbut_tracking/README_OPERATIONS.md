@@ -96,17 +96,16 @@ the follower does not search the costmap for a goal itself. It keeps the
 route's prefix up to the first entry into the requested person-distance
 circle, with the endpoint facing the person; it never shortcuts across the
 planned detour. This prevents a full path toward the person's own position
-from continuing until a delayed observation cancels it. Planning-only velocity
-lookahead is bounded by `goal_prediction_horizon_s` and
-`goal_prediction_maximum_offset_m`; the observed person still anchors range,
+from continuing until a delayed observation cancels it. No additional velocity
+lookahead is applied to the planning goal; the observed person anchors range,
 arrival orientation and the path cut. When Nav2 answers "no
 path" (someone sitting inside furniture inflation, deeper than the tolerance),
 the next attempt moves the goal `goal_pullback_step_m` (0.5 m, one planner
 tolerance) along the line of sight toward the robot, repeating up to the
 standoff point; the pullback is dropped once the person moves more than one
-step away or the motion decision changes. After holding,
-`distance_hysteresis_m` widens the release band to prevent repeated
-forward/reverse switching from range noise. The hard minimum is never relaxed.
+step away or the motion decision changes. A single `distance_tolerance_m=0.20`
+band controls stopping and resuming: 0.80--1.20 m at the default 1.0 m distance,
+without a separate release threshold. The hard minimum is never relaxed.
 Nav2 owns
 both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
@@ -237,9 +236,9 @@ range and continue it through temporary camera loss.
 An active-only 0.2 s motion timer also rechecks alignment, hold and retreat
 using fresh robot TF and the original observation timestamp. It cannot extend
 sensor validity, restart an unchanged non-preemptible BackUp, or run while idle.
-With `align_before_translation`, a far target near the camera view edge also
-enters alignment before driving. The entry is the FOV half-angle minus 0.1 rad;
-release uses the existing alignment tolerance, preventing edge chatter.
+Camera alignment retains the original 0.10 rad tolerance and occurs only inside
+the distance band. Far targets continue through native Nav2 navigation without
+an extra pre-translation Spin phase.
 The robot advances when the person is beyond the configured distance band and
 holds inside it. When the person approaches too closely, the follower asks
 Nav2's `BackUp` behavior to reverse straight along the robot's own axis at

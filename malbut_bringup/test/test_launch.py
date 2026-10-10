@@ -171,7 +171,7 @@ def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
 
 
 def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
-    """SHM is exactly 4 MiB; default UDP discovery and endpoint policies remain."""
+    """32 MiB retains headroom for depth clouds without changing endpoint QoS."""
     import xml.etree.ElementTree as ET
     path = ROOT / 'malbut_bringup/config/fastdds_camera.xml'
     profile = ET.parse(path).getroot()
@@ -179,7 +179,7 @@ def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
     transports = profile.findall('dds:transport_descriptors/dds:transport_descriptor', ns)
     by_type = {item.findtext('dds:type', namespaces=ns): item for item in transports}
     assert set(by_type) == {'SHM', 'UDPv4'}
-    assert int(by_type['SHM'].findtext('dds:segment_size', namespaces=ns)) == 4 * 1024**2
+    assert int(by_type['SHM'].findtext('dds:segment_size', namespaces=ns)) == 32 * 1024**2
     participant = profile.find('dds:participant', ns)
     assert participant.get('is_default_profile') == 'true'
     selected = participant.findall('dds:rtps/dds:userTransports/dds:transport_id', ns)
@@ -399,7 +399,8 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     assert len(_includes(actions)) == 1
     hardware = dict(_includes(actions)[0].launch_arguments)
     assert hardware['robot_name'] == hardware['master_name'] == '/'
-    assert hardware['point_cloud_enable'] == hardware['use_joy'] == 'false'
+    assert hardware['point_cloud_enable'] == 'true'
+    assert hardware['use_joy'] == 'false'
     manager = _parameters(context, _nodes(actions, 'system_manager')[0])
     assert manager['ready_topic'] == ''
     assert manager['localization_control'] is True

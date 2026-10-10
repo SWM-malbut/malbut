@@ -8,7 +8,6 @@ from malbut_tracking.geometry import (
     Point2D,
     make_follow_goal,
     normalize_angle,
-    predict_follow_target,
     quaternion_to_yaw,
     yaw_to_quaternion,
 )
@@ -62,15 +61,3 @@ def test_normalize_angle_wraps_both_directions():
     """Search direction must always remain within a single rotation."""
     assert normalize_angle(3.0 * math.pi) == pytest.approx(math.pi)
     assert normalize_angle(-3.0 * math.pi) == pytest.approx(-math.pi)
-
-
-def test_planning_prediction_is_bounded_and_does_not_move_observation():
-    """Even a noisy velocity cannot throw the planner goal far from the person."""
-    target = Point2D(3.0, 1.0)
-    predicted = predict_follow_target(target, Point2D(3.0, 4.0), 0.3, 0.15)
-    assert predicted.x == pytest.approx(3.09)
-    assert predicted.y == pytest.approx(1.12)
-    assert target == Point2D(3.0, 1.0)
-    assert predict_follow_target(target, None, 0.3, 0.15) == target
-    assert predict_follow_target(target, Point2D(1.0, 0.0), 0.0, 0.15) == target
-    assert predict_follow_target(target, Point2D(float('nan'), 0.0), 0.3, 0.15) == target
