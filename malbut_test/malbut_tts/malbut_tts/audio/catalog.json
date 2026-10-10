@@ -31,6 +31,8 @@
   "operation.unknown": "실행 상태를 확인하지 못했어요.",
   "operation.unsupported": "현재 지원하지 않아요.",
   "set_weather_location.succeeded": "날씨 조회 지역을 저장했어요.",
+  "situation.fall.confirmation": "실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?",
+  "situation.resolved": "알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.",
   "weather.location_not_found": "지역 이름을 다시 알려주세요.",
   "weather.location_required": "날씨를 확인할 지역을 알려주세요."
 }

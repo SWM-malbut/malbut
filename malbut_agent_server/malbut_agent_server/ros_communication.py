@@ -156,6 +156,7 @@ def create_communication_node(
                     situation_factory or build_situation_factory(settings),
                     on_begin=self._begin_situation,
                     on_end=lambda: self.dialogue.resume(),
+                    prerecorded_audio=prerecorded_audio,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
                 self._start_speech_inputs()

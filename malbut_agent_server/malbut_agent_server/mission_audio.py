@@ -16,6 +16,10 @@ CATALOG = {
     'conversation.model_retry': MODEL_RETRY_NOTICE,
     'conversation.weather_retry': WEATHER_RETRY_NOTICE,
     'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,
+    'situation.fall.confirmation': (
+        '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?'
+    ),
+    'situation.resolved': '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.',
     **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()},
 }
 TEXT_IDS = {text: audio_id for audio_id, text in CATALOG.items()}
