@@ -38,7 +38,7 @@ class Model:
 def test_pcm16_roundtrip_and_raw_segments_preserve_arguments_and_laziness(tmp_path):
     pcm = np.arange(-32768, 32768, dtype='<i2')
     audio = pcm.astype(np.float32) / 32768
-    segment = SimpleNamespace(text='  구독과 좋아요! ', start=0.1, end=2.0,
+    segment = SimpleNamespace(text='  테스트 음성입니다. ', start=0.1, end=2.0,
                               no_speech_prob=0.91, avg_logprob=-1.2)
     model = Model([segment])
     diagnostics = TranscriptionDiagnostics(tmp_path)
