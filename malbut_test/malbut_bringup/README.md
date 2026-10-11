@@ -189,7 +189,7 @@ STT와 홈캠이 XFM 마이크 0번을 함께 쓰는 통합 구성에서는 Puls
 
 | 설정 | 적용 범위 | 목적 |
 | --- | --- | --- |
-| [카메라 DDS XML](config/fastdds_camera.xml) | Bringup이 시작하는 제조사 하드웨어 그룹 | SHM 4 MiB, UDPv4 유지 |
+| [카메라 DDS XML](config/fastdds_camera.xml) | Bringup이 시작하는 제조사 하드웨어 그룹 | SHM 8 MiB, UDPv4 유지 |
 | [Nav2 DDS XML](config/fastdds_nav2.xml) | `nav2_container` 프로세스 | `send_buffers.dynamic=true` |
 | [마이크 입력 공유](malbut_bringup/speech_audio.py) | STT·홈캠 | 같은 입력을 두 소비자에게 전달 |
 | 낙상 전용 Python | Pose 노드 | 준비된 ONNX Runtime에서 `auto`로 CUDA 우선 선택 |
