@@ -31,7 +31,6 @@ flowchart LR
 
 - 필드·상수 원본: [ROS 메시지](../malbut_interfaces/msg), [ROS 서비스](../malbut_interfaces/srv)
 - 사용 명세: [STT 명세](docs/stt_agent.md)
-- 조사 기록: [세그먼트·결과 큐·Agent 저장과 “구독과 좋아요” 문구](docs/stt_transcript_audit_2026-10-11.md)
 - Topic QoS: `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`. Service는 ROS 기본 Service QoS를 사용합니다.
 
 STT는 발화마다 UUID를 새로 생성합니다. 같은 문장을 다시 말해도 새 ID를
