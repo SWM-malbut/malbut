@@ -18,9 +18,9 @@ APPROACH_OUTCOMES = {'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejec
 RETURN_OUTCOMES = {'returned', 'failed'}
 # The runtime looks after arrival (Pose, then one Cloud call). Then ask anyway.
 CHECK_WAIT_S = 15.0
-PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body', 'whole_body'}
-# Where the whole body rests (fall_full_view): Pose 5 s, then one Cloud call.
-POSTURE_WAIT_S = 30.0
+PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body'}
+# Where the whole body rests (fall_full_view): two Cloud looks a few seconds apart.
+POSTURE_WAIT_S = 60.0
 POSTURE_REASONS = {'sitting_off_floor', 'standing', 'on_floor', 'body_unseen',
                    'judgements_differ', 'posture_unconfirmed'}
 OFF_FLOOR_REASONS = {'sitting_off_floor', 'standing'}
@@ -193,9 +193,6 @@ class FallConfirmationCoordinator:
                 return True
             if reason == 'partial_body':
                 self.stages[qid] = 'view'  # Move to where the whole body is visible.
-                return True
-            if reason == 'whole_body':
-                self.stages[qid] = 'posture'  # Seen from here; next_work starts its clock.
                 return True
             # No person: no question; the runtime closes the case. Go back.
             self._close_and_return(boot, iid, qid, request, 'not_a_person')

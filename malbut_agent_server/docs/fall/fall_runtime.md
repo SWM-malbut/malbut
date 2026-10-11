@@ -65,17 +65,14 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
 
 2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 꺼짐, `fall_approach` 필요):
 - 침대에 걸터앉은 사람이 12 cm 카메라에 다리만 보여, 근접 확인이 "사람"이라 답하고 질문까지 갔다(10월 10일 20:43, 11일 03:39).
-- 근접 확인이 사람인데 Pose가 몸 전체(어깨·엉덩이 4점)를 3초 안에 못 보면 `person_check_completed(partial_body)`.
-  코디네이터가 2.5 m 자리로 옮기고 `view_result`를 주면 `view_completed(reason=outcome)`. 1 m 앞에서 이미 몸 전체가
-  보이면 `person_check_completed(whole_body)`로 그 자리에서 판단한다.
-- 자세 판단: Pose 5초 안에 몸 전체 표본 3개. 몸통 관절 높이 중앙값이 `off_floor_torso_m`(기본 0.60 m) 미만이면 `on_floor`,
-  이상인데 몸통이 서 있지 않으면 `posture_unconfirmed`(Cloud 없이 묻기). 서 있으면 Cloud "자세 확인"(`check_posture`,
-  `raised`/`floor`/`unclear`)을 한 번 묻고, `raised`일 때만 `sitting_off_floor`(1.0 m 이상이면 `standing`)로
-  `incident_resolved(off_floor_verified)`. `floor`는 `judgements_differ`, 그 밖(애매·실패·차단)은 `posture_unconfirmed`.
-  표본이 모자라거나 옮기지 못하면 `body_unseen`. 닫히지 않으면 지금처럼 묻는다.
-- 감지기 트랙 `features`의 `anchor_names`·몸통/몸 축 각도·`floor_height_m`을 `SubjectPose`의
-  `whole_body`·`upright`·`torso_floor_m`으로 받는다. 값이 없거나 이상하면 모름(서 있음·높음으로 보지 않음).
-- 웹 계약(#235)을 먼저 배포한다. 켜기 전에 실기 20번 측정에서 잘못 닫은 경우가 0번인지 본다.
+- 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 2.5 m 자리로 옮기고
+  `view_result`를 주면 `view_completed(reason=outcome)`.
+- 자세 판단: 도착 1초 뒤 Cloud "자세 확인"(`check_posture`, `furniture`/`standing`/`floor`/`unclear`)을 묻고,
+  `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 `sitting_off_floor`(둘 다
+  `standing`이면 `standing`)로 `incident_resolved(off_floor_verified)`. `floor`는 `on_floor`, 애매·실패·차단은
+  `posture_unconfirmed`, 옮기지 못하면 `body_unseen`. 닫히지 않으면 지금처럼 묻는다.
+- Pose 관절·몸통 높이는 쓰지 않는다. 12 cm에서 올려다보면 앉은 사람의 허벅지가 엉덩이를 가린다.
+- 웹 계약(#235)이 먼저 배포돼 있어야 한다. 로그 `fall posture: case … Cloud looks …: 이유`로 판단을 확인한다.
 
 실시간 영상 추적은 **선택 기능이며 기본 OFF**다. `tracking: null` 또는 필드 생략이면
 기존 동작을 유지한다. GPU·모델을 자동 설치하거나 CPU로 대신 실행하지 않는다.

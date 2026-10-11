@@ -227,23 +227,12 @@ class SubjectPose:
     association_usable: bool
     # Detector box score level for display only; None from an older detector.
     strong: Optional[bool] = None
-    # Whole-body posture, only for the robot's own look at a spot (fall_full_view):
-    # both shoulders and hips seen, torso and body axis upright, and the median
-    # torso keypoint height above the floor from aligned depth. None: not measured.
-    whole_body: Optional[bool] = None
-    upright: Optional[bool] = None
-    torso_floor_m: Optional[float] = None
 
     def __post_init__(self):
         identifier(self.subject_key)
         if (not isinstance(self.state, SubjectCheckState)
                 or type(self.association_usable) is not bool
-                or (self.strong is not None and type(self.strong) is not bool)
-                or any(v is not None and type(v) is not bool
-                       for v in (self.whole_body, self.upright))
-                or (self.torso_floor_m is not None and (
-                    type(self.torso_floor_m) not in (int, float)
-                    or not math.isfinite(self.torso_floor_m) or not 0 <= self.torso_floor_m <= 5))):
+                or (self.strong is not None and type(self.strong) is not bool)):
             raise ValueError('invalid subject pose')
         if self.box is not None and (
                 not isinstance(self.box, tuple) or len(self.box) != 4
@@ -586,13 +575,13 @@ class PostureCheckRequest:
 
 @dataclass(frozen=True)
 class PostureCheckReply:
-    """raised: on a bed, chair or sofa, or standing; floor: sitting or lying on the floor."""
+    """furniture: on a bed, chair or sofa; standing; floor: sitting, kneeling or lying on it."""
 
     verdict: str
     explanation: str
 
     def __post_init__(self):
-        if (self.verdict not in ('raised', 'floor', 'unclear')
+        if (self.verdict not in ('furniture', 'standing', 'floor', 'unclear')
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):
             raise ValueError('invalid posture check reply')

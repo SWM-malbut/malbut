@@ -54,23 +54,13 @@ def test_off_the_floor_closes_without_a_question_and_drives_back(reason):
     assert coordinator.next_work(32.0) is None
 
 
-@pytest.mark.parametrize('reason', ['on_floor', 'body_unseen', 'judgements_differ',
-                                    'posture_unconfirmed'])
+@pytest.mark.parametrize('reason', ['on_floor', 'body_unseen', 'posture_unconfirmed'])
 def test_anything_but_off_the_floor_asks(reason):
     coordinator, request = looking()
     coordinator.receive(looked('partial_body'))
     coordinator.view_done(request, 'no_path', 20.0)
     assert coordinator.receive(posture(reason))
     assert coordinator.next_work(21.0) == ('confirm', request)
-
-
-def test_whole_body_from_1m_reads_the_posture_there_without_moving():
-    coordinator, request = looking()
-    assert coordinator.receive(looked('whole_body'))
-    assert coordinator.next_work(12.0) is None  # Starts the posture clock; no drive.
-    assert coordinator.next_work(12.0 + POSTURE_WAIT_S - 1) is None
-    assert coordinator.receive(posture('sitting_off_floor'))
-    assert coordinator.next_work(13.0)[0] == 'return'
 
 
 def test_no_posture_in_time_asks_anyway_and_late_results_are_ignored():
