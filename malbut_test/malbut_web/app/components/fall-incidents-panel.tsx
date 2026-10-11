@@ -16,7 +16,7 @@ type SceneState = "preparing" | "available" | "partial" | "unavailable" | "expir
 
 type IncidentSummary = {
   incidentId: string; origin: "robot" | "user_report";
-  category: "check" | "normal" | "report" | "merged" | "not_person";
+  category: "check" | "normal" | "report" | "merged" | "not_person" | "off_floor";
   mergedIntoIncidentIds?: string[];
   state: string | null; fallSeen: boolean; assessment: string | null; answer: string | null;
   notificationRank: number; occurredAt: string; updatedAt: string; reviewState: "open" | "closed";
@@ -26,8 +26,10 @@ type IncidentSummary = {
   opinionCounts: Partial<Record<OpinionLabel, number>>;
   sceneState?: SceneState | null; linkedCount?: number;
   notification?: { level: string; sent: number; total: number } | null;
-  /** 말벗이 다가가 확인한 마지막 단계(목업 22번). */
+  /** 말벗이 다가가 확인한 마지막 단계(목업 22·25번). */
   approach?: { kind: string; reason: string | null } | null;
+  /** 사람에게 물었거나 알렸음: 말벗이 보는 중이 아님. */
+  asked?: boolean;
 };
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
@@ -90,26 +92,48 @@ function dayLabel(value: string) {
 }
 const when = (value: string) => `${dayLabel(value)} ${clock(value)}`;
 
+/** 말벗이 보고 있는 단계(목업 25번). 묻기 전에는 "낙상 의심"이라는 말을 쓰지 않는다. */
+const LOOKING: Record<string, string> = {
+  approach_started: "가까이 가는 중", "approach_completed:arrived": "가까이에서 보는 중",
+  "person_check_completed:partial_body": "몸 전체가 보이는 자리로 옮기는 중", "view_completed:arrived": "몸 전체를 보는 중",
+  "person_check_completed:whole_body": "몸 전체를 보는 중",
+};
+
+function looking(i: IncidentSummary) {
+  const a = i.approach;
+  if (i.reviewState !== "open" || i.category !== "check" || !a || i.asked) return null;
+  return LOOKING[a.kind] ?? LOOKING[`${a.kind}:${a.reason}`] ?? null;
+}
+
 function title(i: IncidentSummary) {
   if (i.origin === "user_report") return "놓친 낙상 신고";
+  if (i.category === "off_floor") {
+    return i.approach?.reason === "standing" ? "말벗이 확인: 서 있음" : "말벗이 확인: 침대나 의자에 앉아 있음";
+  }
+  if (looking(i)) return "말벗이 확인하는 중";
   return i.fallSeen || i.assessment === "observed_fall" ? "낙상" : "낙상 의심";
 }
 
-/** 다가가 확인한 결과(목업 22번). 가는 중·도착은 배지로 보여 준다. */
+const POSTURE_TEXT: Record<string, string> = {
+  on_floor: "몸 일부만 보여 가서 확인 · 바닥에 있음", body_unseen: "몸 일부만 보여 가서 확인 · 몸 전체를 못 봄",
+  judgements_differ: "몸 일부만 보여 가서 확인 · 판단이 엇갈림",
+  posture_unconfirmed: "몸 일부만 보여 가서 확인 · 자세를 확인하지 못함",
+};
+
+/** 다가가 확인한 결과(목업 22·25번). 보는 중은 제목·배지로 보여 준다. */
 function approachText(i: IncidentSummary) {
   if (i.category === "not_person") return "말벗이 가서 확인: 사람 아님";
+  if (i.category === "off_floor") return "몸 일부만 보여 가서 확인 · 묻지 않음";
+  const look = looking(i);
+  if (look) return look;
   const a = i.approach;
   if (a?.kind === "person_check_completed") {
-    return a.reason === "person" ? "말벗이 가서 확인: 사람" : "말벗이 가서 확인: 사람 아님";
+    return a.reason === "not_a_person" ? "말벗이 가서 확인: 사람 아님" : "말벗이 가서 확인: 사람";
   }
   if (a?.kind === "approach_completed" && a.reason !== "arrived") return "가까이 가지 못함";
+  if (a?.kind === "view_completed" && a.reason !== "arrived") return "몸 일부만 보여 가서 확인 · 몸 전체를 못 봄";
+  if (a?.kind === "posture_check_completed") return POSTURE_TEXT[a.reason ?? ""] ?? null;
   return null;
-}
-
-function approaching(i: IncidentSummary) {
-  const a = i.approach;
-  return i.reviewState === "open" && i.category === "check" && Boolean(a) &&
-    (a?.kind === "approach_started" || (a?.kind === "approach_completed" && a.reason === "arrived"));
 }
 
 function subtitle(i: IncidentSummary) {
@@ -126,11 +150,14 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   if (i.unacknowledged) {
     list.push(["is-alert", "아무도 확인하지 않음"]);
     if (i.notification) list.push(["is-alert-soft", `알림: ${LEVEL_LABEL[i.notification.level]} · ${i.notification.sent}/${i.notification.total}회 발송`]);
-  } else if (approaching(i)) list.push(["is-info", "말벗이 확인하러 가는 중"]);
+  } else if (looking(i)) list.push(["is-info", "말벗이 확인하는 중"]);
   else if (i.reviewState === "open" && i.needsCheck) list.push(["is-check", "확인 필요"]);
   if (i.category === "normal") list.push(["is-ok", "정상으로 확인됨"]);
   if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
   if (i.category === "not_person") list.push(["is-neutral", "처리 완료"], ["is-neutral", "사람 아님"]);
+  if (i.category === "off_floor") {
+    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.approach?.reason === "standing" ? "서 있음" : "앉아 있음"]);
+  }
   if (i.category === "report") list.push(["is-report", "사용자 신고"], ["is-neutral", "자동 감지 아님"]);
   if (i.reviewState === "closed") list.push(["is-neutral", "처리 완료"]);
   else if (i.reviewPending) list.push(["is-neutral", "검수 전"]);
@@ -144,7 +171,10 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   return list;
 }
 
-/** 로봇이 "사람 아님"으로 닫은 시각: 마지막 종료 기록. */
+/** 로봇이 스스로 닫은 사건: 사람 아님, 바닥에 있지 않음. */
+const robotChecked = (i: IncidentSummary) => i.category === "not_person" || i.category === "off_floor";
+
+/** 로봇이 스스로 닫은 시각: 마지막 종료 기록. */
 function robotClosedAt(detail: IncidentDetail) {
   const closed = detail.robotEvents.filter((e) => e.eventKind === "incident_resolved").at(-1);
   return closed?.occurredAt ?? detail.updatedAt;
@@ -671,7 +701,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
         <div className="fall-bottom">
           {detail.reviewState === "closed" ? (
             <p className="fall-closed">처리 완료됨 · {detail.closedBy === detail.viewerUserId ? "나" : detail.closedByName} · {when(detail.closedAt ?? detail.updatedAt)}</p>
-          ) : detail.category === "not_person" ? (
+          ) : robotChecked(detail) ? (
             <p className="fall-closed">처리 완료됨 · 말벗 · {when(robotClosedAt(detail))}</p>
           ) : (
             <button type="button" className="fall-button is-blue is-large"
@@ -683,10 +713,13 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           {detail.category === "not_person" && (
             <p>알림은 보내지 않았어요. 사람이었다고 생각하면 낙상이나 낙상 의심으로 의견을 남겨 주세요. 사건이 다시 열리고 모두에게 알려요.</p>
           )}
-          {detail.reviewState === "open" && detail.category !== "not_person" && detail.opinions.length === 0 && (
+          {detail.category === "off_floor" && (
+            <p>묻지도, 알리지도 않았어요. 쓰러졌던 거라고 생각하면 낙상이나 낙상 의심으로 의견을 남겨 주세요. 사건이 다시 열리고 모두에게 알려요.</p>
+          )}
+          {detail.reviewState === "open" && !robotChecked(detail) && detail.opinions.length === 0 && (
             <p className="fall-needs-opinion">의견을 먼저 남겨 주세요. 누구든 의견이 하나 있어야 처리 완료할 수 있어요.</p>
           )}
-          {detail.category !== "not_person" && <p>누구나 누를 수 있어요. 닫힌 뒤 다른 의견이 달리면 다시 열리고 모두에게 알려요.</p>}
+          {!robotChecked(detail) && <p>누구나 누를 수 있어요. 닫힌 뒤 다른 의견이 달리면 다시 열리고 모두에게 알려요.</p>}
           <p>녹화 영상은 7일이 지나면 자동으로 지워져요. 그 뒤에도 사건 기록은 남아요.</p>
         </div>
       </div>
