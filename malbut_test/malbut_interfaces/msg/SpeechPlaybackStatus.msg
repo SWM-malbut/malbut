@@ -1,3 +1,4 @@
+string ACCEPTED=accepted
 string PLAYING=playing
 string PAUSED=paused
 string FINISHED=finished

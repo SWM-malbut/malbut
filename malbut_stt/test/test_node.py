@@ -257,7 +257,8 @@ def runtime(monkeypatch, tmp_path):
         SpeechTranscript=type('SpeechTranscript', (SimpleNamespace,), {}),
         SpeechRequest=type('SpeechRequest', (SimpleNamespace,), {}),
         SpeechPlaybackStatus=type('SpeechPlaybackStatus', (SimpleNamespace,), {
-            key.upper(): key for key in ('playing', 'paused', 'finished', 'failed', 'stopped')
+            key.upper(): key for key in (
+                'accepted', 'playing', 'paused', 'finished', 'failed', 'stopped')
         }),
     )
     state.services = SimpleNamespace(
@@ -822,6 +823,19 @@ def test_generated_constants_are_used_at_ros_boundaries(runtime):
     assert runtime.clients['/malbut/speech/playback_control'].requests[0].command == 'wire-pause'
     assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.decisions == [('u2', 'p1', 'addressed')]
+
+
+def test_manager_admission_is_not_treated_as_playback(runtime):
+    def admitted():
+        runtime.callbacks['/malbut/speech/playback_status'](SimpleNamespace(
+            playback_id='new', state=runtime.messages.SpeechPlaybackStatus.ACCEPTED,
+            interim=False, request_id='new-turn'))
+        runtime.ok = False
+
+    runtime.on_spin = admitted
+    assert main() == 0
+    assert 'playback_status' not in runtime.calls
+    assert ('warning', 'invalid_playback_status') not in runtime.logs
 
 
 @pytest.mark.parametrize('service', ['playback_control', 'classify_addressee'])

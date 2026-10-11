@@ -39,9 +39,16 @@ backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하
 
 | 방향 | 이름 | 타입 및 데이터 |
 | --- | --- | --- |
-| Agent → TTS | `/malbut/speech/response` Topic | `SpeechRequest`: `text`, `request_type`, `playback_id`, `request_id`, `interim` |
-| STT → TTS | `/malbut/speech/playback_control` Service | `ControlSpeechPlayback`: `playback_id`, `command` → `accepted` |
-| TTS → STT | `/malbut/speech/playback_status` Topic | `SpeechPlaybackStatus`: `playback_id`, `state` |
+| Manager → TTS | `/malbut/tts/request` Topic | `SpeechRequest`: `text`, `audio_id`, `request_type`, `playback_id`, `request_id`, `interim`, `owner_goal_id` |
+| Manager → TTS | `/malbut/tts/playback_control` Service | `ControlSpeechPlayback`: `playback_id`, `command` → `accepted` |
+| TTS → Manager | `/malbut/tts/playback_status` Topic | `SpeechPlaybackStatus`: `playback_id`, `state` |
+
+Agent와 STT는 기존 `/malbut/speech/*` 주소의 **Manager**에 요청한다.
+TTS는 Manager의 실행용 `/malbut/tts/*` 주소만 제공한다. 발화 소유권과 미션의
+스피커 선점은 [Manager 발화 실행](../malbut_system_manager/README.md#발화-실행)을 따른다.
+`accepted`는 Manager의 접수 상태이며 실제 재생 시작·완료를 뜻하지 않는다.
+`SpeechRequest.owner_goal_id`와 새 상태 상수가 추가되었으므로 인터페이스와
+Manager·Agent·STT·TTS를 함께 재빌드하고 재시작한다.
 
 타입은 모두 `malbut_interfaces` 소속이다. 요청 종류는 `DIALOGUE=0`,
 `NOTIFICATION=1`이며, 기본값은 대화 답변이다. Agent의 대화 응답은
@@ -192,12 +199,18 @@ Agent CLI의 `--no-prerecorded-audio`를 사용한다. 별도 경로는 각각
 기존 `tts_receiver`는 합성 없이 수신 로그만 남기는 통신 확인용으로 유지한다.
 
 ```bash
-colcon build --packages-select malbut_interfaces malbut_agent_server malbut_tts
+colcon build --packages-select malbut_interfaces malbut_system_manager malbut_agent_server malbut_tts
 source install/setup.bash
+# 각 터미널에서 같은 ROS/install 환경을 적용한다.
+# 터미널 1: Manager (bringup으로 이미 실행 중이면 중복 실행하지 않는다)
+ros2 run malbut_system_manager system_manager
+# 터미널 2: TTS
 ros2 run malbut_tts tts_node
+# 터미널 3: 상태 관찰
+ros2 topic echo /malbut/speech/playback_status
+# 터미널 4: Manager에 발화 요청
 ros2 topic pub --once /malbut/speech/response malbut_interfaces/msg/SpeechRequest \
   '{text: "안녕하세요.", request_type: 0}'
-ros2 topic echo /malbut/speech/playback_status
 ```
 
 위 노드의 실제 합성에는 같은 Python 환경에 ROS와 해당 합성·오디오 의존성이

@@ -43,6 +43,7 @@ from .models import (
     TerminalOutcome,
 )
 from .state_store import StateStore
+from .speech_coordinator import SpeechCoordinator
 
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
@@ -71,6 +72,7 @@ class SystemManagerNode(Node):
         self._early_cancellations: set[str] = set()
         self._deferred_downstream_cancellations: set[str] = set()
         self._contexts: dict[str, _MissionContext] = {}
+        self._speaker_waiting: dict[str, float] = {}
         self._state = StateStore()
         self._scheduler = MissionScheduler(self._state)
         self._server_group = ReentrantCallbackGroup()
@@ -104,6 +106,10 @@ class SystemManagerNode(Node):
             'cancel_completion_timeout_s',
             cancel_completion_timeout_s,
         )
+        self._speech_stop_timeout_s = cancel_completion_timeout_s
+        speech_timeout_s = float(self.declare_parameter(
+            'speech_playback_timeout_s', 180.0).value)
+        _require_positive_finite('speech_playback_timeout_s', speech_timeout_s)
         # Bringup gates admission on its readiness report; standalone use
         # (simulation experiments, tests) stays ready immediately.
         ready_topic = self.declare_parameter('ready_topic', '').value
@@ -130,6 +136,13 @@ class SystemManagerNode(Node):
             on_dispatch_timeout=self._on_dispatch_timeout,
             goal_response_timeout_s=goal_response_timeout_s,
             cancel_completion_timeout_s=cancel_completion_timeout_s,
+        )
+        self._speech = SpeechCoordinator(
+            self, lock=self._effects_lock, state=self._state,
+            mission_for_goal=self._executor_bridge.mission_for_goal,
+            changed=self._resume_speaker_missions,
+            control_timeout_s=cancel_completion_timeout_s,
+            playback_timeout_s=speech_timeout_s,
         )
         self._action_server = ActionServer(
             self,
@@ -268,6 +281,8 @@ class SystemManagerNode(Node):
     def destroy_node(self) -> bool:
         """Stop accepting work and release dynamic Action clients."""
         self._accepting_goals = False
+        if hasattr(self, '_speech'):
+            self._speech.close()
         if getattr(self, '_localization', None) is not None:
             self._localization.close()
         if hasattr(self, '_action_server'):
@@ -280,12 +295,13 @@ class SystemManagerNode(Node):
         """Stop admission and cancel every non-terminal managed mission."""
         with self._effects_lock:
             self._accepting_goals = False
+            self._speech.close()
             with self._lock:
                 effects = self._scheduler.request_shutdown()
             self._apply_effects(effects)
             self._publish_state()
             self._executor_bridge.begin_shutdown()
-            return self._executor_bridge.active_count
+            return self.downstream_execution_count
 
     def force_shutdown(self) -> None:
         """Resolve manager goals that cannot finish during bounded shutdown."""
@@ -314,7 +330,7 @@ class SystemManagerNode(Node):
     @property
     def downstream_execution_count(self) -> int:
         """Return active downstream generations during bounded shutdown."""
-        return self._executor_bridge.active_count
+        return self._executor_bridge.active_count + len(self._speech.playbacks)
 
     @property
     def unresolved_context_count(self) -> int:
@@ -527,6 +543,9 @@ class SystemManagerNode(Node):
             for mission_id in effects.updated:
                 self._publish_mission_feedback(mission_id)
             for completion in effects.complete:
+                self._speaker_waiting.pop(completion.mission_id, None)
+                if completion.outcome is not TerminalOutcome.SUCCEEDED:
+                    self._speech.cancel_owner(completion.mission_id)
                 with self._lock:
                     self._deferred_downstream_cancellations.discard(
                         completion.mission_id
@@ -535,6 +554,14 @@ class SystemManagerNode(Node):
                     if context is not None and not context.completion.done():
                         context.completion.set_result(completion)
             for mission_id in effects.cancel:
+                self._speech.cancel_owner(mission_id)
+                if mission_id in self._speaker_waiting:
+                    self._speaker_waiting.pop(mission_id)
+                    with self._lock:
+                        canceled = self._scheduler.handle_terminal(
+                            mission_id, TerminalOutcome.CANCELED)
+                    self._apply_effects(canceled)
+                    continue
                 if self._executor_bridge.cancel(mission_id):
                     continue
                 with self._lock:
@@ -546,6 +573,11 @@ class SystemManagerNode(Node):
                 with self._lock:
                     mission = self._state.get(mission_id)
                     if mission is None:
+                        continue
+                    if (ExecutionResource.SPEAKER in mission.resources
+                            and not self._speech.prepare_mission()):
+                        self._speaker_waiting.setdefault(
+                            mission_id, time.monotonic() + self._speech_stop_timeout_s)
                         continue
                     try:
                         request = self._registry.build_message(
@@ -571,6 +603,28 @@ class SystemManagerNode(Node):
                     )
                 if deferred_cancel:
                     self._executor_bridge.cancel(mission_id)
+
+    def _resume_speaker_missions(self) -> None:
+        """Dispatch reserved missions only after earlier audio really stops."""
+        with self._effects_lock:
+            for mission_id, deadline in list(self._speaker_waiting.items()):
+                with self._lock:
+                    mission = self._state.get(mission_id)
+                    if mission is None:
+                        self._speaker_waiting.pop(mission_id, None)
+                        continue
+                    if not self._speech.playbacks:
+                        self._speaker_waiting.pop(mission_id, None)
+                        effects = SchedulerEffects(start=[mission_id])
+                    elif time.monotonic() >= deadline:
+                        self._speaker_waiting.pop(mission_id, None)
+                        effects = self._scheduler.handle_terminal(
+                            mission_id, TerminalOutcome.ABORTED,
+                            message='TTS did not confirm SPEAKER release')
+                    else:
+                        continue
+                self._apply_effects(effects)
+                self._publish_state()
 
     async def _wait_for_public_cancel_state(self, goal_handle) -> None:
         """Wait until rclpy applies ACCEPT from the cancel callback."""

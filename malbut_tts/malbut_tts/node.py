@@ -7,9 +7,9 @@ import sys
 from typing import Optional, Sequence
 
 
-RESPONSE_TOPIC = '/malbut/speech/response'
-STATUS_TOPIC = '/malbut/speech/playback_status'
-CONTROL_SERVICE = '/malbut/speech/playback_control'
+RESPONSE_TOPIC = '/malbut/tts/request'
+STATUS_TOPIC = '/malbut/tts/playback_status'
+CONTROL_SERVICE = '/malbut/tts/playback_control'
 # How the OpenAI key is doing, for key_sync to tell the web (std_msgs/String JSON).
 KEY_HEALTH_TOPIC = '/malbut/keys/health'
 

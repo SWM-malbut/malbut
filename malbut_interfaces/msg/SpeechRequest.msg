@@ -19,3 +19,7 @@ string request_id
 
 # 최종 답변 전의 진행 안내. 완료 뒤에도 최종 답변을 기다린다.
 bool interim
+
+# SPEAKER를 점유한 미션의 하위 Action Goal UUID (32자리 hex).
+# 일반 대화는 빈 값. Manager가 현재 실행과 대조하며 별도 미션을 만들지 않는다.
+string owner_goal_id

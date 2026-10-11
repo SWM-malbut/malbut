@@ -14,9 +14,10 @@ flowchart LR
     S -->|"일반 발화: SpeechTranscript"| A["Agent 대화 처리"]
     S -->|"ClassifySpeechAddressee 요청"| C["Agent 발화 대상 판단"]
     C -->|"판정 응답"| S
-    S -->|"ControlSpeechPlayback 요청"| T["TTS"]
-    T -->|"접수 응답"| S
-    T -->|"SpeechPlaybackStatus"| S
+    S -->|"ControlSpeechPlayback 요청"| G["Manager"]
+    G --> T["TTS"]
+    T -->|"접수 응답 · 실제 재생 상태"| G
+    G -->|"접수 응답 · SpeechPlaybackStatus"| S
 ```
 
 ## 통신과 동작
@@ -25,8 +26,8 @@ flowchart LR
 |---|---|---|---|
 | STT → Agent | Topic | `/malbut/speech/transcript` | `msg/SpeechTranscript` |
 | STT → Agent 요청·응답 | Service | `/malbut/speech/classify_addressee` | `srv/ClassifySpeechAddressee` |
-| STT → TTS 요청·응답 | Service | `/malbut/speech/playback_control` | `srv/ControlSpeechPlayback` |
-| TTS → STT | Topic | `/malbut/speech/playback_status` | `msg/SpeechPlaybackStatus` |
+| STT → Manager 요청·응답 | Service | `/malbut/speech/playback_control` | `srv/ControlSpeechPlayback` |
+| Manager → STT | Topic | `/malbut/speech/playback_status` | `msg/SpeechPlaybackStatus` |
 
 - 필드·상수 원본: [ROS 메시지](../malbut_interfaces/msg), [ROS 서비스](../malbut_interfaces/srv)
 - 사용 명세: [STT 명세](docs/stt_agent.md)
@@ -126,7 +127,7 @@ ROS 노드는 호출 성공음과 발화 종료 수신음을 같은 로컬 출�
 재생 중과 종료 후 0.3초의 마이크 입력은 잔향 유입을 막기 위해 제외합니다. TTS가
 재생·일시정지 상태이면 수신음을 생략하고, 수신음 출력 실패도 전사 전달을 막지 않습니다.
 수신음 재생은 동기식이므로 최종 전사 전달에는 PCM 재생 150ms와 장치 처리 시간이 추가됩니다.
-TTS 재생·중단·재개는 별도로 실행한 TTS 노드와 위 Topic·Service로 연결합니다.
+TTS 재생·중단·재개는 Manager가 중계합니다. 위 공개 Topic·Service는 Manager가 제공합니다.
 `input_has_aec=false`가 기본이며, 이때는 TTS 재생 중 마이크 입력을 버리고
 `barge_in_requires_aec`를 기록하므로 끼어들기가 비활성입니다. `true`는 선택한
 마이크가 이미 에코 제거된 입력을 제공한다는 설정이며, AEC를 구현하거나 켜는
@@ -670,3 +671,6 @@ Ubuntu 시험은 기존 컨테이너 안의 별도 임시 workspace와 domain `1
 확인한 라이브러리는 OpenAI SDK `3.8.0`, `webrtcvad-wheels` `2.0.14`입니다.
 실제 OpenAI API 요청·실제 호출어 모델 활성화·음성 수집은 수행하지 않았습니다.
 CI 선택 스크립트 시험, 신규 Python 코드 lint, 문서 링크와 변경 공백 검사도 통과했습니다.
+
+Manager의 `accepted` 상태는 발화 접수만 뜻하므로 STT는 이를 재생 시작·완료로
+처리하지 않는다. 실제 재생 상태와 기존 request_id·interim 기반 입력 차단 규칙을 사용한다.
