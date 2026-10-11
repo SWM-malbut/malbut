@@ -136,6 +136,60 @@ test("approach events read as short history lines (mockup 22)", () => {
   assert.equal(label("approach_returned", "return_failed", { state: "resolved" }), "원래 자리로 돌아가지 못함");
 });
 
+test("whole-body check events read as short history lines (mockup 25)", () => {
+  const label = (eventKind, reason, change = {}) => fallEventLabel(event({ eventKind, reason, ...change }));
+  assert.equal(label("person_check_completed", "partial_body"), "가까이에서 확인: 사람 · 몸 일부만 보임");
+  assert.equal(label("person_check_completed", "whole_body"), "가까이에서 확인: 사람 · 몸 전체 보임");
+  assert.equal(label("posture_check_completed", "posture_unconfirmed"), "자세를 확인하지 못함 → 물어봄");
+  assert.equal(label("view_completed", "arrived"), "몸 전체가 보이는 자리로 옮김");
+  assert.equal(label("view_completed", "no_path"), "몸 전체가 보이는 자리로 못 감: 갈 길 없음");
+  assert.equal(label("posture_check_completed", "sitting_off_floor", { analysis: analysis({
+    purpose: "posture_check", assessment: "normal_activity", explanation: "침대 가장자리에 걸터앉아 있습니다." }) }),
+  "몸 전체 확인: 침대나 의자에 앉아 있음 (AI: 침대 가장자리에 걸터앉아 있음)");
+  assert.equal(label("posture_check_completed", "standing"), "몸 전체 확인: 서 있음");
+  assert.equal(label("posture_check_completed", "on_floor"), "몸 전체 확인: 바닥에 있음 → 물어봄");
+  assert.equal(label("posture_check_completed", "body_unseen"), "몸 전체를 못 봄 → 이 자리에서 물어봄");
+  assert.equal(label("posture_check_completed", "judgements_differ"),
+    "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄");
+  assert.equal(label("incident_resolved", "off_floor_verified", { state: "resolved" }),
+    "로봇이 사건 종료: 바닥에 있지 않음 · 묻지 않음");
+});
+
+test("the list says the robot is checking before it asks, and off-floor closures say so (mockup 25)", () => {
+  const panel = readFileSync(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
+  for (const copy of ["말벗이 확인하는 중", "가까이 가는 중", "몸 전체가 보이는 자리로 옮기는 중", "몸 전체를 보는 중",
+    "말벗이 확인: 침대나 의자에 앉아 있음", "말벗이 확인: 서 있음", "몸 일부만 보여 가서 확인 · 묻지 않음",
+    "묻지도, 알리지도 않았어요."]) assert.ok(panel.includes(copy), copy);
+  // Once the person is asked, the title is the suspicion again.
+  assert.match(panel, /!a \|\| i\.asked\) return null/);
+  assert.ok(!panel.includes("말벗이 확인하러 가는 중"));
+});
+
+test("whole-body check events and the off-floor closure are strict contracts", () => {
+  const ok = (change) => assert.ok(parseFallEvent(event(change)), JSON.stringify(change));
+  const bad = (change) => assert.equal(parseFallEvent(event(change)), null, JSON.stringify(change));
+  ok({ eventKind: "person_check_completed", reason: "partial_body",
+    analysis: analysis({ purpose: "person_check" }) });
+  ok({ eventKind: "view_completed", reason: "arrived" });
+  ok({ eventKind: "view_completed", reason: "no_path" });
+  ok({ eventKind: "person_check_completed", reason: "whole_body" });
+  for (const reason of ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
+    "posture_unconfirmed"]) {
+    ok({ eventKind: "posture_check_completed", reason });
+  }
+  ok({ eventKind: "posture_check_completed", reason: "sitting_off_floor",
+    analysis: analysis({ purpose: "posture_check", assessment: "normal_activity" }) });
+  ok({ eventKind: "incident_resolved", state: "resolved", reason: "off_floor_verified" });
+  bad({ eventKind: "view_completed", reason: null });
+  bad({ eventKind: "view_completed", reason: "returned" });
+  bad({ eventKind: "posture_check_completed", reason: null });
+  bad({ eventKind: "posture_check_completed", reason: "sitting" });
+  bad({ eventKind: "posture_check_completed", reason: "standing", analysis: analysis() });  // purpose crosscheck
+  bad({ eventKind: "posture_check_completed", reason: "standing", analysis: analysis({ purpose: "person_check" }) });
+  bad({ eventKind: "analysis_completed", analysis: analysis({ purpose: "posture_check" }) });
+  bad({ eventKind: "view_completed", state: "resolved", reason: "arrived" });
+});
+
 test("approach events and the not-a-person closure are strict contracts", () => {
   const ok = (change) => assert.ok(parseFallEvent(event(change)), JSON.stringify(change));
   const bad = (change) => assert.equal(parseFallEvent(event(change)), null, JSON.stringify(change));
