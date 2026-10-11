@@ -266,6 +266,19 @@ def test_a_patrol_stopped_by_a_fall_check_says_so_and_does_not_resume():
     assert mode['detail']['available_modes'] == ['patrol']  # Restart is the user's choice.
 
 
+def test_a_check_that_saw_the_person_off_the_floor_says_so_after_driving_back():
+    stops = PatrolFallStops(clock=lambda: T0)
+    _stopped_by_fall(stops)
+    stops.observe(_fall('fall_approach', 'active_foreground_missions'), _status(**CANCELED),
+                  _approach('approach', 'arrived'))
+    stop = stops.observe(_fall('fall_approach', 'active_foreground_missions'),
+                         _status(**CANCELED), _approach('view', 'arrived', 20))
+    assert stop['fall_result'] == 'pending'  # Still looking at the whole body.
+    back = dict(_approach('return', 'returned', 40), reason='off_floor')
+    stop = stops.observe({}, _status(**CANCELED), back)
+    assert stop['fall_result'] == 'off_floor' and stop['returned'] is True
+
+
 @pytest.mark.parametrize('steps,expected', [
     ([(_fall('fall_confirmation', 'active_foreground_missions'), None)], 'pending'),
     ([({}, None)], 'asked'),

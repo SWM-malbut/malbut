@@ -138,7 +138,9 @@ class PatrolFallStops:
             elif phase == 'approach' and outcome in _UNREACHED:
                 self.stop['fall_result'] = 'unreachable'
             elif phase == 'return':
-                self.stop.update(fall_result='not_a_person', returned=outcome == 'returned')
+                # Closed without asking: no person, or seen off the floor (2026-10-11).
+                result = 'off_floor' if approach.get('reason') == 'off_floor' else 'not_a_person'
+                self.stop.update(fall_result=result, returned=outcome == 'returned')
         if self.stop['fall_result'] != 'pending':
             return
         confirming = any(isinstance(m, dict) and m.get('capability_id') == 'fall_confirmation'

@@ -119,7 +119,8 @@ class SqliteFallJournal:
             notificationLevel=event.notification_level.value if event.notification_level else None)
         if event.kind == 'incident_merged':
             payload['mergedIntoIncidentIds'] = list(event.merged_into_incident_ids)
-        if (event.kind in ('analysis_completed', 'person_check_completed')
+        if (event.kind in ('analysis_completed', 'person_check_completed',
+                           'posture_check_completed')
                 and event.analysis is not None):
             payload['analysis'] = event.analysis.metadata()
         # Private proof retained across restart. Keep the existing web wire

@@ -26,7 +26,7 @@ ARGUMENTS = [
     'fall_pose_opencv_num_threads', 'fall_pose_allow_spinning', 'rgb_topic', 'odom_topic',
     'depth_topic', 'global_frame', 'fall_depth_aligned_to_rgb', 'fall_depth_camera_info_topic',
     'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_camera_roll_rad', 'fall_approach',
-    'robot_frame',
+    'fall_full_view', 'robot_frame',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
 ]
 
@@ -114,7 +114,9 @@ def _setup(context):
                          'mount_pitch_correction_rad': camera_pitch,
                          'mount_roll_correction_rad': camera_roll,
                          'mount_height_correction_m': camera_height - MODEL_CAMERA_HEIGHT_M,
-                         'approach_enabled': approach_on}],
+                         'approach_enabled': approach_on,
+                         # Look at the whole body before asking; needs the approach.
+                         'full_view_enabled': approach_on and value('fall_full_view') == 'true'}],
             remappings=[(fall_image_topic, value('rgb_topic'))],
         )
 
