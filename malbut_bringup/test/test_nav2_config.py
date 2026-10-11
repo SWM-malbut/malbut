@@ -196,7 +196,7 @@ def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
 
 
 def test_depth_points_are_not_consumed_by_nav2(config):
-    """PointCloud rollback removes the layers and subscriptions, not just marking."""
+    """Remove PointCloud layers and subscriptions when rolling back the input."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
         expected = ['obstacle_layer', 'inflation_layer']
