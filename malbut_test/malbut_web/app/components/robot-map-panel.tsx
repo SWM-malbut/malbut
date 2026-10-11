@@ -3575,14 +3575,20 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
     const at = typeof result.stopped_at === "string" && Number.isFinite(Date.parse(result.stopped_at))
       ? new Date(result.stopped_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })
       : null;
+    const offFloor = result.fall_result === "off_floor";
     const outcome = result.fall_result === "not_a_person"
       ? (result.returned === true ? "확인 결과: 사람 아님 · 원래 자리로 돌아왔어요" : "확인 결과: 사람 아님")
+      : offFloor ? (result.returned === true ? "확인 결과: 앉아 있거나 서 있어 묻지 않음 · 원래 자리로 돌아왔어요"
+        : "확인 결과: 앉아 있거나 서 있어 묻지 않음")
       : result.fall_result === "person" ? "확인 결과: 사람 · 말벗이 그 자리에 있어요"
         : result.fall_result === "unreachable" ? "가까이 가지 못해 그 자리에서 물어봤어요" : "확인 중이에요";
-    return { tone: "warn", title: "낙상 의심을 확인하느라 순찰을 멈췄어요", lines: [
+    const lines = [
       at ? `${at} · ${outcome}` : outcome,
       "순찰은 자동으로 다시 시작하지 않아요. 자세한 내용은 사건 기록에 있어요.",
-    ] };
+    ];
+    // 목업 25번: 바닥에 있지 않아 묻지 않았으면 "낙상 의심"이라는 말을 쓰지 않는다.
+    if (offFloor) return { tone: "neutral", title: "말벗이 확인하느라 순찰을 멈췄어요", lines };
+    return { tone: "warn", title: "낙상 의심을 확인하느라 순찰을 멈췄어요", lines };
   }
   return null;
 }

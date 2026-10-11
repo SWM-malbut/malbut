@@ -5,7 +5,7 @@ export type FallHistoryEvent = {
   answer?: string | null;
   reason?: string | null;
   analysis?: {
-    requestId: string; purpose: "incident" | "crosscheck" | "person_check";
+    requestId: string; purpose: "incident" | "crosscheck" | "person_check" | "posture_check";
     assessment: string; explanation: string;
   } | null;
 };
@@ -56,7 +56,15 @@ const APPROACH_BLOCKED: Record<string, string> = {
   no_map: "지도 없음", no_path: "갈 길 없음", timeout: "시간 초과", failed: "이동 실패", rejected: "이동 실패",
 };
 
-/** 말벗이 의심 장소로 다가가 확인한 기록. 목업 22번 문구, 음슴체. */
+const POSTURE: Record<string, string> = {
+  sitting_off_floor: "몸 전체 확인: 침대나 의자에 앉아 있음",
+  standing: "몸 전체 확인: 서 있음",
+  on_floor: "몸 전체 확인: 바닥에 있음 → 물어봄",
+  body_unseen: "몸 전체를 못 봄 → 이 자리에서 물어봄",
+  judgements_differ: "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄",
+};
+
+/** 말벗이 의심 장소로 다가가 확인한 기록. 목업 22·25번 문구, 음슴체. */
 function approachLabel(event: FallHistoryEvent): string | null {
   const reason = event.reason ?? "";
   if (event.eventKind === "approach_started") {
@@ -68,13 +76,25 @@ function approachLabel(event: FallHistoryEvent): string | null {
   }
   if (event.eventKind === "person_check_completed") {
     if (reason === "person") return "가까이에서 확인: 사람 (사람 확인됨)";
+    if (reason === "partial_body") return "가까이에서 확인: 사람 · 몸 일부만 보임";
     const ai = event.analysis?.explanation ? ` · AI: ${nounEnding(event.analysis.explanation)}` : "";
     return `가까이에서 확인: 사람 아님 (사람 확인 불가${ai})`;
+  }
+  if (event.eventKind === "view_completed") {
+    return reason === "arrived" ? "몸 전체가 보이는 자리로 옮김"
+      : `몸 전체가 보이는 자리로 못 감: ${APPROACH_BLOCKED[reason] ?? "이동 실패"}`;
+  }
+  if (event.eventKind === "posture_check_completed") {
+    const ai = event.analysis?.explanation ? ` (AI: ${nounEnding(event.analysis.explanation)})` : "";
+    return `${POSTURE[reason] ?? "몸 전체 확인"}${ai}`;
   }
   if (event.eventKind === "approach_returned") {
     return reason === "returned" ? "원래 자리로 돌아옴" : "원래 자리로 돌아가지 못함";
   }
   if (event.eventKind === "incident_resolved" && reason === "not_a_person") return "로봇이 사건 종료: 사람 아님";
+  if (event.eventKind === "incident_resolved" && reason === "off_floor_verified") {
+    return "로봇이 사건 종료: 바닥에 있지 않음 · 묻지 않음";
+  }
   return null;
 }
 

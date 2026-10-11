@@ -5,6 +5,7 @@ import { parseVoiceRequest, requiresVoiceDelegation, type VoiceHistory, type Voi
   type VoiceRequest } from "../app/voice-agent-contract";
 import type { DeviceIdentity } from "./homecam";
 import { applyReceipt } from "./media-settings";
+import { OFF_FLOOR_HIDDEN_SQL } from "./fall-review";
 
 async function requireSchema() {
   const result = await getPostgresPool().query(
@@ -171,8 +172,8 @@ async function execute(client: PoolClient, deviceId: string, request: VoiceReque
   }
   if (request.operation === "homecam_falls") {
     const rows = await client.query(`SELECT incident_id AS id,state,assessment,answer,fall_seen AS "fallSeen",
-      occurred_at AS "occurredAt",updated_at AS "updatedAt" FROM fall_incidents WHERE device_id=$1
-      ORDER BY updated_at DESC,incident_id DESC LIMIT $2`, [deviceId, limit]);
+      occurred_at AS "occurredAt",updated_at AS "updatedAt" FROM fall_incidents i WHERE device_id=$1
+      AND NOT ${OFF_FLOOR_HIDDEN_SQL} ORDER BY updated_at DESC,incident_id DESC LIMIT $2`, [deviceId, limit]);
     return { incidents: rows.rows.map((row) => ({ ...row, href: referenceLink(deviceId, "fall", row.id) })), href };
   }
   if (args.kind === "map") {

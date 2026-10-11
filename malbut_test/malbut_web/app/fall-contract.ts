@@ -11,17 +11,29 @@ const kinds = [
   "confirmation_completed", "incident_merged",
   // The robot drives near an uncertain suspicion and checks for a person first.
   "approach_started", "approach_completed", "person_check_completed", "approach_returned",
+  // Only part of the body seen: it moves to see the whole body, then checks the posture.
+  "view_completed", "posture_check_completed",
 ];
 // Allowed reasons per approach event; null is never a reason for these except a start
 // that interrupted nothing.
 const approachReasons: Record<string, Array<string | null>> = {
   approach_started: ["patrol_stopped", "follow_stopped", null],
   approach_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
-  person_check_completed: ["person", "not_a_person"],
+  person_check_completed: ["person", "not_a_person", "partial_body"],
   approach_returned: ["returned", "return_failed"],
+  view_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
+  // Off the floor only when the robot's measurement and Cloud agree; anything else asks.
+  posture_check_completed: ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ"],
 };
 // A robot-side closure after its own check. Never a normal-activity judgment.
-const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person"];
+const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person",
+  "off_floor_verified"];
+// The Cloud explanation each event may carry.
+const analysisPurposes: Record<string, string[]> = {
+  analysis_completed: ["incident", "crosscheck"],
+  person_check_completed: ["person_check"],
+  posture_check_completed: ["posture_check"],
+};
 
 export type FallEventInput = {
   schemaVersion: 1;
@@ -41,7 +53,7 @@ export type FallEventInput = {
   mergedIntoIncidentIds?: string[];
   analysis?: {
     requestId: string;
-    purpose: "incident" | "crosscheck" | "person_check";
+    purpose: "incident" | "crosscheck" | "person_check" | "posture_check";
     assessment: string;
     explanation: string;
   };
@@ -55,14 +67,13 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     "answer", "reason", "notificationLevel"];
   if (v.eventKind === "incident_merged") keys.push("mergedIntoIncidentIds");
   if (Object.hasOwn(v, "analysis")) {
-    if (v.eventKind !== "analysis_completed" && v.eventKind !== "person_check_completed") return null;
+    if (!Object.hasOwn(analysisPurposes, v.eventKind as string)) return null;
     const a = v.analysis;
     if (!a || typeof a !== "object" || Array.isArray(a)) return null;
     const record = a as Record<string, unknown>;
     if (Object.keys(record).length !== 4 ||
         typeof record.requestId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(record.requestId) ||
-        !(v.eventKind === "person_check_completed" ? ["person_check"] : ["incident", "crosscheck"])
-          .includes(record.purpose as string) ||
+        !analysisPurposes[v.eventKind as string].includes(record.purpose as string) ||
         !assessments.includes(record.assessment as string) ||
         typeof record.explanation !== "string" || !record.explanation.trim() ||
         [...record.explanation].length > 1000) return null;
@@ -113,7 +124,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
           (v.state === "resolved" && v.answer === "okay"))) return null;
   }
   if (v.state === "resolved") {
-    // A return trip ends after the robot's own not-a-person closure.
+    // A return trip ends after the robot's own closure (no person, or off the floor).
     if (v.eventKind !== "incident_merged" && v.eventKind !== "confirmation_completed" &&
         v.eventKind !== "approach_returned" &&
         (v.eventKind !== "incident_resolved" || !resolvedReasons.includes(v.reason as string))) return null;
