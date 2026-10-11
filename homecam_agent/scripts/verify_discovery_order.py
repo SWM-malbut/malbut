@@ -20,7 +20,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     FallCandidate, IncidentState, SubjectFrame, SubjectPose, SubjectCheckState,
 )
 from malbut_agent_server.fall_runtime import apply_decision, event_metadata
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 
 BOX = (.1, .4, .7, .9)
 OTHER = (.75, .1, .95, .95)
@@ -242,11 +242,11 @@ def main():
     args.output.mkdir(mode=0o700, parents=True)
     code = {str(p): digest(p) for p in
             (REPO / 'malbut_agent_server/malbut_agent_server').rglob('*.py')}
-    for p in (Path(__file__), REPO / 'malbut_agent_server/config/fall_runtime.example.json',
-              REPO / 'malbut_fall_coordinator/malbut_fall_coordinator/fall_confirmation.py'):
+    # The fall rules (formerly the coordinator) are in the folder above.
+    for p in (Path(__file__), REPO / 'malbut_agent_server/config/fall_runtime.example.json'):
         code[str(p)] = digest(p)
     save(args.output / 'plan.json', dict(code=code, synthetic=True, real_api_calls=0,
-        modes=list(MODES), scope='incident core + SQLite + fall coordinator, not ROS'))
+        modes=list(MODES), scope='incident core + SQLite + fall rules, not ROS'))
     results = [asyncio.run(trial(mode, args.output / mode)) for mode in MODES]
     save(args.output / 'summary.json', results)
     for path, expected in code.items():

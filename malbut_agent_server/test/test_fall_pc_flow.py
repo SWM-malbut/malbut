@@ -52,7 +52,7 @@ if RUN_ROS:
     from malbut_agent_server.fall_runtime import FallNodeSettings
     from malbut_agent_server.ros_fall_monitor import create_fall_node, spin_runtime
     from malbut_interfaces.msg import FallRuntimeStatus, FallSettingsReport, FallSettingsSnapshot
-    from malbut_fall_coordinator.fall_settings_link import FallSettingsLink
+    from malbut_agent_server.fall_rules.fall_settings_link import FallSettingsLink
 
 
 TOPICS = (

@@ -86,6 +86,14 @@ def test_all_speech_nodes_start_without_external_control_or_peer_gates(speech, c
     assert not any(isinstance(item, TimerAction) for item in actions)
 
 
+def test_under_bringup_the_agent_module_starts_the_agent(speech):
+    context = _context(speech)
+    context.extend_globals({'malbut_modular_bringup': True})
+    actions = speech._setup(context)
+    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
+        'tts_node', 'weather', 'stt', 'key_sync']
+
+
 def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     context = _context(
         speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',

@@ -196,13 +196,13 @@ def test_placeholder_device_and_missing_package_are_not_ready(deployment):
     report = asyncio.run(preflight.inspect(d.config, d.model, d.python, prefix_lookup=missing))
     assert not report['checks_passed']
     assert checks(report)['device_id']['reason'] == 'placeholder'
-    assert checks(report)['package.malbut_fall_coordinator']['reason'] == 'package_not_installed'
+    assert checks(report)['package.malbut_fall_approach']['reason'] == 'package_not_installed'
     assert 'arbitrary exception' not in json.dumps(report)
 
 
 def test_unexecutable_package_and_missing_pose_skip_model_probe(deployment):
     d = deployment
-    (d.prefix / 'lib/malbut_fall_coordinator/fall_coordinator').chmod(0o600)
+    (d.prefix / 'lib/malbut_fall_approach/fall_approach').chmod(0o600)
     d.model.unlink()
     calls = []
     async def runner(command, env):
@@ -210,7 +210,7 @@ def test_unexecutable_package_and_missing_pose_skip_model_probe(deployment):
         return 'ok'
     report = inspect(d, probe=True, probe_runner=runner)
     assert not report['checks_passed'] and len(calls) == 1
-    assert checks(report)['package.malbut_fall_coordinator']['reason'] == 'not_accessible'
+    assert checks(report)['package.malbut_fall_approach']['reason'] == 'not_accessible'
     assert checks(report)['pose_probe']['reason'] == 'files_unavailable'
 
 

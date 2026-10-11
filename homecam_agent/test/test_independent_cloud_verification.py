@@ -62,7 +62,7 @@ def test_cli_replays_questions_and_hashes_new_coordinator(tmp_path, monkeypatch,
     assert row['journal_reopen_verified'] and row['new_api_calls'] == 0
 
     provenance = verification.read(output / 'provenance.json')
-    folder = verification.REPO / 'malbut_fall_coordinator/malbut_fall_coordinator'
+    folder = verification.REPO / 'malbut_agent_server/malbut_agent_server/fall_rules'
     assert provenance['new_api_calls'] == 0
     assert not any('malbut_system_manager' in name for name in provenance['sources'])
     for path in folder.rglob('*.py'):
