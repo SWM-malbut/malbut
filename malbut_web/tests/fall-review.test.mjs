@@ -135,6 +135,71 @@ test("robot not-a-person closure is 처리 완료 without reminders; a fall opin
   });
 });
 
+test("off-floor closure shows only under 처리 완료, never asks or reminds; a fall opinion reopens it", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    const incidentId = randomUUID();
+    const steps = [
+      { eventKind: "incident_opened", assessment: "suspected_fall" },
+      { eventKind: "approach_started", assessment: "suspected_fall", reason: null },
+      { eventKind: "approach_completed", assessment: "suspected_fall", reason: "arrived" },
+      { eventKind: "person_check_completed", assessment: "suspected_fall", reason: "partial_body",
+        analysis: { requestId: "check-1", purpose: "person_check", assessment: "suspected_fall",
+          explanation: "사람의 다리와 발이 보입니다." } },
+      { eventKind: "view_completed", assessment: "suspected_fall", reason: "arrived" },
+      { eventKind: "posture_check_completed", assessment: "suspected_fall", reason: "sitting_off_floor",
+        analysis: { requestId: "posture-1", purpose: "posture_check", assessment: "normal_activity",
+          explanation: "침대 가장자리에 걸터앉아 있습니다." } },
+      { eventKind: "incident_resolved", state: "resolved", assessment: "suspected_fall", reason: "off_floor_verified" },
+      { eventKind: "approach_returned", state: "resolved", assessment: "suspected_fall", reason: "returned" },
+    ];
+    const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
+    for (const [index, change] of steps.entries()) {
+      await events.storeFallEvent("robot-a", event({ incidentId, sequence: index + 1, occurredAt: at(index * 1000),
+        ...change }));
+      if (index === 4) {
+        // Still looking: listed as the robot checking, not yet asked.
+        const looking = await review.getFallIncidentDetail("robot-a", incidentId);
+        assert.equal(looking.category, "check");
+        assert.equal(looking.asked, false);
+        assert.deepEqual(looking.approach, { kind: "view_completed", reason: "arrived" });
+        assert.deepEqual(await ids("all"), [incidentId]);
+      }
+    }
+    const other = event({ assessment: "suspected_fall" });
+    await events.storeFallEvent("robot-a", other);
+    // A robot incident resolved without a robot closure stays in 전체.
+    const answered = event({ assessment: "normal_activity", occurredAt: at(-60_000) });
+    await events.storeFallEvent("robot-a", answered);
+    await events.storeFallEvent("robot-a", event({ incidentId: answered.incidentId, sequence: 2,
+      occurredAt: at(-59_000), eventKind: "confirmation_completed", state: "resolved", answer: "okay",
+      assessment: "normal_activity", reason: "resolved" }));
+    const detail = await review.getFallIncidentDetail("robot-a", incidentId);
+    assert.equal(detail.category, "off_floor");
+    assert.equal(detail.needsCheck, false);
+    assert.equal(detail.unacknowledged, false);
+    assert.deepEqual(detail.approach, { kind: "posture_check_completed", reason: "sitting_off_floor" });
+    assert.deepEqual(await ids("closed"), [incidentId]);
+    assert.ok(!(await ids("all")).includes(incidentId));
+    assert.ok((await ids("all")).includes(answered.incidentId));
+    assert.deepEqual(await ids("check"), [other.incidentId]);
+    assert.deepEqual(await ids("normal"), [answered.incidentId]);
+    const timeline = await review.getFallTimeline("robot-a", at(-3_600_000), at(3_600_000), Date.parse(at(60_000)));
+    assert.ok(!timeline.incidents.some((i) => i.incidentId === incidentId));
+    assert.equal(await review.claimFallNotice("robot-a"), null);
+    assert.equal((await h.db.query("SELECT count(*)::int AS n FROM fall_push_outbox WHERE incident_id=$1",
+      [incidentId])).rows[0].n, 0);
+    // Agreeing keeps it closed; seeing a fall reopens it for everyone and shows it again.
+    assert.equal((await review.setFallOpinion("robot-a", incidentId, testUserId("owner@example.com"),
+      "normal", null)).reopened, false);
+    assert.equal((await review.setFallOpinion("robot-a", incidentId, testUserId("family@example.com"),
+      "suspected_fall", null)).reopened, true);
+    const reopened = await review.getFallIncidentDetail("robot-a", incidentId);
+    assert.equal(reopened.category, "check");
+    assert.ok((await ids("all")).includes(incidentId));
+    assert.deepEqual((await ids("check")).sort(), [incidentId, other.incidentId].sort());
+  });
+});
+
 test("clip contract is strict: wall-clock ranges only, no media or session IDs", () => {
   const { parseFallClip } = moduleLoader()("app/fall-clip-contract.ts");
   assert.ok(parseFallClip(clip()));

@@ -68,6 +68,10 @@ const incidents: Row[] = [
   summary("demo-7", { category: "not_person", state: "resolved", needsCheck: false, notificationRank: 0,
     occurredAt: minutes(95), sceneState: "available", linkedCount: 0, notification: null,
     approach: { kind: "person_check_completed", reason: "not_a_person" } }),
+  // 목업 25번: 몸 일부만 보여 몸 전체를 본 뒤 침대나 의자에 앉아 있어 묻지 않음(처리 완료에만).
+  summary("demo-8", { category: "off_floor", state: "resolved", needsCheck: false, notificationRank: 0,
+    occurredAt: minutes(300), sceneState: "available", linkedCount: 0, notification: null,
+    approach: { kind: "posture_check_completed", reason: "sitting_off_floor" } }),
   summary("demo-5", { origin: "user_report", category: "report", state: null, assessment: null, needsCheck: false,
     notificationRank: 0, reportedBy: "demo-user-family", reportedByName: "지민", reportedMomentAt: minutes(60 * 30), occurredAt: minutes(60 * 30),
     sceneState: "expired", linkedCount: 0, notification: null }),
@@ -175,6 +179,36 @@ const details: Record<string, Record<string, unknown>> = {
     ],
     notifications: [], opinions: [], linkedIncidentIds: [], aiReviews: [],
   },
+  "demo-8": {
+    clips: [{ segmentIndex: 0, ...range(300), anchorKinds: ["cloud_window"], foundDown: true, clockStepped: false,
+      playbackState: "available" }],
+    robotEvents: [
+      { sequence: 1, eventKind: "incident_opened", occurredAt: minutes(300), assessment: "suspected_fall", answer: null,
+        reason: "target_unidentified" },
+      { sequence: 2, eventKind: "analysis_completed", occurredAt: minutes(300), assessment: "suspected_fall", answer: null,
+        analysis: { requestId: "demo-analysis-8", purpose: "crosscheck", assessment: "suspected_fall",
+          explanation: "가구 옆 바닥에 사람의 다리가 보입니다." } },
+      { sequence: 3, eventKind: "approach_started", occurredAt: minutes(299.98), assessment: "suspected_fall", answer: null,
+        reason: null },
+      { sequence: 4, eventKind: "approach_completed", occurredAt: minutes(299.7), assessment: "suspected_fall", answer: null,
+        reason: "arrived" },
+      { sequence: 5, eventKind: "person_check_completed", occurredAt: minutes(299.6), assessment: "suspected_fall",
+        answer: null, reason: "partial_body",
+        analysis: { requestId: "demo-check-8", purpose: "person_check", assessment: "suspected_fall",
+          explanation: "사람의 다리와 발이 보입니다." } },
+      { sequence: 6, eventKind: "view_completed", occurredAt: minutes(299.4), assessment: "suspected_fall", answer: null,
+        reason: "arrived" },
+      { sequence: 7, eventKind: "posture_check_completed", occurredAt: minutes(299.3), assessment: "suspected_fall",
+        answer: null, reason: "sitting_off_floor",
+        analysis: { requestId: "demo-posture-8", purpose: "posture_check", assessment: "normal_activity",
+          explanation: "침대 가장자리에 걸터앉아 있습니다." } },
+      { sequence: 8, eventKind: "incident_resolved", occurredAt: minutes(299.3), assessment: "suspected_fall", answer: null,
+        reason: "off_floor_verified" },
+      { sequence: 9, eventKind: "approach_returned", occurredAt: minutes(299), assessment: "suspected_fall", answer: null,
+        reason: "returned" },
+    ],
+    notifications: [], opinions: [], linkedIncidentIds: [], aiReviews: [],
+  },
   "demo-5": {
     clips: [{ segmentIndex: 0, ...range(60 * 30), anchorKinds: ["user_report"], foundDown: false, clockStepped: false,
       playbackState: "expired" }],
@@ -189,9 +223,10 @@ function queuedReview(momentAt: string) {
 }
 
 const FILTER: Record<string, (row: Row) => boolean> = {
-  all: () => true,
+  // 바닥에 있지 않아 묻지 않은 사건은 처리 완료에만 보인다(목업 25번).
+  all: (r) => r.category !== "off_floor",
   check: (r) => r.reviewState === "open" && r.category === "check",
-  closed: (r) => r.reviewState === "closed" || r.category === "not_person" || r.category === "merged",
+  closed: (r) => r.reviewState === "closed" || ["not_person", "merged", "off_floor"].includes(r.category as string),
   normal: (r) => r.category === "normal",
   report: (r) => r.category === "report",
 };
