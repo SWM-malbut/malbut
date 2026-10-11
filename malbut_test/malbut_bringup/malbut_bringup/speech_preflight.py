@@ -18,6 +18,7 @@ SAFE_DETAILS = frozenset({
     'device_index must be -1 or a microphone index',
     'invalid_agent_configuration',
     'invalid_preflight_configuration',
+    'speech_interfaces_require_rebuild',
 })
 
 
@@ -41,6 +42,9 @@ def check_interfaces():
     for message in (SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
                     ClassifySpeechAddressee, ControlSpeechPlayback):
         check_for_type_support(message)
+    if (not hasattr(SpeechRequest(), 'owner_goal_id')
+            or not hasattr(SpeechPlaybackStatus, 'ACCEPTED')):
+        raise RuntimeError('speech_interfaces_require_rebuild')
 
 
 def check_agent(provider):
@@ -113,7 +117,7 @@ def wait_for_control(server, timeout_s):
 
 
 def wait_for_peers(timeout_s):
-    """Wait for typed Agent/TTS endpoints; do not issue requests or play speech."""
+    """Wait for Agent, Manager and TTS; never issue speech or motion requests."""
     import rclpy
     from rclpy.node import Node
     from malbut_interfaces.srv import ClassifySpeechAddressee, ControlSpeechPlayback
@@ -125,6 +129,7 @@ def wait_for_peers(timeout_s):
         clients = [
             node.create_client(ClassifySpeechAddressee, '/malbut/speech/classify_addressee'),
             node.create_client(ControlSpeechPlayback, '/malbut/speech/playback_control'),
+            node.create_client(ControlSpeechPlayback, '/malbut/tts/playback_control'),
         ]
         endpoints = [
             (node.get_subscriptions_info_by_topic, '/malbut/speech/transcript',
@@ -134,6 +139,14 @@ def wait_for_peers(timeout_s):
             (node.get_publishers_info_by_topic, '/malbut/speech/response',
              'malbut_interfaces/msg/SpeechRequest'),
             (node.get_publishers_info_by_topic, '/malbut/speech/playback_status',
+             'malbut_interfaces/msg/SpeechPlaybackStatus'),
+            (node.get_publishers_info_by_topic, '/malbut/tts/request',
+             'malbut_interfaces/msg/SpeechRequest'),
+            (node.get_subscriptions_info_by_topic, '/malbut/tts/request',
+             'malbut_interfaces/msg/SpeechRequest'),
+            (node.get_publishers_info_by_topic, '/malbut/tts/playback_status',
+             'malbut_interfaces/msg/SpeechPlaybackStatus'),
+            (node.get_subscriptions_info_by_topic, '/malbut/tts/playback_status',
              'malbut_interfaces/msg/SpeechPlaybackStatus'),
         ]
         deadline = time.monotonic() + timeout_s

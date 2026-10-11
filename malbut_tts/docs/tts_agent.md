@@ -2,15 +2,18 @@
 
 ```mermaid
 flowchart LR
-    Agent["Agent"] -->|"답변 텍스트"| Queue["요청 대기열<br/>우선순위 · 같은 순위는 도착순"]
+    Agent["Agent"] -->|"발화 요청"| Manager["Manager 소유권·실행 중재"]
+    Manager -->|"검증된 요청"| Queue["요청 대기열<br/>우선순위 · 같은 순위는 도착순"]
     Queue --> TTS["음성 변환"]
     TTS -->|"생성된 부분부터"| Play["순차 재생"]
     Play --> Speaker["스피커"]
 
-    STT["STT"] -->|"일시정지 · 재개 · 중지"| Play
-    Agent -->|"확인 대화 재생 중지 · 전체 중지"| Play
-    Play -->|"재생 상태 · 답변 전체 완료"| STT
-    Play -->|"확인 질문 재생 상태"| Agent
+    STT["STT"] -->|"일시정지 · 재개 · 중지"| Manager
+    Agent -->|"확인 대화 재생 중지 · 전체 중지"| Manager
+    Manager -->|"재생 제어"| Play
+    Play -->|"실제 재생 상태"| Manager
+    Manager -->|"접수 · 재생 상태"| STT
+    Manager -->|"접수 · 재생 상태"| Agent
 ```
 
 - Agent가 보낸 텍스트를 음성으로 변환한다.
@@ -21,7 +24,7 @@ flowchart LR
 
 ### 1.1. 채택 실행 프로필
 
-- 제품 음성 경로는 **로컬 STT → Agent → OpenAI API TTS**로 구성한다.
+- 제품 음성 경로는 **로컬 STT → Agent → Manager → OpenAI API TTS**로 구성한다.
   - STT는 `whisper_cpp` backend로 사용자 음성을 로컬에서 전사한다.
   - TTS는 `openai` backend로 Agent의 답변 텍스트를 음성으로 변환한다.
 - TTS package와 ROS parameter의 기본 backend는 `openai`다. backend를 생략하면
@@ -39,8 +42,8 @@ flowchart LR
 필드와 선택값의 최종 기준은 `malbut_interfaces`의 `.msg`와 `.srv` 파일이다.
 공개 통신 목록과 공통 규격은 [인터페이스 명세](../../malbut_interfaces/README.md)에서 확인한다.
 
-- Agent로부터 사용자에게 말할 텍스트를 전달받는다.
-  - `/malbut/speech/response` ROS 2 Topic을 사용한다.
+- Manager가 허용한 발화 텍스트를 전달받는다.
+  - `/malbut/tts/request` ROS 2 Topic을 사용한다.
   - 메시지 타입은 [SpeechRequest](../../malbut_interfaces/msg/SpeechRequest.msg)이다.
   - 전달 데이터: `text: string` — 사용자에게 말할 텍스트.
   - `playback_id: string`은 발행자가 지정한 재생 ID다. 빈 값이면 TTS가 생성한다.
@@ -51,8 +54,8 @@ flowchart LR
     `NOTIFICATION=1`, 이상 상황 확인 `CONFIRMATION=2`를 구분한다.
   - Agent가 보낸 하나의 답변·알림·확인 발화를 하나의 음성 재생 요청으로 처리한다. 하나의 요청에는 여러 문장이 포함될 수 있다.
 
-- STT·Agent가 특정 음성의 일시정지/재개/중지 또는 전체 중지를 요청한다.
-  - `/malbut/speech/playback_control` ROS 2 Service를 사용한다.
+- Manager가 STT·Agent를 대신해 특정 음성의 일시정지/재개/중지 또는 전체 중지를 요청한다.
+  - `/malbut/tts/playback_control` ROS 2 Service를 사용한다.
   - 서비스 타입은 [ControlSpeechPlayback](../../malbut_interfaces/srv/ControlSpeechPlayback.srv)이다.
   - 요청 데이터: `playback_id: string` — 제어할 음성 재생의 고유 ID, `command: string` — `PAUSE`, `RESUME`, `STOP`, `STOP_ALL` 상수 중 하나.
   - `STOP_ALL`은 재생 ID 없이 현재 재생과 대기열 전체를 중단한다. Agent는 확인 대화 시작 전에 이를 요청하고, 개별 질문은 `playback_id`로 중지한다.
@@ -61,8 +64,8 @@ flowchart LR
 ## 3. 출력
 
 - 변환한 음성을 오디오 출력 장치를 통해 스피커로 재생한다.
-- 음성의 재생 상태를 STT·Agent에 전달한다.
-  - `/malbut/speech/playback_status` ROS 2 Topic을 사용한다.
+- 실제 재생 상태를 Manager에 전달하며 Manager가 STT·Agent에 중계한다.
+  - `/malbut/tts/playback_status` ROS 2 Topic을 사용한다.
   - 메시지 타입은 [SpeechPlaybackStatus](../../malbut_interfaces/msg/SpeechPlaybackStatus.msg)이다.
   - 전달 데이터: `playback_id: string` — 음성 재생의 고유 ID, `state: string` — 현재 재생 상태.
   - `request_id: string`은 원래 일반 요청의 값을 모든 상태에 전달한다. STT는 같은 발화의 최종 답변이 완료·실패·중단되면 입력 차단을 풀고 호출어 대기로 돌아간다. `CONFIRMATION`은 빈 값이며 기존 재생 ID 기반 제어를 유지한다.
@@ -89,19 +92,22 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant A as Agent
+    participant M as Manager
     participant T as TTS
     participant O as OpenAI TTS API
     participant P as Speaker
     participant S as STT
 
-    A->>T: SpeechRequest(완성된 답변 전체)
+    A->>M: SpeechRequest(완성된 답변 전체)
+    M->>T: 검증된 SpeechRequest
     T->>O: TTS 요청 1회(input = text 전체)
     loop 도착하는 PCM 조각
         O-->>T: 24 kHz PCM
         T->>P: 초기 400 ms 버퍼 뒤 순차 재생
     end
     P-->>T: 출력 장치 drain 완료
-    T-->>S: finished(playback_id)
+    T-->>M: finished(playback_id)
+    M-->>S: finished(playback_id)
 ```
 
 - **완성된 Agent 답변 한 건 = `SpeechRequest` 한 건 = OpenAI TTS 요청 한 번 =
@@ -148,7 +154,7 @@ sequenceDiagram
   현재 범위에 포함하지 않는다. 이를 추가하려면 Agent의 증분 출력, 문장 경계,
   fragment 순서, 하나의 `playback_id` 유지, 취소와 실패 처리를 포함한 별도
   Agent–TTS 인터페이스 계약을 먼저 확정해야 한다.
-- 기존 `/malbut/speech/response`에 문장 fragment를 여러 `SpeechRequest`로 발행해 이
+- 기존 `/malbut/tts/request`에 문장 fragment를 여러 `SpeechRequest`로 발행해 이
   기능을 흉내 내지 않는다. 현재 계약에서는 각각이 독립된 재생 요청으로 해석된다.
 
 ### 음성 재생
@@ -181,3 +187,11 @@ sequenceDiagram
 - 중지된 요청에서 이후 생성된 음성도 재생하지 않으며, 해당 요청은 다시 재개하지 않는다. 다른 대기 요청은 유지한다.
 - 각 재생 상태는 요청을 접수한 시점이 아니라 실제로 해당 상태가 된 뒤 전달한다.
 - 유효하지 않은 ID, 최근 완료된 재생, 현재 상태에서 수행할 수 없는 제어 요청은 `accepted=false`로 응답한다. 미수신 ID의 `STOP` 예약 취소는 위 규칙을 적용한다.
+
+### Manager 공개 계약
+
+Agent와 STT는 `/malbut/speech/response`, `/malbut/speech/playback_control`,
+`/malbut/speech/playback_status`로 Manager와 통신한다. `accepted`는 Manager
+접수이며 실제 재생을 뜻하지 않는다. 일반 발화의 `owner_goal_id`는 비우고,
+미션 소유 발화는 해당 하위 Action Goal UUID를 넣는다. 자세한 자원·취소 정책은
+[Manager 발화 실행](../../malbut_system_manager/README.md#발화-실행)을 따른다.

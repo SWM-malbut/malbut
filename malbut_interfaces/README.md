@@ -16,9 +16,12 @@
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |
-| Agent → TTS | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화와 재생 ID, 요청 ID, 중간 안내 여부 |
-| Agent·STT → TTS → 호출자 | Service `/malbut/speech/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 개별 재생 제어·전체 중단과 접수 여부 |
-| TTS → Agent·STT | Topic `/malbut/speech/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 상태. 요청 접수와 재생 완료는 별개 |
+| Agent → Manager | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화, 재생·요청 ID, 소유 미션의 하위 `owner_goal_id` |
+| Agent·STT → Manager | Service `/malbut/speech/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 개별 재생 제어·전체 중단과 접수 여부 |
+| Manager → Agent·STT | Topic `/malbut/speech/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 접수(`accepted`)와 TTS의 실제 재생 상태. 정상 완료는 `finished` |
+| Manager → TTS | Topic `/malbut/tts/request` | [SpeechRequest](msg/SpeechRequest.msg) | 검증된 발화의 실행 |
+| Manager → TTS | Service `/malbut/tts/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 하위 재생 제어 |
+| TTS → Manager | Topic `/malbut/tts/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 시작·중단·완료·실패 |
 
 `SpeechInputStatus`의 빈 `session_id`는 일반 대화이며, `STARTED`·`FAILED` 모두
 비어 있지 않은 `utterance_id`를 사용한다. 빈 최종 인식 결과는 전사나 `FAILED` 없이

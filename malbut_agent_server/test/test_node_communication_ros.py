@@ -304,7 +304,7 @@ def communication(tmp_path, monkeypatch):
         thread.start()
         _wait_until(lambda: agent.count_subscribers(
             '/malbut/speech/response',
-        ) == 1)
+        ) == (2 if with_manager else 1))
         for get_endpoints in (
             agent.get_publishers_info_by_topic,
             agent.get_subscriptions_info_by_topic,

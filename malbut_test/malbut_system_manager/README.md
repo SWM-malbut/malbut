@@ -48,6 +48,44 @@ flowchart TB
 요청자는 하위 서버의 이름·타입·우선순위를 매번 지정하지 않습니다.
 `capability_id`와 입력값을 보내면 관리자가 Manifest에서 실행 계약을 찾습니다.
 
+## 발화 실행
+
+발화도 **Agent → Manager → TTS** 경로를 사용한다. Agent는 말할 내용을
+결정하고, Manager의 `SpeechCoordinator`가 발화 소유권·접수·취소·종료를
+관리한다. TTS는 음성 합성, 사전 녹음 재생, 기존의 제한된 우선순위/FIFO 대기열과
+진행 안내 대체를 담당한다. 발화마다 일반 `ExecuteMission`을 생성하지 않으므로
+동일 우선순위 미션의 교체 규칙이 일반 대화의 앞 문장을 끊지 않는다.
+
+| 경로 | 인터페이스 |
+| --- | --- |
+| Agent → Manager | `/malbut/speech/response` — `SpeechRequest` |
+| STT·Agent → Manager | `/malbut/speech/playback_control` — `ControlSpeechPlayback` |
+| Manager → STT·Agent | `/malbut/speech/playback_status` — `SpeechPlaybackStatus` |
+| Manager → TTS | `/malbut/tts/request` — `SpeechRequest` |
+| Manager → TTS | `/malbut/tts/playback_control` — `ControlSpeechPlayback` |
+| TTS → Manager | `/malbut/tts/playback_status` — `SpeechPlaybackStatus` |
+
+일반 대화는 `owner_goal_id`를 비운다. `BASE`만 사용하는 이동과는 병행한다.
+`SPEAKER` 미션이 실행·대기 중이면 일반 발화는 `stopped`로 종료한다.
+낙상 확인 등 소유 미션의 발화에는 **하위 Action Goal UUID의 32자리 hex**를
+넣는다. Manager가 현재 실행 세대와 `SPEAKER` 소유권을 검증하므로 해당 질문은
+부모 미션과 충돌하지 않는다. 소유자 없는 `CONFIRMATION`과 오래된 Goal은 거절한다.
+
+새 `SPEAKER` 미션은 앞선 음성에 중지를 요청한 뒤 실제 종료 상태를 받아야
+하위 Action을 시작한다. 제어 접수만으로 자원을 해제하지 않는다.
+`cancel_completion_timeout_s` 안에 해제를 확인하지 못하면 새 미션을 실패시킨다.
+미션 취소·실패 시 그 미션의 음성도 중지한다. 성공 전에 이미 접수한 마무리
+안내는 미션 결과 후에도 끝까지 추적하며, 새 스피커 미션은 이를 선점할 수 있다.
+
+`accepted` 상태는 Manager의 발화 접수만 뜻한다. 정상 재생 완료는 여전히
+`finished`뿐이다. STT는 `accepted`를 재생 시작이나 입력 차단 해제로 해석하지 않는다.
+낙상 판단은 마무리 문장의 접수 또는 실패 확인 후 전달하며, 재생 완료까지 기다리지 않는다.
+
+TTS가 없으면 발화는 `failed`다. `speech_playback_timeout_s`(기본 180초) 내에
+종료를 받지 못해도 `failed`를 알리고 중지를 요청하되 실제 종료 전에는 스피커를
+해제하지 않는다. 통신이 복구되어도 TTS 종료 확인이 불가능하면 관련 노드를 함께
+재시작해야 한다. Manager가 없으면 TTS가 공개 발화 Topic을 직접 실행하지 않는다.
+
 ## 공통 실행 계약
 
 | 인터페이스 | 전달하는 정보 |

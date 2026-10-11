@@ -368,6 +368,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
 
         def playback_status(message):
+            if message.state == SpeechPlaybackStatus.ACCEPTED:
+                return  # Manager admission is not audible playback.
             if rclpy.ok():
                 try:
                     pipeline.on_playback_status(

@@ -119,6 +119,13 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
         '--startup-timeout-s', '25.0', '--wait-for-ready', '--', sys.executable]
 
 
+def test_standalone_speech_can_start_one_manager(speech):
+    context = _context(speech, start_manager='true')
+    nodes = [item for item in speech._setup(context) if isinstance(item, Node)]
+    assert [node.node_executable for node in nodes].count('system_manager') == 1
+    assert nodes[0].node_package == 'malbut_system_manager'
+
+
 def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):
     python = tmp_path / 'speech runtime/bin/python'
     python.parent.mkdir(parents=True)

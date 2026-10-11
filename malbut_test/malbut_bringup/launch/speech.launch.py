@@ -44,6 +44,7 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
+    start_manager = value('start_manager') == 'true'
     prerecorded_audio = value('prerecorded_audio') == 'true'
     audio_directory = value('audio_directory')
     preflight_only = value('preflight_only') == 'true'
@@ -136,9 +137,12 @@ def _setup(context):
                 'input_has_aec': input_has_aec,
             }],
         )
-        runtime_nodes.extend([agent, tts, stt, weather, key_sync])
+        managers = [Node(
+            package='malbut_system_manager', executable='system_manager', output='screen',
+        )] if start_manager else []
+        runtime_nodes.extend([*managers, agent, tts, stt, weather, key_sync])
         stage = 'running'
-        return [agent, tts, weather, stt, key_sync]
+        return [*managers, agent, tts, weather, stt, key_sync]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:
@@ -170,7 +174,7 @@ def generate_launch_description():
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
         # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
-        'manager_commands': 'true',
+        'manager_commands': 'true', 'start_manager': 'false',
         'prerecorded_audio': 'true', 'audio_directory': '',
     }
     choices = {
@@ -178,6 +182,7 @@ def generate_launch_description():
         'agent_provider': ['openai', 'mock'],
         'control_server': ['none', 'manager', 'autoslam'],
         'manager_commands': ['true', 'false'],
+        'start_manager': ['true', 'false'],
         'prerecorded_audio': ['true', 'false'],
     }
     return LaunchDescription([

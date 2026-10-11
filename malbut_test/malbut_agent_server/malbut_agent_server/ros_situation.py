@@ -93,6 +93,7 @@ class SituationActionServer:
         self._closed = False
         self._session = None
         self._active_goal = None
+        self._pending_result = None
         self._stop_future = None
         self._started_at = None
         self._initializing = False
@@ -172,11 +173,10 @@ class SituationActionServer:
         self._started_at = time.monotonic()
 
         def report(result):
-            # Save before sending the Action result and before closing audio.
-            # A later playback failure cannot retract a delivered judgment.
+            # Keep the judgment, but let Manager admit the closing utterance
+            # before ending its parent Action (and releasing mission ownership).
             receipt.status, receipt.outcome = 'succeeded', result
-            if not future.done():
-                future.set_result(('succeeded', result))
+            self._pending_result = (future, result)
 
         def finish(status, result):
             stop_future, self._stop_future = self._stop_future, None
@@ -185,7 +185,8 @@ class SituationActionServer:
             if receipt.status is None:
                 receipt.status, receipt.outcome = status, result
             if not future.done():
-                future.set_result((status, result))
+                future.set_result((receipt.status, receipt.outcome))
+            self._pending_result = None
             self._session = None
             self._active_goal = None
             self._reserved = False
@@ -290,7 +291,7 @@ class SituationActionServer:
             raise
 
     def speak(self, text, playback_id):
-        if self._closed or not self.node.context.ok():
+        if self._closed or not self.node.context.ok() or self._active_goal is None:
             return False
         options = {}
         if self._prerecorded_audio:
@@ -303,6 +304,7 @@ class SituationActionServer:
         self._speech.publish(self._speech_type(
             text=text, request_type=self._speech_type.CONFIRMATION,
             playback_id=playback_id, **options,
+            owner_goal_id=self._key(self._active_goal).hex(),
         ))
         return True
 
@@ -320,6 +322,12 @@ class SituationActionServer:
 
     def _playback_status(self, message):
         if self._session is not None:
+            if (message.playback_id == self._session.playback_id
+                    and message.state == 'accepted' and self._pending_result is not None):
+                future, result = self._pending_result
+                self._pending_result = None
+                if not future.done():
+                    future.set_result(('succeeded', result))
             self._session.playback(
                 message.playback_id, message.state, interim=message.interim,
             )
