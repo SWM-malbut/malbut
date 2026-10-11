@@ -33,20 +33,29 @@ const MERGED_TARGETS_SQL = `(SELECT e.payload_json::jsonb->'mergedIntoIncidentId
 const ROBOT_MERGED_SQL = `(i.origin='robot' AND i.state='resolved' AND ${MERGED_TARGETS_SQL} IS NOT NULL)`;
 const ROBOT_NORMAL_SQL =
   "(i.origin='robot' AND i.state='resolved' AND i.assessment='normal_activity' AND NOT i.fall_seen)";
-// The robot drove near the spot and found no person: closed by the robot, not a
-// normal-activity judgment. Like a merge, it closes the queue, not the review.
-const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND
-  (SELECT e.payload_json::jsonb->>'reason' FROM fall_incident_events e
+const ROBOT_CLOSE_REASON_SQL = `(SELECT e.payload_json::jsonb->>'reason' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind'='incident_resolved'
-    ORDER BY e.sequence DESC LIMIT 1)='not_a_person')`;
+    ORDER BY e.sequence DESC LIMIT 1)`;
+// The robot drove near the spot and found no person: closed by the robot, not a
+// normal-activity judgment. Like a merge, it closes the queue, not the review.
+const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND ${ROBOT_CLOSE_REASON_SQL}='not_a_person')`;
+// The robot saw the whole body off the floor (on a bed or chair, or standing) and
+// did not ask (목업 25번). Only 처리 완료 shows it, so the suspicion itself stays out
+// of 전체, the voice agent and the timeline (2026-10-11).
+// NULL-safe: a resolved incident without a robot closure must stay in 전체.
+export const ROBOT_OFF_FLOOR_SQL = `(i.origin='robot' AND i.state='resolved' AND
+  COALESCE(${ROBOT_CLOSE_REASON_SQL}='off_floor_verified', FALSE))`;
+const ROBOT_CLOSED_SQL = `(${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL} OR ${ROBOT_OFF_FLOOR_SQL})`;
+/** Shown only under 처리 완료 until a member reopens it. */
+export const OFF_FLOOR_HIDDEN_SQL = `(${ROBOT_OFF_FLOOR_SQL} AND i.reopened_at IS NULL)`;
 // A reopened incident needs a human again even if the robot judged it normal.
-const NEEDS_CHECK_SQL = `((NOT ${ROBOT_NORMAL_SQL} AND NOT ${ROBOT_MERGED_SQL} AND NOT ${ROBOT_NOT_PERSON_SQL})
+const NEEDS_CHECK_SQL = `((NOT ${ROBOT_NORMAL_SQL} AND NOT ${ROBOT_CLOSED_SQL})
   OR i.reopened_at IS NOT NULL)`;
 const FILTER_SQL: Record<IncidentFilter, string> = {
-  all: "TRUE",
+  all: `NOT ${OFF_FLOOR_HIDDEN_SQL}`,
   check: `i.review_state='open' AND i.origin='robot' AND ${NEEDS_CHECK_SQL}`,
-  closed: `(i.review_state='closed' OR ((${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL}) AND i.reopened_at IS NULL))`,
+  closed: `(i.review_state='closed' OR (${ROBOT_CLOSED_SQL} AND i.reopened_at IS NULL))`,
   normal: ROBOT_NORMAL_SQL,
   report: "i.origin='user_report'",
 };
@@ -128,12 +137,18 @@ const SUMMARY_COLUMNS = `
   i.unacknowledged_since,i.reported_by,i.reported_moment_at,i.report_memo,
   ${ROBOT_NORMAL_SQL} AS robot_normal,
   ${ROBOT_NOT_PERSON_SQL} AS robot_not_person,
+  ${ROBOT_OFF_FLOOR_SQL} AS robot_off_floor,
   ${MERGED_TARGETS_SQL} AS merged_targets,
   (SELECT jsonb_build_object('kind', e.payload_json::jsonb->>'eventKind',
       'reason', e.payload_json::jsonb->>'reason') FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
-      AND e.payload_json::jsonb->>'eventKind' IN ('approach_started','approach_completed','person_check_completed')
+      AND e.payload_json::jsonb->>'eventKind' IN ('approach_started','approach_completed','person_check_completed',
+        'view_completed','posture_check_completed')
     ORDER BY e.sequence DESC LIMIT 1) AS last_approach,
+  EXISTS(SELECT 1 FROM fall_incident_events e
+    WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
+      AND e.payload_json::jsonb->>'eventKind' IN ('voice_result','confirmation_completed','agent_check_failed',
+        'notification_requested')) AS asked,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' = ANY($2::text[])
@@ -150,7 +165,8 @@ type SummaryRow = {
   occurred_at: unknown; updated_at: unknown; review_state: "open" | "closed"; closed_at: unknown;
   closed_by: string | null; reopened_at: unknown; unacknowledged_since: unknown;
   reported_by: string | null; reported_moment_at: unknown; report_memo: string | null; robot_normal: boolean;
-  robot_not_person: boolean; last_approach: { kind: string; reason: string | null } | null;
+  robot_not_person: boolean; robot_off_floor: boolean; asked: boolean;
+  last_approach: { kind: string; reason: string | null } | null;
   last_analysis_kind: string | null; found_down: boolean; opinion_counts: Record<string, number> | null;
   merged_targets: string[] | null;
 };
@@ -162,6 +178,7 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
   const category = row.origin === "user_report" ? "report"
     : row.merged_targets?.length && row.reopened_at === null ? "merged"
     : row.robot_not_person && row.reopened_at === null ? "not_person"
+    : row.robot_off_floor && row.reopened_at === null ? "off_floor"
     : row.robot_normal && row.reopened_at === null ? "normal" : "check";
   return {
     incidentId: row.incident_id, origin: row.origin, category,
@@ -174,11 +191,13 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
     // Display labels; none of these change the robot's automatic judgment.
     needsCheck: open && category === "check",
     aiFailed,
-    unacknowledged: open && category !== "merged" && category !== "not_person" &&
+    unacknowledged: open && !["merged", "not_person", "off_floor"].includes(category) &&
       row.unacknowledged_since !== null,
     reviewPending: open && category === "normal",
-    // 말벗이 다가가 확인한 마지막 단계(목업 22번): 가는 중, 못 감, 사람 확인.
+    // 말벗이 다가가 확인한 마지막 단계(목업 22·25번): 가는 중, 못 감, 사람 확인, 몸 전체 확인.
     approach: row.last_approach,
+    // The person has been asked or alerted: no longer only the robot looking.
+    asked: row.asked,
     foundDown: row.found_down,
     reportedBy: row.reported_by, reportedByName: labelFor(names, row.reported_by),
     reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
@@ -456,12 +475,13 @@ export async function setFallOpinion(deviceId: string, incidentId: string, userI
       [deviceId, incidentId],
     );
     const closedLabels: string[] = incident.closed_labels ?? [];
-    // The robot went and found no person; a member who saw a fall disagrees.
-    const robotNotPerson = incident.reopened_at === null && label !== "normal" && (await db.query(
-      `SELECT ${ROBOT_NOT_PERSON_SQL} AS not_person FROM fall_incidents i
+    // The robot went and found no person, or saw the person off the floor; a member
+    // who saw a fall disagrees.
+    const robotChecked = incident.reopened_at === null && label !== "normal" && (await db.query(
+      `SELECT ${ROBOT_NOT_PERSON_SQL} OR ${ROBOT_OFF_FLOOR_SQL} AS checked FROM fall_incidents i
        WHERE i.device_id=$1 AND i.incident_id=$2`, [deviceId, incidentId],
-    )).rows[0]?.not_person === true;
-    if (!robotNotPerson && (incident.review_state !== "closed" || closedLabels.includes(label))) {
+    )).rows[0]?.checked === true;
+    if (!robotChecked && (incident.review_state !== "closed" || closedLabels.includes(label))) {
       return { reopened: false, noticeId: null };
     }
     await db.query(
@@ -590,9 +610,9 @@ export async function scheduleFallReminders(now = Date.now()) {
       // Robot/AI judged it normal: no reminders for the robot's alert (a reopen still counts).
       const robotNormal = incident.origin === "robot" && incident.state === "resolved" &&
         incident.assessment === "normal_activity" && !incident.fall_seen;
-      // Merged into a person case, or the robot went and found no person.
+      // Merged into a person case, or the robot went and closed it after its own check.
       const robotClosed = (await db.query(
-        `SELECT ${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL} AS closed FROM fall_incidents i
+        `SELECT ${ROBOT_CLOSED_SQL} AS closed FROM fall_incidents i
          WHERE i.device_id=$1 AND i.incident_id=$2`, [deviceId, incidentId],
       )).rows[0]?.closed;
       if (cycle && (robotNormal || robotClosed) && cycle.key.startsWith("robot:")) cycle = null;
@@ -660,7 +680,7 @@ export async function claimFallNotice(deviceId?: string, noticeId?: string): Pro
        JOIN fall_incidents i ON i.device_id=n.device_id AND i.incident_id=n.incident_id
        WHERE n.status='pending' AND n.next_attempt_at<=CURRENT_TIMESTAMP AND i.review_state='open'
          AND NOT (n.kind='resend' AND n.cycle_key LIKE 'robot:%' AND
-           (${ROBOT_NORMAL_SQL} OR ${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL}))
+           (${ROBOT_NORMAL_SQL} OR ${ROBOT_CLOSED_SQL}))
          AND (n.lease_until IS NULL OR n.lease_until<=CURRENT_TIMESTAMP)
          AND ($1::text IS NULL OR n.device_id=$1) AND ($2::text IS NULL OR n.notice_id=$2)
        ORDER BY CASE n.level WHEN 'urgent' THEN 0 ELSE 1 END,n.created_at
@@ -717,8 +737,9 @@ export async function getFallTimeline(deviceId: string, from: string, to: string
     endAt: new Date(Math.min(s.end ?? now, end)).toISOString(),
   })).filter((s) => s.endAt > s.startAt).sort((a, b) => a.startAt.localeCompare(b.startAt));
   const incidents = (await getPostgresPool().query(
-    `SELECT incident_id,origin,occurred_at,reported_moment_at,fall_seen,assessment FROM fall_incidents
+    `SELECT incident_id,origin,occurred_at,reported_moment_at,fall_seen,assessment FROM fall_incidents i
      WHERE device_id=$1 AND COALESCE(reported_moment_at,occurred_at) BETWEEN $2 AND $3
+       AND NOT ${OFF_FLOOR_HIDDEN_SQL}
      ORDER BY COALESCE(reported_moment_at,occurred_at) LIMIT 500`, [deviceId, from, to],
   )).rows.map((row) => ({
     incidentId: row.incident_id,
