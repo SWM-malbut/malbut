@@ -61,7 +61,7 @@ Agent·TTS·STT·모니터 등 관련 발행·수신 노드를 같은 정의로 
 OpenAI는 CLI와 ROS node의 기본 backend다. `--backend`/`backend`를 생략하면
 기존 Agent·STT를 바꾸지 않고 TTS 합성만 API로 처리한다. 로컬 모델 경로,
 CUDA, PyTorch는 이 backend에 필요하지 않다. 기본 설정은
-`gpt-4o-mini-tts`, `marin`, PCM이다.
+`gpt-4o-mini-tts`, `nova`, PCM이다.
 공식 SDK의 스트리밍 응답을 받아 24 kHz signed 16-bit little-endian PCM을
 기존 재생기가 사용하는 mono float32 조각으로 변환한다.
 
@@ -113,12 +113,12 @@ flowchart LR
 ```bash
 /absolute/external/venv/bin/python -m pip install -r malbut_tts/requirements-api.txt
 PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
-  --api-model gpt-4o-mini-tts --api-voice marin \
+  --api-model gpt-4o-mini-tts --api-voice nova \
   --api-timeout-seconds 8 --text '안녕하세요. 말벗이에요.'
 
 # ROS 및 외부 install overlay를 적용한 같은 Python 환경:
 /absolute/external/venv/bin/python -m malbut_tts.node --ros-args \
-  -p api_model:=gpt-4o-mini-tts -p api_voice:=marin \
+  -p api_model:=gpt-4o-mini-tts -p api_voice:=nova \
   -p api_timeout_seconds:=8.0
 ```
 
@@ -130,6 +130,63 @@ PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
 사용자 청취까지의 종단간 지연이나 최대 재생 길이 보장이 아니다.
 
 ## ROS 노드
+
+### 기능별 사전 생성 안내
+
+Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한다. 전체 카탈로그는
+36개이며, 문구와 매핑은 `malbut_agent_server/mission_audio.py`,
+`mission_audio_cases.py`에 있다. 성공·실패·취소는 각각 “요청하신 작업이 완료됐어요.”,
+“작업을 완료하지 못했어요.”, “작업이 취소됐어요.”처럼 공통 문구를 사용한다.
+내부 실패 사유는 이벤트 로그에 남기고, 지도 선택·목적지·날씨 지역처럼 사용자가
+다음 행동을 해야 하는 경우에만 짧은 별도 안내를 사용한다.
+날씨 조회는 “네, 날씨 조회를 시작하겠습니다.”처럼
+기능별 문구를 사용한다. 이동·따라가기·순찰·지도 작성·위치 확인·수동 조작·복구와
+홈캠 조회에도 시작 음성이 있다. 문구는 `function_speech.py`에서 관리한다.
+조회 시작 안내는 재시도나 중복 발화로 반복하지 않으며, 빠른 최종 답변이 와도
+먼저 재생한다. 이동 계열은 인자·지도·실행 조건을 검증하고 Manager에 요청을 보낸 뒤
+시작 의도를 안내한다. 접수 거절·불명 상태에는 해당 실패 안내를 사용한다.
+답변 준비가 5초를 넘으면 “답변을 준비하는 데 조금 시간이 걸리고 있어요.”를
+`conversation.delay.wav`로 한 번 안내한다. 기존 중간 안내의 취소·완료 처리는 유지한다.
+기능 시작을 안내한 뒤에는 이 일반 대기 안내를 추가하지 않는다.
+반대로 대기·재시도 안내가 먼저 재생됐다면 같은 요청의 시작 음성을 생략한다.
+한 요청의 중간 안내는 한 번만 들리고, 실제 결과는 별도로 재생한다.
+날씨 수치·지역 후보·일반 대화처럼 값이 바뀌는 답변은 기존 TTS를 사용한다.
+
+낙상 확인 질문 “실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?”도
+`situation.fall.confirmation.wav`로 저장한다. 확인 대화에서 이 문장이 정확히 일치하면
+저장 음성을 재생한다. 상황이 해소된 뒤의 고정 마무리 문장
+“알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.”는 `situation.resolved.wav`로 재생한다.
+다른 질문·답변은 기존 TTS를 사용한다. 질문 생성·상황 판단과 재생 완료 후 응답을 기다리는
+절차는 유지한다. 사전 음성 옵션을 끄면 확인 질문·마무리 문장도 TTS를 사용한다.
+
+저장소 루트에서 기존 API 키가 **실행 환경에 설정된 상태**로 한 번 생성한다.
+키를 명령줄 인자나 저장소에 넣지 않는다. 아래 생성 명령만 TTS API를 호출하며,
+이미 준비한 파일은 문구·모델·목소리·말투 지시·해시가 일치하면 다시 합성하지 않는다.
+목소리나 말투를 바꿀 때는 새 출력 폴더에서 전체 생성·검증한 뒤 교체한다.
+
+```bash
+PYTHONPATH=malbut_agent_server python3 -m malbut_agent_server.mission_audio > /tmp/malbut-notices.json
+PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
+  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio
+PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
+  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio --check
+```
+
+기본값은 기존 대화와 같은 `gpt-4o-mini-tts` / `nova`이다. 출력은
+mono 24 kHz PCM16 WAV와 `manifest.json`이며 패키지에 함께 설치된다.
+실시간 TTS와 모든 안내 파일에 `voice_style.py`의 한국어 여성 음색 지시를 적용한다.
+말투 제어는 [OpenAI Speech API의 instructions](https://developers.openai.com/api/docs/guides/text-to-speech)를 사용한다.
+별도 배포 폴더는 TTS의 `audio_directory` ROS parameter로 지정한다.
+생성 후 `malbut_interfaces`, Agent, TTS를 함께 다시 빌드하고 재시작한다.
+`SpeechRequest.audio_id`가 추가되어 이전 인터페이스와 혼용할 수 없다.
+실로봇 복사본을 사용할 때는 동일한 WAV 폴더를 그 복사본의
+`malbut_tts/malbut_tts/audio`에도 배포하거나 공통 `audio_directory`를 지정한다.
+
+`speech.launch.py`의 `prerecorded_audio`와 `bringup.launch.py`의
+`speech_prerecorded_audio`는 기본값이 `true`다. 필요하면 `false`로 끄거나
+Agent CLI의 `--no-prerecorded-audio`를 사용한다. 별도 경로는 각각
+`audio_directory` / `speech_audio_directory`다. 파일 누락·손상은 `failed`로 보고하고
+자동 TTS 호출로 대체하지 않는다. 기존 재생 큐·중지·일시정지·STT 재생 차단을 사용한다.
 
 `tts_node`는 ROS 어댑터, `tts_smoke`는 같은 런타임을 사용하는 터미널 시험기다.
 기존 `tts_receiver`는 합성 없이 수신 로그만 남기는 통신 확인용으로 유지한다.

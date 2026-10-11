@@ -355,8 +355,7 @@ def test_location_setting_uses_manager_result_without_weather_or_robot_execution
     assert result.raw_decision.tool_name == 'set_weather_location'
     if context['status'] == 'location_set':
         assert result.decision.reason == 'weather_location_saved'
-        assert context['location'] in result.decision.message
-        assert '저장했어요' in result.decision.message
+        assert result.decision.message == '날씨 조회 지역을 저장했어요.'
     else:
         assert result.decision.type == 'clarification'
     assert result.safety.allowed and not result.state_trusted
@@ -376,12 +375,13 @@ def test_location_tool_is_removed_without_manager_setter(runtime):
     assert provider.calls[0]['tools'] == []
 
 
-def test_missing_saved_location_reaches_provider_as_clarification_context(runtime):
+def test_missing_saved_location_uses_fixed_notice_without_second_model_call(runtime):
     runtime.provider = WeatherProvider()
     runtime.weather_executor = lambda _: {'status': 'location_required'}
     result = runtime.handle(request())
-    assert result.decision.message == 'location_required'
-    assert runtime.provider.calls[1]['weather'] == {'status': 'location_required'}
+    assert '지역을 알려주세요' in result.decision.message
+    assert result.decision.reason == 'weather.location_required'
+    assert len(runtime.provider.calls) == 1
 
 
 def test_location_tool_cannot_bypass_manager_in_production_or_simulation():
@@ -452,3 +452,16 @@ def test_lookup_and_answer_failures_are_distinguished_without_repeating_executio
     before = (len(reads), len(child.calls))
     assert runtime.handle(query).decision == result.decision
     assert (len(reads), len(child.calls)) == before
+
+
+@pytest.mark.parametrize('suffix', ['failed', 'unavailable', 'unknown'])
+def test_weather_failure_uses_a_brief_recording_without_another_model_call(runtime, suffix):
+    from malbut_agent_server.mission_audio import CATALOG
+    audio_id = 'operation.' + suffix
+    runtime.provider = WeatherProvider()
+    runtime.weather_executor = lambda _: {
+        'status': 'unavailable', 'notice_id': audio_id,
+    }
+    result = runtime.handle(request())
+    assert result.decision.message == CATALOG[audio_id]
+    assert len(runtime.provider.calls) == 1

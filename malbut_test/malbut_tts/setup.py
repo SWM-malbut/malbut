@@ -10,7 +10,7 @@ setup(
     name=package_name,
     version='0.1.0',
     packages=find_packages(exclude=['test']),
-    package_data={package_name: ['assets/notice_no_dialogue.wav']},
+    package_data={package_name: ['assets/notice_no_dialogue.wav', 'audio/*.wav', 'audio/*.json']},
     data_files=[
         (
             'share/ament_index/resource_index/packages',
@@ -30,6 +30,7 @@ setup(
             'tts_receiver = malbut_tts.receiver:main',
             'tts_node = malbut_tts.node:main',
             'tts_smoke = malbut_tts.smoke:main',
+            'tts_prepare_notices = malbut_tts.prepare_notices:main',
         ],
     },
 )

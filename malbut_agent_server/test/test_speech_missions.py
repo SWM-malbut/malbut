@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.speech_missions import SpeechMissions
+from malbut_agent_server.function_speech import FUNCTION_STARTS
 
 
 class FakeManager:
@@ -72,7 +73,8 @@ class Targets:
 def test_added_commands_submit_only_the_existing_manifest(tool, arguments, capability, expected):
     manager = FakeManager()
     dispatcher = SpeechMissions(manager)
-    dispatcher.dispatch(dispatcher.prepare('leaf-request', tool, arguments))
+    assert dispatcher.dispatch(dispatcher.prepare('leaf-request', tool, arguments)) == (
+        FUNCTION_STARTS[tool])
     assert len(manager.submissions) == 1
     assert manager.submissions[0][:2] == (capability, expected)
 
@@ -84,6 +86,29 @@ def test_cancel_uses_existing_foreground_cancel_and_remembers_unaccepted_voice_g
     dispatcher.dispatch(dispatcher.prepare('follow', 'request_follow_person', {}))
     dispatcher.dispatch(dispatcher.prepare('cancel', 'cancel_voice_mission', {}))
     assert len(manager.cancellations) == 1 and all_foreground == [True]
+
+
+@pytest.mark.parametrize('spoken_name', ['우리 집', ' 우리 집 ', '우리 집'])
+def test_mapping_preserves_spaces_in_spoken_names(spoken_name):
+    manager = FakeManager()
+    dispatcher = SpeechMissions(manager)
+    proposal = dispatcher.prepare('mapping', 'request_mapping', {'map_name': spoken_name})
+    assert manager.submissions == []
+    assert dispatcher.dispatch(proposal) == FUNCTION_STARTS['request_mapping']
+    assert len(manager.submissions) == 1
+    assert manager.submissions[0][:2] == ('autoslam', {'map_name': '우리 집'})
+
+
+@pytest.mark.parametrize('name', [
+    '', ' ', '../우리 집', '우리/집', '우리\\집', '우리 집.yaml',
+    '우리 집\n새 지도', '우리 집\x00', '가' * 65, None,
+])
+def test_mapping_invalid_names_never_reach_manager(name):
+    manager = FakeManager()
+    dispatcher = SpeechMissions(manager)
+    with pytest.raises(ValueError, match='mapping requires a filename'):
+        dispatcher.prepare('mapping', 'request_mapping', {'map_name': name})
+    assert manager.submissions == []
 
 
 @pytest.fixture
@@ -114,7 +139,7 @@ def test_preparation_is_immutable_and_submission_uses_ros_owner(harness):
     with pytest.raises(FrozenInstanceError):
         proposal.tool_name = 'arbitrary_action'
     response = dispatcher.dispatch(proposal)
-    assert response == '실행 요청을 보냈어요. 접수 결과를 확인할게요.'
+    assert response == FUNCTION_STARTS['request_follow_person']
     assert manager.submissions == [(
         'follow_person', {
             'target_mode': 0, 'target_person_id': '',
@@ -171,10 +196,10 @@ def test_duplicate_ids_never_submit_again_even_after_submit_failure(harness):
 
 
 @pytest.mark.parametrize('state, kind, text', [
-    ('UNAVAILABLE', 'unavailable', '요청을 보내지 못했어요'),
-    ('REJECTED', 'rejected', '접수를 거절했어요'),
-    ('UNKNOWN', 'unknown', '확인할 수 없어요'),
-    ('ACCEPTED', 'accepted', '요청을 접수했어요'),
+    ('UNAVAILABLE', 'unavailable', '지금은 실행할 수 없어요.'),
+    ('REJECTED', 'rejected', '작업을 완료하지 못했어요'),
+    ('UNKNOWN', 'unknown', '실행 상태를 확인하지 못했어요.'),
+    ('ACCEPTED', 'accepted', FUNCTION_STARTS['request_follow_person']),
 ])
 def test_immediate_response_uses_actual_manager_observation(
     harness, state, kind, text,
@@ -212,7 +237,7 @@ def test_cancel_includes_only_owned_accepted_and_unknown_missions(harness):
     proposal = dispatcher.prepare('stop', 'cancel_voice_mission', {})
     response = dispatcher.dispatch(proposal)
     assert manager.cancellations == ids[:2]
-    assert '종료 여부를 확인할게요' in response
+    assert response == '취소를 요청했어요.'
     dispatcher.dispatch(proposal)
     assert manager.cancellations == ids[:2]
 
@@ -244,7 +269,7 @@ def test_cancellation_does_not_claim_no_motion_after_unknown_cancel(harness):
     response = dispatcher.dispatch(dispatcher.prepare(
         'stop', 'cancel_voice_mission', {},
     ))
-    assert '종료된 것으로 판단하지 않을게요' in response
+    assert response == '취소 여부를 확인하지 못했어요.'
 
 
 def test_navigation_resolves_and_rechecks_server_binding(harness):

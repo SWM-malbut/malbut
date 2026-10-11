@@ -824,3 +824,128 @@ def test_expired_requests_free_capacity_before_admission_and_keep_priority():
 def test_invalid_pending_limits_are_rejected_before_starting_workers(option, value):
     with pytest.raises(ValueError, match=option):
         SpeechRuntime(None, None, None, **{option: value})
+
+
+START = 'function.get_weather.starting'
+
+
+@pytest.mark.parametrize('waiting', [
+    'conversation.delay', 'conversation.model_retry', 'conversation.weather_retry',
+])
+@pytest.mark.parametrize('already_finished', [False, True])
+@pytest.mark.parametrize('interim_start', [False, True])
+def test_audible_waiting_notice_replaces_later_start(waiting, already_finished, interim_start):
+    audio = FakeSynthesizer()
+    h = Harness(prerecorded=audio)
+    try:
+        first = h.runtime.submit('waiting', audio_id=waiting, interim=True, request_id='turn')
+        player = h.active(first)
+        if already_finished:
+            player.drain.set()
+            h.wait(first, 'finished')
+        start = h.runtime.submit('start', audio_id=START, interim=interim_start, request_id='turn')
+        h.wait(start, 'stopped')
+        index = h.events.index((start, 'stopped'))
+        assert h.interim_flags[index] is interim_start
+        assert h.request_ids[index] == 'turn'
+        result = h.runtime.submit('actual result', request_id='turn')
+        player.drain.set()
+        h.active(result).drain.set()
+        h.wait(result, 'finished')
+        assert audio.texts == [waiting]
+        assert h.synth.texts == ['actual result']
+        assert (start, 'playing') not in h.events
+    finally:
+        h.runtime.close()
+
+
+def test_fast_result_preserves_queued_function_start_and_replaces_unheard_waiting():
+    audio = FakeSynthesizer()
+    h = Harness(prerecorded=audio)
+    try:
+        busy = h.runtime.submit('previous turn')
+        player = h.active(busy)
+        waiting = h.runtime.submit('waiting', audio_id='conversation.delay',
+                                   interim=True, request_id='turn')
+        start = h.runtime.submit('start', audio_id=START, interim=True, request_id='turn')
+        h.wait(waiting, 'stopped')
+        result = h.runtime.submit('actual result', request_id='turn')
+        player.drain.set()
+        h.active(start).drain.set()
+        h.wait(start, 'finished')
+        h.active(result).drain.set()
+        h.wait(result, 'finished')
+        assert audio.texts == [START]
+        assert h.synth.texts == ['previous turn', 'actual result']
+    finally:
+        h.runtime.close()
+
+
+def test_result_does_not_cancel_function_start_before_device_is_ready():
+    entered, release = Event(), Event()
+    audio = FakeSynthesizer()
+    h = Harness(prerecorded=audio)
+
+    def delayed_player(**kwargs):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(3)
+        return h.make_player(**kwargs)
+
+    h.runtime._player_factory = delayed_player
+    try:
+        start = h.runtime.submit('start', audio_id=START, interim=True, request_id='turn')
+        assert entered.wait(3)
+        result = h.runtime.submit('actual result', request_id='turn')
+        release.set()
+        h.active(start).drain.set()
+        h.wait(start, 'finished')
+        h.active(result).drain.set()
+        h.wait(result, 'finished')
+        assert audio.texts == [START]
+        assert h.synth.texts == ['actual result']
+    finally:
+        release.set()
+        h.runtime.close()
+
+
+def test_receipts_already_queued_are_rechecked_after_first_is_heard():
+    audio = FakeSynthesizer()
+    h = Harness(prerecorded=audio)
+    try:
+        busy = h.runtime.submit('previous turn')
+        player = h.active(busy)
+        first = h.runtime.submit('start', audio_id=START, interim=True, request_id='turn')
+        second = h.runtime.submit('late waiting', audio_id='conversation.delay',
+                                  interim=True, request_id='turn')
+        player.drain.set()
+        h.active(first).drain.set()
+        h.wait(first, 'finished')
+        h.wait(second, 'stopped')
+        assert audio.texts == [START]
+        assert (second, 'playing') not in h.events
+    finally:
+        h.runtime.close()
+
+
+def test_a_failed_unheard_notice_does_not_suppress_start_and_new_turns_are_independent():
+    class BrokenWaiting(FakeSynthesizer):
+        def generate(self, text, cancel_event):
+            if text == 'conversation.delay':
+                raise ValueError('missing notice')
+            yield from super().generate(text, cancel_event)
+
+    audio = BrokenWaiting()
+    h = Harness(prerecorded=audio)
+    try:
+        waiting = h.runtime.submit('waiting', audio_id='conversation.delay',
+                                   interim=True, request_id='first')
+        h.wait(waiting, 'failed')
+        assert h.players.get(timeout=3).audio == []
+        for request_id in ('first', 'second'):
+            start = h.runtime.submit('start', audio_id=START, request_id=request_id)
+            h.active(start).drain.set()
+            h.wait(start, 'finished')
+        assert audio.texts == [START, START]
+    finally:
+        h.runtime.close()

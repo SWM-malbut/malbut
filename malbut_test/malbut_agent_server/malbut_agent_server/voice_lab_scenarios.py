@@ -103,7 +103,7 @@ def _send(graph, text):
     reply = graph.wait_reply(utterance_id, timeout=_TIMEOUT)
     if (reply.get('utterance_id') != utterance_id
             or not isinstance(reply.get('text'), str) or not reply['text'].strip()
-            or reply.get('kind') == 'progress'):
+            or reply.get('kind') in {'progress', 'acknowledgement'}):
         raise AssertionError('해당 발화의 최종 응답이 필요합니다.')
     return utterance_id, reply
 
@@ -309,11 +309,11 @@ def _execute(scenario_id, graph, checks, timeline):
         uid, _ = _send(graph, '따라와')
         _goal(graph, 'follow_person')
         before = len([reply for reply in graph.replies
-                      if reply.get('utterance_id') == uid and reply.get('kind') != 'progress'])
+                      if reply.get('utterance_id') == uid and reply.get('kind') not in {'progress', 'acknowledgement'}])
         graph.send('따라와', utterance_id=uid)
         _observe(graph, 0.35)
         after = len([reply for reply in graph.replies
-                     if reply.get('utterance_id') == uid and reply.get('kind') != 'progress'])
+                     if reply.get('utterance_id') == uid and reply.get('kind') not in {'progress', 'acknowledgement'}])
         _check(checks, len(graph.goals) == 1, '같은 발화 ID가 새 Goal을 만들지 않음')
         _check(checks, before == after == 1, '같은 발화 ID의 최종 답변을 반복하지 않음')
         return

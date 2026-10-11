@@ -328,12 +328,12 @@ class VoiceLabGraph:
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('reply timeout must be positive and finite')
         self._wait(lambda: any(reply.get('utterance_id') == uid
-                               and reply.get('kind') != 'progress' for reply in self.replies),
+                               and reply.get('kind') not in {'progress', 'acknowledgement'} for reply in self.replies),
                    'no final dialogue reply for ' + str(uid), timeout)
         self._drain_output()
         return deepcopy(next(
             reply for reply in self.replies
-            if reply.get('utterance_id') == uid and reply.get('kind') != 'progress'))
+            if reply.get('utterance_id') == uid and reply.get('kind') not in {'progress', 'acknowledgement'}))
 
     def status(self):
         """Return local laboratory evidence without polling a production graph."""

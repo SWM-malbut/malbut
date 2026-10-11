@@ -63,7 +63,7 @@ def build_situation_factory(settings):
 
 
 class SituationActionServer:
-    def __init__(self, node, engine_factory, *, on_begin, on_end):
+    def __init__(self, node, engine_factory, *, on_begin, on_end, prerecorded_audio=False):
         from malbut_interfaces.action import ConfirmSituation
         from malbut_interfaces.msg import (
             SpeechRequest, SpeechInputStatus, SpeechPlaybackStatus,
@@ -77,6 +77,7 @@ class SituationActionServer:
         self.engine_factory = engine_factory
         self.on_begin = on_begin
         self.on_end = on_end
+        self._prerecorded_audio = prerecorded_audio
         self._action_type = ConfirmSituation
         self._speech_type = SpeechRequest
         self._control_type = ControlSpeechPlayback
@@ -291,9 +292,17 @@ class SituationActionServer:
     def speak(self, text, playback_id):
         if self._closed or not self.node.context.ok():
             return False
+        options = {}
+        if self._prerecorded_audio:
+            from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
+            audio_id = TEXT_IDS.get(text, '')
+            # Confirmation questions must keep the model's exact wording;
+            # ordinary mission-reply aliases may have a shorter recording.
+            if audio_id and CATALOG[audio_id] == text:
+                options['audio_id'] = audio_id
         self._speech.publish(self._speech_type(
             text=text, request_type=self._speech_type.CONFIRMATION,
-            playback_id=playback_id,
+            playback_id=playback_id, **options,
         ))
         return True
 

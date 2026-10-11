@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import time
 from typing import Optional, Sequence
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
@@ -49,6 +49,7 @@ def create_communication_node(
     weather_query_timeout_s=20.0,
     situation_factory=None,
     enable_manager_commands=False,
+    prerecorded_audio=False,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
@@ -102,6 +103,9 @@ def create_communication_node(
                     lambda text: self.say(
                         text, request_type=SpeechRequest.NOTIFICATION,
                     ),
+                    speak_audio=(lambda text, audio_id: self.say(
+                        text, request_type=SpeechRequest.NOTIFICATION, audio_id=audio_id,
+                    )) if prerecorded_audio else None,
                 )
                 self._receipts = SpeechReceiptStore(speech_db_path)
                 self.missions = ManagerClient(
@@ -152,6 +156,7 @@ def create_communication_node(
                     situation_factory or build_situation_factory(settings),
                     on_begin=self._begin_situation,
                     on_end=lambda: self.dialogue.resume(),
+                    prerecorded_audio=prerecorded_audio,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
                 self._start_speech_inputs()
@@ -181,7 +186,7 @@ def create_communication_node(
             self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
         def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False,
-                request_id=''):
+                request_id='', audio_id=''):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
@@ -189,9 +194,15 @@ def create_communication_node(
                 return False
             if self.situation is not None and self.situation.active:
                 return False
+            if prerecorded_audio and not audio_id:
+                from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
+                audio_id = TEXT_IDS.get(text, '')
+                if audio_id:
+                    text = CATALOG[audio_id]
+            options = {'audio_id': audio_id} if audio_id else {}
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type, interim=interim,
-                playback_id=str(uuid4()), request_id=request_id,
+                playback_id=str(uuid4()), request_id=request_id, **options,
             ))
             return True
 
@@ -350,8 +361,14 @@ def create_communication_node(
                     continue
                 published = self.dialogue.publish_reply(
                     response, lambda text: self.say(
-                        text, interim=response.get('kind') == 'progress',
-                        request_id=response.get('utterance_id', '')))
+                        text, interim=response.get('kind') in {'progress', 'acknowledgement'},
+                        # Prerecorded TTS coalesces waiting/start notices for the
+                        # same utterance and preserves a start before a fast result.
+                        # Keep legacy synthesized receipts on their old correlation.
+                        request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
+                                    if (response.get('kind') == 'acknowledgement'
+                                        and not prerecorded_audio)
+                                    else response.get('utterance_id', ''))))
                 if published is not None:
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,
@@ -390,6 +407,8 @@ def create_communication_node(
         def destroy_node(self):
             """Release communication from the owning thread outside callbacks."""
             self.begin_shutdown()
+            if getattr(self, '_key_health', None) is not None:
+                self._key_health.close()
             if self.executor is not None and self.context.ok():
                 from rclpy.executors import ExternalShutdownException
 
@@ -496,6 +515,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--user-id', default=DEFAULT_SPEECH_USER)
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--enable-manager-commands', action='store_true')
+    parser.add_argument('--prerecorded-audio', action=argparse.BooleanOptionalAction, default=True)
     args, ros_args = parser.parse_known_args(argv)
     try:
         settings = dialogue_settings_from_args(args)
@@ -524,6 +544,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             goal_response_timeout_s=args.goal_response_timeout_s,
             dialogue_settings=settings,
             enable_manager_commands=args.enable_manager_commands,
+            prerecorded_audio=args.prerecorded_audio,
         )
         executor.add_node(node)
         node.get_logger().info(

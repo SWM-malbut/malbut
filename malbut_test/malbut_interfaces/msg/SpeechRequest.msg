@@ -4,6 +4,9 @@ uint8 CONFIRMATION=2
 
 # TTS가 음성으로 변환하여 사용자에게 말할 텍스트
 string text
+# 사전 생성 WAV의 식별자. 비어 있으면 text를 합성한다.
+# 값이 있으면 해당 파일만 재생하며, 누락/손상 시 TTS로 대체하지 않는다.
+string audio_id
 # 대화 답변은 DIALOGUE, 일반 작업 알림은 NOTIFICATION
 uint8 request_type
 

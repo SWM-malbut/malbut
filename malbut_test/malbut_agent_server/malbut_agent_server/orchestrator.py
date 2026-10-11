@@ -19,7 +19,8 @@ from malbut_agent_server.conversation import (
     SQLiteConversationStore,
 )
 from malbut_agent_server.conversation_progress import (
-    claim_retry, conversation_request, SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
+    announce_function_start, claim_retry, conversation_request,
+    SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
 from malbut_agent_server.conversation_ownership import (
     owned_conversation_request, recover_abandoned_turns,
@@ -1094,6 +1095,7 @@ class AgentOrchestrator:
         try:
             if executor is None or not accepts_memory_context(self.provider):
                 raise RuntimeError('homecam query unavailable')
+            announce_function_start(first_result.decision.tool_name)
             result = executor(first_result.decision.tool_name, first_result.decision.arguments)
         except CancelledError:
             raise
@@ -1145,6 +1147,7 @@ class AgentOrchestrator:
                 type='message', message=SERVICE_UNAVAILABLE_NOTICE,
                 reason='weather_unavailable', confidence=1.0,
             ), memory_proposal=None)
+        announce_function_start(first_result.decision.tool_name)
         for attempt in range(2):
             try:
                 if setting_location:
@@ -1161,13 +1164,24 @@ class AgentOrchestrator:
             if (setting_location or weather['status'] != 'unavailable' or attempt
                     or not claim_retry(WEATHER_RETRY_NOTICE)):
                 break
+        from malbut_agent_server.mission_audio import CATALOG
+        notice_id = weather.get('notice_id')
+        if not setting_location and weather['status'] == 'location_required':
+            notice_id = 'weather.location_required'
+        if isinstance(notice_id, str) and notice_id in {
+                'operation.failed', 'operation.unavailable', 'operation.unknown',
+                'weather.location_required'}:
+            return replace(first_result, decision=AgentDecision(
+                type='message', message=CATALOG[notice_id], reason=notice_id,
+                confidence=1.0,
+            ), memory_proposal=None)
         if setting_location:
             # A committed setting needs a receipt even if a second model call would fail.
             status = weather['status']
             location = weather.get('location')
             if status == 'location_set' and isinstance(location, str) and location.strip():
                 decision = AgentDecision(
-                    'message', f'날씨 조회 위치를 저장했어요. 앞으로 {location} 날씨를 알려드릴게요.',
+                    'message', CATALOG['set_weather_location.succeeded'],
                     reason='weather_location_saved', confidence=1.0,
                 )
             elif status == 'location_ambiguous':

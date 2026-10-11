@@ -253,10 +253,12 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
         SpeechRuntime=runtime,
     ))
     node = tts_node.create_tts_node()
+    from malbut_tts.prerecorded import PrerecordedAudio
+    assert isinstance(received.pop('prerecorded'), PrerecordedAudio)
     assert received == dict(
         path='/local/cuda-model', backend='qwen-cuda', cuda_dtype='float16',
         cuda_sentence_mode=True, sentence_max_chars=80,
-        api_model='gpt-4o-mini-tts', api_voice='marin', api_timeout_seconds=8.0,
+        api_model='gpt-4o-mini-tts', api_voice='nova', api_timeout_seconds=8.0,
         speaker='Sohee', language='Korean', device=3,
         max_pending_requests=8, pending_timeout_s=12.0,
     )
@@ -266,7 +268,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
 
 
 @pytest.mark.parametrize('options,model,voice,timeout', [
-    ({}, 'gpt-4o-mini-tts', 'marin', 8.0),
+    ({}, 'gpt-4o-mini-tts', 'nova', 8.0),
     ({'api_model': 'tts-1', 'api_voice': 'alloy', 'api_timeout_seconds': 4.5},
      'tts-1', 'alloy', 4.5),
 ])
@@ -298,6 +300,8 @@ def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
         SpeechRuntime=runtime,
     ))
     node = tts_node.create_tts_node()
+    from malbut_tts.prerecorded import PrerecordedAudio
+    assert isinstance(received.pop('prerecorded'), PrerecordedAudio)
     assert received == {
         'options': {'model': model, 'voice': voice, 'timeout_seconds': timeout},
         'synth': 'api-synthesizer', 'player': None,
@@ -368,3 +372,16 @@ def test_main_closes_ros_after_interruption_or_backend_failure(
     else:
         assert code == 0
         assert calls[1:3] == ['spin', 'destroy']
+
+
+def test_prerecorded_id_reaches_runtime_without_becoming_text(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    received = []
+    node._runtime.submit = lambda *args, **kwargs: received.append((args, kwargs))
+    fake_ros.subscriptions[0][2](SimpleNamespace(
+        text='작업을 완료하지 못했어요.', request_type=1, interim=False,
+        audio_id='operation.failed', playback_id='failure-notice'))
+    assert received == [(('작업을 완료하지 못했어요.', 1), {
+        'playback_id': 'failure-notice', 'interim': False, 'audio_id': 'operation.failed',
+    })]
+    node.destroy_node()
