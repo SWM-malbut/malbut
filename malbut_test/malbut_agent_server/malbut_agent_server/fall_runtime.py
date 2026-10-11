@@ -192,8 +192,9 @@ def apply_decision(monitor, payload):
     data = bounded_object(payload)
     action = data.get('action')
     fields = {'incident_id', 'evidence_revision', 'action'}
-    if action in {'approach_result', 'return_result'}:
-        # The coordinator's drive near an uncertain suspicion, and the way back.
+    if action in {'approach_result', 'view_result', 'return_result'}:
+        # The coordinator's drive near an uncertain suspicion, to where the whole
+        # body is visible, and the way back.
         fields.update({'boot_id', 'question_id', 'outcome'})
         if (set(data) != fields or data['boot_id'] != monitor.boot_id
                 or type(data['evidence_revision']) is not int or data['evidence_revision'] < 1

@@ -8,6 +8,7 @@ by treating Unix/simulation seconds as local monotonic time.
 import json
 import math
 from collections import OrderedDict
+from dataclasses import replace
 
 from malbut_agent_server.application.fall_pose_aliases import LowPoseAliases
 
@@ -36,6 +37,36 @@ def bounded_object(payload):
     if not isinstance(result, dict):
         raise ValueError('expected object')
     return result
+
+
+# Same as the detector's upright_torso_deg (fall_candidate.FallCandidateConfig).
+UPRIGHT_DEG = 35.0
+ANCHORS = frozenset({'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip'})
+
+
+def whole_body_posture(features):
+    """(whole_body, upright, torso_floor_m) from detector features; None when not measured.
+
+    Only for the robot's own look at a spot. A missing or malformed optional
+    feature is unknown, never upright or off the floor.
+    """
+    if not isinstance(features, dict) or features.get('usable') is not True:
+        return None, None, None
+
+    def number(value):
+        return (type(value) in (int, float) and math.isfinite(value)
+                and not isinstance(value, bool))
+
+    anchors = features.get('anchor_names')
+    whole = isinstance(anchors, list) and set(anchors) == ANCHORS
+    torso, axis = features.get('torso_angle_deg'), features.get('body_axis_angle_deg')
+    upright = bool(whole and number(torso) and torso <= UPRIGHT_DEG
+                   and (axis is None or (number(axis) and axis <= UPRIGHT_DEG))
+                   and features.get('horizontal') is False
+                   and features.get('compact_body') is False)
+    floor = features.get('floor_height_m')
+    height = float(floor) if number(floor) and 0 <= floor <= 5 else None
+    return whole, upright, height
 
 
 def ros_stamp(value):
@@ -200,9 +231,11 @@ class FallDetectorInput:
                 level = track.get('confidenceLevel')
                 if level not in (None, 'strong', 'weak'):
                     raise ValueError('invalid subject confidence level')
+                whole, upright, torso = whole_body_posture(track.get('features'))
                 subjects.append(SubjectPose(
                     track['targetTrackId'], tuple(box) if isinstance(box, list) else box,
-                    check, usable, None if level is None else level == 'strong'))
+                    check, usable, None if level is None else level == 'strong',
+                    whole_body=whole, upright=upright, torso_floor_m=torso))
             # Validate duplicate identities and full payload before side effects.
             SubjectFrame(capture, tuple(subjects), data['subjectCheckMaxGapSec'])
         prepared = []
@@ -284,9 +317,9 @@ class FallDetectorInput:
                 result.append(iid)
         if subjects is not None:
             self.monitor.ingest_subject_frame(SubjectFrame(
-                observed_frame, tuple(SubjectPose(
-                    f'pose:{self._generation}:{p.subject_key}', p.box, p.state,
-                    p.association_usable, p.strong) for p in mapped_frame.subjects),
+                observed_frame, tuple(
+                    replace(p, subject_key=f'pose:{self._generation}:{p.subject_key}')
+                    for p in mapped_frame.subjects),
                 data['subjectCheckMaxGapSec'],
                 camera_stationary=data.get('robotMotion') == 'stationary',
                 camera_moving=data.get('robotMotion') == 'moving'))

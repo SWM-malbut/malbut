@@ -11,12 +11,19 @@ import math
 STANDOFF_M = 1.0
 APPROACH_LIMIT_S = 60.0
 RETURN_LIMIT_S = 60.0
+# Only part of the body was seen from 1 m (2026-10-11): move back to where the
+# 12 cm camera sees a seated person's head (about 2.5 m), within the user's one
+# minute. Straight back first; furniture in the way: around the spot.
+VIEW_STANDOFF_M = 2.5
+VIEW_LIMIT_S = 60.0
+VIEW_TURNS_DEG = (0.0, 45.0, -45.0, 90.0, -90.0)
+RETURN_REASONS = ('not_a_person', 'off_floor')
 # No path to the spot itself (inside furniture or a keepout edge): try points
 # pulled back toward the robot, like the follower's goal pullback.
 PULLBACK_STEP_M = 0.5
 PULLBACK_TRIES = 2
 FACE_TOLERANCE_RAD = 0.10
-PHASES = ('approach', 'return')
+PHASES = ('approach', 'view', 'return')
 OUTCOMES = ('arrived', 'returned', 'no_map', 'no_path', 'timeout', 'failed')
 
 
@@ -31,17 +38,27 @@ def normalize_angle(angle):
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-def goal_error(phase, x, y, standoff_m):
+def goal_error(phase, x, y, standoff_m, reason=''):
     """Why a goal cannot be accepted, or None."""
     if phase not in PHASES:
-        return 'phase must be approach or return'
+        return 'phase must be approach, view or return'
     values = (x, y, standoff_m)
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
            for v in values):
         return 'coordinates must be finite numbers'
-    if phase == 'approach' and not 0.3 <= standoff_m <= 3.0:
+    if phase in ('approach', 'view') and not 0.3 <= standoff_m <= 3.0:
         return 'standoff must be within 0.3-3.0 m'
+    if reason not in ('', *RETURN_REASONS) or (reason and phase != 'return'):
+        return 'reason must be not_a_person or off_floor, on a return only'
     return None
+
+
+def view_points(robot, target, distance):
+    """Where the whole body may be seen: straight back from the spot, then around it."""
+    base = math.atan2(robot[1] - target[1], robot[0] - target[0])
+    return [(target[0] + distance * math.cos(base + math.radians(turn)),
+             target[1] + distance * math.sin(base + math.radians(turn)))
+            for turn in VIEW_TURNS_DEG]
 
 
 def plan_targets(robot, target):

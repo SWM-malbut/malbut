@@ -18,6 +18,12 @@ APPROACH_OUTCOMES = {'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejec
 RETURN_OUTCOMES = {'returned', 'failed'}
 # The runtime looks after arrival (Pose, then one Cloud call). Then ask anyway.
 CHECK_WAIT_S = 15.0
+PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body', 'whole_body'}
+# Where the whole body rests (fall_full_view): Pose 5 s, then one Cloud call.
+POSTURE_WAIT_S = 30.0
+POSTURE_REASONS = {'sitting_off_floor', 'standing', 'on_floor', 'body_unseen',
+                   'judgements_differ', 'posture_unconfirmed'}
+OFF_FLOOR_REASONS = {'sitting_off_floor', 'standing'}
 
 
 def _identifier(value):
@@ -48,12 +54,13 @@ class ConfirmationRequest:
 
 @dataclass(frozen=True)
 class ReturnJob:
-    """Drive back after a check found no person; the incident is already closed."""
+    """Drive back after a check closed the case: no person, or off the floor."""
 
     boot_id: str
     incident_id: str
     question_id: str
     revision: int
+    reason: str = 'not_a_person'
 
     def decision(self, outcome):
         return dict(action='return_result', boot_id=self.boot_id, incident_id=self.incident_id,
@@ -79,7 +86,8 @@ class FallConfirmationCoordinator:
         self.finished = OrderedDict()
         self.commands = []
         self.closed = False
-        # question_id -> 'approach' | 'check' | 'confirm'; check carries its start time.
+        # question_id -> 'approach' | 'check' | 'view' | 'posture' | 'confirm';
+        # check and posture carry their start time.
         self.stages = {}
         self.check_since = {}
         self.returns = deque()
@@ -103,7 +111,7 @@ class FallConfirmationCoordinator:
         if not isinstance(kind, str) or kind not in {
                 'incident_opened', 'incident_updated', 'incident_resolved', 'incident_merged',
                 'confirmation_completed', 'analysis_completed', 'question_requested',
-                'person_check_completed'}:
+                'person_check_completed', 'posture_check_completed'}:
             return False
         scope = event.get('confirmation_scope', 'subject')
         subject = event.get('subject_key')
@@ -141,7 +149,11 @@ class FallConfirmationCoordinator:
                 target = (float(target['x']), float(target['y']))
         if kind == 'person_check_completed' and (
                 not _identifier(event.get('question_id'))
-                or event.get('reason') not in {'person', 'not_a_person'}):
+                or event.get('reason') not in PERSON_CHECK_REASONS):
+            return False
+        if kind == 'posture_check_completed' and (
+                not _identifier(event.get('question_id'))
+                or event.get('reason') not in POSTURE_REASONS):
             return False
         if kind == 'incident_merged':
             targets = event.get('merged_into_incident_ids')
@@ -175,14 +187,31 @@ class FallConfirmationCoordinator:
             if request is None or request.incident_id != iid or self.stages.get(qid) != 'check':
                 return True
             self.check_since.pop(qid, None)
-            if event['reason'] == 'person':
+            reason = event['reason']
+            if reason == 'person':
                 self.stages[qid] = 'confirm'
                 return True
+            if reason == 'partial_body':
+                self.stages[qid] = 'view'  # Move to where the whole body is visible.
+                return True
+            if reason == 'whole_body':
+                self.stages[qid] = 'posture'  # Seen from here; next_work starts its clock.
+                return True
             # No person: no question; the runtime closes the case. Go back.
-            del self.requests[qid]
-            self.stages.pop(qid, None)
-            self._remember(qid)
-            self.returns.append(ReturnJob(boot, iid, qid, request.revision))
+            self._close_and_return(boot, iid, qid, request, 'not_a_person')
+            return True
+        if kind == 'posture_check_completed':
+            qid = event['question_id']
+            request = self.requests.get(qid)
+            if (request is None or request.incident_id != iid
+                    or self.stages.get(qid) not in ('view', 'posture')):
+                return True
+            self.check_since.pop(qid, None)
+            if event['reason'] in OFF_FLOOR_REASONS:
+                # Seen off the floor: no question; the runtime closes the case. Go back.
+                self._close_and_return(boot, iid, qid, request, 'off_floor')
+            else:
+                self.stages[qid] = 'confirm'
             return True
         if kind in {'incident_resolved', 'incident_merged'}:
             self.terminal_revisions[iid] = revision
@@ -240,20 +269,28 @@ class FallConfirmationCoordinator:
         self.stages[qid] = 'approach' if target is not None else 'confirm'
         return True
 
+    def _close_and_return(self, boot, iid, qid, request, reason):
+        del self.requests[qid]
+        self.stages.pop(qid, None)
+        self._remember(qid)
+        self.returns.append(ReturnJob(boot, iid, qid, request.revision, reason))
+
     def next_work(self, now):
-        """('return', job) | ('approach' | 'confirm', request) | None (wait)."""
+        """('return', job) | ('approach' | 'view' | 'confirm', request) | None (wait)."""
         if self.returns:
             return 'return', self.returns[0]
         request = next(iter(self.requests.values()), None)
         if request is None:
             return None
-        stage = self.stages.get(request.question_id, 'confirm')
-        if stage == 'check':
-            if now - self.check_since.get(request.question_id, now) < CHECK_WAIT_S:
+        qid = request.question_id
+        stage = self.stages.get(qid, 'confirm')
+        if stage in ('check', 'posture'):
+            since = self.check_since.setdefault(qid, now)
+            if now - since < (CHECK_WAIT_S if stage == 'check' else POSTURE_WAIT_S):
                 return None
             # The runtime did not answer in time: ask from here rather than wait.
-            self.stages[request.question_id] = stage = 'confirm'
-            self.check_since.pop(request.question_id, None)
+            self.stages[qid] = stage = 'confirm'
+            self.check_since.pop(qid, None)
         return stage, request
 
     def approach_done(self, request, outcome, now):
@@ -270,6 +307,19 @@ class FallConfirmationCoordinator:
             self.check_since[request.question_id] = now
         else:
             self.stages[request.question_id] = 'confirm'
+        return True
+
+    def view_done(self, request, outcome, now):
+        """Report the move; the runtime then reads the posture (or reports none)."""
+        if self.requests.get(request.request_id) != request or self.closed:
+            return False
+        if outcome not in APPROACH_OUTCOMES:
+            outcome = 'failed'
+        decision = request.decision('view_result')
+        decision['outcome'] = outcome
+        self.commands.append(decision)
+        self.stages[request.question_id] = 'posture'
+        self.check_since[request.question_id] = now
         return True
 
     def return_done(self, job, outcome):

@@ -1,14 +1,18 @@
-# Drive near an uncertain fall suspicion to look closely, or back afterwards.
+# Drive near an uncertain fall suspicion to look closely, to where the whole body
+# is visible (view), or back afterwards.
 # The fall coordinator owns the sequence; no question or alert happens here.
 string APPROACH=approach
+string VIEW=view
 string RETURN=return
 string request_id
 string phase
-# Map frame point of the suspicion (approach only).
+# Map frame point of the suspicion (approach and view).
 float64 x
 float64 y
-# Stop this far from the point, facing it (approach only).
+# Stop this far from the point, facing it (approach and view).
 float64 standoff_m 1.0
+# Why it goes back (return only): not_a_person or off_floor; shown on the patrol card.
+string reason
 ---
 string ARRIVED=arrived
 string RETURNED=returned

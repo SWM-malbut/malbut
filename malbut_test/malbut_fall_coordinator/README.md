@@ -58,5 +58,28 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 - 능력 `fall_approach.yaml`: URGENT, `[BASE]`, `map_requirement: SELECTED`. 지도가 없거나 위치 전환 중이면
   Manager가 거부하고 코디네이터는 그 자리에서 묻는다.
 - 멈춘 순찰·따라가기는 자동으로 다시 시작하지 않는다(기존 규칙). 웹 순찰 카드가 멈춘 이유와 결과를 보여 준다.
-- 결정(코디네이터 → 런타임): `approach_result`, `return_result` = `boot_id, incident_id, question_id,
-  evidence_revision, outcome`.
+- 결정(코디네이터 → 런타임): `approach_result`, `view_result`, `return_result` = `boot_id, incident_id,
+  question_id, evidence_revision, outcome`.
+
+## 몸 전체 보고 판단하기 (2026-10-11, 런치 `fall_full_view`, 기본 꺼짐)
+
+카메라가 12 cm 높이라 침대에 걸터앉은 사람은 1 m 앞에서 다리만 보인다(10월 10일 20:43, 11일 03:39).
+사람인데 몸 일부만 보이면 몸 전체가 보이는 자리로 옮겨 다시 보고, 바닥에 있지 않으면 묻지 않는다.
+
+```
+person_check_completed
+  ├ partial_body(사람 · 몸 일부만) → fall_approach(phase=view, standoff 2.5 m): 뒤로, 안 되면 좌우 45°·90°
+  │    └ view_result → 런타임이 자세 확인 → posture_check_completed
+  ├ whole_body(1 m 앞에서 이미 몸 전체) → 옮기지 않고 자세 확인 → posture_check_completed
+  └ posture_check_completed
+       ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
+       ├ on_floor · body_unseen · judgements_differ · posture_unconfirmed → fall_confirmation
+       └ 30초 안에 답 없음 → 그 자리에서 fall_confirmation
+```
+
+- 자세 확인(런타임): Pose가 어깨·엉덩이 4점이 보이는 사람을 3번 잡고, 몸통이 서 있고, 몸통 관절 높이(깊이)가
+  `fall_off_floor_torso_m`(기본 0.60 m, 1.0 m 넘으면 서 있음) 이상이면 Cloud에 자세를 한 번 묻는다.
+  Cloud도 `raised`일 때만 닫는다. 몸통이 낮으면 Cloud 없이 묻는다.
+- 옮기기는 60초 안(사용자 결정 1분). 시작 위치는 다가가기 때의 것을 그대로 써서 return이 원래 자리로 간다.
+- return의 `reason`(`not_a_person`/`off_floor`)은 순찰 카드 결과(`fall_result`)를 가른다.
+- 켜기 전에 실기에서 침대에 앉기·바닥에 앉기·바닥에 눕기·서기를 20번쯤 해서 잘못 닫은 경우가 0번인지 본다.

@@ -39,6 +39,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     VideoAssessment, VoiceAnswer, identifier, timestamp,
     CandidateKind, CloudDiscovery, CloudDiscoveryLink, CloudPersonFinding, CloudPoseLink,
     CloudAssociationReview, CloudAnalysisExplanation, PersonCheckReply, PersonCheckRequest,
+    PostureCheckReply, PostureCheckRequest,
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
@@ -70,6 +71,20 @@ FURNITURE_HEIGHT_M = 0.30
 # The lowest quarter of a Cloud box is what the body rests on; its centre would
 # rise to 30-40 cm for someone slumped against a wall on the floor.
 SUPPORT_BAND = 0.25
+# fall_full_view (2026-10-11): the 12 cm camera showed only the legs of someone
+# sitting on a bed, so a close look said "person" and the robot asked. When the
+# look finds a person but not the whole body, the robot moves where the whole
+# body is visible (at most VIEW_LIMIT_S, the user's one minute) and checks where
+# the body rests. It closes without asking only when its own measurement (both
+# shoulders and hips, upright, torso keypoints this high above the floor) and
+# Cloud agree; anything else asks. Heights are starting values to be measured
+# on the robot (sitting on a bed about 0.75 m, on the floor about 0.4 m).
+VIEW_LIMIT_S = 60.0
+POSTURE_POSE_WAIT_S = 5.0
+POSTURE_SAMPLES = 3
+OFF_FLOOR_TORSO_M = 0.60
+STANDING_TORSO_M = 1.00
+OFF_FLOOR_REASONS = frozenset({'sitting_off_floor', 'standing'})
 
 
 @dataclass
@@ -82,6 +97,10 @@ class PersonCheck:
     pose_deadline: float
     cloud: bool = False
     asked: bool = False
+    # 'person' (1 m look), 'view' (moving to see the whole body) or 'posture'.
+    stage: str = 'person'
+    deadline: float = 0.0
+    measured: Optional[str] = None  # the robot's own posture reading
 
 
 @dataclass(frozen=True)
@@ -169,6 +188,11 @@ class CloudFallMonitor:
         # Drive near uncertain suspicions before asking (fall_approach). Off
         # until verified on the robot; the ROS node sets it from a parameter.
         self.approach_enabled = False
+        # Look at the whole body before asking (fall_full_view). Off until the
+        # robot measurement is checked on the robot; the ROS node sets these.
+        self.full_view_enabled = False
+        self.off_floor_torso_m = OFF_FLOOR_TORSO_M
+        self.standing_torso_m = STANDING_TORSO_M
         self._running_missions = ()
         self._person_checks = {}
         # incident_id -> (map point, since): spots the robot is checking now.
@@ -736,8 +760,10 @@ class CloudFallMonitor:
                 return iid  # Same fallback as the close look: the robot faces the spot.
         return None
 
-    def _pose_sees_person(self, check):
-        for stamp, poses in self._subject_evidence.frames_since(check.started):
+    def _spot_poses(self, check, since):
+        """Clear Pose people at the checked spot since then, oldest first."""
+        found = []
+        for stamp, poses in self._subject_evidence.frames_since(since):
             for pose in poses:
                 if pose.strong is not True or not pose.association_usable or pose.box is None:
                     continue
@@ -749,10 +775,29 @@ class CloudFallMonitor:
                         point = None
                 if point is not None:
                     if math.dist(point, check.target) <= SAME_PLACE_M:
-                        return True
+                        found.append(pose)
                 elif 0.25 <= (pose.box[0] + pose.box[2]) / 2 <= 0.75:
-                    return True  # The robot faces the spot: a person in the middle.
-        return False
+                    found.append(pose)  # The robot faces the spot: a person in the middle.
+        return found
+
+    def _pose_sees_person(self, check):
+        return bool(self._spot_poses(check, check.started))
+
+    def _measured_posture(self, check, since):
+        """The robot's own reading from whole-body samples, or None (not enough seen)."""
+        samples = [p for p in self._spot_poses(check, since)
+                   if p.whole_body is True and p.torso_floor_m is not None]
+        if len(samples) < POSTURE_SAMPLES:
+            return None
+        samples = samples[-POSTURE_SAMPLES * 3:]
+        heights = sorted(p.torso_floor_m for p in samples)
+        height = heights[len(heights) // 2]
+        upright = sum(p.upright is True for p in samples) * 2 > len(samples)
+        if height < self.off_floor_torso_m:
+            return 'on_floor'
+        if not upright:
+            return 'posture_unconfirmed'  # High but not upright, e.g. slumped over a bed.
+        return 'standing' if height >= self.standing_torso_m else 'sitting_off_floor'
 
     def _advance_person_checks(self):
         now = self._now()
@@ -763,10 +808,126 @@ class CloudFallMonitor:
                 del self._person_checks[iid]
             elif check.cloud:
                 continue
+            elif check.stage == 'view':
+                if now >= check.deadline:
+                    self._finish_posture_check(iid, 'body_unseen')  # Lost move report.
+            elif check.stage == 'posture':
+                self._advance_posture_check(iid, check, now)
+            elif self.full_view_enabled and self._measured_posture(check, check.started):
+                # The whole body is already in view from 1 m: check where it rests here.
+                self._start_posture_check(iid, check, now, 'whole_body')
             elif self._pose_sees_person(check):
-                self._finish_person_check(iid, 'person')
+                if self.full_view_enabled:
+                    self._start_view(iid, check, now)
+                else:
+                    self._finish_person_check(iid, 'person')
             elif now >= check.pose_deadline:
                 check.cloud = True  # run_once asks Cloud once.
+
+    # ------------------------------------------------------------ whole body
+
+    def _start_view(self, iid, check, now, analysis=None):
+        """A person, not the whole body: the coordinator moves to see all of it."""
+        incident = self._incidents[iid]
+        check.stage, check.cloud, check.asked = 'view', False, False
+        check.deadline = now + VIEW_LIMIT_S + 30.0  # Beyond the coordinator's own limit.
+        self._emit('person_check_completed', incident, question_id=check.question_id,
+                   reason='partial_body', analysis=analysis)
+
+    def _start_posture_check(self, iid, check, now, reason=None):
+        check.stage, check.cloud, check.asked, check.measured = 'posture', False, False, None
+        check.started, check.deadline = now, now + POSTURE_POSE_WAIT_S
+        if reason is not None:
+            self._emit('person_check_completed', self._incidents[iid],
+                       question_id=check.question_id, reason=reason)
+        self._advance_posture_check(iid, check, now)
+
+    def _advance_posture_check(self, iid, check, now):
+        measured = self._measured_posture(check, check.started)
+        if measured in OFF_FLOOR_REASONS:
+            check.measured, check.cloud = measured, True  # run_once asks Cloud to agree.
+        elif measured is not None:
+            self._finish_posture_check(iid, measured)  # On the floor or slumped: ask.
+        elif now >= check.deadline:
+            self._finish_posture_check(iid, 'body_unseen')
+
+    def view_result(self, *, incident_id, question_id, evidence_revision, outcome):
+        """The move to the whole-body spot ended; on arrival read the posture."""
+        if outcome not in APPROACH_OUTCOMES:
+            raise ValueError('invalid view outcome')
+        incident = self._incidents.get(incident_id)
+        check = self._person_checks.get(incident_id)
+        if (incident is None or incident.state is IncidentState.RESOLVED
+                or incident.question_id != question_id or check is None or check.stage != 'view'):
+            return False
+        self._emit('view_completed', incident, question_id=question_id, reason=outcome)
+        if outcome == 'arrived':
+            self._start_posture_check(incident_id, check, self._now())
+        else:
+            self._finish_posture_check(incident_id, 'body_unseen')
+        return True
+
+    async def _cloud_posture_check(self, iid, check):
+        check.asked = True
+        now = self._now()
+        block = self._cloud_block(now)
+        window = None
+        if block is None:
+            try:
+                window = self.buffer.window(end=now, duration_s=2.0, max_images=3,
+                                            max_age_s=self.policy.max_frame_age_s)
+            except ValueError:
+                block = 'fresh_rgb_unavailable'
+        if block is not None:
+            self._finish_posture_check(iid, 'posture_unconfirmed')  # Cannot agree: ask.
+            return True
+        request = PostureCheckRequest(str(uuid4()), window)
+        self._calls.append(now)
+        epoch, reply = self._epoch, None
+        try:
+            self._task = asyncio.create_task(self._provider.check_posture(request))
+            self._task.add_done_callback(self._consume_exception)
+            done, _ = await asyncio.wait({self._task}, timeout=self.policy.cloud_timeout_s)
+            if not done:
+                self._task.cancel()
+            elif self._epoch == epoch and not self._task.cancelled():
+                reply = self._task.result()
+        except asyncio.CancelledError:
+            if self._task is not None:
+                self._task.cancel()
+            raise
+        except Exception:
+            reply = None  # Unclear or failed: ask rather than close.
+        analysis, reason = None, 'posture_unconfirmed'
+        if isinstance(reply, PostureCheckReply):
+            if reply.verdict == 'raised':
+                reason = check.measured
+            elif reply.verdict == 'floor':
+                reason = 'judgements_differ'
+            seen = (VideoAssessment.NORMAL_ACTIVITY if reply.verdict == 'raised'
+                    else VideoAssessment.SUSPECTED_FALL)
+            try:
+                analysis = CloudAnalysisExplanation(
+                    request.request_id, 'posture_check', seen, reply.explanation)
+            except (ValueError, TypeError, UnicodeError):
+                analysis = None
+        self._finish_posture_check(iid, reason, analysis)
+        return True
+
+    def _finish_posture_check(self, iid, reason, analysis=None):
+        check = self._person_checks.pop(iid, None)
+        incident = self._incidents.get(iid)
+        if check is None or incident is None or incident.state is IncidentState.RESOLVED:
+            return
+        if reason in OFF_FLOOR_REASONS:
+            if self._active_incident == iid:
+                reason = 'posture_unconfirmed'  # Its analysis is in flight: ask instead.
+            else:
+                incident.pending = False
+        self._emit('posture_check_completed', incident, question_id=check.question_id,
+                   reason=reason, analysis=analysis)
+        if reason in OFF_FLOOR_REASONS:
+            self.resolve(iid, revision=incident.revision, reason='off_floor_verified')
 
     async def _cloud_person_check(self, iid, check):
         check.asked = True
@@ -809,6 +970,11 @@ class CloudFallMonitor:
                     request.request_id, 'person_check', seen, reply.explanation)
             except (ValueError, TypeError, UnicodeError):
                 analysis = None
+        if (self.full_view_enabled and isinstance(reply, PersonCheckReply)
+                and reply.verdict == 'person' and iid in self._person_checks):
+            # A person, but Pose did not see the whole body in time.
+            self._start_view(iid, check, self._now(), analysis)
+            return True
         self._finish_person_check(iid, 'not_a_person' if not_person else 'person', analysis)
         return True
 
@@ -1107,7 +1273,8 @@ class CloudFallMonitor:
     def resolve(self, incident_id: str, *, revision: int, reason: str) -> None:
         """Only a verified fusion/operator decision may call this boundary."""
         incident = self._incidents[incident_id]
-        if reason not in {'normal_verified', 'risk_cleared', 'response_completed', 'not_a_person'}:
+        if reason not in {'normal_verified', 'risk_cleared', 'response_completed', 'not_a_person',
+                          'off_floor_verified'}:
             raise ValueError('verified closure reason required')
         if (revision != incident.revision or incident.pending
                 or self._active_incident == incident_id):
@@ -1954,6 +2121,8 @@ class CloudFallMonitor:
         looking = next(((iid, c) for iid, c in self._person_checks.items()
                         if c.cloud and not c.asked), None)
         if looking is not None:
+            if looking[1].stage == 'posture':
+                return await self._cloud_posture_check(*looking)
             return await self._cloud_person_check(*looking)
         # Local evidence/verification policy does not depend on the next scan
         # or on receiving another successful Cloud response.

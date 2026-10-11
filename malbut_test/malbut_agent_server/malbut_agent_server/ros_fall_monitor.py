@@ -11,7 +11,9 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
-from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
+from malbut_agent_server.application.cloud_fall_monitor import (
+    OFF_FLOOR_TORSO_M, STANDING_TORSO_M, CloudFallMonitor,
+)
 from malbut_agent_server.application.fall_detector_input import FallDetectorInput, ros_stamp
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_place_locator import (
@@ -82,6 +84,11 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 for name in ('pitch_correction_rad', 'roll_correction_rad', 'height_correction_m')}
             approach = self.declare_parameter(
                 'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
+            full_view = {name: self.declare_parameter(
+                name, default, descriptor=ParameterDescriptor(read_only=True)).value
+                for name, default in (('full_view_enabled', False),
+                                      ('off_floor_torso_m', OFF_FLOOR_TORSO_M),
+                                      ('standing_torso_m', STANDING_TORSO_M))}
             self.monitor = CloudFallMonitor(
                 device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
                 buffer=FallFrameBuffer(retention_s=settings.retention_s,
@@ -90,6 +97,9 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 provider=provider, journal=journal, clock=clock, place_locator=self.place,
                 place_log=self.get_logger().info)
             self.monitor.approach_enabled = bool(approach)
+            self.monitor.full_view_enabled = bool(full_view['full_view_enabled'])
+            self.monitor.off_floor_torso_m = float(full_view['off_floor_torso_m'])
+            self.monitor.standing_torso_m = float(full_view['standing_torso_m'])
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(

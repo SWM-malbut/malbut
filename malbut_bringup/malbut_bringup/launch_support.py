@@ -58,6 +58,13 @@ def defaults():
         # Drive 1 m in front of an uncertain suspicion before asking. Needs the
         # depth switch for map points; without a point it asks where it stands.
         'fall_approach': 'true',
+        # Only part of the body seen from 1 m: move to see all of it and close
+        # without asking only when the robot's measurement and Cloud agree it is
+        # off the floor (2026-10-11). Off until about 20 tries on the robot (bed,
+        # floor, lying, standing) show no wrong closure; the torso height of the
+        # shoulder/hip keypoints that counts as off the floor is set from them.
+        'fall_full_view': 'false',
+        'fall_off_floor_torso_m': '0.60',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',
