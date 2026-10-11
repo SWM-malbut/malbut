@@ -44,7 +44,9 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
-    navigation_targets = value('navigation_targets')
+    start_manager = value('start_manager') == 'true'
+    prerecorded_audio = value('prerecorded_audio') == 'true'
+    audio_directory = value('audio_directory')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     command = [python, '-m', 'malbut_bringup.speech_preflight']
@@ -98,11 +100,10 @@ def _setup(context):
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
         prefix = shlex.quote(python)
-        mission_arguments = []
+        mission_arguments = [
+            '--prerecorded-audio' if prerecorded_audio else '--no-prerecorded-audio']
         if manager_commands:
             mission_arguments.append('--enable-manager-commands')
-            if navigation_targets.strip():
-                mission_arguments.extend(['--navigation-targets', navigation_targets])
         agent = Node(
             package='malbut_agent_server', executable='agent_communication',
             prefix=prefix, output='screen', arguments=[
@@ -113,7 +114,8 @@ def _setup(context):
         )
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
-            parameters=[{'backend': 'openai', 'output_device': output_device}],
+            parameters=[{'backend': 'openai', 'output_device': output_device,
+                         **({'audio_directory': audio_directory} if audio_directory else {})}],
         )
         weather = Node(
             package='malbut_agent_server', executable='weather',
@@ -135,9 +137,12 @@ def _setup(context):
                 'input_has_aec': input_has_aec,
             }],
         )
-        runtime_nodes.extend([agent, tts, stt, weather, key_sync])
+        managers = [Node(
+            package='malbut_system_manager', executable='system_manager', output='screen',
+        )] if start_manager else []
+        runtime_nodes.extend([*managers, agent, tts, stt, weather, key_sync])
         stage = 'running'
-        return [agent, tts, weather, stt, key_sync]
+        return [*managers, agent, tts, weather, stt, key_sync]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:
@@ -169,13 +174,16 @@ def generate_launch_description():
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
         # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
-        'manager_commands': 'true', 'navigation_targets': '',
+        'manager_commands': 'true', 'start_manager': 'false',
+        'prerecorded_audio': 'true', 'audio_directory': '',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
         'agent_provider': ['openai', 'mock'],
         'control_server': ['none', 'manager', 'autoslam'],
         'manager_commands': ['true', 'false'],
+        'start_manager': ['true', 'false'],
+        'prerecorded_audio': ['true', 'false'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

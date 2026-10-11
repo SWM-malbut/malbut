@@ -14,12 +14,12 @@ from malbut_agent_server.speech_mission_policy import configure_speech_missions
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, validate_tool_arguments
 
 
-def runtime(*, navigation=True, simulation=False):
+def runtime(*, simulation=False):
     result = SimpleNamespace(
         capability_registry=simulation_registry() if simulation else production_registry(),
         safety_policy=SafetyPolicy(),
     )
-    return configure_speech_missions(result, navigation_enabled=navigation)
+    return configure_speech_missions(result)
 
 
 def evaluate(utterance, tool, arguments=None, *, policy=None, ttl=5000):
@@ -93,16 +93,24 @@ def test_non_speech_registries_disable_every_mission_tool(registry_factory):
     assert len(registry.to_dict()['capabilities']) > len(SPEECH_MISSION_TOOLS)
 
 
-def test_navigation_opt_in_and_runtime_configuration_are_isolated():
-    first = runtime(navigation=False)
-    second = runtime()
-    assert 'request_navigation' not in first.speech_mission_tools
-    assert 'request_navigation' in second.speech_mission_tools
+def test_navigation_is_available_on_speech_but_requires_applied_rooms_per_turn():
+    from dataclasses import replace
+    from malbut_agent_server.schemas import SpeechAgentRequest
+
+    first = runtime()
+    assert 'request_navigation' in first.speech_mission_tools
     assert first.capability_registry.get('get_weather').available
-    assert evaluate('거실로 가', 'request_navigation', {'location': '거실'},
-                    policy=first).code == 'tool_unavailable'
-    configure_speech_missions(second, navigation_enabled=False)
-    assert 'request_navigation' not in second.speech_mission_tools
+    request = SpeechAgentRequest(
+        request_id='request', user_id='speaker', conversation_id='conversation',
+        turn_id='turn', utterance='안방까지 가', robot_state=RobotState(),
+        available_tools=first.speech_mission_tools, navigation_locations=(),
+    )
+    decision = AgentDecision(type='tool_call', tool_name='request_navigation',
+                             arguments={'location': '안방'}, message='')
+    assert first.safety_policy.evaluate(request, decision).code == 'navigation_unavailable'
+    assert first.safety_policy.evaluate(
+        replace(request, navigation_locations=('안방',)), decision,
+    ).allowed
 
 
 def test_legacy_navigate_still_requires_trusted_state():

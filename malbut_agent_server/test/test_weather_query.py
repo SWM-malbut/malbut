@@ -104,8 +104,9 @@ def test_manager_failure_never_returns_weather_values(kind):
     try:
         query.drain()
         finish(done, thread)
-        assert isinstance(result['error'], RuntimeError)
-        assert 'value' not in result
+        assert result == {'value': {
+            'status': 'unavailable', 'notice_id': 'operation.' + ('failed' if kind == 'rejected' else kind),
+        }}
     finally:
         query.close()
 
@@ -121,6 +122,22 @@ def test_manager_cancellation_propagates_without_a_second_submission():
         query.drain()
         assert len(query._manager.calls) == 1
         assert query._pending == {} and query._manager.cancels == []
+    finally:
+        query.close()
+
+
+def test_manager_failure_reason_needs_no_child_result():
+    manager = Manager('failed')
+    manager.snapshot = lambda key: {
+        'request_id': key, 'capability_id': 'get_weather', 'kind': 'failed',
+        'terminal': True, 'reason': 'Downstream Service is unavailable',
+    }
+    query = ManagerWeatherQuery(manager)
+    result, done, thread = start(query)
+    try:
+        query.drain()
+        finish(done, thread)
+        assert result['value']['notice_id'] == 'operation.failed'
     finally:
         query.close()
 
@@ -189,6 +206,14 @@ def test_only_known_aborted_missing_location_requests_user_input(kind, code, exp
         finish(done, thread)
         if expected:
             assert result == {'value': {'status': expected}}
+        elif kind == 'failed' and code == 'FETCH_FAILED':
+            assert result == {'value': {
+                'status': 'unavailable', 'notice_id': 'operation.failed',
+            }}
+        elif kind == 'unknown':
+            assert result == {'value': {
+                'status': 'unavailable', 'notice_id': 'operation.unknown',
+            }}
         else:
             assert 'error' in result and 'value' not in result
     finally:

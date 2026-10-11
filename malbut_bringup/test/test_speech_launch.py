@@ -91,7 +91,7 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
         speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',
         agent_provider='mock', agent_user_id='trial-user',
         agent_conversation_db='/trial records/session.sqlite3',
-        navigation_targets='/maps/targets.yaml', preflight_timeout_s='25')
+        preflight_timeout_s='25')
     actions = speech._setup(context)
     agent, tts, weather, stt, key_sync = [item for item in actions if isinstance(item, Node)]
     assert weather.node_package == 'malbut_agent_server'
@@ -102,7 +102,8 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     assert command == [
         '--provider', 'mock', '--user-id', 'trial-user',
         '--conversation-db', '/trial records/session.sqlite3',
-        '--enable-manager-commands', '--navigation-targets', '/maps/targets.yaml', '--ros-args']
+        '--prerecorded-audio',
+        '--enable-manager-commands', '--ros-args']
     assert evaluate_parameters(context, tts._Node__parameters) == (
         {'backend': 'openai', 'output_device': 3},)
     config, params = evaluate_parameters(context, stt._Node__parameters)
@@ -118,6 +119,13 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
         '--startup-timeout-s', '25.0', '--wait-for-ready', '--', sys.executable]
 
 
+def test_standalone_speech_can_start_one_manager(speech):
+    context = _context(speech, start_manager='true')
+    nodes = [item for item in speech._setup(context) if isinstance(item, Node)]
+    assert [node.node_executable for node in nodes].count('system_manager') == 1
+    assert nodes[0].node_package == 'malbut_system_manager'
+
+
 def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):
     python = tmp_path / 'speech runtime/bin/python'
     python.parent.mkdir(parents=True)
@@ -131,12 +139,12 @@ def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):
 
 @pytest.mark.parametrize('enabled', ['true', 'false'])
 def test_manager_command_opt_in_does_not_gate_launch(speech, enabled):
-    context = _context(speech, manager_commands=enabled, navigation_targets='/targets.yaml')
+    context = _context(speech, manager_commands=enabled)
     agent = next(item for item in speech._setup(context)
                  if isinstance(item, Node) and item.node_executable == 'agent_communication')
     command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
     assert ('--enable-manager-commands' in command) is (enabled == 'true')
-    assert ('--navigation-targets' in command) is (enabled == 'true')
+    assert '--navigation-targets' not in command
 
 
 @pytest.mark.parametrize('name', [
@@ -220,3 +228,15 @@ def test_real_launch_exit_status_for_explicit_diagnostic(speech, tmp_path, mode,
         'stt_library_path:=unused', 'preflight_only:=true', 'preflight_timeout_s:=0.2',
     ], capture_output=True, text=True, timeout=15)
     assert result.returncode == expected_code, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('enabled', ['true', 'false'])
+def test_prerecorded_option_routes_catalog_ids_and_custom_audio_directory(speech, enabled):
+    context = _context(speech, prerecorded_audio=enabled, audio_directory='/robot/notices')
+    actions = speech._setup(context)
+    agent, tts, *_ = [action for action in actions if isinstance(action, Node)]
+    command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
+    assert ('--prerecorded-audio' in command) is (enabled == 'true')
+    assert ('--no-prerecorded-audio' in command) is (enabled == 'false')
+    parameters = evaluate_parameters(context, tts._Node__parameters)
+    assert parameters[0]['audio_directory'] == '/robot/notices'

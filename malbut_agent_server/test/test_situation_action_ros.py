@@ -25,7 +25,7 @@ from malbut_agent_server.ros_communication import create_communication_node  # n
 
 
 @pytest.fixture
-def rig(monkeypatch, tmp_path):
+def rig(monkeypatch, tmp_path, request):
     monkeypatch.setattr('malbut_agent_server.manager_client.ManagerClient',
                         lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None))
     rclpy.init()
@@ -35,6 +35,7 @@ def rig(monkeypatch, tmp_path):
         dialogue_settings=Settings(
             user_id='speaker', database_path=str(tmp_path / 'dialogue.sqlite3'),
         ),
+        prerecorded_audio=getattr(request, 'param', False),
     )
     voice = Node('confirmation_audio_test')
     executor.add_node(agent)
@@ -43,13 +44,17 @@ def rig(monkeypatch, tmp_path):
         agent=agent, spoken=[], controls=[], session_id='', finish=True, feedback=[],
         voice=voice, executor=executor, control_response=None, completed_controls=0,
         sessions=[],
+        prerecorded_audio=getattr(request, 'param', False),
     )
-    playback = voice.create_publisher(SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
+    audio_namespace = '/malbut/tts' if 'mission_manager' in request.fixturenames else '/malbut/speech'
+    playback = voice.create_publisher(SpeechPlaybackStatus, audio_namespace + '/playback_status', 10)
     inputs = voice.create_publisher(SpeechInputStatus, '/malbut/speech/input_status', 10)
     transcripts = voice.create_publisher(SpeechTranscript, '/malbut/speech/transcript', 10)
 
     def speak(message):
         state.spoken.append(message)
+        if audio_namespace == '/malbut/speech':
+            playback.publish(SpeechPlaybackStatus(playback_id=message.playback_id, state='accepted'))
         playback.publish(SpeechPlaybackStatus(playback_id=message.playback_id, state='playing'))
         if state.finish:
             playback.publish(SpeechPlaybackStatus(
@@ -78,10 +83,11 @@ def rig(monkeypatch, tmp_path):
         state.completed_controls += 1
         return response
 
-    voice.create_subscription(SpeechRequest, '/malbut/speech/response', speak, 10)
+    voice.create_subscription(SpeechRequest, audio_namespace + (
+        '/request' if audio_namespace == '/malbut/tts' else '/response'), speak, 10)
     voice.create_service(ControlSpeechSession, '/malbut/speech/session_control', session)
     voice.create_service(
-        ControlSpeechPlayback, '/malbut/speech/playback_control', control,
+        ControlSpeechPlayback, audio_namespace + '/playback_control', control,
         callback_group=ReentrantCallbackGroup(),
     )
     client = ActionClient(voice, ConfirmSituation, '/malbut/agent/confirm_situation')
@@ -159,6 +165,39 @@ def mission_manager(rig):
         manager.destroy_node()
 
 
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
+@pytest.mark.parametrize('audio_id', ['situation.fall.confirmation', 'situation.resolved'])
+def test_fixed_confirmation_speech_selects_file_only_when_enabled(rig, audio_id, monkeypatch):
+    from malbut_agent_server.mission_audio import CATALOG
+
+    text = CATALOG[audio_id]
+    owner = uuid4()
+    monkeypatch.setattr(rig.agent.situation, '_active_goal', SimpleNamespace(
+        goal_id=SimpleNamespace(uuid=owner.bytes)))
+    rig.spin_until(lambda: rig.agent.situation._speech.get_subscription_count() > 0)
+    assert rig.agent.situation.speak(text, 'fixed-fall-question')
+    rig.spin_until(lambda: len(rig.spoken) == 1)
+    message = rig.spoken[0]
+    assert message.text == text
+    assert message.playback_id == 'fixed-fall-question'
+    assert message.request_type == SpeechRequest.CONFIRMATION
+    assert message.owner_goal_id == owner.hex
+    assert message.interim is False
+    assert message.audio_id == (audio_id if rig.prerecorded_audio else '')
+    # A generated follow-up must retain its own wording and use normal TTS.
+    assert rig.agent.situation.speak('지금 괜찮으신가요?', 'dynamic-question')
+    rig.spin_until(lambda: len(rig.spoken) == 2)
+    assert rig.spoken[1].text == '지금 괜찮으신가요?'
+    assert rig.spoken[1].audio_id == ''
+    # A mission alias must not substitute a shorter recording for a question.
+    alias = '지금 날씨 조회 기능을 사용할 수 없어요.'
+    assert rig.agent.situation.speak(alias, 'unrecorded-exact-wording')
+    rig.spin_until(lambda: len(rig.spoken) == 3)
+    assert rig.spoken[2].text == alias
+    assert rig.spoken[2].audio_id == ''
+
+
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
 def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     handle = rig.start('rest-confirmation')
     assert handle.accepted
@@ -175,6 +214,8 @@ def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     assert result.result().result.help_needed is False
     assert rig.feedback == []
     rig.spin_until(lambda: len(rig.spoken) == 2)
+    assert rig.spoken[-1].text == '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.'
+    assert rig.spoken[-1].audio_id == ('situation.resolved' if rig.prerecorded_audio else '')
     assert rig.agent.situation.active
     rig.playback.publish(SpeechPlaybackStatus(
         playback_id=rig.spoken[-1].playback_id, state='finished',
@@ -418,3 +459,40 @@ def test_vlm_manager_real_agent_round_trip_applies_final_user_judgment(
         link.destroy()
         rig.executor.remove_node(manager)
         manager.destroy_node()
+
+
+def test_manager_keeps_closing_speech_after_confirmation_result(rig, mission_manager):
+    """Admission precedes the judgment; audio remains tracked after mission success."""
+    from malbut_interfaces.action import ExecuteMission
+
+    client = ActionClient(rig.voice, ExecuteMission, '/malbut/mission/execute')
+    try:
+        rig.spin_until(lambda: client.server_is_ready() and rig.agent.dialogue.ready
+                       and rig.agent.situation._input.service_is_ready()
+                       and rig.agent.situation._playback.service_is_ready()
+                       and mission_manager._speech.client.service_is_ready()
+                       and mission_manager._speech.requests.get_subscription_count() > 0)
+        sent = client.send_goal_async(ExecuteMission.Goal(
+            capability_id='fall_confirmation', arguments_yaml=json.dumps({
+                'request_id': 'managed-closing', 'situation_type': 'fall',
+                'summary': '거실 바닥에 누워 있는 사람이 관측됨',
+            })))
+        rig.spin_until(sent.done)
+        assert sent.result().accepted
+        result = sent.result().get_result_async()
+        rig.spin_until(lambda: rig.agent.situation._session is not None
+                       and rig.agent.situation._session.phase == 'listening')
+        rig.finish = False
+        rig.answer('그냥 누워 있는 거야')
+        rig.spin_until(lambda: result.done() and len(rig.spoken) == 2)
+        assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+        closing = rig.spoken[-1]
+        assert closing.owner_goal_id
+        assert closing.playback_id in mission_manager._speech.playbacks
+        assert rig.agent.situation.active
+        rig.playback.publish(SpeechPlaybackStatus(
+            playback_id=closing.playback_id, state='finished'))
+        rig.spin_until(lambda: not rig.agent.situation.active
+                       and not mission_manager._speech.playbacks)
+    finally:
+        client.destroy()

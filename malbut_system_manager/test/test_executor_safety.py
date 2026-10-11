@@ -116,7 +116,7 @@ class _Client:
         """Report a ready downstream server."""
         return True
 
-    def send_goal_async(self, _request, *, feedback_callback):
+    def send_goal_async(self, _request, *, feedback_callback, goal_uuid=None):
         """Create and return one accepted downstream goal."""
         del feedback_callback
         goal_handle = _GoalHandle(self.cancel_acceptance)
@@ -135,7 +135,7 @@ class _PendingClient(_Client):
         super().__init__()
         self.goal_response = _Future()
 
-    def send_goal_async(self, _request, *, feedback_callback):
+    def send_goal_async(self, _request, *, feedback_callback, goal_uuid=None):
         """Return a pending goal-response future."""
         del feedback_callback
         return self.goal_response
@@ -148,7 +148,7 @@ class _FixedGoalClient(_Client):
         super().__init__()
         self.goal_handle = goal_handle
 
-    def send_goal_async(self, _request, *, feedback_callback):
+    def send_goal_async(self, _request, *, feedback_callback, goal_uuid=None):
         """Return the configured goal handle immediately."""
         del feedback_callback
         self.goal_handles.append(self.goal_handle)

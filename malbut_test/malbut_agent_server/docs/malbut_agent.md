@@ -19,7 +19,8 @@ flowchart TD
     A -->|"실행 요청"| M["Manager"]
     M -->|"접수 · 진행 · 실행 결과"| A
 
-    R --> TTS["TTS<br/>텍스트를 음성으로 변환"]
+    R -->|"발화 요청"| M
+    M --> TTS["TTS<br/>텍스트를 음성으로 변환"]
     TTS --> S["스피커"]
 ```
 
@@ -51,9 +52,9 @@ flowchart TD
 
 ### 응답정리
 
-- 자유대화로 부터 받은 텍스트 내용을 정리하여 TTS에 전송한다.
-- 대화/ 명령 구분 프로그램에서 재질문 요청이 들어올 시 정해진 형식에 맞는 재질문 텍스트를 TTS에 전송한다.
-- 명령 구분 프로그램에서 결과가 들어오면 이 결과를 정리하여 TTS에 전송한다.
+- 자유대화로 부터 받은 텍스트 내용을 정리하여 Manager에 발화를 요청한다.
+- 대화/명령 구분 프로그램의 재질문 요청을 정해진 문장으로 정리하여 Manager에 발화를 요청한다.
+- 명령 구분 프로그램에서 결과가 들어오면 이 결과를 정리하여 Manager에 발화를 요청한다.
 
 ### 통신
 
@@ -86,10 +87,10 @@ sequenceDiagram
         Note over A: result 내부 필드<br/>mission_id: string<br/>result_yaml: string — YAML 형식<br/>message: string
 
         Note over A: 종료 상태와 기능별 결과를 확인하고<br/>사용자에게 말할 문장으로 정리
-        A->>T: 결과 안내 텍스트<br/>자료형: string
+        A->>M: 결과 안내 텍스트<br/>자료형: string
 
     else 접수 거절 — accepted가 false
-        A->>T: 요청 거절 안내 텍스트<br/>자료형: string
+        A->>M: 요청 거절 안내 텍스트<br/>자료형: string
     end
 ```
 
@@ -136,8 +137,8 @@ sequenceDiagram
 
 ### 응답 정리
 
-- 자유 대화 및 명령 처리에서 보낸 텍스트를 기반으로 사용자에게 말할 텍스트를 TTS에 보낸다.
-- `/malbut/speech/response` ROS 2 Topic을 사용한다.
+- 자유 대화 및 명령 처리에서 보낸 텍스트를 기반으로 사용자에게 말할 텍스트를 Manager에 발화 요청으로 보낸다.
+- `/malbut/speech/response` ROS 2 Topic으로 Manager에 요청한다. Manager가 소유권을 검증하고 `/malbut/tts/request`로 실행한다.
 - 메시지 타입은 `malbut_interfaces/msg/SpeechRequest`이며, `text`: TTS에 사용자에게 말할 텍스트를 담는다.
 - QoS는 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`을 사용한다.
 
@@ -171,6 +172,14 @@ sequenceDiagram
 
 ### 응답 정리
 
-- 답변과 질문을 이해하기 쉬운 문장으로 TTS에 전달한다. 전달을 음성 재생 완료로 판단하지 않는다.
+- 답변과 질문을 이해하기 쉬운 문장으로 Manager에 전달한다. 전달을 음성 재생 완료로 판단하지 않는다.
 - 확인된 사실만 안내하며, 요청 접수·실행 중·실행 완료를 구분한다.
 - 같은 진행 안내는 반복하지 않고, 주요 상태가 바뀌거나 사용자가 물으면 안내한다.
+
+### 발화 소유권과 접수
+
+낙상 확인 질문의 `owner_goal_id`에는 하위 Action Goal UUID의 hex를 담는다.
+Manager가 실행 중인 SPEAKER 소유자와 대조한다. 마무리 문장을 Manager가
+`accepted`로 접수한 뒤 판단 결과를 반환하며, 실제 음성 완료까지 기다리지 않는다.
+재생 실패로 이미 확정한 판단을 바꾸지 않는다. STT 재생 제어와 재생 상태도
+Manager를 경유하며, 정상 재생 완료는 `finished`뿐이다.

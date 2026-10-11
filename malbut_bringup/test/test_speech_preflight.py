@@ -142,7 +142,8 @@ def test_interrupt_returns_shell_interrupt_status(checks, monkeypatch, capsys):
 
 @pytest.fixture
 def peers(monkeypatch):
-    service_names = ('/malbut/speech/classify_addressee', '/malbut/speech/playback_control')
+    service_names = ('/malbut/speech/classify_addressee', '/malbut/speech/playback_control',
+                     '/malbut/tts/playback_control')
     state = SimpleNamespace(
         now=0.0, ok=False, events=[], clients=[], failure=None, on_spin=None,
         services={name: True for name in service_names},
@@ -152,6 +153,12 @@ def peers(monkeypatch):
             ('subscription', '/malbut/speech/response'): 'malbut_interfaces/msg/SpeechRequest',
             ('publisher', '/malbut/speech/response'): 'malbut_interfaces/msg/SpeechRequest',
             ('publisher', '/malbut/speech/playback_status'):
+                'malbut_interfaces/msg/SpeechPlaybackStatus',
+            ('publisher', '/malbut/tts/request'): 'malbut_interfaces/msg/SpeechRequest',
+            ('subscription', '/malbut/tts/request'): 'malbut_interfaces/msg/SpeechRequest',
+            ('publisher', '/malbut/tts/playback_status'):
+                'malbut_interfaces/msg/SpeechPlaybackStatus',
+            ('subscription', '/malbut/tts/playback_status'):
                 'malbut_interfaces/msg/SpeechPlaybackStatus',
         },
     )
@@ -217,12 +224,14 @@ def test_ready_peers_require_typed_service_clients_and_release_ros(peers):
     assert peers.clients == [
         (peers.types.ClassifySpeechAddressee, '/malbut/speech/classify_addressee'),
         (peers.types.ControlSpeechPlayback, '/malbut/speech/playback_control'),
+        (peers.types.ControlSpeechPlayback, '/malbut/tts/playback_control'),
     ]
     assert peers.events == ['init', 'node', 'destroy', 'shutdown']
 
 
 @pytest.mark.parametrize('service', [
     '/malbut/speech/classify_addressee', '/malbut/speech/playback_control',
+    '/malbut/tts/playback_control',
 ])
 def test_missing_service_blocks_readiness_and_times_out_with_cleanup(peers, service):
     peers.services[service] = False
@@ -237,6 +246,10 @@ def test_missing_service_blocks_readiness_and_times_out_with_cleanup(peers, serv
     ('subscription', '/malbut/speech/response'),
     ('publisher', '/malbut/speech/response'),
     ('publisher', '/malbut/speech/playback_status'),
+    ('publisher', '/malbut/tts/request'),
+    ('subscription', '/malbut/tts/request'),
+    ('publisher', '/malbut/tts/playback_status'),
+    ('subscription', '/malbut/tts/playback_status'),
 ])
 @pytest.mark.parametrize('topic_type', [None, 'std_msgs/msg/String'])
 def test_missing_or_wrong_type_endpoint_blocks_readiness(peers, endpoint, topic_type):

@@ -23,16 +23,21 @@ def test_real_speech_endpoints_are_discovered_and_released():
         for message_type, topic in (
             (messages.SpeechTranscript, '/malbut/speech/transcript'),
             (messages.SpeechRequest, '/malbut/speech/response'),
+            (messages.SpeechRequest, '/malbut/tts/request'),
+            (messages.SpeechPlaybackStatus, '/malbut/tts/playback_status'),
         ):
             node.create_subscription(message_type, topic, lambda _: None, 10)
         for message_type, topic in (
             (messages.SpeechRequest, '/malbut/speech/response'),
             (messages.SpeechPlaybackStatus, '/malbut/speech/playback_status'),
+            (messages.SpeechRequest, '/malbut/tts/request'),
+            (messages.SpeechPlaybackStatus, '/malbut/tts/playback_status'),
         ):
             node.create_publisher(message_type, topic, 10)
         for service_type, name in (
             (services.ClassifySpeechAddressee, '/malbut/speech/classify_addressee'),
             (services.ControlSpeechPlayback, '/malbut/speech/playback_control'),
+            (services.ControlSpeechPlayback, '/malbut/tts/playback_control'),
         ):
             node.create_service(service_type, name, lambda _, response: response)
         wait_for_peers(5.0)

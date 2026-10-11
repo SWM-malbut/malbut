@@ -82,6 +82,8 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 for name in ('pitch_correction_rad', 'roll_correction_rad', 'height_correction_m')}
             approach = self.declare_parameter(
                 'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
+            full_view = self.declare_parameter(
+                'full_view_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
             self.monitor = CloudFallMonitor(
                 device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
                 buffer=FallFrameBuffer(retention_s=settings.retention_s,
@@ -90,6 +92,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 provider=provider, journal=journal, clock=clock, place_locator=self.place,
                 place_log=self.get_logger().info)
             self.monitor.approach_enabled = bool(approach)
+            self.monitor.full_view_enabled = bool(full_view)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(

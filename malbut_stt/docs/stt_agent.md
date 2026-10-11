@@ -4,10 +4,12 @@ flowchart LR
     M["마이크"] --> S["로컬 Whisper STT"]
     S -->|"최종 전사 · 발화 상태"| A["Agent"]
     A -->|"확인 청취 세션 제어"| S
-    A -->|"답변 텍스트"| T["TTS 음성 합성·재생"]
+    A -->|"답변 텍스트"| G["Manager"]
+    G --> T["TTS 음성 합성·재생"]
     T --> SP["스피커"]
-    T -->|"실제 재생 시작·완료 알림"| S
-    T -->|"확인 질문 재생 상태"| A
+    T -->|"실제 재생 상태"| G
+    G -->|"재생 시작·완료 알림"| S
+    G -->|"확인 질문 재생 상태"| A
 ```
 ## 1. 목적
 
@@ -19,11 +21,11 @@ flowchart LR
 |---|---|---|---|
 | STT → Agent 전사 전달 | Topic | `/malbut/speech/transcript` | `SpeechTranscript` |
 | STT → Agent 발화 상태 | Topic | `/malbut/speech/input_status` | `SpeechInputStatus` |
-| TTS → STT·Agent 재생 상태 | Topic | `/malbut/speech/playback_status` | `SpeechPlaybackStatus` |
+| Manager → STT·Agent 재생 상태 | Topic | `/malbut/speech/playback_status` | `SpeechPlaybackStatus` |
 | STT → Agent 발화 대상 판정 | **Service** | `/malbut/speech/classify_addressee` | `ClassifySpeechAddressee` |
 | Agent → STT 확인 청취 세션 제어·조회 | **Service** | `/malbut/speech/session_control` | `ControlSpeechSession` |
 | 웹 말하기 → STT 입력 차단 제어 | **Service** | `/malbut/speech/web_talk_control` | `ControlWebTalk` |
-| STT·Agent → TTS 재생 제어 | **Service** | `/malbut/speech/playback_control` | `ControlSpeechPlayback` |
+| STT·Agent → Manager 재생 제어 | **Service** | `/malbut/speech/playback_control` | `ControlSpeechPlayback` |
 
 필드와 선택값의 최종 기준은 `malbut_interfaces`의 `.msg`와 `.srv` 파일이다.
 공개 통신 목록과 공통 규격은 [인터페이스 명세](../../malbut_interfaces/README.md)에서 확인한다.
@@ -168,3 +170,6 @@ flowchart TD
 - AEC 일반 끼어들기의 인식 실패도 비프 후 호출어 대기로 돌아간다. 기존 재생 상태를 보존하며 임의의 stop/resume을 보내지 않는다. 확인 세션의 `FAILED` 전달과 웹 말하기 입력·출력 차단 정책은 유지한다.
 - 기존 VAD 시작 조건·무발화 타임아웃·0 PCM·빈 결과·추론 예외 판정을 사용한다. 문구 블랙리스트나 VAD 임계값 변경은 없다. VAD를 통과한 비어 있지 않은 Whisper 환각을 구분하는 별도 전사 품질 판정은 없어 이 변경만으로 해당 환각을 차단하지는 못한다.
 - Agent 주도 확인 세션에서 최종 인식에 실패하거나 결과가 비어 있으면 `SpeechInputStatus.FAILED`를 전달한다. Agent는 이를 처리 실패로 종료하며 사용자 무응답으로 판단하지 않는다.
+
+Manager의 `accepted` 상태는 발화 접수만 뜻하므로 STT는 이를 재생 시작·완료로
+처리하지 않는다. 실제 재생 상태와 기존 request_id·interim 기반 입력 차단 규칙을 사용한다.

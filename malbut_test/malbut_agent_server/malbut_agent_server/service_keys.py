@@ -138,6 +138,12 @@ class ManagedKey:
         if health is not None:
             listener(self.service, *health)
 
+    def remove_listener(self, listener):
+        """Release an observer when its owning runtime stops."""
+        with self._lock:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
     def __repr__(self):
         return f'ManagedKey(service={self.service!r}, key=<redacted>)'
 

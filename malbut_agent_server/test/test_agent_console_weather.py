@@ -8,6 +8,7 @@ import test_agent_console_support  # noqa: F401
 
 from console_core import ConsoleCore
 from malbut_agent_server.config import Settings
+from malbut_agent_server.mission_audio import CATALOG
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.schemas import AgentDecision, ProviderResult
 from malbut_agent_server.weather import SOURCE, WeatherForecast, WeatherState
@@ -57,11 +58,11 @@ def test_chat_selects_weather_saves_location_fetches_and_preserves_location(tmp_
     try:
         assert fetches == []
         missing = core.chat('오늘 날씨가 어때?')
-        assert missing['text'] == 'location_required'
+        assert missing['text'] == CATALOG['weather.location_required']
+        assert missing['metadata']['decision']['reason'] == 'weather.location_required'
         assert fetches == []
         assert provider.calls == [
             (['get_weather', 'set_weather_location'], None),
-            ([], {'status': 'location_required'}),
         ]
         provider.location = '수원 우만동'
         ambiguous = core.chat('수원 우만동에 있어')

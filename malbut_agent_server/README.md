@@ -505,10 +505,13 @@ PYTHONPATH=. python3 -m malbut_agent_server.vlm_eval_runner \
 “기억 사용하지 않기”는 별도의 기존 기억 정책으로 처리한다.
 
 발화 접수 후 5초가 지나면 대기 안내를 한 번 보낸다. 일반 모델 생성과
-읽기 전용 날씨 조회는 요청 전체에서 자동 재시도를 한 번 공유하고 안내한다.
+읽기 전용 날씨 조회는 요청 전체에서 자동 재시도를 한 번 공유한다.
 로봇 실행이나 위치 설정을 이 규칙으로 다시 보내지 않는다. 완료·취소 후
 대기 안내를 발행하지 않으며, 재시도가 빠르게 끝나 안내를 아직 전달하지
-못했으면 최종 음성 응답에 재시도 사실을 포함한다.
+못했으면 일반 대화의 최종 음성 응답에 재시도 사실을 포함한다.
+기능 시작을 안내한 뒤에는 재시도·대기 안내를 추가하지 않는다. 사전 녹음 모드에서는
+시작 안내와 실제 답변이 같은 발화 ID를 사용하며, 대기 안내가 이미 재생됐다면
+TTS가 뒤의 시작 안내를 생략한다. 실제 결과는 별도로 재생한다.
 
 압축 후 이전 문구를 다시 물으면 같은 세션의 원문을 조회해 현재 입력에
 포함한다. “처음 제안한 것”, “두번째안”, “2번째 방법” 같은 순서 참조도
@@ -639,7 +642,7 @@ Manager에서 시작하는 이상 상황 확인 대화는 [대화 명세](docs/f
 `/malbut/agent/confirm_situation` Action으로 받고, 최종 판단 두 필드만 반환한다.
 
 `agent_communication`은 STT 최종 발화를 기존 대화 처리에 전달하고, 생성한
-응답을 TTS Topic으로 보내는 개발용 실행 모드다. 같은 대화 DB와 `--user-id`를
+응답을 Manager의 발화 Topic으로 보내는 실행 모드다. 같은 대화 DB와 `--user-id`를
 사용하면 재시작 후에도 마지막 완료 발화로부터 1시간 기준으로 세션을 재개한다.
 Manager의 실행 요청·진행·취소 통신도
 같은 Agent Node에서 제공하며, 모델 응답을 기다리는 동안에도 처리한다.
@@ -660,14 +663,17 @@ flowchart LR
     DEV["개발 터미널의 명시적 요청"] --> A
     A -->|"ExecuteMission Goal · Cancel"| M["Manager"]
     M -->|"접수 · Feedback · Result"| A
-    A -->|"SpeechRequest Topic: 대화 답변 · 안내 문장"| TTS["TTS 수신기"]
+    A -->|"SpeechRequest: 대화 답변 · 안내 문장"| M
+    M -->|"검증된 발화"| TTS["TTS 합성·재생"]
+    TTS -->|"실제 재생 상태"| M
+    M -->|"접수 · 재생 상태"| A
 ```
 
 | 구간 | 공개 ROS 계약 | 이번 구현의 처리 |
 | --- | --- | --- |
 | STT → Agent | `/malbut/speech/transcript`, `malbut_interfaces/msg/SpeechTranscript` | 기존 수신 기록·중복 판정 후 원문을 대화 처리에 전달 |
 | Agent ↔ Manager | `/malbut/mission/execute`, `malbut_interfaces/action/ExecuteMission` | 요청, 접수, 진행, 결과, 특정 Goal 취소 |
-| Agent → TTS | `/malbut/speech/response`, `malbut_interfaces/msg/SpeechRequest` | `text`에 대화 답변·질문·명령 안내 문장을 담아 발행 |
+| Agent → Manager | `/malbut/speech/response`, `malbut_interfaces/msg/SpeechRequest` | `text`에 대화 답변·질문·명령 안내 문장을 담아 발행 |
 
 Agent는 발행할 때마다 고유한 `playback_id`를 지정한다. TTS 재생 노드는
 같은 ID로 `SpeechPlaybackStatus`를 발행하므로, 동일한 문장을 반복해도
@@ -678,8 +684,13 @@ Agent는 발행할 때마다 고유한 `playback_id`를 지정한다. TTS 재생
 안내를 취소한다. 이미 재생·일시정지 중인 음성과 다른 요청의 답변은 유지한다.
 
 두 Topic은 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`을 사용한다.
-TTS를 위한 별도 Manifest는 만들지 않는다. TTS 수신기는 음성을 합성하거나
-스피커로 재생하지 않으며, 발행 성공도 상대 수신·재생 완료를 보장하지 않는다.
+발화는 Manager의 별도 중재 경로를 사용하며 문장마다 일반 미션을 만들지 않는다.
+Manager는 `/malbut/tts/request`로 전달하고 STT·Agent의 재생 제어도 중계한다.
+`accepted`는 접수이고 `finished`만 정상 재생 완료다. 낙상 확인 발화에는
+하위 Action UUID인 `owner_goal_id`를 넣어 기존 `SPEAKER` 소유권을 사용한다.
+마무리 문장 접수 후 판단 결과를 반환하므로 결과 전달과 재생 완료는 별개다.
+자세한 정책은 [Manager 발화 실행](../malbut_system_manager/README.md#발화-실행)을 따른다.
+`tts_receiver`는 공개 요청을 로그로 관찰하는 도구이며 합성·재생·Manager 접수를 보장하지 않는다.
 
 이 모드는 개발용 사용자와 대화 DB를 사용한다. 발화 ID로 화자 신원을
 추정하거나 기존 실제 사용자의 대화·기억에 연결하지 않는다. 대화 DB에는

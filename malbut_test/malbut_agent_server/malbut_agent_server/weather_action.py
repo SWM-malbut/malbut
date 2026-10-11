@@ -269,6 +269,8 @@ def create_weather_action_node(*, client=None, timeout_s=10.0,
 
         def destroy_node(self):
             self.close()
+            if getattr(self, '_key_health', None) is not None:
+                self._key_health.close()
             if self._server is not None:
                 self._server.destroy()
                 self._server = None

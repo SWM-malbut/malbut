@@ -10,6 +10,12 @@ Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는
 기본으로 포함한다. `speech.launch.py`는 이때 사용하는 하위 launch이며 음성만 진단할 때
 별도로 실행할 수 있다. Agent의 현재 proposal-only 정책과 STT/TTS 명세는 그대로 사용한다.
 
+발화와 STT 재생 제어는 **Manager를 거쳐 TTS**로 전달한다. 전체 Bringup에서는
+robot 모듈의 Manager를 사용한다. `speech.launch.py`만 단독으로 실행하고
+Manager가 없는 경우 `start_manager:=true`를 지정한다. 이미 Manager가 실행 중이면
+기본값 `false`를 유지한다. 이 옵션은 주행 기능이나 센서를 시작하지 않는다.
+별도 `--wait-for-peers` 진단은 Manager 공개 주소와 TTS 실행용 주소를 함께 확인한다.
+
 ## 최초 준비
 
 실로봇에는 저장소의 **`malbut_test` 내용**을 `~/ros2_ws/src/malbut`으로 복사한다.
@@ -104,7 +110,7 @@ Agent·STT·TTS 프로세스도 종료 후 새로 시작한다.
 ## 실행과 장치 선택
 
 현재 Agent의 기본 provider와 TTS backend는 `openai`이며 TTS 모델은
-`gpt-4o-mini-tts`, 목소리는 `marin`이다. 실제 대화에서는 텍스트가 유료 외부 API로
+`gpt-4o-mini-tts`, 목소리는 `nova`이다. 실제 대화에서는 텍스트가 유료 외부 API로
 전달되며 출력 음성은 AI가 생성한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
 실행 터미널에 미리 export한다. 키를 launch 인자나 YAML에 넣지 않는다.
 launch는 `.env` 파일을 자동 로드하지 않는다.
@@ -217,9 +223,14 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 기존 `control_server`, `peer_timeout_s` 인자는 구 호출 호환용으로 받지만 일반 실행의
 외부 준비 검사에 사용하지 않는다. 모델 초기화 제한시간 `preflight_timeout_s`는 유지한다.
 STT 시작 중 확인된 CUDA 메모리 부족에 대한 기존 5초·10초 대기/최대 3회 시도는
-음성 프로세스 내부에서 유지한다. 실패 소진·모델 오류·음성 노드 종료는 로그로
-보고하며 다른 모듈을 종료하지 않는다. 자동 복구 기능을 새로 추가하지 않는다.
-Ctrl+C 또는 웹 Bringup 종료는 소유한 음성 프로세스와 진행 중인 대기도 정리한다.
+음성 프로세스 내부에서 유지한다. 일반 실행에서 STT가 초기화 실패·마이크 오류 등으로
+종료되면 기존 자식 프로세스를 정리한 뒤 5초 후 STT만 다시 시작한다. 재시작할 때마다
+초기화 제한시간을 새로 적용하며, 실패가 계속되면 같은 간격으로 재시도한다.
+Agent·TTS 등 다른 모듈은 계속 실행하며 자동 재시작 대상에는 포함하지 않는다.
+음성을 소유한 launch를 종료하면 실행 중인 STT와 재시작 대기도 함께 종료한다.
+웹에서 Bringup을 종료하면 그 Bringup이 소유한 음성도 함께 종료된다.
+재시작은 종료된 프로세스를 복구하며, USB/PulseAudio 장애 자체를 해결하거나
+오류 없이 멈춘 프로세스를 감시하지는 않는다. 실제 마이크 입력 이후에만 다시 ready가 된다.
 단독 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하며,
 `preflight_only:=true`는 실제 음성 노드를 시작하지 않고 종료한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.
@@ -250,9 +261,10 @@ ros2 launch malbut_bringup speech.launch.py \
 ```
 
 이 진단은 성공 시 종료한다. 음성만 계속 시험하려면 같은 명령의 `preflight_only`를
-`false`로 바꾼다. 정상 로봇 운용에는 위 `bringup.launch.py`를 사용한다.
+`false`로 바꾸고 `start_manager:=true`를 추가한다. 정상 로봇 운용에는 위
+`bringup.launch.py`를 사용한다.
 
-현재 로봇의 XFM으로 STT·Agent·TTS만 실행하는 명령은 다음과 같다.
+현재 로봇의 XFM으로 STT·Agent·Manager·TTS를 실행하는 명령은 다음과 같다.
 위 선점 해제를 마치고 ROS 및 빌드된 workspace 환경을 불러온 터미널에서 실행한다:
 
 ```bash
@@ -260,7 +272,7 @@ ros2 launch malbut_bringup speech.launch.py \
   python_executable:=/home/ubuntu/.cache/malbut_speech/runtime/bin/python \
   stt_model_path:=/home/ubuntu/.cache/malbut_speech/models/ggml-small.bin \
   stt_library_path:=/home/ubuntu/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so \
-  agent_provider:=openai control_server:=none input_device:=0
+  agent_provider:=openai control_server:=none start_manager:=true input_device:=0
 ```
 
 실행 중 `ros2 param get /malbut_stt device_index`가 `0`인지 확인한다.
@@ -309,7 +321,7 @@ ros2 launch malbut_bringup speech.launch.py \
   python_executable:="$HOME/.cache/malbut_speech/runtime/bin/python" \
   stt_model_path:="$HOME/.cache/malbut_speech/models/ggml-small.bin" \
   stt_library_path:="$HOME/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so" \
-  agent_user_id:=trial-20260926-p1 \
+  start_manager:=true agent_user_id:=trial-20260926-p1 \
   agent_conversation_db:="$HOME/.local/state/malbut/trial-20260926-p1.sqlite3"
 ```
 

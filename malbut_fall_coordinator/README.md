@@ -58,5 +58,29 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 - 능력 `fall_approach.yaml`: URGENT, `[BASE]`, `map_requirement: SELECTED`. 지도가 없거나 위치 전환 중이면
   Manager가 거부하고 코디네이터는 그 자리에서 묻는다.
 - 멈춘 순찰·따라가기는 자동으로 다시 시작하지 않는다(기존 규칙). 웹 순찰 카드가 멈춘 이유와 결과를 보여 준다.
-- 결정(코디네이터 → 런타임): `approach_result`, `return_result` = `boot_id, incident_id, question_id,
-  evidence_revision, outcome`.
+- 결정(코디네이터 → 런타임): `approach_result`, `view_result`, `return_result` = `boot_id, incident_id,
+  question_id, evidence_revision, outcome`.
+
+## 몸 전체 보고 판단하기 (2026-10-11, 런치 `fall_full_view`, 기본 켜짐)
+
+카메라가 12 cm 높이라 침대에 걸터앉은 사람은 1 m 앞에서 다리만 보인다(10월 10일 20:43, 11일 03:39).
+근접 확인이 사람이면 몸 전체가 보이는 자리로 물러나 클라우드 AI에게 자세를 두 번 묻고, 두 번 다
+침대·의자 위이거나 서 있으면 묻지 않는다. 12 cm에서 올려다보면 허벅지가 엉덩이를 가려 Pose 관절로는
+가리기 어려워 Pose는 쓰지 않는다.
+
+```
+person_check_completed
+  ├ partial_body(사람) → fall_approach(phase=view, standoff 2.5 m): 뒤로, 안 되면 좌우 45°·90°
+  │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
+  └ posture_check_completed
+       ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
+       ├ on_floor · body_unseen · posture_unconfirmed → fall_confirmation
+       └ 60초 안에 답 없음 → 그 자리에서 fall_confirmation
+```
+
+- 자세 확인(런타임): 도착 1초 뒤 Cloud `check_posture`(`furniture`/`standing`/`floor`/`unclear`)를 묻고,
+  `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 닫는다(둘 다 `standing`이면
+  `standing`). `floor`는 `on_floor`, 애매·실패·차단은 `posture_unconfirmed`, 옮기지 못하면 `body_unseen`.
+- 옮기기는 60초 안(사용자 결정 1분). 시작 위치는 다가가기 때의 것을 그대로 써서 return이 원래 자리로 간다.
+- return의 `reason`(`not_a_person`/`off_floor`)은 순찰 카드 결과(`fall_result`)를 가른다.
+- 로그: `fall posture: case … Cloud looks furniture, furniture: sitting_off_floor`.

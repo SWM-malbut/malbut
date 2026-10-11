@@ -349,6 +349,24 @@ def test_non_action_meanings_and_existing_tool_refusal_are_preserved():
         worker.close()
 
 
+@pytest.mark.parametrize('reason', ['unsupported_capability', 'unavailable_capability'])
+def test_unavailable_function_message_uses_the_short_recording(reason):
+    from malbut_agent_server.mission_audio import TEXT_IDS
+
+    provider = FixedProvider(lambda request, history: AgentDecision(
+        type='message', message='홈캠 이벤트를 조회하는 기능은 현재 사용할 수 없어요.',
+        reason=reason,
+    ))
+    worker = DialogueWorker(RuntimeFactory(provider), 'speaker')
+    try:
+        assert worker.submit('homecam', '최근 홈캠 이벤트를 조회해줘')
+        reply = collect(worker, 1)[0]
+        assert reply['text'] == '현재 지원하지 않아요.'
+        assert TEXT_IDS[reply['text']] == 'operation.unsupported'
+    finally:
+        worker.close()
+
+
 def test_capacity_includes_inflight_pending_and_unread_results():
     release = threading.Event()
 

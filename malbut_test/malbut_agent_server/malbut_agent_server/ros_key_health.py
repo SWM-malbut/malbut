@@ -5,6 +5,7 @@ Never the key itself. Transient local, so key_sync hears the latest even if it s
 """
 
 import json
+from threading import RLock
 
 HEALTH_TOPIC = '/malbut/keys/health'
 
@@ -24,11 +25,23 @@ class KeyHealthPublisher:
 
     def __init__(self, node, managed_key):
         from std_msgs.msg import String
+        self._lock = RLock()
+        self._closed = False
+        self._key = managed_key
         self._string = String
         self._publisher = node.create_publisher(String, HEALTH_TOPIC, health_qos())
         managed_key.add_listener(self._publish)
 
     def _publish(self, service, state, code):
-        message = self._string()
-        message.data = health_message(service, state, code)
-        self._publisher.publish(message)
+        with self._lock:
+            if self._closed:
+                return
+            message = self._string()
+            message.data = health_message(service, state, code)
+            self._publisher.publish(message)
+
+    def close(self):
+        """Drain an in-flight publication before ROS destroys its publisher."""
+        with self._lock:
+            self._closed = True
+            self._key.remove_listener(self._publish)

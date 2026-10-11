@@ -17,8 +17,8 @@ def test_acceptance_and_cancellation_are_not_execution_completion():
     """Acceptance cannot turn into success or physical stop speech."""
     assert '접수' in event_speech(event('accepted'))
     assert '성공' not in event_speech(event('accepted'))
-    assert '종료 확인 전' in event_speech(event('cancel_accepted'))
-    assert '취소 상태로 종료' in event_speech(event('canceled'))
+    assert event_speech(event('cancel_accepted')) == '취소를 요청했어요.'
+    assert event_speech(event('canceled')) == '작업이 취소됐어요.'
     assert '멈췄' not in event_speech(event('canceled'))
     assert '정지' not in event_speech(event('canceled'))
 
@@ -28,14 +28,14 @@ def test_success_describes_manager_status_not_unverified_result_fields():
     text = event_speech(event(
         'succeeded', result_yaml='arrived: true\nphysically_stopped: true',
     ))
-    assert 'Manager' in text and '성공 상태로 종료' in text
+    assert text == '요청하신 작업이 완료됐어요.'
     assert '도착' not in text and '정지' not in text
 
 
-def test_manager_failure_reports_only_its_supplied_reason():
+def test_manager_failure_keeps_internal_reasons_out_of_speech():
     """Handle failures after Goal acceptance without inventing their cause."""
     supplied = 'unknown capability: missing'
-    assert supplied in event_speech(event('failed', reason=supplied))
+    assert event_speech(event('failed', reason=supplied)) == '작업을 완료하지 못했어요.'
     assert '사유' not in event_speech(event('failed'))
     assert event_speech(event('submitted')) is None
     assert event_speech(event('progress', state='made_up_state')) is None
@@ -77,7 +77,7 @@ def test_admission_rejection_does_not_claim_a_supplied_reason():
     text = event_speech(event(
         'rejected', reason='Manager did not accept the Action Goal',
     ))
-    assert '접수를 거절' in text
+    assert text == '작업을 완료하지 못했어요.'
     assert '전달받은 사유' not in text
     assert 'did not accept' not in text
 
@@ -85,8 +85,8 @@ def test_admission_rejection_does_not_claim_a_supplied_reason():
 def test_cancel_rejection_does_not_promise_new_result_observation():
     """Result observation may already have failed with an unknown state."""
     text = event_speech(event('cancel_rejected', state='UNKNOWN'))
-    assert '접수되지 않았어요' in text
-    assert '종료된 것으로 판단하지 않을게요' in text
+    assert text == '취소 요청을 처리하지 못했어요.'
+    assert '취소됐어요' not in text
     assert '계속 확인' not in text
 
 

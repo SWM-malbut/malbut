@@ -3,12 +3,14 @@
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
+from uuid import uuid4
 
 from action_msgs.msg import GoalStatus
 from action_msgs.srv import CancelGoal
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
 from rosidl_runtime_py.convert import message_to_yaml
+from unique_identifier_msgs.msg import UUID
 
 from .models import (
     CommandKind,
@@ -41,6 +43,7 @@ class _Execution:
     dispatch_timed_out: bool = False
     goal_response_timer: Any = None
     cancel_completion_timer: Any = None
+    goal_id: str = ''
 
 
 class MissionExecutor:
@@ -88,6 +91,7 @@ class MissionExecutor:
             )
             return
         execution = _Execution(mission.mission_id, generation, client, kind)
+        execution.goal_id = uuid4().hex
         with self._lock:
             self._runs[mission.mission_id] = execution
         if kind is CommandKind.SERVICE:
@@ -116,6 +120,7 @@ class MissionExecutor:
         try:
             future = client.send_goal_async(
                 request_message,
+                goal_uuid=UUID(uuid=list(bytes.fromhex(execution.goal_id))),
                 feedback_callback=lambda message: self._feedback(
                     execution,
                     message,
@@ -167,6 +172,12 @@ class MissionExecutor:
                 return False
         self._request_cancel(execution)
         return True
+
+    def mission_for_goal(self, goal_id: str) -> str | None:
+        """Resolve only a live downstream generation's speech ownership."""
+        with self._lock:
+            return next((run.mission_id for run in self._runs.values()
+                         if run.goal_id == goal_id), None)
 
     def is_current(self, mission_id: str, generation: int) -> bool:
         """Return whether a callback belongs to the current execution."""

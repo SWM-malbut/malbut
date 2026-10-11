@@ -10,6 +10,12 @@ Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는
 기본으로 포함한다. `speech.launch.py`는 이때 사용하는 하위 launch이며 음성만 진단할 때
 별도로 실행할 수 있다. Agent의 현재 proposal-only 정책과 STT/TTS 명세는 그대로 사용한다.
 
+발화와 STT 재생 제어는 **Manager를 거쳐 TTS**로 전달한다. 전체 Bringup에서는
+robot 모듈의 Manager를 사용한다. `speech.launch.py`만 단독으로 실행하고
+Manager가 없는 경우 `start_manager:=true`를 지정한다. 이미 Manager가 실행 중이면
+기본값 `false`를 유지한다. 이 옵션은 주행 기능이나 센서를 시작하지 않는다.
+별도 `--wait-for-peers` 진단은 Manager 공개 주소와 TTS 실행용 주소를 함께 확인한다.
+
 ## 최초 준비
 
 실로봇에는 저장소의 **`malbut_test` 내용**을 `~/ros2_ws/src/malbut`으로 복사한다.
@@ -104,7 +110,7 @@ Agent·STT·TTS 프로세스도 종료 후 새로 시작한다.
 ## 실행과 장치 선택
 
 현재 Agent의 기본 provider와 TTS backend는 `openai`이며 TTS 모델은
-`gpt-4o-mini-tts`, 목소리는 `marin`이다. 실제 대화에서는 텍스트가 유료 외부 API로
+`gpt-4o-mini-tts`, 목소리는 `nova`이다. 실제 대화에서는 텍스트가 유료 외부 API로
 전달되며 출력 음성은 AI가 생성한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
 실행 터미널에 미리 export한다. 키를 launch 인자나 YAML에 넣지 않는다.
 launch는 `.env` 파일을 자동 로드하지 않는다.
@@ -255,9 +261,10 @@ ros2 launch malbut_bringup speech.launch.py \
 ```
 
 이 진단은 성공 시 종료한다. 음성만 계속 시험하려면 같은 명령의 `preflight_only`를
-`false`로 바꾼다. 정상 로봇 운용에는 위 `bringup.launch.py`를 사용한다.
+`false`로 바꾸고 `start_manager:=true`를 추가한다. 정상 로봇 운용에는 위
+`bringup.launch.py`를 사용한다.
 
-현재 로봇의 XFM으로 STT·Agent·TTS만 실행하는 명령은 다음과 같다.
+현재 로봇의 XFM으로 STT·Agent·Manager·TTS를 실행하는 명령은 다음과 같다.
 위 선점 해제를 마치고 ROS 및 빌드된 workspace 환경을 불러온 터미널에서 실행한다:
 
 ```bash
@@ -265,7 +272,7 @@ ros2 launch malbut_bringup speech.launch.py \
   python_executable:=/home/ubuntu/.cache/malbut_speech/runtime/bin/python \
   stt_model_path:=/home/ubuntu/.cache/malbut_speech/models/ggml-small.bin \
   stt_library_path:=/home/ubuntu/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so \
-  agent_provider:=openai control_server:=none input_device:=0
+  agent_provider:=openai control_server:=none start_manager:=true input_device:=0
 ```
 
 실행 중 `ros2 param get /malbut_stt device_index`가 `0`인지 확인한다.
@@ -314,7 +321,7 @@ ros2 launch malbut_bringup speech.launch.py \
   python_executable:="$HOME/.cache/malbut_speech/runtime/bin/python" \
   stt_model_path:="$HOME/.cache/malbut_speech/models/ggml-small.bin" \
   stt_library_path:="$HOME/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so" \
-  agent_user_id:=trial-20260926-p1 \
+  start_manager:=true agent_user_id:=trial-20260926-p1 \
   agent_conversation_db:="$HOME/.local/state/malbut/trial-20260926-p1.sqlite3"
 ```
 
