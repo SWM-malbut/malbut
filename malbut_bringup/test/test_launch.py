@@ -601,6 +601,19 @@ def test_upload_setup_failure_does_not_disable_detection(launch_module, fall_con
     assert any(isinstance(a, LogInfo) for a in actions)
 
 
+@pytest.mark.parametrize('overrides,enabled', [
+    ({}, True),  # On by default: the web starts Bringup with a fixed command.
+    ({'fall_full_view': 'false'}, False),
+    ({'fall_approach': 'false'}, False),  # Moving back needs the approach.
+])
+def test_the_whole_body_look_is_on_by_default_and_needs_the_approach(
+        launch_module, fall_config, overrides, enabled):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), **overrides)
+    monitor, = _nodes(module._setup(context), 'malbut-fall-monitor')
+    assert _parameters(context, monitor)['full_view_enabled'] is enabled
+
+
 def test_disabled_fall_never_starts_uploader(launch_module, fall_config):
     module = _load('fall')
     context = _context(module, fall_monitor='false', fall_config=str(fall_config))

@@ -63,7 +63,7 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   그 트랙의 다음 후보도 사건이 열려 있는 동안 같은 사건으로 간다. 사건이 닫히면 붙은 트랙도 풀린다.
 - 급격한 자세 변화(새로 본 낙상)는 겹쳐도 따로 연다. 옆에 있던 다른 사람이 쓰러진 것을 놓치지 않기 위해서다.
 
-2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 꺼짐, `fall_approach` 필요):
+2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 켜짐, `fall_approach` 필요):
 - 침대에 걸터앉은 사람이 12 cm 카메라에 다리만 보여, 근접 확인이 "사람"이라 답하고 질문까지 갔다(10월 10일 20:43, 11일 03:39).
 - 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 2.5 m 자리로 옮기고
   `view_result`를 주면 `view_completed(reason=outcome)`.

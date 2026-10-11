@@ -61,7 +61,7 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 - 결정(코디네이터 → 런타임): `approach_result`, `view_result`, `return_result` = `boot_id, incident_id,
   question_id, evidence_revision, outcome`.
 
-## 몸 전체 보고 판단하기 (2026-10-11, 런치 `fall_full_view`, 기본 꺼짐)
+## 몸 전체 보고 판단하기 (2026-10-11, 런치 `fall_full_view`, 기본 켜짐)
 
 카메라가 12 cm 높이라 침대에 걸터앉은 사람은 1 m 앞에서 다리만 보인다(10월 10일 20:43, 11일 03:39).
 근접 확인이 사람이면 몸 전체가 보이는 자리로 물러나 클라우드 AI에게 자세를 두 번 묻고, 두 번 다
