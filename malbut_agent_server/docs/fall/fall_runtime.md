@@ -63,6 +63,17 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   그 트랙의 다음 후보도 사건이 열려 있는 동안 같은 사건으로 간다. 사건이 닫히면 붙은 트랙도 풀린다.
 - 급격한 자세 변화(새로 본 낙상)는 겹쳐도 따로 연다. 옆에 있던 다른 사람이 쓰러진 것을 놓치지 않기 위해서다.
 
+2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 켜짐, `fall_approach` 필요):
+- 침대에 걸터앉은 사람이 12 cm 카메라에 다리만 보여, 근접 확인이 "사람"이라 답하고 질문까지 갔다(10월 10일 20:43, 11일 03:39).
+- 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 2.5 m 자리로 옮기고
+  `view_result`를 주면 `view_completed(reason=outcome)`.
+- 자세 판단: 도착 1초 뒤 Cloud "자세 확인"(`check_posture`, `furniture`/`standing`/`floor`/`unclear`)을 묻고,
+  `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 `sitting_off_floor`(둘 다
+  `standing`이면 `standing`)로 `incident_resolved(off_floor_verified)`. `floor`는 `on_floor`, 애매·실패·차단은
+  `posture_unconfirmed`, 옮기지 못하면 `body_unseen`. 닫히지 않으면 지금처럼 묻는다.
+- Pose 관절·몸통 높이는 쓰지 않는다. 12 cm에서 올려다보면 앉은 사람의 허벅지가 엉덩이를 가린다.
+- 웹 계약(#235)이 먼저 배포돼 있어야 한다. 로그 `fall posture: case … Cloud looks …: 이유`로 판단을 확인한다.
+
 실시간 영상 추적은 **선택 기능이며 기본 OFF**다. `tracking: null` 또는 필드 생략이면
 기존 동작을 유지한다. GPU·모델을 자동 설치하거나 CPU로 대신 실행하지 않는다.
 켜려면 실제 런타임 JSON의 `tracking`을 다음 객체로 바꾼다. 아래 경로는 예시다.

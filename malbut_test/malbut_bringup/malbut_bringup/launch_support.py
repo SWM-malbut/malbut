@@ -58,6 +58,12 @@ def defaults():
         # Drive 1 m in front of an uncertain suspicion before asking. Needs the
         # depth switch for map points; without a point it asks where it stands.
         'fall_approach': 'true',
+        # A person seen from 1 m: move back to see the whole body and close
+        # without asking only when two Cloud looks a few seconds apart both say
+        # on a bed or chair, or standing (2026-10-11). On by default: the web
+        # starts Bringup with a fixed command, and anything short of two such
+        # looks still asks. Needs fall_approach.
+        'fall_full_view': 'true',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',

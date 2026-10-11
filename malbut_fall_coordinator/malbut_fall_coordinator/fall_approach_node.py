@@ -31,8 +31,8 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_fall_coordinator.fall_approach import (
-    APPROACH_LIMIT_S, RETURN_LIMIT_S, Pose2D, StartPoses, facing_turn,
-    goal_error, plan_targets, returning_turn, route_length, standoff_route,
+    APPROACH_LIMIT_S, RETURN_LIMIT_S, VIEW_LIMIT_S, Pose2D, StartPoses, facing_turn,
+    goal_error, plan_targets, returning_turn, route_length, standoff_route, view_points,
 )
 
 STATUS_TOPIC = '/malbut/falls/approach/status'
@@ -99,7 +99,7 @@ class FallApproachNode(Node):
             callback_group=self.group)
 
     def _goal(self, request):
-        if goal_error(request.phase, request.x, request.y, request.standoff_m):
+        if goal_error(request.phase, request.x, request.y, request.standoff_m, request.reason):
             return GoalResponse.REJECT
         if not request.request_id or len(request.request_id) > 200 or self.busy.locked():
             return GoalResponse.REJECT
@@ -108,13 +108,14 @@ class FallApproachNode(Node):
     def _execute(self, handle):
         request = handle.request
         with self.busy:
-            limit = APPROACH_LIMIT_S if request.phase == 'approach' else RETURN_LIMIT_S
+            limit = {'approach': APPROACH_LIMIT_S, 'view': VIEW_LIMIT_S}.get(
+                request.phase, RETURN_LIMIT_S)
             deadline = time.monotonic() + limit
             canceled = False
+            phase = {'approach': self._approach, 'view': self._view}.get(
+                request.phase, self._return)
             try:
-                outcome, detail = (self._approach(handle, request, deadline)
-                                   if request.phase == 'approach'
-                                   else self._return(handle, request, deadline))
+                outcome, detail = phase(handle, request, deadline)
             except Timeout:
                 outcome, detail = 'timeout', f'not done within {limit:.0f} s'
             except Canceled:
@@ -156,6 +157,30 @@ class FallApproachNode(Node):
             if not self._spin(handle, turn, deadline):
                 return 'arrived', 'could not turn to face the spot'
         return 'arrived', ''
+
+    def _view(self, handle, request, deadline):
+        """Move back (or around) to where the whole body is visible, facing the spot."""
+        robot = self._pose()
+        if robot is None:
+            return 'no_map', 'no robot pose on the map'
+        self.starts.remember(request.request_id, robot)  # Normally kept from the approach.
+        target = (request.x, request.y)
+        for goal in view_points((robot.x, robot.y), target, request.standoff_m):
+            path = self._plan(handle, robot, goal, deadline,
+                              yaw=math.atan2(target[1] - goal[1], target[0] - goal[0]))
+            if path is None:
+                continue
+            self._feedback(handle, 'DRIVING')
+            if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
+                return 'failed', 'Nav2 did not finish the path'
+            robot = self._pose() or robot
+            turn = facing_turn(robot, target)
+            if turn:
+                self._feedback(handle, 'TURNING')
+                if not self._spin(handle, turn, deadline):
+                    return 'arrived', 'could not turn to face the spot'
+            return 'arrived', ''
+        return 'no_path', 'no place to see the whole body'
 
     def _return(self, handle, request, deadline):
         start = self.starts.get(request.request_id)
@@ -269,9 +294,11 @@ class FallApproachNode(Node):
         handle.publish_feedback(FallApproach.Feedback(phase=phase))
 
     def _publish(self, request, outcome):
-        self.status.publish(String(data=json.dumps(dict(
-            request_id=request.request_id, phase=request.phase, outcome=outcome,
-            at=datetime.now(timezone.utc).isoformat(timespec='seconds')))))
+        status = dict(request_id=request.request_id, phase=request.phase, outcome=outcome,
+                      at=datetime.now(timezone.utc).isoformat(timespec='seconds'))
+        if request.phase == 'return' and request.reason:
+            status['reason'] = request.reason
+        self.status.publish(String(data=json.dumps(status)))
 
 
 def main(args=None):

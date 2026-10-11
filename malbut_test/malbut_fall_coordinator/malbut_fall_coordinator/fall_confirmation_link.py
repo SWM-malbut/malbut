@@ -7,11 +7,14 @@ import time
 
 import yaml
 
+from .fall_approach import VIEW_STANDOFF_M
 from .fall_confirmation import FallConfirmationCoordinator
 
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
 FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
+# Work kinds that are a fall_approach drive, not a conversation.
+DRIVES = ('approach', 'view')
 
 
 class FallConfirmationLink:
@@ -150,19 +153,19 @@ class FallConfirmationLink:
             expired = now - self.sent_at >= self.goal_response_timeout_s
         elif self.handle is not None:
             if self.client.server_is_ready() and (
-                    self.mode == 'approach' or self.agent_presence.server_is_ready()):
+                    self.mode in DRIVES or self.agent_presence.server_is_ready()):
                 self.server_missing_since = None
             elif self.server_missing_since is None:
                 self.server_missing_since = now
-            limit = self.approach_timeout_s if self.mode == 'approach' else self.result_timeout_s
+            limit = self.approach_timeout_s if self.mode in DRIVES else self.result_timeout_s
             expired = (
                 now - self.accepted_at >= limit
                 or (self.server_missing_since is not None
                     and now - self.server_missing_since >= self.server_loss_timeout_s))
         if expired:
-            if self.mode == 'approach':
+            if self.mode in DRIVES:
                 # Not there in time: ask from wherever the robot is.
-                self.coordinator.approach_done(self.request, 'timeout', now)
+                self._drive_done(self.request, 'timeout')
             else:
                 self.coordinator.fail(self.request)
             self._cancel_current()
@@ -208,10 +211,11 @@ class FallConfirmationLink:
             return
         self.request, self.mode = request, kind
         self.sent_at = self.clock()
-        if kind == 'approach':
+        if kind in DRIVES:
             x, y = request.approach_target
             capability, arguments = 'fall_approach', dict(
-                request_id=request.request_id, phase='approach', x=x, y=y, standoff_m=1.0)
+                request_id=request.request_id, phase=kind, x=x, y=y,
+                standoff_m=VIEW_STANDOFF_M if kind == 'view' else 1.0)
         else:
             capability, arguments = 'fall_confirmation', dict(
                 request_id=request.request_id, situation_type='fall', summary=request.summary)
@@ -224,10 +228,16 @@ class FallConfirmationLink:
         except Exception:
             self._give_up(request)
 
+    def _drive_done(self, request, outcome):
+        if self.mode == 'view':
+            self.coordinator.view_done(request, outcome, self.clock())
+        else:
+            self.coordinator.approach_done(request, outcome, self.clock())
+
     def _give_up(self, request):
-        """A transport failure: a confirmation fails; an approach asks in place."""
-        if self.mode == 'approach':
-            self.coordinator.approach_done(request, 'failed', self.clock())
+        """A transport failure: a confirmation fails; a drive asks in place."""
+        if self.mode in DRIVES:
+            self._drive_done(request, 'failed')
         else:
             self.coordinator.fail(request)
         self._cancel_current()
@@ -256,9 +266,9 @@ class FallConfirmationLink:
                 return
             self.goal_future = None
             if not handle.accepted:
-                if self.mode == 'approach':
+                if self.mode in DRIVES:
                     # No map, localization switching or a busy robot: ask here.
-                    self.coordinator.approach_done(request, 'rejected', self.clock())
+                    self._drive_done(request, 'rejected')
                     self.request = None
                     self._publish()
                     return
@@ -286,12 +296,12 @@ class FallConfirmationLink:
                 return
             try:
                 response = future.result()
-                if self.mode == 'approach':
+                if self.mode in DRIVES:
                     outcome = 'failed'
                     if response.status == GoalStatus.STATUS_SUCCEEDED:
                         outcome = (yaml.safe_load(response.result.result_yaml) or {}).get(
                             'outcome', 'failed')
-                    self.coordinator.approach_done(request, outcome, self.clock())
+                    self._drive_done(request, outcome)
                 elif (response.status == GoalStatus.STATUS_ABORTED
                         and response.result.message == 'Downstream Action server rejected the goal'
                         and not response.result.result_yaml):
@@ -307,8 +317,8 @@ class FallConfirmationLink:
                         request, situation_assessment=result['situation_assessment'],
                         help_needed=result['help_needed'])
             except Exception:
-                if self.mode == 'approach':
-                    self.coordinator.approach_done(request, 'failed', self.clock())
+                if self.mode in DRIVES:
+                    self._drive_done(request, 'failed')
                 else:
                     self.coordinator.fail(request)
             self.request = self.handle = self.goal_future = None
@@ -322,7 +332,8 @@ class FallConfirmationLink:
         try:
             future = self.client.send_goal_async(self.action_type.Goal(
                 capability_id='fall_approach', arguments_yaml=json.dumps(dict(
-                    request_id=job.question_id, phase='return', x=0.0, y=0.0, standoff_m=1.0))))
+                    request_id=job.question_id, phase='return', x=0.0, y=0.0, standoff_m=1.0,
+                    reason=job.reason))))
             self.return_future = future
             future.add_done_callback(lambda done: self._return_accepted(job, done))
         except Exception:

@@ -566,6 +566,28 @@ class PersonCheckRequest:
 
 
 @dataclass(frozen=True)
+class PostureCheckRequest:
+    """Frames from where the robot sees the whole body; asks where the body rests."""
+
+    request_id: str
+    window: FrameWindow = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PostureCheckReply:
+    """furniture: on a bed, chair or sofa; standing; floor: sitting, kneeling or lying on it."""
+
+    verdict: str
+    explanation: str
+
+    def __post_init__(self):
+        if (self.verdict not in ('furniture', 'standing', 'floor', 'unclear')
+                or not isinstance(self.explanation, str) or not self.explanation.strip()
+                or len(self.explanation) > 1000):
+            raise ValueError('invalid posture check reply')
+
+
+@dataclass(frozen=True)
 class PersonCheckReply:
     """Cloud's look from close range: only whether a human body is there."""
 
@@ -623,7 +645,7 @@ class CloudAnalysisExplanation:
     def __post_init__(self):
         identifier(self.request_id)
         if (not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', self.request_id)
-                or self.purpose not in {'incident', 'crosscheck', 'person_check'}
+                or self.purpose not in {'incident', 'crosscheck', 'person_check', 'posture_check'}
                 or not isinstance(self.assessment, VideoAssessment)
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):

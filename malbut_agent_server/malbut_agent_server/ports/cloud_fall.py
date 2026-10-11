@@ -7,6 +7,8 @@ from malbut_agent_server.domain.fall_monitoring import (
     CloudFallRequest,
     PersonCheckReply,
     PersonCheckRequest,
+    PostureCheckReply,
+    PostureCheckRequest,
 )
 
 
@@ -38,4 +40,8 @@ class CloudFallProvider(Protocol):
 
     async def check_person(self, request: PersonCheckRequest) -> PersonCheckReply:
         """One close-range look after the robot drove near the spot; same rules."""
+        ...
+
+    async def check_posture(self, request: PostureCheckRequest) -> PostureCheckReply:
+        """One look from where the whole body is visible: on the floor or off it."""
         ...
