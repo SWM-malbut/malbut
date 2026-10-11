@@ -62,6 +62,7 @@ const POSTURE: Record<string, string> = {
   on_floor: "몸 전체 확인: 바닥에 있음 → 물어봄",
   body_unseen: "몸 전체를 못 봄 → 이 자리에서 물어봄",
   judgements_differ: "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄",
+  posture_unconfirmed: "자세를 확인하지 못함 → 물어봄",
 };
 
 /** 말벗이 의심 장소로 다가가 확인한 기록. 목업 22·25번 문구, 음슴체. */
@@ -77,6 +78,7 @@ function approachLabel(event: FallHistoryEvent): string | null {
   if (event.eventKind === "person_check_completed") {
     if (reason === "person") return "가까이에서 확인: 사람 (사람 확인됨)";
     if (reason === "partial_body") return "가까이에서 확인: 사람 · 몸 일부만 보임";
+    if (reason === "whole_body") return "가까이에서 확인: 사람 · 몸 전체 보임";
     const ai = event.analysis?.explanation ? ` · AI: ${nounEnding(event.analysis.explanation)}` : "";
     return `가까이에서 확인: 사람 아님 (사람 확인 불가${ai})`;
   }

@@ -139,6 +139,8 @@ test("approach events read as short history lines (mockup 22)", () => {
 test("whole-body check events read as short history lines (mockup 25)", () => {
   const label = (eventKind, reason, change = {}) => fallEventLabel(event({ eventKind, reason, ...change }));
   assert.equal(label("person_check_completed", "partial_body"), "가까이에서 확인: 사람 · 몸 일부만 보임");
+  assert.equal(label("person_check_completed", "whole_body"), "가까이에서 확인: 사람 · 몸 전체 보임");
+  assert.equal(label("posture_check_completed", "posture_unconfirmed"), "자세를 확인하지 못함 → 물어봄");
   assert.equal(label("view_completed", "arrived"), "몸 전체가 보이는 자리로 옮김");
   assert.equal(label("view_completed", "no_path"), "몸 전체가 보이는 자리로 못 감: 갈 길 없음");
   assert.equal(label("posture_check_completed", "sitting_off_floor", { analysis: analysis({
@@ -170,7 +172,9 @@ test("whole-body check events and the off-floor closure are strict contracts", (
     analysis: analysis({ purpose: "person_check" }) });
   ok({ eventKind: "view_completed", reason: "arrived" });
   ok({ eventKind: "view_completed", reason: "no_path" });
-  for (const reason of ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ"]) {
+  ok({ eventKind: "person_check_completed", reason: "whole_body" });
+  for (const reason of ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
+    "posture_unconfirmed"]) {
     ok({ eventKind: "posture_check_completed", reason });
   }
   ok({ eventKind: "posture_check_completed", reason: "sitting_off_floor",

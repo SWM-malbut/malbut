@@ -96,6 +96,7 @@ const when = (value: string) => `${dayLabel(value)} ${clock(value)}`;
 const LOOKING: Record<string, string> = {
   approach_started: "가까이 가는 중", "approach_completed:arrived": "가까이에서 보는 중",
   "person_check_completed:partial_body": "몸 전체가 보이는 자리로 옮기는 중", "view_completed:arrived": "몸 전체를 보는 중",
+  "person_check_completed:whole_body": "몸 전체를 보는 중",
 };
 
 function looking(i: IncidentSummary) {
@@ -116,6 +117,7 @@ function title(i: IncidentSummary) {
 const POSTURE_TEXT: Record<string, string> = {
   on_floor: "몸 일부만 보여 가서 확인 · 바닥에 있음", body_unseen: "몸 일부만 보여 가서 확인 · 몸 전체를 못 봄",
   judgements_differ: "몸 일부만 보여 가서 확인 · 판단이 엇갈림",
+  posture_unconfirmed: "몸 일부만 보여 가서 확인 · 자세를 확인하지 못함",
 };
 
 /** 다가가 확인한 결과(목업 22·25번). 보는 중은 제목·배지로 보여 준다. */

@@ -19,11 +19,12 @@ const kinds = [
 const approachReasons: Record<string, Array<string | null>> = {
   approach_started: ["patrol_stopped", "follow_stopped", null],
   approach_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
-  person_check_completed: ["person", "not_a_person", "partial_body"],
+  person_check_completed: ["person", "not_a_person", "partial_body", "whole_body"],
   approach_returned: ["returned", "return_failed"],
   view_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
   // Off the floor only when the robot's measurement and Cloud agree; anything else asks.
-  posture_check_completed: ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ"],
+  posture_check_completed: ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
+    "posture_unconfirmed"],
 };
 // A robot-side closure after its own check. Never a normal-activity judgment.
 const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person",
