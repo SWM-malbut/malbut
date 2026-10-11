@@ -26,7 +26,7 @@ from malbut_agent_server.application.fall_scene_place import (
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
 from malbut_agent_server.application.fall_pending_association import AssociationWait, PendingAssociation
 from malbut_agent_server.application.fall_cloud_association import (
-    associate_timed_finding, supplement_samples, timed_association_evidence,
+    associate_timed_finding, box_iou, supplement_samples, timed_association_evidence,
 )
 from malbut_agent_server.application.fall_deferred_association import (
     DeferredDiscovery, DiscoveryLinkResult, DiscoveryTrack,
@@ -85,6 +85,22 @@ POSTURE_SAMPLES = 3
 OFF_FLOOR_TORSO_M = 0.60
 STANDING_TORSO_M = 1.00
 OFF_FLOOR_REASONS = frozenset({'sitting_off_floor', 'standing'})
+# One person can come out of YOLO-pose as several tracks (2026-10-10 18:44: one
+# person lying on the floor became three tracks and three incidents). Tracks seen
+# together were one person at IoU 0.54-0.82; another person's box was at most
+# 0.12. A track appearing 2.2 s after another vanished sat 87% inside its last
+# box. So open person incidents never outnumber the people in view.
+SAME_PERSON_IOU = 0.5
+SAME_PERSON_INSIDE = 0.8
+SAME_PERSON_GAP_S = 5.0
+
+
+def _inside(a, b):
+    """How much of the smaller box lies inside the other."""
+    area = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+        0, min(a[3], b[3]) - max(a[1], b[1]))
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return area / smaller if smaller else 0.0
 
 
 @dataclass
@@ -197,6 +213,8 @@ class CloudFallMonitor:
         self._person_checks = {}
         # incident_id -> (map point, since): spots the robot is checking now.
         self._spot_checks = {}
+        # Pose track -> open incident of the same person under another track.
+        self._same_person = {}
 
     def _now(self) -> float:
         value = self._clock()
@@ -363,6 +381,7 @@ class CloudFallMonitor:
             self.buffer.clear()
             self._subject_evidence.clear()
             self._settled_subjects.clear()
+            self._same_person.clear()
             self._people.clear_history()
             self._discoveries.clear()
             self._person_observation = None
@@ -461,6 +480,7 @@ class CloudFallMonitor:
         self._subject_evidence.active = True
         self._subject_evidence.clear()
         self._settled_subjects.clear()
+        self._same_person.clear()
         self._association_wait.anchors.clear()
         self._association_wait.stationary_at = None
         for entry in self._discoveries.values():
@@ -579,6 +599,8 @@ class CloudFallMonitor:
         current = next((i for i in self._incidents.values()
                         if i.subject_key == candidate.subject_key
                         and i.state is not IncidentState.RESOLVED), None)
+        if current is None:
+            current = self._same_person_incident(candidate)
         if current is not None:
             if candidate.source not in current.candidate_sources:
                 current.candidate_sources += (candidate.source,)
@@ -693,7 +715,7 @@ class CloudFallMonitor:
         self._running_missions = tuple(capability_ids)
 
     def _approach_target(self, incident):
-        """A map point for a fall suspicion; None asks from the current position."""
+        """A map point when a person is not certain there; None asks right away."""
         if not self.approach_enabled or self._place is None:
             return None
         if incident.subject_key is None:
@@ -702,6 +724,8 @@ class CloudFallMonitor:
         if latest is None or latest[2].box is None:
             return None
         stamp, _, pose = latest
+        if pose.strong is True and pose.association_usable:
+            return None  # A clear Pose person: no need to look closer.
         try:
             return self._place.locate_near(stamp, pose.box)
         except Exception:
@@ -759,6 +783,76 @@ class CloudFallMonitor:
             elif 0.25 <= (pose.box[0] + pose.box[2]) / 2 <= 0.75:
                 return iid  # Same fallback as the close look: the robot faces the spot.
         return None
+
+    def _same_person_incident(self, candidate):
+        """The open person incident this track is the same person as, or None.
+
+        Same moment: boxes overlap at SAME_PERSON_IOU. One after another: the
+        track appears where an incident track vanished, within SAME_PERSON_GAP_S
+        and without camera movement. Map points over SAME_PLACE_M apart are two
+        people. A newly seen fall still opens its own incident.
+        """
+        key = candidate.subject_key
+        if candidate.kind is CandidateKind.MOTION_SEEN:
+            self._same_person.pop(key, None)
+            return None
+        members = {}
+        for track, iid in tuple(self._same_person.items()):
+            incident = self._incidents.get(iid)
+            if incident is None or incident.state is IncidentState.RESOLVED:
+                del self._same_person[track]
+            else:
+                members[track] = incident
+        if key in members:
+            return members[key]
+        for incident in self._incidents.values():
+            if incident.subject_key is not None and incident.state is not IncidentState.RESOLVED:
+                members[incident.subject_key] = incident
+        if not members:
+            return None
+        tracks, wanted = {}, members.keys() | {key}
+        for stamp, poses in self._subject_evidence.frames_since(-math.inf):
+            for pose in poses:
+                if pose.box is not None and pose.subject_key in wanted:
+                    tracks.setdefault(pose.subject_key, {})[stamp] = pose.box
+        mine = tracks.pop(key, None)
+        if not mine:
+            return None
+        first = min(mine)
+        for track, theirs in tracks.items():
+            together = mine.keys() & theirs.keys()
+            if together:
+                stamp = max(together)
+                a, b = (stamp, theirs[stamp]), (stamp, mine[stamp])
+                same = box_iou(a[1], b[1]) >= SAME_PERSON_IOU
+            else:
+                stamp = max(theirs)
+                a, b = (stamp, theirs[stamp]), (first, mine[first])
+                same = (stamp < first and first - stamp <= SAME_PERSON_GAP_S
+                        and not self._camera_motion.moved_between(stamp, first)
+                        and (box_iou(a[1], b[1]) >= SAME_PERSON_IOU
+                             or _inside(a[1], b[1]) >= SAME_PERSON_INSIDE))
+            if same and not self._apart_on_map(a, b):
+                incident = members[track]
+                self._same_person[key] = incident.incident_id
+                if self._place_log is not None:
+                    try:
+                        self._place_log(f'fall place: Pose track {key} is the same person as '
+                                        f'case {incident.incident_id[:8]}: no new case')
+                    except Exception:
+                        pass
+                return incident
+        return None
+
+    def _apart_on_map(self, a, b):
+        """Both (stamp, box) measured on the map, farther apart than one place."""
+        if self._place is None:
+            return False
+        try:
+            points = [self._place.locate_near(stamp, box) for stamp, box in (a, b)]
+        except Exception:
+            return False  # Auxiliary: never stops fall handling.
+        return None not in points and math.dist(*points) > SAME_PLACE_M
 
     def _spot_poses(self, check, since):
         """Clear Pose people at the checked spot since then, oldest first."""
