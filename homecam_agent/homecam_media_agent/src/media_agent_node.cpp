@@ -47,6 +47,14 @@ using WebTalkControl = malbut_interfaces::srv::ControlWebTalk;
 namespace
 {
 
+// One web channel (2026-10-12): the resident robot_cloud_sync carries the
+// heartbeat in its state upload. 10 s is the whole-request limit the HTTPS
+// heartbeat had; a few answers may queue between the 250 ms collections.
+constexpr char kHeartbeatRequestTopic[] = "/malbut/homecam/heartbeat/request";
+constexpr char kHeartbeatReplyTopic[] = "/malbut/homecam/heartbeat/reply";
+constexpr double kHeartbeatReplyTimeoutS = 10.0;
+constexpr std::size_t kMaximumPendingHeartbeats = 4U;
+
 struct QueuedEncodedFrame
 {
   EncodedFrame frame;
@@ -164,8 +172,21 @@ public:
     const std::string token = load_device_token(
       token_file == nullptr ? "" : token_file,
       environment_token == nullptr ? "" : environment_token);
-    heartbeat_client_ = std::make_unique<HeartbeatClient>(
-      trim_trailing_slashes(config_.backend_url), token);
+    // One web channel (2026-10-12): robot_cloud_sync carries the heartbeat in its
+    // state upload. Configured as before: a valid backend URL and device token.
+    heartbeat_relay_enabled_ =
+      is_allowed_backend_url(trim_trailing_slashes(config_.backend_url)) &&
+      is_valid_device_token(token);
+    if (heartbeat_relay_enabled_) {
+      heartbeat_requests_ = create_publisher<std_msgs::msg::String>(
+        kHeartbeatRequestTopic, rclcpp::QoS(10).reliable());
+      heartbeat_replies_ = create_subscription<std_msgs::msg::String>(
+        kHeartbeatReplyTopic, rclcpp::QoS(10).reliable(),
+        [this](const std_msgs::msg::String::ConstSharedPtr message) {
+          receive_heartbeat_reply(message->data);
+        });
+    }
+    last_heartbeat_reply_at_ = steady_now_ns() / 1e9;
     session_client_ = std::make_unique<DeviceSessionClient>(
       trim_trailing_slashes(config_.backend_url), config_.device_id, token);
     desired_state_confirmed_ = config_.backend_url.empty();
@@ -292,7 +313,7 @@ public:
       get_logger(), "Storage transport: %s",
       storage_transport_->status().c_str());
 
-    if (!heartbeat_client_->available()) {
+    if (!heartbeat_relay_enabled_) {
       RCLCPP_WARN(
         get_logger(),
         "Remote heartbeat disabled. Configure backend_url and the "
@@ -311,9 +332,6 @@ public:
     media_permitted_.store(false);
     session_generation_.fetch_add(1U);
     active_transport_generation_.store(0U);
-    if (heartbeat_future_.valid()) {
-      heartbeat_future_.wait();
-    }
     if (session_future_.valid()) {
       session_future_.wait();
       collect_session_result();
@@ -2096,32 +2114,24 @@ private:
       odom_received_.load() ? "yes" : "no",
       local_state.c_str());
 
-    if (heartbeat_client_->available() &&
-      !heartbeat_future_.valid())
-    {
-      HeartbeatClient * const client = heartbeat_client_.get();
-      try {
-        heartbeat_future_ = std::async(
-          std::launch::async,
-          [client, status]() {
-            HeartbeatOutcome outcome;
-            outcome.requested_at = steady_now_ns() / 1e9;
-            try {
-              outcome.success =
-              client->post(status, &outcome.desired, &outcome.error, &outcome.failure_code);
-            } catch (const std::exception & exception) {
-              outcome.success = false;
-              outcome.error =
-              std::string("heartbeat worker exception: ") + exception.what();
-            }
-            // Record completion here, not when the ROS executor collects it.
-            outcome.observed_at = steady_now_ns() / 1e9;
-            return outcome;
-          });
-      } catch (const std::exception & exception) {
-        RCLCPP_ERROR(
-          get_logger(), "Cannot start heartbeat worker: %s", exception.what());
+    if (heartbeat_relay_enabled_) {
+      const double now = steady_now_ns() / 1e9;
+      // No answer for as long as the HTTPS heartbeat waited (10 s) counts as
+      // the same timeout: robot_cloud_sync or the web is not answering.
+      if (now - std::max(last_heartbeat_reply_at_, last_heartbeat_timeout_at_) >=
+        kHeartbeatReplyTimeoutS)
+      {
+        HeartbeatOutcome outcome;
+        outcome.failure_code = "server_timeout";
+        outcome.error = "no heartbeat reply from robot_cloud_sync";
+        outcome.requested_at = now - kHeartbeatReplyTimeoutS;
+        outcome.observed_at = now;
+        heartbeat_outcomes_.push_back(std::move(outcome));
+        last_heartbeat_timeout_at_ = now;
       }
+      std_msgs::msg::String message;
+      message.data = heartbeat_relay_request(status, ++heartbeat_sequence_);
+      heartbeat_requests_->publish(message);
     }
   }
 
@@ -2135,21 +2145,51 @@ private:
     double requested_at{0};
   };
 
+  /** robot_cloud_sync's answer, newest only; handled with the timers as before. */
+  void receive_heartbeat_reply(const std::string & data)
+  {
+    HeartbeatRelayReply reply;
+    std::string error;
+    if (!parse_heartbeat_relay_reply(data, &reply, &error)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Ignoring an invalid heartbeat reply: %s", error.c_str());
+      return;
+    }
+    if (reply.sequence <= last_heartbeat_reply_sequence_ ||
+      reply.sequence > heartbeat_sequence_)
+    {
+      return;  // Late or foreign: a newer answer was already taken.
+    }
+    last_heartbeat_reply_sequence_ = reply.sequence;
+    last_heartbeat_reply_at_ = steady_now_ns() / 1e9;
+    HeartbeatOutcome outcome;
+    outcome.success = reply.success;
+    outcome.desired = std::move(reply.desired);
+    outcome.error = std::move(reply.error);
+    outcome.failure_code = std::move(reply.failure_code);
+    outcome.requested_at = reply.requested_at;
+    outcome.observed_at = reply.observed_at;
+    heartbeat_outcomes_.push_back(std::move(outcome));
+    while (heartbeat_outcomes_.size() > kMaximumPendingHeartbeats) {
+      heartbeat_outcomes_.pop_front();
+    }
+  }
+
   void collect_heartbeat_result()
   {
-    if (!heartbeat_future_.valid() ||
-      heartbeat_future_.wait_for(0ms) != std::future_status::ready)
-    {
-      return;
+    while (!heartbeat_outcomes_.empty()) {
+      HeartbeatOutcome outcome = std::move(heartbeat_outcomes_.front());
+      heartbeat_outcomes_.pop_front();
+      handle_heartbeat_outcome(outcome);
     }
-    HeartbeatOutcome outcome;
-    try {
-      outcome = heartbeat_future_.get();
-    } catch (const std::exception & exception) {
-      RCLCPP_WARN(
-        get_logger(), "Heartbeat worker failed: %s", exception.what());
-      return;
-    }
+  }
+
+  void handle_heartbeat_outcome(HeartbeatOutcome & outcome)
+  {
+    // Answers and local timeouts are both in steady time; keep them in order.
+    outcome.observed_at = std::max(outcome.observed_at, last_heartbeat_observed_at_);
+    last_heartbeat_observed_at_ = outcome.observed_at;
     if (fall_bridge_) {
       fall_snapshots_->publish(fall_bridge_->update(
         outcome.desired, outcome.failure_code, outcome.observed_at));
@@ -2161,7 +2201,7 @@ private:
       return;
     }
     apply_desired_settings(outcome.desired, false);
-    // A slow HTTPS response must not restart the server's remaining lease time.
+    // A slow answer must not restart the server's remaining lease time.
     const double until = outcome.requested_at + outcome.desired.talk_remaining_ms / 1000.0;
     const auto id = until > steady_now_ns() / 1e9 ? outcome.desired.talk_lease_id : "";
     if (id != talk_lease_id_) {
@@ -2359,7 +2399,15 @@ private:
   }
 
   MediaConfig config_;
-  std::unique_ptr<HeartbeatClient> heartbeat_client_;
+  bool heartbeat_relay_enabled_{false};
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_requests_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr heartbeat_replies_;
+  std::uint64_t heartbeat_sequence_{0};
+  std::uint64_t last_heartbeat_reply_sequence_{0};
+  double last_heartbeat_reply_at_{0};
+  double last_heartbeat_timeout_at_{0};
+  double last_heartbeat_observed_at_{0};
+  std::deque<HeartbeatOutcome> heartbeat_outcomes_;
   std::unique_ptr<FallSettingsBridge> fall_bridge_;
   rclcpp::Publisher<FallSettingsBridge::Snapshot>::SharedPtr fall_snapshots_;
   rclcpp::Subscription<FallSettingsBridge::Report>::SharedPtr fall_reports_;
@@ -2368,7 +2416,6 @@ private:
   std::unique_ptr<KvsTransport> storage_transport_;
   std::unique_ptr<TransportSender> p2p_sender_;
   std::unique_ptr<TransportSender> storage_sender_;
-  std::future<HeartbeatOutcome> heartbeat_future_;
   rclcpp::Client<WebTalkControl>::SharedPtr web_talk_client_;
   rclcpp::Client<WebTalkControl>::SharedFuture talk_future_;
   std::int64_t talk_request_id_{0};

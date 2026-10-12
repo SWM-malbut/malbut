@@ -335,11 +335,18 @@ Content-Type: application/json
 token 안의 credential UUID는 장치 ID가 아니며 서로 바꿔 쓰면 session 응답
 검증 단계에서 거부된다.
 
-에이전트는 `POST /api/device/v1/heartbeat`에 `sourceProfile`,
-`imageTopic`, `streamMode`, `mediaHealthy`, `p2pHealthy`,
-`storageHealthy`를 보낸다.
-응답의 `desiredState.monitoringEnabled`, `cameraEnabled`,
-`microphoneEnabled`를 적용한다.
+에이전트는 1초마다 heartbeat 본문(`sourceProfile`, `imageTopic`, `streamMode`,
+`mediaHealthy`, `p2pHealthy`, `storageHealthy`)을 만들고, 응답의
+`desiredState.monitoringEnabled`, `cameraEnabled`, `microphoneEnabled`를 적용한다.
+
+2026-10-12부터 웹과의 1초 통로는 상주 프로그램 `robot_cloud_sync` 하나다. 에이전트는
+본문을 `/malbut/homecam/heartbeat/request`(std_msgs/String, `{"sequence":N,"body":{…}}`)로
+내고, 상주 프로그램이 로봇 상태 업로드(`POST /api/device/v1/robot/state`)의 `homecam`에 실어
+웹의 답을 `/malbut/homecam/heartbeat/reply`(`{"sequence","requestedAt","observedAt","ok",
+"body"|"failureCode"}`)로 돌려준다. 답은 예전 `POST /api/device/v1/heartbeat` 응답과 같고,
+동의·설정·말하기 허가·낙상 설정은 지금처럼 에이전트가 판단한다. 10초 동안 답이 없으면
+예전 HTTPS 시간 초과와 같은 `server_timeout`으로 처리한다(마지막 설정 유지). 장치 토큰은
+KVS 세션 발급(`/session`)에만 쓴다.
 
 heartbeat body는 백엔드가 허용하는 필드만 전송한다. 실제 peer/storage
 연결과 최근 `writeFrame` 성공이 없으면 카메라 토픽이 정상이어도

@@ -3,6 +3,7 @@
 import base64
 from contextlib import contextmanager
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -412,3 +413,120 @@ def test_the_state_upload_carries_the_fall_check_stage():
     assert detail['fall_check_active'] is True
     assert detail['fall_check'] == {'phase': 'approach', 'waiting_for': None, 'alerted': False,
                                     'target': {'x': 1.0, 'y': 2.0}}
+
+
+# One web channel (2026-10-12): the homecam's heartbeat rides on the state upload.
+HOMECAM_BODY = {'streamMode': 'idle', 'mediaHealthy': True}
+HOMECAM_ANSWER = {'deviceId': 'robot-a', 'desiredState': {
+    'cameraEnabled': False, 'microphoneEnabled': True, 'monitoringEnabled': False},
+    'talkLease': None}
+
+
+class FakeHomecam:
+    def __init__(self, request=(5, HOMECAM_BODY)):
+        self.request, self.answers = request, []
+
+    def take(self):
+        request, self.request = self.request, None
+        return request
+
+    def answer(self, sequence, requested_at, observed_at, *, body=None, failure=None):
+        assert observed_at >= requested_at
+        self.answers.append((sequence, body, failure))
+
+
+def _homecam_sync(state_reply):
+    sync, bridge, client = _sync()
+    sync.homecam = FakeHomecam()
+    sent = []
+
+    def request(path, method='GET', payload=None):
+        if path.endswith('/state'):
+            sent.append(payload)
+            if isinstance(state_reply, Exception):
+                raise state_reply
+            return state_reply
+        return {'commands': []}
+    client.request.side_effect = request
+    return sync, sent
+
+
+def test_the_state_upload_carries_the_homecam_heartbeat_and_hands_back_its_answer():
+    sync, sent = _homecam_sync({'accepted': True, 'closedFallIncidents': [],
+                                'homecam': HOMECAM_ANSWER})
+    sync.tick()
+    assert sent[0]['homecam'] == HOMECAM_BODY
+    assert sync.homecam.answers == [(5, HOMECAM_ANSWER, None)]
+    # Nothing new from the homecam: no homecam field, no answer.
+    sync.last_state_at = -math.inf
+    sync.tick()
+    assert 'homecam' not in sent[1] and len(sync.homecam.answers) == 1
+
+
+@pytest.mark.parametrize('reply, failure', [
+    ({'accepted': True, 'homecam': {'error': 'x', 'status': 409}}, 'server_transport_error'),
+    ({'accepted': True, 'homecam': {'error': 'x', 'status': 401}}, 'server_auth_failed'),
+    ({'accepted': True}, 'server_transport_error'),  # An older web without the channel.
+    ({'accepted': True, 'homecam': 'bad'}, 'server_invalid_settings'),
+    (CloudError('Cloud request failed', timeout=True), 'server_timeout'),
+    (CloudError('Cloud returned HTTP 403', 403), 'server_auth_failed'),
+    (CloudError('Cloud returned HTTP 500', 500), 'server_transport_error'),
+])
+def test_homecam_failures_keep_the_codes_its_https_heartbeat_used(reply, failure):
+    sync, _ = _homecam_sync(reply)
+    if isinstance(reply, Exception):
+        with pytest.raises(CloudError):
+            sync.tick()
+    else:
+        sync.tick()
+    assert sync.homecam.answers == [(5, None, failure)]
+
+
+def test_homecam_requests_are_bounded_json_with_a_sequence():
+    from malbut_bringup.cloud_sync import homecam_request
+    request = json.dumps({'sequence': 3, 'body': HOMECAM_BODY})
+    assert homecam_request(request) == (3, HOMECAM_BODY)
+    for bad in ('x', '[]', json.dumps({'sequence': 0, 'body': {}}),
+                json.dumps({'sequence': True, 'body': {}}),
+                json.dumps({'sequence': 1, 'body': []}),
+                json.dumps({'sequence': 1, 'body': {}, 'extra': 1}),
+                json.dumps({'sequence': 1, 'body': {'pad': 'a' * 20000}}), None):
+        assert homecam_request(bad) is None
+
+
+def test_the_relay_hands_the_newest_fresh_request_once_and_publishes_answers():
+    pytest.importorskip('std_msgs.msg')
+    from malbut_bringup.cloud_sync import HomecamHeartbeatRelay
+    node, clock = Mock(), Mock(return_value=100.0)
+    relay = HomecamHeartbeatRelay(node, clock=clock)
+    publish = node.create_publisher.return_value.publish
+    message = lambda sequence: SimpleNamespace(  # noqa: E731
+        data=json.dumps({'sequence': sequence, 'body': HOMECAM_BODY}))
+    relay.on_request(message(1))
+    relay.on_request(message(2))
+    assert relay.take() == (2, HOMECAM_BODY) and relay.take() is None
+    relay.on_request(message(3))
+    clock.return_value = 103.5  # The homecam stopped asking.
+    assert relay.take() is None
+    relay.answer(2, 10.0, 10.2, body=HOMECAM_ANSWER)
+    relay.answer(3, 11.0, 11.1, failure='server_timeout')
+    sent = [json.loads(call.args[0].data) for call in publish.call_args_list]
+    assert sent == [
+        {'sequence': 2, 'requestedAt': 10.0, 'observedAt': 10.2, 'ok': True,
+         'body': HOMECAM_ANSWER},
+        {'sequence': 3, 'requestedAt': 11.0, 'observedAt': 11.1, 'ok': False,
+         'failureCode': 'server_timeout'}]
+
+
+def test_a_timed_out_request_is_reported_as_a_timeout():
+    from urllib.error import URLError
+    client = CloudClient('https://robot.example.com', TOKEN)
+    client.opener = Mock()
+    client.opener.open.side_effect = URLError(TimeoutError('timed out'))
+    with pytest.raises(CloudError) as result:
+        client.request('/api/device/v1/robot/state', 'POST', {})
+    assert result.value.timeout
+    client.opener.open.side_effect = URLError(OSError('refused'))
+    with pytest.raises(CloudError) as result:
+        client.request('/api/device/v1/robot/state', 'POST', {})
+    assert not result.value.timeout
