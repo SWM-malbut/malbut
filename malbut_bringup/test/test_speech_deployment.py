@@ -28,14 +28,17 @@ def test_robot_speech_runtime_matches_source(package):
     assert files == copied
     for path in files:
         if package == 'malbut_stt' and path == Path('node.py'):
-            # The test deployment temporarily disables barge-in, even with AEC.
+            # The test deployment disables barge-in, even with AEC: in the
+            # capture and in the dialogue (#245 added the capture one).
             expected = (source / path).read_bytes()
-            original = b'            input_has_aec=input_has_aec,\n'
-            override = (b'            # Temporarily disable barge-in '
-                        b'in the robot test deployment.\n'
-                        b'            input_has_aec=False,\n')
-            assert expected.count(original) == 1
-            assert expected.replace(original, override, 1) == (deployed / path).read_bytes()
+            for original, override in (
+                    (b'vad_mode=vad_mode, input_has_aec=input_has_aec,\n',
+                     b'vad_mode=vad_mode, input_has_aec=False,\n'),
+                    (b'            input_has_aec=input_has_aec,\n',
+                     b'            input_has_aec=False,\n')):
+                assert expected.count(original) == 1
+                expected = expected.replace(original, override, 1)
+            assert expected == (deployed / path).read_bytes()
         else:
             assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
 
