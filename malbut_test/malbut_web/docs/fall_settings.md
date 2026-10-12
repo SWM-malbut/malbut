@@ -74,6 +74,11 @@ flowchart TD
 
 기존 `POST /api/device/v1/heartbeat`를 사용한다. 장치 토큰으로 확인한 로봇에만 저장한다.
 
+2026-10-12부터 같은 요청 본문을 로봇 상태 업로드 `POST /api/device/v1/robot/state`의 `homecam`에 실어도 된다(웹 통로
+하나, 상주 프로그램이 나름). 응답 `homecam`은 아래 heartbeat 응답과 같은 객체이고, 실패면 `{"error":…,"status":400|409|503|500}`이다.
+홈캠 처리가 실패해도 로봇 상태 저장(202)은 실패시키지 않는다. `homecam`이 없으면(Bringup 꺼짐) 홈캠 온라인 시각을 갱신하지 않는다.
+`/heartbeat`는 옛 로봇을 위해 당분간 남긴다. 두 경로는 `app/homecam-heartbeat.ts` 하나로 처리한다.
+
 ### 응답에 추가한 `fallSettings`
 
 ```json
