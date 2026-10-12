@@ -18,7 +18,9 @@ input:
     summary:
       type: string
       description: 확인 대화에 전달할 상황 요약
+# NORMAL(2026-10-12): 직접 움직이기(HIGH) 중에는 받지 않는다. Agent 낙상 규칙이 기다렸다가
+# 다시 신청하고, 막힌 시간이 1분이면 보호자에게 긴급 알림을 보낸다.
 execution:
   mode: FOREGROUND
-  priority: URGENT
+  priority: NORMAL
   resources: [BASE, SPEAKER]

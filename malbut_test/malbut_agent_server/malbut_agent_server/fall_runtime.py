@@ -192,9 +192,18 @@ def apply_decision(monitor, payload):
     data = bounded_object(payload)
     action = data.get('action')
     fields = {'incident_id', 'evidence_revision', 'action'}
-    if action in {'approach_result', 'view_result', 'return_result'}:
+    if action in {'check_waiting', 'check_not_confirmed', 'revisit_started'}:
+        # The fall rules could not ask yet: waiting, a minute of it, going back.
+        fields.update({'boot_id', 'question_id', 'reason'})
+        if (set(data) != fields or data['boot_id'] != monitor.boot_id
+                or type(data['evidence_revision']) is not int or data['evidence_revision'] < 1
+                or not isinstance(data['reason'], str)):
+            raise ValueError('invalid or stale waiting decision')
+        values = {key: value for key, value in data.items() if key not in {'action', 'boot_id'}}
+        return getattr(monitor, action)(**values)
+    if action in {'approach_result', 'view_result', 'return_result', 'revisit_result'}:
         # The coordinator's drive near an uncertain suspicion, to where the whole
-        # body is visible, and the way back.
+        # body is visible, back to the spot after waiting, and the way back.
         fields.update({'boot_id', 'question_id', 'outcome'})
         if (set(data) != fields or data['boot_id'] != monitor.boot_id
                 or type(data['evidence_revision']) is not int or data['evidence_revision'] < 1
@@ -208,6 +217,8 @@ def apply_decision(monitor, payload):
             fields.add('question_id')
         if action == 'confirmation_result':
             fields.update({'subject_key', 'situation_assessment', 'help_needed'})
+        if action == 'confirmation_failed':
+            fields.add('reason')  # speech_unavailable | question_error | time_limit
         if (set(data) != fields or data['boot_id'] != monitor.boot_id
                 or type(data['evidence_revision']) is not int
                 or data['evidence_revision'] < 1):
@@ -264,6 +275,9 @@ def event_metadata(event):
     if event.approach_target is not None:
         result['approach_target'] = dict(x=event.approach_target[0], y=event.approach_target[1],
                                          frame='map')
+    if event.revisit_target is not None:
+        result['revisit_target'] = dict(x=event.revisit_target[0], y=event.revisit_target[1],
+                                        frame='map')
     if event.kind == 'incident_merged':
         result['merged_into_incident_ids'] = list(event.merged_into_incident_ids)
     if event.reply is not None:

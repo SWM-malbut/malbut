@@ -62,7 +62,7 @@ Agent는 최종 답변을 준비하는 중의 지연·재시도 안내에만 `tr
 
 Agent의 [낙상 규칙](../malbut_agent_server/docs/fall/fall_rules.md)은 VLM 사건을 해석하고
 `ExecuteMission`으로 `fall_confirmation`을 요청한다. Manager는
-[등록된 Manifest](capabilities/fall_confirmation.yaml)의 `FOREGROUND`, `URGENT`,
+[등록된 Manifest](capabilities/fall_confirmation.yaml)의 `FOREGROUND`, `NORMAL`,
 `[BASE, SPEAKER]` 규칙에 따라 충돌 미션의 종료를 확인한 뒤 Agent의
 `ConfirmSituation` Action을 실행한다. Coordinator는 Manager가 돌려준 최종 결과를
 검증하여 VLM 사건에 적용한다. 취소된 기존 주행은 자동 재개하지 않는다.

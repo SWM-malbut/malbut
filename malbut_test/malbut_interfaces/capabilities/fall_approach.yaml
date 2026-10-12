@@ -32,11 +32,13 @@ input:
       default: 1.0
     reason:
       type: string
-      description: 돌아가는 이유(return만) — not_a_person 또는 off_floor
+      description: 돌아가는 이유(return만) — not_a_person, off_floor 또는 revisit(기다린 뒤 다시 가서 보고 알림만 보냄)
       default: ""
 
+# NORMAL(2026-10-12): 순찰(LOW)·목적지 이동 등은 끊고 확인하러 가지만, 직접 움직이기(HIGH)는
+# 끊지 않는다. 막히면 Agent 낙상 규칙이 기다렸다가 다시 신청한다.
 execution:
   mode: FOREGROUND
-  priority: URGENT
+  priority: NORMAL
   resources: [BASE]
   map_requirement: SELECTED

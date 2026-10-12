@@ -18,16 +18,43 @@ APPROACH_OUTCOMES = {'arrived', 'no_map', 'no_path', 'timeout', 'failed', 'rejec
 RETURN_OUTCOMES = {'returned', 'failed'}
 # The runtime looks after arrival (Pose, then one Cloud call). Then ask anyway.
 CHECK_WAIT_S = 15.0
-PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body'}
+# nobody_there: went back after waiting and found no one; the case stays open.
+PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body', 'nobody_there'}
 # Where the whole body rests (fall_full_view): two Cloud looks a few seconds apart.
 POSTURE_WAIT_S = 60.0
 POSTURE_REASONS = {'sitting_off_floor', 'standing', 'on_floor', 'body_unseen',
                    'judgements_differ', 'posture_unconfirmed'}
 OFF_FLOOR_REASONS = {'sitting_off_floor', 'standing'}
+# A fall check yields to 직접 움직이기 and waits out another job (2026-10-12): the
+# Manager refuses or interrupts the step, and the same step goes again a second
+# later. Only that waiting is counted, never a drive, a look or a question in
+# progress. A minute of it alerts the guardian and the robot goes back to the
+# spot before asking; ten minutes in all and it stops trying (the guardian's
+# 처리 완료 stops it at once).
+WAITING_FOR = ('manual_drive', 'busy')
+# The incident history notes a wait only once it lasts: the Agent finishing the
+# previous conversation or the Manager's first state is a passing moment.
+WAIT_NOTE_S = 3.0
+WAIT_ALERT_S = 60.0
+WAIT_LIMIT_S = 600.0
+# Why a question was not asked: speech is off, the question failed, or the
+# robot waited ten minutes in all.
+FAILURE_REASONS = ('speech_unavailable', 'question_error', 'time_limit')
 
 
 def _identifier(value):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= 200
+
+
+def _map_point(value):
+    """(x, y) of a {'x', 'y', 'frame': 'map'} point, None when absent, False when malformed."""
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != {'x', 'y', 'frame'} or value['frame'] != 'map'
+            or any(isinstance(value[k], bool) or not isinstance(value[k], (int, float))
+                   or not math.isfinite(value[k]) for k in ('x', 'y'))):
+        return False
+    return float(value['x']), float(value['y'])
 
 
 @dataclass(frozen=True)
@@ -42,6 +69,8 @@ class ConfirmationRequest:
     summary: str
     # Map point to drive near first: the runtime was not sure it is a person.
     approach_target: Optional[Tuple[float, float]] = None
+    # Map point of the suspicion, to go back to after a minute of waiting.
+    revisit_target: Optional[Tuple[float, float]] = None
 
     @property
     def request_id(self):
@@ -54,13 +83,15 @@ class ConfirmationRequest:
 
 @dataclass(frozen=True)
 class ReturnJob:
-    """Drive back after a check closed the case: no person, or off the floor."""
+    """Drive back without asking: no person, off the floor, or a revisit's report."""
 
     boot_id: str
     incident_id: str
     question_id: str
     revision: int
     reason: str = 'not_a_person'
+    # The spot just checked, for the map screen while driving back.
+    target: Optional[Tuple[float, float]] = None
 
     def decision(self, outcome):
         return dict(action='return_result', boot_id=self.boot_id, incident_id=self.incident_id,
@@ -91,6 +122,24 @@ class FallConfirmationCoordinator:
         self.stages = {}
         self.check_since = {}
         self.returns = deque()
+        self._clear_waits()
+
+    def _clear_waits(self):
+        # question_id -> seconds waited before the current wait, and when its
+        # share of the current wait began. Every queued request waits together.
+        self.blocked_total = {}
+        self.blocked_from = {}
+        self.waiting_for = None  # 'manual_drive' | 'busy' while the robot waits
+        self.waiting_sent = {}  # question_id -> reasons check_waiting recorded
+        self.alerted = {}  # question_id -> seconds waited at the last alert or revisit
+        self.revisits = {}  # question_id -> what it waited for before going back
+
+    def _forget(self, qid):
+        for table in (self.blocked_total, self.blocked_from, self.waiting_sent,
+                      self.alerted, self.revisits):
+            table.pop(qid, None)
+        if not self.requests:
+            self.waiting_for = None
 
     def _remember(self, request_id, decision=None):
         self.finished[request_id] = decision
@@ -138,15 +187,10 @@ class FallConfirmationCoordinator:
                     or (video == 'normal_activity'
                         and event.get('reason') != 'prior_fall_observed')):
                 return False
-            target = event.get('approach_target')
-            if target is not None:
-                if (not isinstance(target, dict) or set(target) != {'x', 'y', 'frame'}
-                        or target['frame'] != 'map'
-                        or any(isinstance(target[k], bool)
-                               or not isinstance(target[k], (int, float))
-                               or not math.isfinite(target[k]) for k in ('x', 'y'))):
-                    return False
-                target = (float(target['x']), float(target['y']))
+            target, revisit = (_map_point(event.get('approach_target')),
+                               _map_point(event.get('revisit_target')))
+            if target is False or revisit is False:
+                return False
         if kind == 'person_check_completed' and (
                 not _identifier(event.get('question_id'))
                 or event.get('reason') not in PERSON_CHECK_REASONS):
@@ -174,6 +218,7 @@ class FallConfirmationCoordinator:
             self.stages.clear()
             self.check_since.clear()
             self.returns.clear()
+            self._clear_waits()
         # A question retains its original evidence revision until its session
         # ends. Its replay or completion may follow a newer incident update.
         if (revision < self.revisions.get(iid, 0)
@@ -194,8 +239,10 @@ class FallConfirmationCoordinator:
             if reason == 'partial_body':
                 self.stages[qid] = 'view'  # Move to where the whole body is visible.
                 return True
-            # No person: no question; the runtime closes the case. Go back.
-            self._close_and_return(boot, iid, qid, request, 'not_a_person')
+            # No person: no question; the runtime closes the case (or, when it went
+            # back after waiting, reports nobody there and keeps it open). Go back.
+            self._close_and_return(boot, iid, qid, request,
+                                   'revisit' if qid in self.revisits else 'not_a_person')
             return True
         if kind == 'posture_check_completed':
             qid = event['question_id']
@@ -205,8 +252,10 @@ class FallConfirmationCoordinator:
                 return True
             self.check_since.pop(qid, None)
             if event['reason'] in OFF_FLOOR_REASONS:
-                # Seen off the floor: no question; the runtime closes the case. Go back.
-                self._close_and_return(boot, iid, qid, request, 'off_floor')
+                # Seen off the floor: no question; the runtime closes the case (after a
+                # revisit it alerts instead and keeps it open). Go back.
+                self._close_and_return(boot, iid, qid, request,
+                                       'revisit' if qid in self.revisits else 'off_floor')
             else:
                 self.stages[qid] = 'confirm'
             return True
@@ -218,6 +267,7 @@ class FallConfirmationCoordinator:
                     self.stages.pop(rid, None)
                     self.check_since.pop(rid, None)
                     self._remember(rid)
+                    self._forget(rid)
             return True
         if kind == 'confirmation_completed':
             qid = event.get('question_id')
@@ -226,6 +276,7 @@ class FallConfirmationCoordinator:
                 request = self.requests.get(qid)
                 if request is not None and request.incident_id == iid:
                     del self.requests[qid]
+                    self._forget(qid)
             return True
         if kind == 'analysis_completed' and event.get('video_assessment') == 'normal_activity':
             # Runtime revalidates that there was no earlier observed fall or
@@ -262,7 +313,7 @@ class FallConfirmationCoordinator:
         else:
             summary += ' 실제로 넘어진 것인지와 도움 필요 여부를 확인해 주세요.'
         self.requests[qid] = ConfirmationRequest(
-            boot, iid, qid, subject, revision, summary, target)
+            boot, iid, qid, subject, revision, summary, target, revisit)
         self.stages[qid] = 'approach' if target is not None else 'confirm'
         return True
 
@@ -270,10 +321,102 @@ class FallConfirmationCoordinator:
         del self.requests[qid]
         self.stages.pop(qid, None)
         self._remember(qid)
-        self.returns.append(ReturnJob(boot, iid, qid, request.revision, reason))
+        self._forget(qid)
+        self.returns.append(ReturnJob(boot, iid, qid, request.revision, reason,
+                                      request.revisit_target or request.approach_target))
+
+    # ------------------------------------------------------------ waiting
+
+    def _blocked_s(self, qid, now):
+        since = self.blocked_from.get(qid)
+        return self.blocked_total.get(qid, 0.0) + (
+            max(0.0, now - since) if since is not None else 0.0)
+
+    def wait(self, now, why):
+        """The Manager cannot take the next step now; the link asks again later."""
+        if not self.requests:
+            return
+        if why not in WAITING_FOR:
+            why = 'busy'
+        self.waiting_for = why
+        for qid in self.requests:
+            self.blocked_from.setdefault(qid, now)
+
+    def resume(self, now):
+        """The Manager took the step: the wait is over for every queued request."""
+        for qid, since in self.blocked_from.items():
+            self.blocked_total[qid] = self.blocked_total.get(qid, 0.0) + max(0.0, now - since)
+        self.blocked_from.clear()
+        self.waiting_for = None
+
+    def check_waits(self, now):
+        """Note a lasting wait; a minute alerts once and goes back; ten stop trying."""
+        if self.waiting_for is None:
+            return
+        head = next(iter(self.requests.values()), None)
+        since = self.blocked_from.get(head.question_id) if head is not None else None
+        if since is not None and now - since >= WAIT_NOTE_S:
+            recorded = self.waiting_sent.setdefault(head.question_id, set())
+            if self.waiting_for not in recorded:
+                recorded.add(self.waiting_for)
+                decision = head.decision('check_waiting')
+                decision['reason'] = self.waiting_for
+                self.commands.append(decision)
+        for qid, request in tuple(self.requests.items()):
+            waited = self._blocked_s(qid, now)
+            if waited >= WAIT_LIMIT_S:
+                self.fail(request, 'time_limit')
+                continue
+            mark = self.alerted.get(qid)
+            if waited - (mark or 0.0) < WAIT_ALERT_S:
+                continue
+            if mark is None:
+                decision = request.decision('check_not_confirmed')
+                decision['reason'] = 'waited_' + self.waiting_for
+                self.commands.append(decision)
+            self.alerted[qid] = waited
+            if request.revisit_target is not None and self.stages.get(qid) != 'revisit':
+                # The person may have moved meanwhile: look at the spot again first.
+                self.stages[qid] = 'revisit'
+                self.check_since.pop(qid, None)
+                self.revisits[qid] = self.waiting_for
+
+    def revisit_started(self, request):
+        """The Manager runs the drive back to the spot."""
+        if self.requests.get(request.request_id) != request or self.closed:
+            return False
+        decision = request.decision('revisit_started')
+        decision['reason'] = self.revisits.get(request.question_id, 'busy')
+        self.commands.append(decision)
+        # Another minute of waiting from here sends it back once more (no new alert).
+        self.alerted[request.question_id] = self.blocked_total.get(request.question_id, 0.0)
+        return True
+
+    def status(self, *, current=None, returning=False):
+        """What the robot does for falls now, for the map screen (목업 27번).
+
+        ``current`` is the kind of work the link has in flight. Active from the
+        first drive to the end of the return, gaps included.
+        """
+        request = next(iter(self.requests.values()), None)
+        job = self.returns[0] if self.returns else None
+        if request is None and job is None and not returning:
+            return dict(active=False, phase=None, waiting_for=None, alerted=False, target=None)
+        if returning or job is not None:
+            phase, target = 'return', job.target if job is not None else None
+        else:
+            stage = current or self.stages.get(request.question_id, 'confirm')
+            # Moving back to see the whole body is part of looking at the spot.
+            phase = ('wait' if self.waiting_for is not None
+                     else 'look' if stage in ('check', 'view', 'posture')
+                     else 'ask' if stage == 'confirm' else 'approach')
+            target = request.revisit_target or request.approach_target
+        return dict(active=True, phase=phase, waiting_for=self.waiting_for,
+                    alerted=request is not None and request.question_id in self.alerted,
+                    target=dict(x=target[0], y=target[1]) if target is not None else None)
 
     def next_work(self, now):
-        """('return', job) | ('approach' | 'view' | 'confirm', request) | None (wait)."""
+        """('return', job) | ('approach' | 'view' | 'revisit' | 'confirm', request) | None."""
         if self.returns:
             return 'return', self.returns[0]
         request = next(iter(self.requests.values()), None)
@@ -290,13 +433,13 @@ class FallConfirmationCoordinator:
             self.check_since.pop(qid, None)
         return stage, request
 
-    def approach_done(self, request, outcome, now):
+    def approach_done(self, request, outcome, now, *, action='approach_result'):
         """Report the drive; arrived waits for the runtime's look, else ask here."""
         if self.requests.get(request.request_id) != request or self.closed:
             return False
         if outcome not in APPROACH_OUTCOMES:
             outcome = 'failed'
-        decision = request.decision('approach_result')
+        decision = request.decision(action)
         decision['outcome'] = outcome
         self.commands.append(decision)
         if outcome == 'arrived':
@@ -305,6 +448,10 @@ class FallConfirmationCoordinator:
         else:
             self.stages[request.question_id] = 'confirm'
         return True
+
+    def revisit_done(self, request, outcome, now):
+        """The drive back to the spot ended: look again (never closing), or ask here."""
+        return self.approach_done(request, outcome, now, action='revisit_result')
 
     def view_done(self, request, outcome, now):
         """Report the move; the runtime then reads the posture (or reports none)."""
@@ -339,16 +486,20 @@ class FallConfirmationCoordinator:
         del self.requests[request.request_id]
         self.stages.pop(request.request_id, None)
         self._remember(request.request_id, decision)
+        self._forget(request.request_id)
         return True
 
-    def fail(self, request):
+    def fail(self, request, reason='question_error'):
+        """Not asked: the runtime alerts the guardian at once (urgent)."""
         if self.requests.get(request.request_id) != request or self.closed:
             return False
         decision = request.decision('confirmation_failed')
+        decision['reason'] = reason if reason in FAILURE_REASONS else 'question_error'
         self.commands.append(decision)
         del self.requests[request.request_id]
         self.stages.pop(request.request_id, None)
         self._remember(request.request_id, decision)
+        self._forget(request.request_id)
         return True
 
     def drain_commands(self):
@@ -361,3 +512,4 @@ class FallConfirmationCoordinator:
         self.commands.clear()
         self.stages.clear()
         self.returns.clear()
+        self._clear_waits()

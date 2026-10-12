@@ -29,7 +29,7 @@ def rig(monkeypatch):
     link.message_type = SimpleNamespace
     link.client, link.decisions, link.timer = Mock(), Mock(), Mock()
     link.client.server_is_ready.return_value = True
-    link.client.send_goal_async.side_effect = lambda goal: Future()
+    link.client.send_goal_async.side_effect = lambda goal, **kwargs: Future()
     link.agent_presence = Mock()
     link.agent_presence.server_is_ready.return_value = True
     link.manager_state = SimpleNamespace(
@@ -60,7 +60,7 @@ def success():
 
 
 @pytest.mark.parametrize('late_by', [0.0, 0.001])
-@pytest.mark.parametrize('phase', ['acceptance', 'result', 'manager_loss', 'agent_loss'])
+@pytest.mark.parametrize('phase', ['result', 'manager_loss', 'agent_loss'])
 def test_late_callback_cannot_bypass_transport_deadline(rig, phase, late_by):
     link = rig.link
     if phase != 'acceptance':
@@ -75,9 +75,25 @@ def test_late_callback_cannot_bypass_transport_deadline(rig, phase, late_by):
     else:
         rig.result.set_result(success())
     assert [item['action'] for item in commands(link)] == ['confirmation_failed']
+    assert commands(link)[0]['reason'] == 'question_error'
     assert link.request is None and not link.coordinator.requests
     rig.handle.cancel_goal_async.assert_called_once()
     assert all('help_needed' not in item for item in commands(link))
+
+
+@pytest.mark.parametrize('late_by', [0.0, 0.001])
+def test_unanswered_goal_waits_and_goes_again_instead_of_failing(rig, late_by):
+    """No Manager answer in 5 s: busy, not a failed question (2026-10-12)."""
+    link = rig.link
+    request = link.request
+    rig.now.value = 5.0 + late_by
+    link.goal_future.set_result(rig.handle)
+    assert commands(link) == [] and link.coordinator.waiting_for == 'busy'
+    assert link.request is None and list(link.coordinator.requests.values()) == [request]
+    rig.handle.cancel_goal_async.assert_called_once()
+    rig.now.value += 1.0
+    link.tick()
+    assert link.request == request and link.client.send_goal_async.call_count == 2
 
 
 def test_result_before_deadline_is_forwarded_once(rig):
@@ -183,7 +199,7 @@ def test_downstream_rejection_retries_through_manager(rig):
         message='Downstream Action server rejected the goal', result_yaml='',
     )))
     assert rig.link.request is None
-    assert commands(rig.link) == []
+    assert commands(rig.link) == []  # A passing refusal leaves no note.
     rig.now.value = 1.0
     rig.link.tick()
     assert rig.link.request == request

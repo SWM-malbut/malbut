@@ -445,3 +445,49 @@ def test_rgb_frames_keep_aligned_depth_and_map_pose_for_scene_places(tmp_path, m
     node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=1001 * 10**9))
     node.on_image(image)
     assert len(node.place._frames) == 1 and node.monitor.buffer.stored_bytes > 0
+
+
+def test_guardian_closed_incidents_reach_the_runtime_from_their_topic(tmp_path, monkeypatch):
+    """처리 완료 in the app → Bringup → /malbut/falls/incidents/closed → closed (2026-10-12)."""
+    node_module = pytest.importorskip('rclpy.node')
+    std = pytest.importorskip('std_msgs.msg')
+    pytest.importorskip('malbut_interfaces.msg')
+    pytest.importorskip('cv_bridge')
+
+    class Node:
+        def __init__(self, name):
+            self.subscriptions, self.logs = {}, []
+
+        def declare_parameter(self, name, default, descriptor):
+            return SimpleNamespace(value=default)
+
+        def create_subscription(self, msg, topic, callback, qos):
+            self.subscriptions[topic] = callback
+
+        def create_publisher(self, msg, topic, qos):
+            return Mock()
+
+        def create_service(self, *args):
+            pass
+
+        def create_timer(self, *args, **kwargs):
+            pass
+
+        def get_clock(self):
+            return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+
+        def get_logger(self):
+            return SimpleNamespace(warning=self.logs.append)
+
+    monkeypatch.setattr(node_module, 'Node', Node)
+    _, clock, provider = make()
+    node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                            provider=provider, journal=None, clock=clock)
+    closed = []
+    node.monitor.close_by_guardian = closed.append
+    receive = node.subscriptions['/malbut/falls/incidents/closed']
+    receive(std.String(data=json.dumps({'incident_ids': ['a', 'b']})))
+    assert closed == ['a', 'b']
+    for bad in ('{"incident_ids": "a"}', json.dumps({'incident_ids': ['x'] * 17}), 'not json'):
+        receive(std.String(data=bad))
+    assert closed == ['a', 'b'] and node.logs == ['guardian_close_rejected']

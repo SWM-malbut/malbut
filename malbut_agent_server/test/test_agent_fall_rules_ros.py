@@ -28,7 +28,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E
 from std_msgs.msg import String  # noqa: E402
 from malbut_interfaces.action import ConfirmSituation, ExecuteMission  # noqa: E402
 from malbut_interfaces.msg import (  # noqa: E402
-    FallControlHeartbeat, FallRuntimeStatus, SystemState,
+    FallControlHeartbeat, FallRuntimeStatus, MissionStatus, SystemState,
 )
 
 IDS = ['--fall-runtime-id', 'rules-id', '--fall-bridge-runtime-id', 'bridge-id',
@@ -173,3 +173,34 @@ def test_a_signal_cancels_the_fall_mission_the_rules_started(agent):
     assert not probe.cancels
     assert stop(process) == 0
     assert probe.cancels  # Sent before the process ended, as the coordinator did.
+
+
+def test_driven_by_hand_the_rules_wait_say_so_and_unlock_when_stopped(agent):
+    """2026-10-12: 직접 움직이기 is never taken; the map screen hears the check waits."""
+    probe = Probe(manager=True)
+    decisions, statuses = [], []
+    probe.create_subscription(String, '/malbut/falls/runtime/decision',
+                              lambda m: decisions.append(json.loads(m.data)), 10)
+    probe.create_subscription(String, '/malbut/falls/check/status',
+                              lambda m: statuses.append((time.monotonic(), json.loads(m.data))),
+                              10)
+    probe.state.publish(SystemState(active_foreground_missions=[MissionStatus(
+        mission_id='m', capability_id='manual_drive', priority=MissionStatus.HIGH,
+        state=MissionStatus.RUNNING)]))
+    process = agent(probe, '--no-speech', '--fall-rules', *IDS)
+    assert wait_for(lambda: len(probe.beats) >= 1)
+    probe.question()
+    assert wait_for(lambda: statuses and statuses[-1][1]['phase'] == 'wait')
+    assert statuses[-1][1] == dict(active=True, phase='wait', waiting_for='manual_drive',
+                                   alerted=False, target=None)
+    first = len(statuses)
+    # The history notes the wait once it lasts three seconds.
+    assert wait_for(lambda: any(d['action'] == 'check_waiting' for d in decisions), 6)
+    assert [(d['action'], d['reason']) for d in decisions] == [('check_waiting', 'manual_drive')]
+    time.sleep(1.5)
+    assert len(statuses) - first >= 4  # Every second while it lasts.
+    assert not probe.goals  # Nothing is sent while driven by hand.
+    probe.state.publish(SystemState())
+    assert wait_for(lambda: probe.goals == ['fall_confirmation'])
+    assert stop(process) == 0
+    assert statuses[-1][1]['active'] is False  # Stopping unlocks the moves at once.

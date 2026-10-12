@@ -1,6 +1,7 @@
 """Drive 1 m in front of an uncertain fall suspicion, facing it, or back.
 
-The Manager runs this as the URGENT `fall_approach` mission holding BASE.
+The Manager runs this as the NORMAL `fall_approach` mission holding BASE: it
+takes over a patrol or a drive, never 직접 움직이기 (HIGH).
 Nav2 plans around keepout zones (GridBased planner); the follower's path
 standoff rule stops the robot on the 1 m circle. No question or alert here: the
 Agent's fall rules ask the fall runtime to look once the robot has arrived.

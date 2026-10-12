@@ -101,10 +101,15 @@ def test_transport_failure_is_not_user_no_response_or_help_needed():
         command.pop(key)
     command['action'] = 'confirmation_failed'
     monitor.drain_events()
+    with pytest.raises(ValueError, match='invalid'):
+        apply_decision(monitor, json.dumps(command))  # The reason is required.
+    command['reason'] = 'question_error'
     assert apply_decision(monitor, json.dumps(command))
     assert monitor.incident(iid).help_needed is None
     assert monitor.incident(iid).state is IncidentState.RECHECK_REQUIRED
-    assert [e.kind for e in monitor.drain_events()] == ['agent_check_failed']
+    # Not the user's silence: the guardian is alerted that the robot could not ask.
+    assert [(e.kind, e.reason) for e in monitor.drain_events()] == [
+        ('agent_check_failed', 'question_error'), ('notification_requested', 'robot_could_not_confirm')]
 
 
 def test_new_evidence_keeps_question_and_accepts_its_result_without_clearing_new_evidence():
@@ -154,6 +159,7 @@ def test_finished_question_releases_only_latest_assessed_revision(failed):
     monitor.drain_events()
     if failed:
         old['action'] = 'confirmation_failed'
+        old['reason'] = 'speech_unavailable'
         for key in ('subject_key', 'situation_assessment', 'help_needed'):
             old.pop(key)
     assert apply_decision(monitor, json.dumps(old))

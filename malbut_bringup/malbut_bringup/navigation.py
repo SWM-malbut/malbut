@@ -14,6 +14,7 @@ import time
 
 import yaml
 
+from .drive_mode import FALL_CHECK_REFUSAL
 from .zones import RESTRICTED_MARGIN_M
 
 
@@ -167,8 +168,12 @@ def failure_reason(request, start, system):
                        if value)
     if 'priority HIGH' in message:
         return 'manual_drive'  # Manual driving is the only HIGH mission.
-    if 'priority URGENT' in message:
+    if FALL_CHECK_REFUSAL in message:
+        # The panel refuses moves during a fall check (2026-10-12). The fall missions
+        # are NORMAL now, so no Manager refusal names them any more.
         return 'fall_check'
+    if 'priority URGENT' in message:
+        return 'unknown'  # Recovery, the only URGENT mission.
     if 'preempted' in message:
         running = {mission.get('capability_id') for key in _MISSION_LISTS
                    for mission in (system or {}).get(key) or [] if isinstance(mission, dict)}

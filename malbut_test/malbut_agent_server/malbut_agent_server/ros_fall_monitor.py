@@ -12,7 +12,9 @@ import time
 from uuid import uuid4
 
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
-from malbut_agent_server.application.fall_detector_input import FallDetectorInput, ros_stamp
+from malbut_agent_server.application.fall_detector_input import (
+    FallDetectorInput, bounded_object, ros_stamp,
+)
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_place_locator import (
     FallPlaceLocator, FrameGeometry, mount_corrected,
@@ -28,6 +30,7 @@ from malbut_agent_server.fall_control import (
 
 
 MISSION_STATE_TOPIC = '/malbut/state'
+GUARDIAN_CLOSED_TOPIC = '/malbut/falls/incidents/closed'
 MAPPING_CAPABILITY = 'autoslam'
 # Depth paired with an RGB frame; stored every 4th pixel to bound memory.
 DEPTH_MAX_STAMP_DELTA_S = 0.1
@@ -132,6 +135,12 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.create_subscription(String, '/malbut/falls/runtime/decision',
                                      lambda msg: self.guarded('decision_rejected', apply_decision,
                                                               self.monitor, msg.data), 10)
+            # 처리 완료 in the app (cloud_sync, from each state upload's reply): the
+            # robot stops checking those incidents. The same list repeats each second.
+            self.create_subscription(String, GUARDIAN_CLOSED_TOPIC,
+                                     lambda msg: self.guarded('guardian_close_rejected',
+                                                              self.on_guardian_closed, msg.data),
+                                     10)
             # Map making moves the camera around the home; its frames read as false falls.
             self.create_subscription(
                 SystemState, MISSION_STATE_TOPIC, self.on_system_state,
@@ -164,6 +173,13 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.monitor.set_running_missions(
                 mission.capability_id for mission in (*message.active_foreground_missions,
                                                       *message.active_background_missions))
+
+        def on_guardian_closed(self, data):
+            ids = bounded_object(data).get('incident_ids')
+            if not isinstance(ids, list) or len(ids) > 16:
+                raise ValueError('invalid closed incident list')
+            for incident_id in ids:
+                self.monitor.close_by_guardian(incident_id)
 
         def on_settings(self, request, response):
             result = self.control.apply_settings(**{
