@@ -22,6 +22,8 @@ import cv2
 import numpy as np
 import yaml
 
+from malbut_autoslam.map_view import read_map_view, write_map_view
+
 
 FORMAT_VERSION = "malbut-user-map-v1"
 TRINARY_UNKNOWN_VALUE = 205
@@ -645,9 +647,23 @@ def load_or_build_user_map(map_yaml: Path, map_id: str) -> dict:
         if stored.get("map_id") != slam_map.map_id:
             stored = {**stored, "map_id": slam_map.map_id}
             _write_user_map(map_yaml, stored)
-        return stored
-    document = build_user_map(slam_map)
-    _write_user_map(map_yaml, document)
+        document = stored
+    else:
+        document = build_user_map(slam_map)
+        _write_user_map(map_yaml, document)
+    # Display metadata is separate from navigation geometry and room edits.
+    # Selecting an older map also creates alignment once. Reuse valid settings
+    # on later uploads and recalculate only when the saved map has changed.
+    document = {key: value for key, value in document.items() if key != "view"}
+    view = read_map_view(map_yaml)
+    if view is None:
+        try:
+            view = write_map_view(map_yaml)
+        except (OSError, ValueError, KeyError, TypeError):
+            # Display-only alignment must never prevent loading a saved map.
+            view = None
+    if view is not None:
+        document["view"] = view
     return document
 
 

@@ -28,6 +28,7 @@ from malbut_autoslam.frontier import (
     search_frontiers,
 )
 from malbut_autoslam.saved_pose import write_mapping_pose
+from malbut_autoslam.map_view import write_map_view
 from malbut_autoslam.slam_process import SlamProcess
 
 
@@ -42,7 +43,7 @@ def map_base(directory, name):
         raise ValueError('map_name must be a filename without a path or extension')
     base = Path(directory).expanduser().resolve() / name
     if any(Path(str(base) + suffix).exists()
-           for suffix in ('.yaml', '.pgm', '.pose.yaml', '.zones.geojson')):
+           for suffix in ('.yaml', '.pgm', '.pose.yaml', '.zones.geojson', '.view.json')):
         raise ValueError(f'map already exists: {base}; choose another map_name')
     return base
 
@@ -483,6 +484,14 @@ class AutoSlamNode(Node):
         result.known_area_m2 = map_statistics(grid)['known_area_m2']
         result.map_yaml = self._save(handle, base)
         result.message = f'{reason}; navigation map saved'
+        self._feedback(handle, 'ALIGNING_VIEW', grid)
+        try:
+            view = write_map_view(result.map_yaml)
+            degrees = math.degrees(view['rotation_rad'])
+            result.message += f'; map view alignment saved ({degrees:.1f} deg)'
+        except (OSError, ValueError, KeyError) as error:
+            # A decorative post-processing failure must not invalidate a map.
+            self.get_logger().warning(f'Map view alignment not saved: {error}')
         if self.frontier_count:
             result.message += f'; {self.frontier_count} frontier regions remain'
         try:

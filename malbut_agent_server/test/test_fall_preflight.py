@@ -172,6 +172,7 @@ def test_database_paths_must_be_private_no_creation_or_open(deployment, kind):
         d.journal.parent.chmod(0o755)
     elif kind == 'public_file':
         d.journal.touch(mode=0o644)
+        d.journal.chmod(0o644)
     elif kind == 'symlink_file':
         d.journal.symlink_to(d.key)
     elif kind == 'symlink_directory':
