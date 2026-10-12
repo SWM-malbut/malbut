@@ -406,6 +406,7 @@ class Relocalization(Node):
                 current = self.estimate
             if current is not None:
                 restored_pose = current[1]
+                located = (*located[:2], current, located[3])
             return located
         finally:
             # Cancellation during a running search also keeps the last live
@@ -486,8 +487,8 @@ class Relocalization(Node):
         if ratio >= minimum:
             return (True, f'{reason}; found by global search, {ratio:.0%} of the scan '
                     'matches the map', estimate, ratio)
-        return (False, f'{reason}; global search matched only {ratio:.0%} of the scan',
-                estimate, ratio)
+        return (True, f'{reason}; search time limit reached; keeping the latest AMCL pose, '
+                f'{ratio:.0%} of the scan matches the map', estimate, ratio)
 
     def _wait_ready(self, handle, deadline):
         self._feedback(handle, 'WAITING')
@@ -623,8 +624,11 @@ class Relocalization(Node):
             while time.monotonic() < deadline:
                 self._check(handle)
                 with self.lock:
-                    current = self.estimate
-                if current is not None and current[0] >= started and current[0] != scored_at:
+                    current, scan = self.estimate, self.scan
+                # Do not start waiting for another scan at the search deadline.
+                # Keep the last completed measurement when the ten seconds end.
+                if (current is not None and current[0] >= started and current[0] != scored_at
+                        and scan is not None and scan[0] >= current[0]):
                     ratio = self._score(handle, current, deadline)
                     estimate, scored_at = current, current[0]
                     self._feedback(handle, 'SEARCHING', ratio)
@@ -642,6 +646,10 @@ class Relocalization(Node):
                                   'Spin cancellation')
         if estimate is None:
             raise RelocalizationError('AMCL reported no pose during the global search')
+        with self.lock:
+            current = self.estimate
+        if current is not None and current[0] >= started:
+            estimate = current
         return estimate, ratio
 
     def _cancel_late_spin(self, future):
