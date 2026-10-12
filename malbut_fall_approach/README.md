@@ -7,11 +7,15 @@
 2026-10-11(SWM25-238)까지는 `malbut_fall_coordinator` 패키지 안에 있었고 동작은 그대로다.
 
 - Action `/malbut/falls/approach`(`FallApproach`): `phase` = `approach`(1 m 앞, 의심 장소를 바라봄),
-  `view`(요청한 거리로 물러남, 안 되면 좌우 45°·90°), `return`(질문 ID별로 기억한 시작 위치로).
+  `view`(요청한 거리로 물러남), `return`(질문 ID별로 기억한 시작 위치로).
 - ComputePathToPose(GridBased, 금지 구역 반영) → 1 m 원에서 경로를 자름(`standoff_route`) →
-  FollowPath → Spin으로 바라봄. 접근·몸 전체 보기의 기존 방식은 유지한다.
+  FollowPath → Spin으로 바라봄. 이동마다 60초 상한.
 - 복귀는 저장한 출발 위치를 NavigateToPose에 전달해 Nav2의 재계획·복구를 사용하고,
   도착 후 Spin으로 출발 방향을 복원한다. 이동마다 60초 상한.
+- `view`: 의심 장소를 바라보고 있으면 Nav2 BackUp으로 그대로 후진한다(0.1 m/s, 지역 costmap으로
+  뒤쪽 충돌 확인). 안 되면 의심 장소 둘레의 자리(바로 뒤, 좌우 45°·90°)를 차례로 경로 계획·주행하고,
+  주행이 실패해도 다음 자리를 시도한다. 2026-10-12 침대 옆에서 등 뒤 자리로 가려고 돌아서다
+  Nav2 진행 확인(10초에 0.5 m)에 걸려 첫 자리에서 포기했던 것을 고쳤다.
 - 결과는 `/malbut/falls/approach/status`(래치 JSON)에도 낸다(웹 순찰 카드의 "낙상 확인으로 멈춤").
 - 능력 정의: [`fall_approach.yaml`](../malbut_interfaces/capabilities/fall_approach.yaml)
   (`[BASE]`, `map_requirement: SELECTED`).

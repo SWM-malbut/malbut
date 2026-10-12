@@ -217,6 +217,8 @@ export const deviceState = pgTable("device_state", {
     .primaryKey()
     .references(() => devices.id, { onDelete: "cascade" }),
   monitoringEnabled: integer("monitoring_enabled").notNull().default(0),
+  // The user's recording choice, kept while the camera is off (0026).
+  monitoringPreferred: integer("monitoring_preferred").notNull().default(0),
   cameraEnabled: integer("camera_enabled").notNull().default(1),
   microphoneEnabled: integer("microphone_enabled").notNull().default(1),
   fallEnabled: boolean("fall_enabled").notNull().default(false),

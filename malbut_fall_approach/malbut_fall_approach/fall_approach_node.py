@@ -19,7 +19,7 @@ from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FallApproach
-from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose, Spin
+from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin
 from nav_msgs.msg import Path
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -32,12 +32,14 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_fall_approach.fall_approach import (
-    APPROACH_LIMIT_S, RETURN_LIMIT_S, VIEW_LIMIT_S, Pose2D, StartPoses, facing_turn,
-    goal_error, plan_targets, returning_turn, route_length, standoff_route, view_points,
+    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, RETURN_LIMIT_S, VIEW_LIMIT_S, Pose2D, StartPoses,
+    backup_distance, facing_turn, goal_error, plan_targets, returning_turn, route_length,
+    standoff_route, view_points,
 )
 
 STATUS_TOPIC = '/malbut/falls/approach/status'
 SPIN_ALLOWANCE_S = 10
+BACKUP_SLACK_S = 5
 CANCEL_SETTLE_S = 5.0
 
 
@@ -76,6 +78,7 @@ class FallApproachNode(Node):
             'goal_checker_id': 'general_goal_checker',
             'compute_path_action': 'compute_path_to_pose', 'follow_path_action': 'follow_path',
             'spin_action': 'spin', 'navigate_action': 'navigate_to_pose',
+            'backup_action': 'backup',
         }
         self.settings = {name: self.declare_parameter(name, value).value
                          for name, value in settings.items()}
@@ -90,6 +93,8 @@ class FallApproachNode(Node):
                                     callback_group=self.group)
         self.navigator = ActionClient(self, NavigateToPose, self.settings['navigate_action'],
                                       callback_group=self.group)
+        self.backer = ActionClient(self, BackUp, self.settings['backup_action'],
+                                   callback_group=self.group)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
         self.status = self.create_publisher(String, STATUS_TOPIC, latched)
@@ -162,12 +167,19 @@ class FallApproachNode(Node):
         return 'arrived', ''
 
     def _view(self, handle, request, deadline):
-        """Move back (or around) to where the whole body is visible, facing the spot."""
+        """Back away (or go around) to where the whole body is visible, facing the spot."""
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
         self.starts.remember(request.request_id, robot)  # Normally kept from the approach.
         target = (request.x, request.y)
+        back = backup_distance(robot, target, request.standoff_m)
+        if back:
+            self._feedback(handle, 'DRIVING')
+            if self._back_up(handle, back, deadline):
+                return self._face(handle, robot, target, deadline)
+            robot = self._pose() or robot
+        failed = False
         for goal in view_points((robot.x, robot.y), target, request.standoff_m):
             path = self._plan(handle, robot, goal, deadline,
                               yaw=math.atan2(target[1] - goal[1], target[0] - goal[0]))
@@ -175,15 +187,23 @@ class FallApproachNode(Node):
                 continue
             self._feedback(handle, 'DRIVING')
             if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
-                return 'failed', 'Nav2 did not finish the path'
-            robot = self._pose() or robot
-            turn = facing_turn(robot, target)
-            if turn:
-                self._feedback(handle, 'TURNING')
-                if not self._spin(handle, turn, deadline):
-                    return 'arrived', 'could not turn to face the spot'
-            return 'arrived', ''
+                # Another side of the spot may still be reachable within the minute.
+                failed = True
+                robot = self._pose() or robot
+                continue
+            return self._face(handle, robot, target, deadline)
+        if failed:
+            return 'failed', 'Nav2 did not finish a path to see the whole body'
         return 'no_path', 'no place to see the whole body'
+
+    def _face(self, handle, robot, target, deadline):
+        robot = self._pose() or robot
+        turn = facing_turn(robot, target)
+        if turn:
+            self._feedback(handle, 'TURNING')
+            if not self._spin(handle, turn, deadline):
+                return 'arrived', 'could not turn to face the spot'
+        return 'arrived', ''
 
     def _return(self, handle, request, deadline):
         start = self.starts.get(request.request_id)
@@ -236,6 +256,16 @@ class FallApproachNode(Node):
         goal.target_yaw = float(turn)
         goal.time_allowance = DurationMsg(sec=SPIN_ALLOWANCE_S)
         result = self._call(self.spinner, goal, handle, deadline)
+        return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+
+    def _back_up(self, handle, distance, deadline):
+        """Nav2 BackUp checks the local costmap behind the robot as it goes."""
+        goal = BackUp.Goal()
+        goal.target.x = float(distance)
+        goal.speed = BACKUP_SPEED_MPS
+        goal.time_allowance = DurationMsg(
+            sec=int(math.ceil(distance / BACKUP_SPEED_MPS)) + BACKUP_SLACK_S)
+        result = self._call(self.backer, goal, handle, deadline)
         return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
 
     def _call(self, client, goal, handle, deadline):

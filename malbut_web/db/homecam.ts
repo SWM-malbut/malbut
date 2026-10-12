@@ -340,11 +340,16 @@ export async function updateDeviceSettings(input: {
     input.patch.monitoringEnabled !== undefined;
   const result = await getD1()
     .prepare(
+      // Camera off stops recording but keeps the choice; camera on restores it.
       `UPDATE device_state
-       SET monitoring_enabled = CASE
+       SET monitoring_preferred = CASE
+             WHEN CAST(? AS INTEGER) IS NULL THEN monitoring_preferred ELSE ?
+           END,
+           monitoring_enabled = CASE
              WHEN ? = 0 THEN 0
-             WHEN CAST(? AS INTEGER) IS NULL THEN monitoring_enabled
-             ELSE ?
+             WHEN CAST(? AS INTEGER) IS NOT NULL THEN ?
+             WHEN ? = 1 THEN monitoring_preferred
+             ELSE monitoring_enabled
            END,
            camera_enabled = CASE
              WHEN CAST(? AS INTEGER) IS NULL THEN camera_enabled ELSE ?
@@ -361,9 +366,12 @@ export async function updateDeviceSettings(input: {
          AND NOT (COALESCE(?, 0) = 1 AND COALESCE(?, camera_enabled) = 0)`,
     )
     .bind(
+      monitoringPatch,
+      monitoringPatch,
       cameraPatch,
       monitoringPatch,
       monitoringPatch,
+      cameraPatch,
       cameraPatch,
       cameraPatch,
       microphonePatch,

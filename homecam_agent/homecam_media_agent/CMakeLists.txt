@@ -10,7 +10,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 option(HOMECAM_ENABLE_GSTREAMER "Enable the in-process GStreamer appsrc pipeline" ON)
-option(HOMECAM_ENABLE_CURL "Enable HTTPS device heartbeats through libcurl" ON)
+option(HOMECAM_ENABLE_CURL "Enable HTTPS device sessions through libcurl" ON)
 option(HOMECAM_ENABLE_KVS "Enable the Amazon KVS WebRTC C SDK transport" OFF)
 set(KVS_WEBRTC_SDK_ROOT "" CACHE PATH
   "Pinned amazon-kinesis-video-streams-webrtc-sdk-c source tree with a completed build")
@@ -50,13 +50,13 @@ endif()
 if(HOMECAM_ENABLE_CURL)
   find_package(CURL QUIET)
   if(CURL_FOUND)
-    message(STATUS "homecam_media_agent: libcurl heartbeat support enabled")
+    message(STATUS "homecam_media_agent: libcurl device session support enabled")
     list(APPEND HOMECAM_OPTIONAL_LIBRARIES CURL::libcurl)
     set(HOMECAM_HAVE_CURL 1)
   else()
     message(WARNING
       "homecam_media_agent: libcurl development package not found; "
-      "heartbeats will be logged locally only")
+      "no device media session can be requested")
   endif()
 endif()
 

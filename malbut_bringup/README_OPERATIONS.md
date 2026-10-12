@@ -369,7 +369,9 @@ TF가 맞는지도 확인한다. 시뮬레이션의 frame 보정이나 fake stat
 기존에 별도로 켠 Bringup·SLAM·Nav2와 겹치지 않게 정리한 뒤, 로봇에서
 `cloud.launch.py`로 서비스 웹([malbut_web](../malbut_web/README.md))에 연결하고
 웹의 **로봇 기능**에서 진행한다([실기기 클라우드 연결](../malbut_test/README_CLOUD.md)).
-연결만으로는 다른 노드를 켜거나 움직이지 않는다. LAN 테스트 패널
+연결만으로는 다른 노드를 켜거나 움직이지 않는다. 웹과의 1초 연락은 이 상주 프로그램
+(`robot_cloud_sync`) 하나이고, 홈캠의 heartbeat도 로봇 상태 업로드에 실어 나른다(2026-10-12,
+`/malbut/homecam/heartbeat/request`·`reply`). 상주 프로그램을 끄면 그 프로그램이 켠 Bringup도 꺼진다. LAN 테스트 패널
 (`robot_web_panel`)도 남아 있지만 현재 사용하지 않는다.
 
 1. **Bringup 시작** → 마지막에 고른 저장 지도가 있으면 그 지도로 켜고 4번처럼 위치를 찾는다.

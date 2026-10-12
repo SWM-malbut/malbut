@@ -1,5 +1,7 @@
-// ABI 3: cooperative cancellation and a per-call monotonic decode deadline.
+// ABI 4: bounded observations of actual native silence decisions and seeks.
 #include "whisper.h"
+#include "whisper_trace.h"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -9,6 +11,23 @@ namespace {
 struct Bridge {
     whisper_context * context;
     std::atomic<bool> cancelled{false};
+    std::array<mb_whisper_window, 64> windows{};
+    int window_count = 0;
+    bool trace_truncated = false;
+};
+
+struct Observe {
+    explicit Observe(Bridge * bridge) {
+        mb_whisper_trace_set([](const mb_whisper_window * window, void * data) {
+            auto * b = static_cast<Bridge *>(data);
+            if (b->window_count < (int) b->windows.size()) {
+                b->windows[b->window_count++] = *window;
+            } else {
+                b->trace_truncated = true;
+            }
+        }, bridge);
+    }
+    ~Observe() { mb_whisper_trace_set(nullptr, nullptr); }
 };
 
 struct Decode {
@@ -35,7 +54,7 @@ whisper_context * unwrap(void * context) {
 
 extern "C" {
 
-int mb_whisper_abi_version() { return 3; }
+int mb_whisper_abi_version() { return 4; }
 
 void * mb_whisper_create(const char * model_path, int use_gpu) {
     whisper_context_params params = whisper_context_default_params();
@@ -63,6 +82,9 @@ void mb_whisper_cancel(void * context) {
 
 int mb_whisper_transcribe(void * context, const float * samples, int count,
                          int threads, const char * initial_prompt, double timeout_s) {
+    auto * bridge = static_cast<Bridge *>(context);
+    bridge->window_count = 0;
+    bridge->trace_truncated = false;
     if (!std::isfinite(timeout_s) || timeout_s <= 0) return -101;
     Decode decode{static_cast<Bridge *>(context), std::chrono::steady_clock::now(), timeout_s};
     if (const int status = decode.status()) return status;
@@ -91,11 +113,27 @@ int mb_whisper_transcribe(void * context, const float * samples, int count,
         return !abort_decode(data);
     };
     params.encoder_begin_callback_user_data = &decode;
+    Observe observe(bridge);
     const int result = whisper_full(unwrap(context), params, samples, count);
     // whisper.cpp may return success after an encoder callback abort. Never
     // expose a partial or stale transcript after cancellation or timeout.
     if (const int status = decode.status()) return status;
     return result;
+}
+
+int mb_whisper_trace_count(void * context) {
+    return static_cast<Bridge *>(context)->window_count;
+}
+
+int mb_whisper_trace_truncated(void * context) {
+    return static_cast<Bridge *>(context)->trace_truncated;
+}
+
+int mb_whisper_trace_window(void * context, int index, mb_whisper_window * out) {
+    const auto * b = static_cast<Bridge *>(context);
+    if (!out || index < 0 || index >= b->window_count) return 0;
+    *out = b->windows[index];
+    return 1;
 }
 
 int mb_whisper_segment_count(void * context) {

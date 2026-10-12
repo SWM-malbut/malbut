@@ -186,3 +186,27 @@ def test_event_storage_errors_never_escape_to_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr('malbut_stt.diagnostics.os.open', no_space)
     diagnostics.event('speech_started', utterance_id='new')
     assert diagnostics.error == 'OSError: disk full'
+
+
+def test_native_trace_survives_decoder_error_and_observation_is_bounded(tmp_path):
+    trace = dict(status='observed', return_code=-101, windows=[dict(avg_logprobs=-1.2)])
+    error = TimeoutError('native deadline')
+    error.native_decode = trace
+
+    class FailingModel:
+        def transcribe(self, *args, **kwargs):
+            raise error
+
+    diagnostics = TranscriptionDiagnostics(tmp_path)
+    with pytest.raises(TimeoutError) as caught:
+        diagnostics.wrap_model(FailingModel()).transcribe(np.zeros(16))
+    assert caught.value is error
+    record, = records(tmp_path)
+    assert record['native_decode'] == trace
+    # Oversized observation must not break otherwise valid model output.
+    model = Model([SimpleNamespace(text='normal')])
+    model.info = SimpleNamespace(native_decode={'huge': 'x' * 65536})
+    result, _ = diagnostics.wrap_model(model).transcribe(np.zeros(16))
+    assert list(result) == model.segments
+    oversized, = [r for r in records(tmp_path) if r['error'] is None]
+    assert oversized['native_decode']['reason'] == 'result_budget'

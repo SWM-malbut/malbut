@@ -1,4 +1,4 @@
-# Local whisper.cpp bridge (ABI 3)
+# Local whisper.cpp bridge (ABI 4)
 
 This builds the resident STT bridge against an explicitly supplied local
 [whisper.cpp checkout](https://github.com/ggml-org/whisper.cpp/tree/da54572229bcf64ba367d96c7ef15770376c4280).
@@ -7,7 +7,7 @@ Configuration requires that checkout to be clean at commit
 system-wide by these commands. Keep the external checkout and build directory
 outside each other so generated files do not dirty the pinned source.
 
-Prepare a working C++ toolchain, Git, CMake >= 3.18, and the CUDA toolkit matching
+Prepare a working C++ toolchain, Git, Python 3, CMake >= 3.18, and the CUDA toolkit matching
 the robot's JetPack installation before building. The example below targets
 Jetson Orin NX, whose [CUDA compute capability is 8.7](https://developer.nvidia.com/cuda/gpus).
 It is a preparation recipe; successful execution on the target robot is still
@@ -31,9 +31,43 @@ CMake records build-tree library search paths. Keep that build tree intact.
 Copying the bridge alone or using the Mac `.dylib` does not provide a Linux
 runtime. Model files are independent of this build.
 
-Rebuild the bridge when updating from ABI 2. The Python adapter rejects older
-libraries before model creation because ABI 3 adds cancellation and a decode
-deadline to the native call.
+Rebuild the bridge for ABI 4 native decision tracing. ABI 3 libraries continue
+to transcribe, but diagnostics explicitly report `bridge_abi_3` as unavailable.
+Older ABIs are rejected before model creation because they lack cancellation
+and a decode deadline.
+
+### Native silence decision tracing
+
+The pinned version already contains whisper.cpp PRs [#2625](https://github.com/ggml-org/whisper.cpp/pull/2625)
+and [#2629](https://github.com/ggml-org/whisper.cpp/pull/2629). ABI 4 observes their
+actual decisions without changing thresholds, tokens, timestamps, or seek logic.
+CMake generates `whisper-observed.cpp` in the build directory using
+`instrument_whisper.py`; the supplied clean upstream checkout stays untouched.
+Reconfiguration fails if the observation point is missing or ambiguous.
+
+When incident or continuous diagnostics are enabled, each decode result includes
+`native_decode.windows` (up to 64 windows, with an explicit truncation flag):
+
+- `no_speech_prob`, `avg_logprobs`: the decoder's actual window-level values,
+  including windows discarded before producing segments. The score is the
+  selected sequence's average, not a reconstruction from emitted text tokens.
+- `no_speech_threshold`, `logprob_threshold`, `skipped_no_speech`: the thresholds
+  and actual combined decision (`prob > threshold AND score < threshold`).
+- `start_s`, `end_s`, `next_seek_s`, `single_timestamp_ending`: input-relative
+  window positions and the #2629 decision to advance over the remaining window.
+- `segment_start`, `segment_count`, `token_count`: correspondence to the returned
+  segments and number of tokens used to compute the selected sequence score.
+
+Each record has a native `return_code`; timeout/cancellation can include partial
+observations but never publish partial transcripts. Nonfinite scores are `null`
+with their original representation in `nonfinite_fields`. Exact zero input is
+reported as `not_run/exact_silence`, not as a measured no-speech probability.
+The recorder preserves these fields even with `save_audio=false`. The resource
+viewer's STT execution trace shows the scores and decisions per decode.
+
+Python Whisper PR [#1838](https://github.com/openai/whisper/pull/1838) is not ported:
+its heuristic requires word alignment and has reported speech-omission cases.
+This bridge does not enable word timestamps or add a new silence-skipping rule.
 
 Use the already acquired multilingual `ggml-small.bin` from the
 [official model location](https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-small.bin):

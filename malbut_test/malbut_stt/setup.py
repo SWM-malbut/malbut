@@ -17,6 +17,7 @@ setup(
         ('share/' + package_name + '/config', ['config/jetson.yaml']),
         ('share/' + package_name + '/native', [
             'native/CMakeLists.txt', 'native/README.md', 'native/whisper_cpp_bridge.cpp',
+            'native/whisper_trace.h', 'native/whisper_trace.cpp', 'native/instrument_whisper.py',
         ]),
     ],
     install_requires=['setuptools'],
@@ -26,5 +27,8 @@ setup(
     description='Wake-triggered speech transcription and ROS topic publication',
     license='Apache-2.0',
     tests_require=['pytest'],
-    entry_points={'console_scripts': ['stt = malbut_stt.node:main']},
+    entry_points={'console_scripts': [
+        'stt = malbut_stt.node:main',
+        'stt_incident = malbut_stt.incident_cli:main',
+    ]},
 )

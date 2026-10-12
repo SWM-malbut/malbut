@@ -1,6 +1,7 @@
 """Exercise ROS wiring with controlled runtime boundaries and no hardware or SDK."""
 
 from pathlib import Path
+import json
 import sys
 from threading import Event
 from types import SimpleNamespace
@@ -14,6 +15,9 @@ from malbut_stt.node import main
 def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
+    monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
+    monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
+                        str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
     model.mkdir()
     state = SimpleNamespace(
@@ -291,6 +295,7 @@ def runtime(monkeypatch, tmp_path):
                 VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
         ),
         'std_msgs.msg': SimpleNamespace(String=SimpleNamespace),
+        'rcl_interfaces.msg': SimpleNamespace(Log=SimpleNamespace),
         'malbut_interfaces.msg': state.messages,
         'malbut_interfaces.srv': state.services,
         'pvporcupine': None,
@@ -336,8 +341,8 @@ def cpp_runtime(runtime, tmp_path):
 
 
 @pytest.mark.parametrize('shared', [False, True])
-def test_diagnostics_opt_in_wraps_models_without_loading_another(runtime, monkeypatch,
-                                                                tmp_path, shared):
+def test_diagnostics_opt_in_wraps_models_without_loading_another(
+        runtime, monkeypatch, tmp_path, shared):
     if not shared:
         other = tmp_path / 'other-model'
         other.mkdir()
@@ -348,14 +353,66 @@ def test_diagnostics_opt_in_wraps_models_without_loading_another(runtime, monkey
     args = runtime.pipeline_args
     assert args['diagnostics'].directory == directory
     assert (args['wake'].model is args['transcriber'].model) is shared
-    assert not list(directory.iterdir()), 'no audio is saved without an inference'
+    assert not list(directory.glob('*.wav')), 'no audio is saved without an inference'
 
 
-def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
+def test_incident_mode_observes_final_publish_and_correlated_tts(runtime, monkeypatch, tmp_path):
+    output = tmp_path / 'incidents'
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', json.dumps({'directory': str(output)}))
+
+    def spin():
+        runtime.pipeline_args['publish_transcript']('suspect', '구독과 좋아요 부탁드려요!')
+        runtime.callbacks['/rosout'](SimpleNamespace(
+            name='malbut_agent_communication', level=20,
+            msg=json.dumps({'event': 'speech_transcript', 'status': 'received',
+                            'utterance_id': 'suspect'}),
+            stamp=SimpleNamespace(sec=10, nanosec=3), file='receiver.py',
+            function='receive_transcript', line=35))
+        runtime.callbacks['/malbut/speech/response'](SimpleNamespace(
+            playback_id='reply', request_id='suspect', text='답변 원문',
+            request_type=0, interim=False))
+        for state in ('accepted', 'playing', 'finished'):
+            runtime.callbacks['/malbut/speech/playback_status'](SimpleNamespace(
+                playback_id='reply', request_id='suspect', state=state, interim=False))
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main([]) == 0
+    recorder = runtime.pipeline_args['diagnostics']
+    assert not recorder._worker.is_alive()
+    assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
+    lines = (recorder.last_incident / 'events.jsonl').read_text().splitlines()
+    events = [json.loads(s) for s in lines]
+    request, = [e for e in events if e['event'] == 'tts_request']
+    assert request['request_id'] == 'suspect' and request['text'] == '답변 원문'
+    assert [e['state'] for e in events if e['event'] == 'tts_playback'] == [
+        'accepted', 'playing', 'finished']
+    transcripts = [msg for topic, msg in runtime.published if topic == '/malbut/speech/transcript']
+    assert transcripts[-1].text == '구독과 좋아요 부탁드려요!'
+    transaction, = [t for t in json.loads(
+        (recorder.last_incident / 'transactions.json').read_text())['transactions']
+        if t['utterance_id'] == 'suspect']
+    assert transaction['observed']['agent_received']
+    assert not transaction['observed']['agent_response_published']
+
+
+def test_incident_does_not_claim_publication_after_shutdown(runtime, monkeypatch, tmp_path):
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', json.dumps({'directory': str(tmp_path)}))
+    runtime.shutdown_before_publish = True
+    assert main([]) == 0
+    recorder = runtime.pipeline_args['diagnostics']
+    assert not recorder._worker.is_alive()
+    assert all(json.loads(e.record)['event'] != 'transcript_published' for e in recorder._entries)
+
+
+def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, tmp_path):
     assert main(['--ros-args']) == 0
     assert runtime.calls['ros_args'] == ['--ros-args']
     assert runtime.calls['node_name'] == 'malbut_stt'
-    assert runtime.pipeline_args['diagnostics'] is None
+    recorder = runtime.pipeline_args['diagnostics']
+    assert recorder.directory == tmp_path / 'resource_logs' / 'stt_incidents'
+    assert recorder.save_audio is False
+    assert not recorder._worker.is_alive()
     defaults = runtime.calls['defaults']
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
@@ -404,7 +461,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
         {'utterance_id': 'u1', 'text': '원문 그대로', 'session_id': ''},
     ]
     assert set(runtime.calls['subscriptions']) == {
-        '/malbut/speech/playback_status', '/malbut/speech/response',
+        '/malbut/speech/playback_status', '/malbut/speech/response', '/rosout',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
@@ -419,11 +476,36 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     }
     assert ('info', 'playback_control_accepted:pause') in runtime.logs
     for _, qos in [runtime.calls['publishers']['/malbut/speech/transcript'],
-                   *runtime.calls['subscriptions'].values()]:
+                   *(value for topic, value in runtime.calls['subscriptions'].items()
+                     if topic != '/rosout')]:
         assert vars(qos) == {
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+
+def test_default_capture_saves_final_phrase_without_extra_launch_or_environment(runtime):
+    def spin():
+        runtime.pipeline_args['publish_transcript']('automatic', '구독과 좋아요 부탁드려요!')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main([]) == 0
+    recorder = runtime.pipeline_args['diagnostics']
+    assert recorder.last_incident.is_dir()
+    assert not list(recorder.last_incident.rglob('*.wav'))
+    manifest = json.loads((recorder.last_incident / 'incident.json').read_text())
+    assert manifest['triggers'][0]['utterance_id'] == 'automatic'
+    assert manifest['audio_saved'] is False
+    assert any(message.text == '구독과 좋아요 부탁드려요!'
+               for topic, message in runtime.published if topic == '/malbut/speech/transcript')
+
+
+def test_automatic_capture_can_be_disabled(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{"enabled":false}')
+    assert main([]) == 0
+    assert runtime.pipeline_args['diagnostics'] is None
+    assert '/rosout' not in runtime.callbacks
 
 
 @pytest.mark.parametrize('accepted', [True, False])
@@ -714,6 +796,27 @@ def test_speech_onset_parameter_reaches_capture_settings(runtime, duration):
     runtime.parameters['min_speech_s'] = duration
     assert main() == 0
     assert runtime.pipeline_args['settings'].min_speech_s == duration
+
+
+@pytest.mark.parametrize('duration', [0, .3, .8, 3.0])
+def test_chime_tail_and_quality_guard_parameters_reach_pipeline(runtime, duration):
+    runtime.parameters.update(chime_tail_s=duration, short_speech_guard=True)
+    assert main() == 0
+    assert runtime.calls['defaults']['chime_tail_s'] == .3
+    assert runtime.calls['defaults']['short_speech_guard'] is False
+    assert runtime.pipeline_args['chime_tail_s'] == duration
+    assert runtime.pipeline_args['short_speech_guard'] is True
+
+
+@pytest.mark.parametrize('name,value', [
+    ('chime_tail_s', -1), ('chime_tail_s', 3.1), ('chime_tail_s', float('nan')),
+    ('chime_tail_s', float('inf')), ('chime_tail_s', True),
+    ('short_speech_guard', 'false'), ('short_speech_guard', 1),
+])
+def test_invalid_recognition_guard_fails_before_loading_models(runtime, name, value):
+    runtime.parameters[name] = value
+    assert main() == 1
+    assert 'local_stt' not in runtime.calls and 'recorder' not in runtime.calls
 
 
 @pytest.mark.parametrize('duration', [0, -1, True, float('nan'), float('inf'), 0.31])

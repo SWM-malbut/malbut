@@ -432,3 +432,63 @@ def test_allowing_guard_keeps_submission_and_cancellation_working(harness):
     assert calls == ['checked', 'checked']
     assert len(harness.manager.submissions) == 1
     assert len(harness.manager.cancellations) == 1
+
+
+# While a fall check runs, voice moves are refused like the app's move buttons
+# (2026-10-12): a same-priority move would otherwise preempt the check.
+FALL_CHECK = '낙상 확인 중이라 잠시 이동할 수 없어요.'
+LOCKED = [
+    ('request_follow_person', {}),
+    ('request_patrol', {'thoroughness': 'normal'}),
+    ('request_mapping', {'map_name': 'home'}),
+    ('request_relocalization', {'method': 'auto'}),
+]
+
+
+@pytest.mark.parametrize('tool, arguments', LOCKED)
+def test_fall_check_refuses_voice_moves_before_any_start_notice(tool, arguments):
+    manager = FakeManager()
+    dispatcher = SpeechMissions(manager, move_refusal=lambda: FALL_CHECK)
+    proposal = dispatcher.prepare('during-fall-check', tool, arguments)
+    assert proposal.blocked and proposal.message == FALL_CHECK
+    assert dispatcher.dispatch(proposal) == FALL_CHECK
+    assert manager.submissions == []
+
+
+def test_fall_check_refuses_navigation_before_resolving_the_destination():
+    manager, targets = FakeManager(), Targets()
+    dispatcher = SpeechMissions(manager, targets, move_refusal=lambda: FALL_CHECK)
+    dispatcher.observe_localization({'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'})
+    proposal = dispatcher.prepare('go', 'request_navigation', {'location': '거실'})
+    assert proposal.blocked and proposal.message == FALL_CHECK
+    assert targets.lookups == [] and manager.submissions == []
+
+
+@pytest.mark.parametrize('tool, capability', [
+    ('request_manual_control', 'manual_drive'), ('request_recovery', 'recovery')])
+def test_manual_driving_and_recovery_stay_available_during_a_fall_check(tool, capability):
+    manager = FakeManager()
+    dispatcher = SpeechMissions(manager, move_refusal=lambda: FALL_CHECK)
+    assert dispatcher.dispatch(dispatcher.prepare('allowed', tool, {})) == FUNCTION_STARTS[tool]
+    assert [s[0] for s in manager.submissions] == [capability]
+
+
+def test_a_fall_check_started_after_preparing_is_rechecked_before_sending():
+    manager, checking = FakeManager(), []
+    dispatcher = SpeechMissions(
+        manager, move_refusal=lambda: FALL_CHECK if checking else None)
+    proposal = dispatcher.prepare('race', 'request_follow_person', {})
+    assert not proposal.blocked
+    checking.append(True)
+    assert dispatcher.dispatch(proposal) == FALL_CHECK
+    assert manager.submissions == []
+
+
+def test_an_unreadable_fall_check_refuses_rather_than_preempts():
+    manager = FakeManager()
+
+    def broken():
+        raise RuntimeError('state unavailable')
+    dispatcher = SpeechMissions(manager, move_refusal=broken)
+    proposal = dispatcher.prepare('unknown', 'request_patrol', {'thoroughness': 'light'})
+    assert proposal.blocked and manager.submissions == []

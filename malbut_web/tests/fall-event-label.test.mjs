@@ -58,6 +58,9 @@ test("answers read 질문에 대한 답 (답) without the video judgment", () =>
     assert.equal(fallEventLabel(event({ eventKind, answer: null })), "질문에 대한 답");
   }
   assert.equal(fallEventLabel(event({ eventKind: "voice_result", answer: "no_response" })), "질문에 대한 답 (응답 없음)");
+  // 영상만 본 장면: 괜찮다는 답을 "응답 불분명"으로 보이지 않는다(2026-10-12 16:31).
+  assert.equal(fallEventLabel(event({ eventKind: "voice_result", answer: "unclear",
+    reason: "scene_answer_unassociated" })), "질문에 대한 답 (괜찮다고 답함 · 쓰러진 분인지 모름)");
 });
 
 test("every alert reads level 알림: what", () => {
@@ -69,6 +72,7 @@ test("every alert reads level 알림: what", () => {
   assert.equal(notice("check_required_not_confirmed_fall", "check"), "확인 필요 알림: 낙상 의심을 확인하지 못함");
   assert.equal(notice("fall_observed_person_okay", "info"), "일반 알림: 넘어졌지만 괜찮다고 응답");
   assert.equal(notice("robot_could_not_confirm", "urgent"), "긴급 알림: 말벗이 직접 확인하지 못함");
+  assert.equal(notice("scene_answer_unconfirmed", "check"), "확인 필요 알림: 괜찮다는 답, 쓰러진 분인지 모름");
   assert.equal(notice("help_requested", undefined), "긴급 알림: 도움 요청");
   assert.equal(notice("unknown_future_reason", "check"), "확인 필요 알림");
   // A failed question, older reasons included, reads like the reason box.
