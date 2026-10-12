@@ -7,7 +7,9 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from malbut_stt.incident import DEFAULT_CONTAINS, DEFAULT_EXACT, IncidentRecorder
+from malbut_stt.incident import (
+    DEFAULT_CONTAINS, DEFAULT_DIRECTORY, DEFAULT_EXACT, IncidentRecorder,
+)
 
 
 def demo(options):
@@ -62,7 +64,7 @@ def demo(options):
 
 def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', default='~/.ros/malbut/stt_incidents')
+    parser.add_argument('--output', default=DEFAULT_DIRECTORY)
     parser.add_argument('--pre-seconds', type=float, default=30.0)
     parser.add_argument('--post-seconds', type=float, default=15.0)
     parser.add_argument('--buffer-mib', type=int, default=32)

@@ -12,13 +12,20 @@ from urllib.parse import parse_qs, urlparse
 
 from malbut_resource_monitor.incidents import DOWNLOADS, IncidentStore
 
+DEFAULT_LOG_ROOT = '~/.ros/malbut/resource_logs'
+LEGACY_INCIDENT_ROOT = '~/.ros/malbut/stt_incidents'
+
 
 class LogServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, root, incident_root='~/.ros/malbut/stt_incidents'):
+    def __init__(self, address, root, incident_root=None):
         self.root = Path(root).expanduser().resolve()
-        self.incidents = IncidentStore(incident_root)
+        legacy = ()
+        if incident_root is None and self.root == Path(DEFAULT_LOG_ROOT).expanduser().resolve():
+            legacy = (LEGACY_INCIDENT_ROOT,)
+        self.incidents = IncidentStore(incident_root or self.root / 'stt_incidents',
+                                       legacy_roots=legacy)
         super().__init__(address, Handler)
 
 
@@ -271,9 +278,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', default='~/.ros/malbut/resource_logs')
-    parser.add_argument('--incident-root', default='~/.ros/malbut/stt_incidents',
-                        help='Completed STT incident bundles (read only).')
+    parser.add_argument('--root', default=DEFAULT_LOG_ROOT)
+    parser.add_argument('--incident-root',
+                        help='STT evidence directory (default: <root>/stt_incidents).')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8766)
     args = parser.parse_args(argv)
