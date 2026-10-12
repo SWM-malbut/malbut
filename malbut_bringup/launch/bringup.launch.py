@@ -81,7 +81,8 @@ def _setup(context):
             package_file('malbut_bringup', f'launch/{name}.launch.py'), settings,
             environment=audio_env if name in ('homecam', 'speech') else None))
     nodes = {
-        'robot': ['system_manager', 'controller_server', 'planner_server', 'bt_navigator',
+        'robot': ['system_manager', 'runtime_control', 'controller_server', 'planner_server',
+                  'bt_navigator',
                   'behavior_server', 'teleop_behavior_server', 'velocity_smoother',
                   'collision_monitor', 'smoother_server', 'waypoint_follower'],
         'tracking': ['yolo/yolo_node', 'person_reidentifier', 'person_localizer',
@@ -98,8 +99,9 @@ def _setup(context):
         'tracking': ['/follow_person'], 'patrol': ['/patrol'], 'autoslam': ['/autoslam'],
         'relocalization': ['/relocalize'],
     }
-    topic_options = ['scan_topic', 'odom_topic', 'static_map_topic',
-                     'global_costmap_topic', 'patrol_costmap_topic']
+    # Costmaps and perception outputs intentionally sleep until a mission.
+    # Startup checks connections, not data that would require waking them.
+    topic_options = ['scan_topic', 'odom_topic', 'static_map_topic']
     if 'tracking' in observed:
         topic_options += ['rgb_topic', 'depth_topic', 'camera_info_topic']
     elif 'homecam' in observed or 'fall' in observed:
@@ -108,7 +110,9 @@ def _setup(context):
     actions.append(Node(
         package='malbut_bringup', executable='wait_for_robot', name='bringup_connections',
         output='screen', parameters=[{
-            'use_sim_time': False, 'observe_only': True, 'speech': 'speech' in observed,
+            'use_sim_time': value('use_sim_time') == 'true',
+            'observe_only': True, 'speech': 'speech' in observed,
+            'runtime_state_topic': '/malbut/runtime/state',
             'startup_nodes': ','.join(node for name in observed for node in nodes[name]),
             'required_actions': ','.join(action for name in observed
                                          for action in endpoints.get(name, [])),

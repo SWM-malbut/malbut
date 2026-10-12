@@ -16,6 +16,7 @@ def generate_launch_description():
     arguments = [
         DeclareLaunchArgument('config', default_value=str(default_config)),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('start_enabled', default_value='true'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('static_map_topic', default_value='/map'),
         DeclareLaunchArgument(
@@ -37,6 +38,7 @@ def generate_launch_description():
             LaunchConfiguration('config'),
             {
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
+                'start_enabled': LaunchConfiguration('start_enabled'),
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'static_map_topic': LaunchConfiguration('static_map_topic'),
                 'clusters_topic': LaunchConfiguration('clusters_topic'),

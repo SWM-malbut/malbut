@@ -25,6 +25,7 @@ from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_patrol.coverage import (
@@ -114,6 +115,7 @@ class PatrolManager(Node):
     def __init__(self, **kwargs):
         super().__init__('patrol_manager', **kwargs)
         defaults = {
+            'start_enabled': True,
             'map_topic': '/map',
             'costmap_topic': '/global_costmap/costmap',
             'camera_image_topic': '/camera/color/image_raw',
@@ -184,16 +186,15 @@ class PatrolManager(Node):
         self.create_subscription(OccupancyGrid, self.settings['map_topic'],
                                  self._receive_map, latched,
                                  callback_group=self.group)
-        self.create_subscription(OccupancyGrid, self.settings['costmap_topic'],
-                                 self._receive_costmap, latched,
-                                 callback_group=self.group)
-        self.create_subscription(OccupancyGridUpdate,
-                                 self.settings['costmap_topic'] + '_updates',
-                                 self._receive_costmap_update, 10,
-                                 callback_group=self.group)
-        self.create_subscription(Image, self.settings['camera_image_topic'],
-                                 self._receive_image, qos_profile_sensor_data,
-                                 callback_group=self.group)
+        self._costmap_subscription = self.create_subscription(
+            OccupancyGrid, self.settings['costmap_topic'], self._receive_costmap, latched,
+            callback_group=self.group)
+        self._updates_subscription = self.create_subscription(
+            OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
+            self._receive_costmap_update, 10, callback_group=self.group)
+        self._image_subscription = self.create_subscription(
+            Image, self.settings['camera_image_topic'], self._receive_image,
+            qos_profile_sensor_data, callback_group=self.group)
         self.create_subscription(CameraInfo, self.settings['camera_info_topic'],
                                  self._receive_info, qos_profile_sensor_data,
                                  callback_group=self.group)
@@ -209,6 +210,60 @@ class PatrolManager(Node):
             goal_callback=self._goal, cancel_callback=self._cancel,
             callback_group=self.group)
         self._publish_status('idle', 'Waiting for a patrol goal')
+        self._processing_enabled = True
+        self.create_service(SetBool, '~/set_processing', self._set_processing)
+        self._change_processing(bool(self.settings['start_enabled']))
+
+    def _change_processing(self, enabled):
+        with self.lock:
+            if self._processing_enabled == enabled:
+                return
+            self._processing_enabled = enabled
+            if enabled:
+                self.tf.clear()
+                self.tf_listener = TransformListener(self.tf, self)
+            elif self.tf_listener is not None:
+                self.tf_listener.unregister()
+                self.tf_listener = None
+                self.tf.clear()
+            self.image = self.costmap = None
+            self.image_received = self.costmap_received = 0.0
+            self.last_image_stamp = None
+            if enabled:
+                latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+                self._costmap_subscription = self.create_subscription(
+                    OccupancyGrid, self.settings['costmap_topic'], self._receive_costmap,
+                    latched, callback_group=self.group)
+                self._updates_subscription = self.create_subscription(
+                    OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
+                    self._receive_costmap_update, 10, callback_group=self.group)
+                self._image_subscription = self.create_subscription(
+                    Image, self.settings['camera_image_topic'], self._receive_image,
+                    qos_profile_sensor_data, callback_group=self.group)
+            else:
+                for subscription in (
+                        self._costmap_subscription, self._updates_subscription,
+                        self._image_subscription):
+                    self.destroy_subscription(subscription)
+                self._costmap_subscription = self._updates_subscription = None
+                self._image_subscription = None
+
+    def _set_processing(self, request, response):
+        if not request.data and self.busy:
+            response.success, response.message = False, 'patrol is still running'
+            return response
+        self._change_processing(request.data)
+        if request.data:
+            # Image/costmap callbacks remain independent of this preparation RPC.
+            deadline = time.monotonic() + self.settings['sensor_timeout_s']
+            while self._ready():
+                if self.stop_event.is_set() or time.monotonic() >= deadline:
+                    response.success, response.message = False, self._ready()
+                    self._change_processing(False)
+                    return response
+                time.sleep(0.02)
+        response.success = True
+        return response
 
     def _receive_map(self, message):
         with self.lock:
@@ -225,12 +280,16 @@ class PatrolManager(Node):
 
     def _receive_costmap(self, message):
         with self.lock:
+            if not self._processing_enabled:
+                return
             self.costmap = message
             self.costmap_received = time.monotonic()
 
     def _receive_costmap_update(self, update):
         # Nav2 can publish patches instead of a new full grid every cycle.
         with self.lock:
+            if not self._processing_enabled:
+                return
             grid = self.costmap
             if (grid is None or grid.header.frame_id != update.header.frame_id
                     or update.x < 0 or update.y < 0
@@ -251,6 +310,8 @@ class PatrolManager(Node):
         # Keep only the latest image. No image processing or coverage work idle.
         if message.width and message.height and len(message.data):
             with self.lock:
+                if not self._processing_enabled:
+                    return
                 self.image = message
                 self.image_received = time.monotonic()
 

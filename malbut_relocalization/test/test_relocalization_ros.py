@@ -37,6 +37,8 @@ def graph(room):
         Parameter('timeout_s', value=5.0),
     ])
     amcl = rclpy.create_node('amcl', context=context)
+    amcl.declare_parameter('min_particles', 500)
+    amcl.declare_parameter('max_particles', 3000)
     calls = []
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -133,7 +135,7 @@ def test_saved_pose_is_confirmed_by_the_scan(graph, room):
     result = _run(executor, client)
     assert result.success, result.message
     assert 'saved pose confirmed' in result.message and result.match_ratio > 0.9
-    assert calls == ['initialpose']
+    assert calls == ['initialpose', 'initialpose']
 
 
 def test_moved_robot_is_found_by_rotating_global_search(graph, room):

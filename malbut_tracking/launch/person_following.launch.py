@@ -21,6 +21,7 @@ def generate_launch_description():
             'lidar_config', default_value=str(default_lidar_config)
         ),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('start_enabled', default_value='true'),
         DeclareLaunchArgument(
             'detections_topic',
             default_value='/perception/person/detections_3d',
@@ -66,6 +67,7 @@ def generate_launch_description():
         launch_arguments={
             'config': LaunchConfiguration('lidar_config'),
             'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'start_enabled': LaunchConfiguration('start_enabled'),
             'scan_topic': LaunchConfiguration('scan_topic'),
             'static_map_topic': LaunchConfiguration('static_map_topic'),
             'clusters_topic': LaunchConfiguration('lidar_clusters_topic'),

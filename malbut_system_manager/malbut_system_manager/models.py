@@ -30,19 +30,10 @@ class ExecutionResource(str, Enum):
 
 
 class MapRequirement(str, Enum):
-    """Localization a capability needs: a selected saved map, or mapping."""
+    """Legacy manifest metadata; no longer a manager admission condition."""
 
     SELECTED = 'SELECTED'
     NOT_SELECTED = 'NOT_SELECTED'
-
-
-class LocalizationMode(str, Enum):
-    """Runtime localization owned by the manager when enabled."""
-
-    SWITCHING = 'SWITCHING'
-    MAPPING = 'MAPPING'
-    LOCALIZATION = 'LOCALIZATION'
-    ERROR = 'ERROR'
 
 
 class MissionPriority(IntEnum):

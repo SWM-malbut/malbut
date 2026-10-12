@@ -2,7 +2,7 @@
 
 import math
 
-from malbut_relocalization.scan_match import distance_field, match_ratio, refine
+from malbut_relocalization.scan_match import distance_field, match_ratio
 
 
 def _field(room):
@@ -47,26 +47,12 @@ def test_scans_without_returns_score_zero(room):
                        hit_distance_m=0.15, max_range_m=8.0) == (0.0, 0)
 
 
-def test_a_pose_a_little_off_is_fitted_back_onto_the_walls(room):
-    """AMCL after one turn is centimetres and degrees off; the fit removes that."""
+def test_the_tighter_radius_rejects_nearby_but_misaligned_points(room):
     field = _field(room)
     scan = room.scan(0.8, 0.4, 0.3)
-    start = (0.8 + 0.2, 0.4 - 0.15, 0.3 - math.radians(6))
-    before, _ = match_ratio(field, scan, (0.0, 0.0, 0.0), start,
-                            hit_distance_m=0.15, max_range_m=8.0)
-    fitted = refine(field, scan, (0.0, 0.0, 0.0), start, max_range_m=8.0)
-    after, _ = match_ratio(field, scan, (0.0, 0.0, 0.0), fitted,
+    pose = (0.8 + 0.13, 0.4, 0.3)
+    loose, _ = match_ratio(field, scan, (0.0, 0.0, 0.0), pose,
                            hit_distance_m=0.15, max_range_m=8.0)
-    assert before < 0.9 and after > 0.95
-    assert math.hypot(fitted[0] - 0.8, fitted[1] - 0.4) < 0.02
-    assert abs(fitted[2] - 0.3) < math.radians(0.5)
-
-
-def test_the_fit_keeps_a_right_pose_and_a_scan_without_returns(room):
-    field = _field(room)
-    scan = room.scan(0.8, 0.4, 0.3)
-    x, y, yaw = refine(field, scan, (0.0, 0.0, 0.0), (0.8, 0.4, 0.3), max_range_m=8.0)
-    assert math.hypot(x - 0.8, y - 0.4) <= 0.01 and abs(yaw - 0.3) <= math.radians(0.4)
-    scan.ranges = [math.inf] * len(scan.ranges)
-    assert refine(field, scan, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), max_range_m=8.0) == (
-        1.0, 0.0, 0.0)
+    tight, _ = match_ratio(field, scan, (0.0, 0.0, 0.0), pose,
+                           hit_distance_m=0.10, max_range_m=8.0)
+    assert tight < loose

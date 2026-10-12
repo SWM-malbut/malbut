@@ -28,6 +28,7 @@ def defaults():
     pose_python = pose_cache / 'runtime/bin/python'
     values = {
         'start_hardware': 'true',
+        'use_sim_time': 'false',
         'relocalization': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',
@@ -85,6 +86,7 @@ def defaults():
         'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',
         'map': '',
+        'map_selection_file': str(Path.home() / '.ros/malbut/last_selected_map.txt'),
         'map_directory': str(Path.home() / '.ros/malbut/maps'),
         'nav2_params_file': '',
         'slam_params_file': '',
@@ -147,7 +149,7 @@ def include(path, arguments, *, environment=None):
           for name, value in (environment or {}).items()],
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(path),
-            launch_arguments={**arguments, 'use_sim_time': 'false'}.items()),
+            launch_arguments={'use_sim_time': 'false', **arguments}.items()),
     ], scoped=True)
 
 

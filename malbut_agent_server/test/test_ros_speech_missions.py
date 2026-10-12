@@ -213,9 +213,9 @@ def speech_graph(tmp_path, monkeypatch):
             (directory / (name + '.yaml')).write_text(yaml.safe_dump(value))
         run.actuators = _Actuators()
         run.manager = SystemManagerNode(manifest_directory=str(directory))
-        # Standalone Manager deliberately has localization_control disabled:
-        # no SLAM/AMCL process or real map loading is started by this fixture.
-        assert run.manager._localization is None
+        # Map providers now belong to Bringup, never to the mission manager.
+        # This standalone graph starts no SLAM/AMCL or map loading itself.
+        assert not hasattr(run.manager, '_localization')
         background.add_node(run.actuators)
         background.add_node(run.manager)
         background_thread.start()

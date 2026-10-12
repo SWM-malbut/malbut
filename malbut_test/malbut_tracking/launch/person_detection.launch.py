@@ -28,6 +28,7 @@ def generate_launch_description():
     defaults = {
         'config': str(tracking_share / 'config/person_detection.yaml'),
         'use_sim_time': 'false',
+        'start_enabled': 'true',
         'rgb_topic': '/camera/color/image_raw',
         'depth_topic': '/camera/depth/image_raw',
         'camera_info_topic': '/camera/color/camera_info',
@@ -54,7 +55,7 @@ def generate_launch_description():
     arguments = [DeclareLaunchArgument(key, default_value=value)
                  for key, value in defaults.items()]
     yolo_arguments = {key: LaunchConfiguration(key) for key in (
-        'use_sim_time', 'rgb_topic', 'model_path', 'device',
+        'use_sim_time', 'start_enabled', 'rgb_topic', 'model_path', 'device',
         'python_executable', 'opencv_num_threads',
     )}
     yolo_arguments.update({
@@ -64,7 +65,7 @@ def generate_launch_description():
         'processing_trace_topic': LaunchConfiguration('yolo_processing_trace_topic'),
     })
     reid_arguments = {key: LaunchConfiguration(key) for key in (
-        'use_sim_time', 'rgb_topic', 'yolo_detections_topic',
+        'use_sim_time', 'start_enabled', 'rgb_topic', 'yolo_detections_topic',
         'detections_2d_topic', 'reid_backend', 'reid_model_path',
         'inference_backend', 'dnn_target', 'opencv_num_threads',
     )}
@@ -82,12 +83,12 @@ def generate_launch_description():
             (reid_share, 'person_reidentification.launch.py', reid_arguments),
         )
     ]
-    types = {'use_sim_time': bool, 'opencv_num_threads': int,
+    types = {'use_sim_time': bool, 'start_enabled': bool, 'opencv_num_threads': int,
              'publish_debug_image': bool, 'debug_jpeg_quality': int}
     localization_parameters = {
         key: ParameterValue(LaunchConfiguration(key), value_type=types.get(key, str))
         for key in (
-            'use_sim_time', 'rgb_topic', 'depth_topic', 'camera_info_topic',
+            'use_sim_time', 'start_enabled', 'rgb_topic', 'depth_topic', 'camera_info_topic',
             'detections_2d_topic', 'detections_3d_topic', 'yolo_processing_trace_topic',
             'processing_trace_topic', 'opencv_num_threads', 'projection_frame',
             'output_frame', 'publish_debug_image', 'debug_image_transport',

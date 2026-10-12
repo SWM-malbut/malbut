@@ -15,8 +15,7 @@ FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
 # Work kinds that are a fall_approach drive, not a conversation.
 DRIVES = ('approach', 'view', 'revisit')
 MANUAL_DRIVE = 'manual_drive'
-# "낙상 확인 중" for the map screen and the robot's own move guard (malbut_bringup
-# web_panel): every second and on change; silent for 3 s means not checking.
+# Display-only "낙상 확인 중": every second and on change; no admission gate.
 CHECK_STATUS_TOPIC = '/malbut/falls/check/status'
 STATUS_PERIOD_S = 1.0
 # The Manager's own words (mission_scheduler, mission_executor) for a refusal or
@@ -24,8 +23,6 @@ STATUS_PERIOD_S = 1.0
 WAIT_MESSAGES = frozenset({
     'manual recovery is in progress', 'system manager is still booting',
     'emergency stop is active', 'foreground missions are blocked while recharging',
-    'localization is switching; retry after it settles',
-    'localization is ERROR; retry after it settles',
     'mission preempted by a replacement request', 'system manager is shutting down',
 })
 WAIT_PREFIXES = ('conflicting mission ', 'superseded before execution by ')
@@ -47,7 +44,7 @@ class FallConfirmationLink:
     front, facing it); a check that found no person drives back instead of
     asking. These share the one-at-a-time queue with the conversations.
 
-    The missions are NORMAL (2026-10-12): 직접 움직이기 (HIGH) refuses or ends
+    The missions are HIGH: 직접 움직이기 (URGENT) refuses or ends
     them, and other jobs may too. Such a step waits and goes again; the
     coordinator counts only that waiting.
     """
@@ -146,8 +143,8 @@ class FallConfirmationLink:
         downstream = message == DOWNSTREAM_REJECTED and not result_yaml and self.mode not in DRIVES
         if not (downstream or message in WAIT_MESSAGES or message.startswith(WAIT_PREFIXES)):
             return None
-        if message.endswith('higher priority HIGH'):
-            return MANUAL_DRIVE  # 직접 움직이기 is the only HIGH mission.
+        if message.endswith('higher priority URGENT') and self._manual_driving():
+            return MANUAL_DRIVE
         if message.startswith(('mission preempted', 'superseded')) and self._manual_driving():
             return MANUAL_DRIVE
         return 'busy'
@@ -313,7 +310,7 @@ class FallConfirmationLink:
             self._send_return(request)
             return
         if self._manual_driving():
-            # 직접 움직이기 refuses it anyway (HIGH): wait without asking every second.
+            # 직접 움직이기 refuses it anyway (URGENT): wait without asking every second.
             self._wait(MANUAL_DRIVE)
             return
         self.request, self.mode, self.running = request, kind, False

@@ -10,6 +10,7 @@ from action_msgs.srv import CancelGoal
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
 from rosidl_runtime_py.convert import message_to_yaml
+from std_srvs.srv import Trigger
 from unique_identifier_msgs.msg import UUID
 
 from .models import (
@@ -44,6 +45,11 @@ class _Execution:
     goal_response_timer: Any = None
     cancel_completion_timer: Any = None
     goal_id: str = ''
+    preparing: bool = False
+    preparation_timer: Any = None
+    preparation_client: Any = None
+    preparation_future: Any = None
+    command_name: str = ''
 
 
 class MissionExecutor:
@@ -60,6 +66,9 @@ class MissionExecutor:
         on_dispatch_timeout: DispatchTimeoutCallback,
         goal_response_timeout_s: float,
         cancel_completion_timeout_s: float,
+        prepare_service_prefix: str = '',
+        prepared_capabilities=(),
+        preparation_timeout_s: float = 120.0,
     ) -> None:
         self._node = node
         self._callback_group = callback_group
@@ -69,6 +78,10 @@ class MissionExecutor:
         self._on_dispatch_timeout = on_dispatch_timeout
         self._goal_response_timeout_s = goal_response_timeout_s
         self._cancel_completion_timeout_s = cancel_completion_timeout_s
+        self._prepare_prefix = prepare_service_prefix
+        self._prepared_capabilities = frozenset(prepared_capabilities)
+        self._prepare_clients = {}
+        self._preparation_timeout_s = preparation_timeout_s
         self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self._lock = RLock()
         self._clients: dict[tuple[str, str, str], Any] = {}
@@ -92,8 +105,74 @@ class MissionExecutor:
             return
         execution = _Execution(mission.mission_id, generation, client, kind)
         execution.goal_id = uuid4().hex
+        execution.command_name = mission.capability.command_name
+        capability = mission.capability.capability_id
+        execution.preparing = bool(
+            self._prepare_prefix and capability in self._prepared_capabilities)
         with self._lock:
             self._runs[mission.mission_id] = execution
+        if execution.preparing:
+            self._prepare(execution, capability, request_message)
+            return
+        self._dispatch(execution, request_message)
+
+    def _prepare(self, execution, capability, request):
+        try:
+            client = self._prepare_clients.get(capability)
+            if client is None:
+                client = self._node.create_client(
+                    Trigger, self._prepare_prefix.rstrip('/') + '/' + capability,
+                    callback_group=self._callback_group)
+                self._prepare_clients[capability] = client
+            if not client.service_is_ready():
+                raise RuntimeError('dependency preparation service is unavailable')
+            with self._lock:
+                if not self._is_current(execution):
+                    return
+                future = client.call_async(Trigger.Request())
+                execution.preparation_client = client
+                execution.preparation_future = future
+            self._arm_timer(
+                execution, 'preparation_timer', self._preparation_timeout_s,
+                lambda current: self._finish(
+                    current, TerminalOutcome.ABORTED,
+                    message='Dependency preparation timed out; no goal was sent'))
+            future.add_done_callback(
+                lambda future: self._prepared(execution, request, future))
+        except Exception as error:
+            self._finish(execution, TerminalOutcome.ABORTED, message=str(error))
+
+    def _prepared(self, execution, request, future):
+        self._clear_timer(execution, 'preparation_timer')
+        with self._lock:
+            if not self._is_current(execution):
+                return
+            execution.preparing = False
+            canceled = execution.cancel_pending
+        if canceled:
+            self._finish(execution, TerminalOutcome.CANCELED,
+                         message='Canceled before downstream dispatch')
+            return
+        try:
+            reply = future.result()
+            if not reply.success:
+                raise RuntimeError(reply.message)
+        except Exception as error:
+            self._finish(execution, TerminalOutcome.ABORTED, message=str(error))
+            return
+        self._dispatch(execution, request)
+
+    def _dispatch(self, execution, request_message):
+        with self._lock:
+            if not self._is_current(execution):
+                return
+            canceled = execution.cancel_pending
+        if canceled:
+            self._finish(execution, TerminalOutcome.CANCELED,
+                         message='Canceled before downstream dispatch')
+            return
+        client = execution.client
+        kind = execution.command_kind
         if kind is CommandKind.SERVICE:
             self._start_service(execution, request_message)
             return
@@ -111,8 +190,7 @@ class MissionExecutor:
                 execution,
                 TerminalOutcome.ABORTED,
                 message=(
-                    f'Action server {mission.capability.command_name} '
-                    'is unavailable'
+                    f'Action server {execution.command_name} is unavailable'
                 ),
             )
             return
@@ -213,6 +291,9 @@ class MissionExecutor:
                 self._node.destroy_client(client)
             else:
                 client.destroy()
+        for client in self._prepare_clients.values():
+            self._node.destroy_client(client)
+        self._prepare_clients.clear()
 
     def _client_for(self, mission: MissionRecord):
         manifest = mission.capability
@@ -395,19 +476,28 @@ class MissionExecutor:
         with self._lock:
             if not self._is_current(execution):
                 return
-            execution.cancel_required = True
-            execution.cancel_pending = True
-            if execution.command_kind is CommandKind.SERVICE:
-                # ROS Services have no cancellation protocol. Keep the request
-                # and its resources alive until the actual response arrives.
-                return
-            has_goal_handle = execution.downstream_goal_handle is not None
-            if not has_goal_handle and not execution.dispatch_timed_out:
-                return
-            if execution.active_cancel_attempt is None:
-                execution.cancel_attempt += 1
-                execution.active_cancel_attempt = execution.cancel_attempt
-            attempt = execution.active_cancel_attempt
+            preparing = execution.preparing
+            if not preparing:
+                execution.cancel_required = True
+                execution.cancel_pending = True
+                if execution.command_kind is CommandKind.SERVICE:
+                    # ROS Services have no cancellation protocol. Keep the request
+                    # and its resources alive until the actual response arrives.
+                    return
+                has_goal_handle = execution.downstream_goal_handle is not None
+                if not has_goal_handle and not execution.dispatch_timed_out:
+                    return
+                if execution.active_cancel_attempt is None:
+                    execution.cancel_attempt += 1
+                    execution.active_cancel_attempt = execution.cancel_attempt
+                attempt = execution.active_cancel_attempt
+        if preparing:
+            # Never call the manager while owning the executor lock: the
+            # manager enters executor methods while holding its effects lock.
+            # A late preparation reply is still generation-checked.
+            self._finish(execution, TerminalOutcome.CANCELED,
+                         message='Canceled during dependency preparation')
+            return
         self._arm_timer(
             execution,
             'cancel_completion_timer',
@@ -645,6 +735,11 @@ class MissionExecutor:
             )
 
     def _clear_execution_timers(self, execution: _Execution) -> None:
+        self._clear_timer(execution, 'preparation_timer')
+        future = execution.preparation_future
+        if future is not None and not future.done():
+            execution.preparation_client.remove_pending_request(future)
+            future.cancel()
         self._clear_timer(execution, 'goal_response_timer')
         self._clear_timer(execution, 'cancel_completion_timer')
 

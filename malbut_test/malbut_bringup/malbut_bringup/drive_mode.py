@@ -31,14 +31,12 @@ _PHASES = ('planning', 'navigating', 'observing', 'stopping')
 _PARTIAL = 'No usable untried viewpoint remains'
 _WAITING = 'Waiting for a patrol goal'
 MAX_ROOM_NAMES = 32
-# A fall check takes the wheels from a patrol (NORMAL over LOW, 2026-10-12): the
-# patrol ends and never resumes itself. 직접 움직이기 (HIGH) is never taken.
+# A fall check (HIGH) takes the wheels from a patrol (LOW); the patrol ends
+# and never resumes itself. 직접 움직이기 (URGENT) is never taken.
 FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
 _UNREACHED = ('no_map', 'no_path', 'timeout', 'failed')
 # The Agent fall rules' status (/malbut/falls/check/status), 목업 27번.
 _CHECK_PHASES = ('approach', 'look', 'ask', 'return', 'wait')
-# web_panel's answer to a move started during a fall check; navigation reads it back.
-FALL_CHECK_REFUSAL = 'fall check is in progress; only manual driving is available'
 _WAITING_FOR = ('manual_drive', 'busy')
 
 
@@ -91,7 +89,7 @@ def last_patrol(status):
 
 def fall_check_active(system, check=None):
     """
-    Report whether a fall check runs or waits, so a new move would be refused.
+    Report whether a fall check runs or waits, for status display only.
 
     ``check`` is the fall rules' fresh status: it also covers the gaps between
     missions (looking, waiting for 직접 움직이기 to end).

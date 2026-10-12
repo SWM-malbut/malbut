@@ -25,9 +25,8 @@ execution:
   mode: FOREGROUND
   priority: NORMAL
   resources: [BASE]
-  map_requirement: SELECTED
 
 # malbut_relocalization 패키지의 relocalization 노드가 /relocalize Action을 제공한다.
 # 전역 탐색은 Nav2 Spin으로 제자리에서 회전하므로 BASE를 쓴다.
-# 시스템 관리자는 저장 지도로 전환할 때마다 이 Action을 직접 요청(AUTO)하고,
-# 위치를 찾는 동안 위치 추정 상태를 SWITCHING으로 유지한다.
+# Bringup의 지도 제공자가 저장 지도 선택 시 이 Action을 요청(AUTO)한다.
+# 시스템 관리자는 명시적인 위치 보정 미션을 전달하며 지도 모드를 관리하지 않는다.

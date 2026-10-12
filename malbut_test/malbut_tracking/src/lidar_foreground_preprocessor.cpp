@@ -28,6 +28,7 @@
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 
 namespace
 {
@@ -105,8 +106,7 @@ class LidarForegroundPreprocessor : public rclcpp::Node
 public:
   LidarForegroundPreprocessor()
   : Node("lidar_foreground_preprocessor"),
-    tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
-    tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_))
+    tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock()))
   {
     declare_parameters();
     read_and_validate_parameters();
@@ -116,16 +116,18 @@ public:
     processing_trace_publisher_ =
       create_publisher<malbut_interfaces::msg::SensorProcessingTrace>(
       processing_trace_topic_, rclcpp::QoS(100));
-    static_map_subscription_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
-      static_map_topic_,
-      rclcpp::QoS(1).transient_local().reliable(),
-      std::bind(&LidarForegroundPreprocessor::on_static_map, this, std::placeholders::_1));
-    scan_subscription_ = create_subscription<sensor_msgs::msg::LaserScan>(
-      scan_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&LidarForegroundPreprocessor::queue_scan, this, std::placeholders::_1));
     scan_transform_timer_ = create_wall_timer(
       std::chrono::milliseconds(20),
       std::bind(&LidarForegroundPreprocessor::process_pending_scan, this));
+    scan_transform_timer_->cancel();
+    processing_service_ = create_service<std_srvs::srv::SetBool>(
+      "~/set_processing",
+      [this](const std_srvs::srv::SetBool::Request::SharedPtr request,
+      std_srvs::srv::SetBool::Response::SharedPtr response) {
+        set_processing(request->data);
+        response->success = true;
+      });
+    set_processing(get_parameter("start_enabled").as_bool());
 
     RCLCPP_INFO(
       get_logger(),
@@ -134,8 +136,37 @@ public:
   }
 
 private:
+  void set_processing(bool enabled)
+  {
+    if (processing_enabled_ == enabled) {
+      return;
+    }
+    processing_enabled_ = enabled;
+    pending_scan_.reset();
+    latest_scan_.reset();
+    map_ready_ = false;
+    if (enabled) {
+      tf_buffer_->clear();
+      tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+      static_map_subscription_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        static_map_topic_, rclcpp::QoS(1).transient_local().reliable(),
+        std::bind(&LidarForegroundPreprocessor::on_static_map, this, std::placeholders::_1));
+      scan_subscription_ = create_subscription<sensor_msgs::msg::LaserScan>(
+        scan_topic_, rclcpp::SensorDataQoS(),
+        std::bind(&LidarForegroundPreprocessor::queue_scan, this, std::placeholders::_1));
+      scan_transform_timer_->reset();
+    } else {
+      scan_transform_timer_->cancel();
+      scan_subscription_.reset();
+      static_map_subscription_.reset();
+      tf_listener_.reset();
+      tf_buffer_->clear();
+    }
+  }
+
   void declare_parameters()
   {
+    declare_parameter("start_enabled", true);
     declare_parameter("scan_topic", "/scan");
     declare_parameter("static_map_topic", "/map");
     declare_parameter("clusters_topic", "/perception/lidar/foreground_clusters");
@@ -195,6 +226,9 @@ private:
 
   void on_static_map(const nav_msgs::msg::OccupancyGrid::SharedPtr message)
   {
+    if (!processing_enabled_) {
+      return;
+    }
     const auto expected_size =
       static_cast<std::size_t>(message->info.width) * message->info.height;
     if (message->header.frame_id != global_frame_ || message->info.resolution <= 0.0 ||
@@ -275,6 +309,9 @@ private:
 
   void queue_scan(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
+    if (!processing_enabled_) {
+      return;
+    }
     const auto receipt_steady_time_ns = monotonic_time_ns();
     if (!map_ready_ || scan->header.frame_id.empty()) {
       return;
@@ -301,6 +338,9 @@ private:
 
   void process_pending_scan()
   {
+    if (!processing_enabled_) {
+      return;
+    }
     const auto scan = pending_scan_;
     const auto receipt_steady_time_ns = pending_scan_receipt_steady_time_ns_;
     if (scan == nullptr) {
@@ -451,6 +491,8 @@ private:
   double transform_queue_timeout_s_{0.30};
 
   bool map_ready_{false};
+  bool processing_enabled_{false};
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr processing_service_;
   std::uint32_t map_width_{0U};
   std::uint32_t map_height_{0U};
   double map_resolution_{0.0};

@@ -3,7 +3,7 @@
 from concurrent.futures import Future
 import os
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -24,6 +24,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.time import Time
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
@@ -31,6 +32,31 @@ from malbut_autoslam.autoslam_node import AutoSlamNode, Navigation, map_base
 
 
 TIMEOUT_S = 6.0
+
+
+def test_owned_slam_start_does_not_accept_a_queued_previous_map():
+    node = SimpleNamespace(
+        lock=RLock(), _observing=True, _owned_map_after=20_000_000_000,
+        message=None, received_at=0., map_revision=0, wake=Event())
+    old = OccupancyGrid()
+    old.header.stamp.sec = 19
+    AutoSlamNode._receive_map(node, old)
+    assert node.message is None and node.map_revision == 0
+    assert not node.wake.is_set()
+    current = OccupancyGrid()
+    current.header.stamp.sec = 20
+    AutoSlamNode._receive_map(node, current)
+    assert node.message is current and node.map_revision == 1
+    assert node.wake.is_set()
+
+
+def test_external_map_receipt_keeps_the_existing_standalone_contract():
+    node = SimpleNamespace(
+        lock=RLock(), _observing=True, _owned_map_after=None,
+        message=None, received_at=0., map_revision=0, wake=Event())
+    current = OccupancyGrid()
+    AutoSlamNode._receive_map(node, current)
+    assert node.message is current and node.map_revision == 1
 
 
 def _wait_until(predicate):
@@ -232,7 +258,8 @@ class _System:
     def ready(self):
         """Wait for discovery only after the fixture owns cleanup of the nodes."""
         assert self.client.wait_for_server(timeout_sec=TIMEOUT_S)
-        _wait_until(lambda: self.node.message is not None)
+        assert not self.node._observing
+        assert self.node._map_subscription is not None and self.node.listener is not None
 
     def request(self, name='home', feedback=None):
         """Send a real AutoSlam goal to the private test server."""
@@ -338,11 +365,18 @@ def test_owned_slam_starts_on_request_and_stops_before_success(system_factory):
     """Idle servers do not start SLAM; completed mapping releases its backend."""
     system = system_factory(owned_mapping=True)
     assert system.backend.mapping_events == []
+    assert system.node.message is None
+    assert not system.node._observing
+    inputs = (system.node._map_subscription, system.node.listener)
     result = _result(system.request().get_result_async())
     assert result.status == GoalStatus.STATUS_SUCCEEDED
     assert result.result.success
     assert system.backend.mapping_events == ['start', 'stop']
     assert len(system.backend.save_requests) == 1
+    assert not system.node._observing
+    assert system.node._map_subscription is not None and system.node.listener is not None
+    assert inputs == (system.node._map_subscription, system.node.listener)
+    assert system.node.message is None
 
 
 @pytest.mark.parametrize('pose', [(-1.0, 2.0), (0.5, 0.5)])
@@ -350,11 +384,14 @@ def test_slam_handoff_waits_for_pose_in_observed_map(system_factory, pose):
     """A new map and the previous localizer's TF must not abort startup."""
     system = system_factory(owned_mapping=True, scene='frontier')
     system.backend.robot_xy = pose
-    _wait_until(lambda: system.node._snapshot()[1] == pose)
+    assert not system.node._observing
     feedback = []
     handle = system.request(feedback=feedback)
     result = handle.get_result_async()
     _wait_until(lambda: 'WAITING' in feedback)
+    _wait_until(lambda: system.node.message is not None and system.node.tf.can_transform(
+        'map', 'base_footprint', Time()))
+    assert system.node._snapshot()[1] == pose
     assert not result.done()
     assert not system.backend.planning_requests
     assert not system.backend.navigation_requests
@@ -367,13 +404,15 @@ def test_slam_handoff_waits_for_pose_in_observed_map(system_factory, pose):
     system.backend.release_cancel.set()
     assert _result(result).status == GoalStatus.STATUS_CANCELED
     assert system.backend.mapping_events == ['start', 'stop']
+    assert not system.node._observing
+    assert system.node._map_subscription is not None and system.node.listener is not None
 
 
 def test_slam_handoff_pose_mismatch_expires_without_motion_or_save(system_factory):
     """Waiting is bounded when SLAM never supplies a usable pose."""
     system = system_factory(owned_mapping=True, ready_timeout_s=0.3)
     system.backend.robot_xy = (-1.0, 2.0)
-    _wait_until(lambda: system.node._snapshot()[1] == (-1.0, 2.0))
+    assert not system.node._observing
     result = _result(system.request().get_result_async())
     assert result.status == GoalStatus.STATUS_ABORTED
     assert 'waiting for the robot pose in known free SLAM space' in result.result.message
@@ -381,6 +420,8 @@ def test_slam_handoff_pose_mismatch_expires_without_motion_or_save(system_factor
     assert not system.backend.navigation_requests
     assert not system.backend.save_requests
     assert system.backend.mapping_events == ['start', 'stop']
+    assert not system.node._observing
+    assert system.node._map_subscription is not None and system.node.listener is not None
 
 
 def test_owned_slam_cancel_waits_for_navigation_before_stopping(system_factory):
@@ -434,6 +475,28 @@ def test_owned_slam_cleanup_failure_is_not_reported_as_success(system_factory):
     assert not result.result.success
     assert 'mapping cleanup failed: SLAM shutdown failed' in result.result.message
     assert not system.request('other').accepted
+
+
+def test_dead_slam_failure_restores_map_but_aborts_action(system_factory):
+    """An exit error must not strand a confirmed-dead SLAM as the map owner."""
+    system = system_factory(owned_mapping=True)
+    slam = Mock()
+    slam.stop.side_effect = RuntimeError('slam_toolbox exited abnormally (-6)')
+    slam.alive = False
+    # Exercise cleanup without replacing the fixture's existing SLAM startup.
+    original = system.node._finish_mapping
+
+    def finish(*args):
+        original(*args)
+        system.node.slam = slam
+
+    system.node._finish_mapping = finish
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'SLAM cleanup failed' in result.result.message
+    assert system.backend.mapping_events == ['start', 'stop']
+    assert not system.node.save_uncertain
+    system.node.slam = None
 
 
 def test_navigation_timeout_waits_for_confirmed_stop(system_factory):
@@ -701,7 +764,6 @@ def test_central_manifest_builds_the_actual_action_goal(tmp_path):
 def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_path, owned_mapping):
     """Drive the real manager-to-AutoSlam Action chain using only mock backends."""
     from malbut_interfaces.action import ExecuteMission
-    from malbut_system_manager.models import LocalizationMode
     from malbut_system_manager.system_manager_node import SystemManagerNode
     import yaml
 
@@ -715,7 +777,7 @@ def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_pat
     # localhost domain without changing its production constructor.
     rclpy.init(domain_id=system.context.get_domain_id())
     manager = SystemManagerNode(manifest_directory=str(manifests))
-    manager._on_localization_mode(LocalizationMode.LOCALIZATION)
+    assert not hasattr(manager, '_localization')
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(manager)
     thread = Thread(target=executor.spin, daemon=True)

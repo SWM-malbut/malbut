@@ -22,6 +22,7 @@ def generate_launch_description():
         'config': str(package_share / 'config' / 'person_reidentification.yaml'),
         'python_executable': str(runtime_root / 'bin/python'),
         'use_sim_time': 'false',
+        'start_enabled': 'true',
         'rgb_topic': '/camera/color/image_raw',
         'yolo_detections_topic': '/yolo/detections',
         'detections_2d_topic': '/perception/person/detections_2d',
@@ -38,7 +39,7 @@ def generate_launch_description():
         DeclareLaunchArgument(name, default_value=value)
         for name, value in defaults.items()
     ]
-    parameter_types = {'use_sim_time': bool, 'opencv_num_threads': int}
+    parameter_types = {'use_sim_time': bool, 'start_enabled': bool, 'opencv_num_threads': int}
     node = Node(
         package='malbut_reid', executable='person_reidentifier',
         name='person_reidentifier', output='screen',

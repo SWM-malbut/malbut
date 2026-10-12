@@ -1,6 +1,6 @@
 # slam_toolbox mapping parameters from the robot-provided config
-# (Hiwonder ROSOrin ROS2 slam/config/slam.yaml). The system manager starts this
-# only while no saved map is selected; it passes scan_topic and use_sim_time.
+# (Hiwonder ROSOrin ROS2 slam/config/slam.yaml). AutoSLAM owns this process only
+# during its Action; it passes scan_topic and use_sim_time.
 slam_toolbox:
   ros__parameters:
     solver_plugin: solver_plugins::CeresSolver

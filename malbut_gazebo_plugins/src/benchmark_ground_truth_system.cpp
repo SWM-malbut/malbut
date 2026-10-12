@@ -61,7 +61,10 @@ public:
     stamp->set_nsec(nanoseconds % 1000000000LL);
     this->AppendRobotPose(_ecm, message);
     this->AppendActorPose(_ecm, message);
-    if (message.pose_size() == 2)
+    // Publish the robot even before an actor exists or after its removal.
+    // Otherwise observers retain the last actor forever and cannot confirm
+    // a clean fixture or an actual entity removal.
+    if (message.pose_size() > 0)
       this->publisher.Publish(message);
   }
 

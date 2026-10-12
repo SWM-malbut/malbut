@@ -20,6 +20,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from std_msgs.msg import Bool
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import (
     Detection2DArray,
@@ -105,7 +106,8 @@ class PersonLocalizerNode(Node):
         self._warning_times: Dict[str, int] = {}
         self._output_frame = self.get_parameter('output_frame').value
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)
+        self._tf_listener = (TransformListener(self._tf_buffer, self)
+                             if self._output_frame else None)
         self._timing = CameraTiming()
 
         self._detections_3d_publisher = self.create_publisher(
@@ -167,13 +169,50 @@ class PersonLocalizerNode(Node):
             queue_size=self.get_parameter('identity_sync_queue_size').value,
         )
         self._identity_sync.registerCallback(self._on_observation)
+        self._processing_enabled = True
+        self.create_service(SetBool, '~/set_processing', self._set_processing)
+        self._change_processing(bool(self.get_parameter('start_enabled').value))
         self.get_logger().info(
             'Person localizer ready: shared Re-ID observations + aligned '
             'RGB-D. No detector or identity gallery runs in this node.'
         )
 
+    def _change_processing(self, enabled):
+        if enabled == self._processing_enabled:
+            return
+        self._processing_enabled = enabled
+        if not enabled and self._tf_listener is not None:
+            self._tf_listener.unregister()
+            self._tf_listener = None
+            self._tf_buffer.clear()
+        elif enabled and self._output_frame:
+            self._tf_buffer.clear()
+            self._tf_listener = TransformListener(self._tf_buffer, self)
+        # Never match a pre-idle image/identity against a new frame on wake.
+        for synchronizer in (self._rgb_depth_sync, self._identity_sync):
+            for queue in synchronizer.queues:
+                queue.clear()
+        self._timing = CameraTiming()
+        for subscriber, kind in (
+                (self._rgb_subscription, Image), (self._depth_subscription, Image),
+                (self._identities, Detection2DArray)):
+            if enabled:
+                subscriber.sub = self.create_subscription(
+                    kind, subscriber.topic, subscriber.callback, qos_profile_sensor_data)
+            else:
+                self.destroy_subscription(subscriber.sub)
+                subscriber.sub = None
+        if not enabled:
+            self._publish_health(False)
+
+    def _set_processing(self, request, response):
+        self._change_processing(request.data)
+        response.success = True
+        return response
+
     def _declare_parameters(self) -> None:
         defaults = {
+            'start_enabled': True,
             'rgb_topic': '/camera/color/image_raw',
             'depth_topic': '/camera/depth/image_raw',
             'camera_info_topic': '/camera/color/camera_info',
@@ -239,9 +278,13 @@ class PersonLocalizerNode(Node):
             raise ValueError('debug_jpeg_quality must be in [1, 100]')
 
     def _on_aligned_images(self, rgb: Image, depth: Image) -> None:
+        if not self._processing_enabled:
+            return
         self._aligned_images.signalMessage(AlignedImages(rgb, depth))
 
     def _on_yolo_trace(self, trace: SensorProcessingTrace) -> None:
+        if not self._processing_enabled:
+            return
         # A diagnostic topic can arrive after the result. Neither delivery order
         # nor a missing diagnostic message may block localization itself.
         complete = self._timing.received(trace)
@@ -251,6 +294,8 @@ class PersonLocalizerNode(Node):
     def _on_observation(
         self, images: AlignedImages, detections: Detection2DArray,
     ) -> None:
+        if not self._processing_enabled:
+            return
         if images.header != detections.header:
             self._warn_periodically(
                 'identity_header',

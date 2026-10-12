@@ -1,6 +1,8 @@
 """robot: start only this module, without waiting for external ROS peers."""
 
 from malbut_bringup.nav2_stack import nav2_actions
+from malbut_bringup.map_selection import remembered_map
+from malbut_bringup.runtime_control import PREPARE_PREFIX, PROFILES
 
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -11,7 +13,7 @@ from malbut_bringup.launch_support import (
 
 ARGUMENTS = [
     'start_hardware', 'hardware_launch_file', 'nav2_params_file', 'slam_params_file', 'map',
-    'scan_topic', 'odom_topic', 'restore_pose',
+    'scan_topic', 'odom_topic', 'restore_pose', 'use_sim_time', 'map_selection_file',
 ]
 
 
@@ -27,13 +29,11 @@ def _setup(context):
     params = (_file(value('nav2_params_file'), 'Nav2 parameters')
               if value('nav2_params_file') else _package_file(
                   'malbut_bringup', 'config/nav2_params.yaml'))
-    slam_params = (_file(value('slam_params_file'), 'SLAM parameters')
-                   if value('slam_params_file') else _package_file(
-                       'malbut_bringup', 'config/slam_toolbox.yaml'))
     # Use the same map_server/AMCL path even before a saved map is selected.
     # The default map contains only unknown cells; explicit maps still win.
     default_map = _package_file('malbut_bringup', 'config/default_map.yaml')
-    initial_map = _file(value('map'), 'saved map YAML') if value('map') else default_map
+    initial_map = (_file(value('map'), 'saved map YAML') if value('map') else
+                   remembered_map(value('map_selection_file')) or default_map)
 
     hardware_actions = []
     if hardware_path:
@@ -56,18 +56,25 @@ def _setup(context):
         }))
 
     actions = [*hardware_actions, *nav2_actions(
-        params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic'))]
+        params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic'),
+        use_sim_time=value('use_sim_time') == 'true')]
     actions.append(Node(
         package='malbut_system_manager', executable='system_manager',
         name='system_manager', output='screen', parameters=[{
-            'use_sim_time': False,
+            'use_sim_time': value('use_sim_time') == 'true',
             # Manager owns admission/safety; optional modules do not gate it.
             'ready_topic': '',
-            'localization_control': True, 'initial_map': initial_map,
-            'default_map': default_map,
-            'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
-            'relocalize_action': '/relocalize' if value('restore_pose') == 'true' else '',
+            'prepare_service_prefix': PREPARE_PREFIX,
+            'prepared_capabilities': list(PROFILES),
         }],
+    ))
+    actions.append(Node(
+        package='malbut_bringup', executable='runtime_control', output='screen',
+        parameters=[{'use_sim_time': value('use_sim_time') == 'true',
+                     'initial_map': initial_map, 'default_map': default_map,
+                     'map_selection_file': value('map_selection_file'),
+                     'relocalize_action': ('/relocalize'
+                                           if value('restore_pose') == 'true' else '')}],
     ))
     return actions
 

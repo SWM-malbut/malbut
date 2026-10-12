@@ -191,7 +191,7 @@ controller_server:
       vx_samples: 20
       vy_samples: 5
       vtheta_samples: 20
-      sim_time: 1.7
+      sim_time: 3.0
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
@@ -210,14 +210,12 @@ controller_server:
       # Scale 0 would skip the critic entirely.
       # PreferForward (built-in dwb_critics) adds `penalty` x `scale` to every
       # trajectory that drives backwards; strafe_x/theta_scale are zeroed so
-      # forward turning and rotating in place stay free. 40 is the upper end of
-      # the range public DWB configs use next to PathDist 32 / GoalDist 24: a
-      # soft preference for driving forward, not a ban. Reverse still wins when
-      # it saves clearly more path distance or when every forward sample is
-      # rejected by the obstacle critics. The person follower backs away from a
+      # forward turning and rotating in place stay free. Keep the reverse
+      # preference soft so short paths behind the robot can still make progress.
+      # The person follower backs away from a
       # too-close person with the BackUp behavior, not through this controller.
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
-      PreferForward.scale: 40.0
+      PreferForward.scale: 10.0
       PreferForward.penalty: 1.0
       PreferForward.strafe_x: 0.0
       PreferForward.strafe_theta: 0.2
@@ -256,7 +254,7 @@ controller_server:
       vx_samples: 20
       vy_samples: 5
       vtheta_samples: 20
-      sim_time: 1.7
+      sim_time: 3.0
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
