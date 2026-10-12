@@ -15,6 +15,7 @@ if not hasattr(interfaces, 'FallApproach'):
     pytest.skip('malbut_interfaces without FallApproach', allow_module_level=True)
 
 from geometry_msgs.msg import PoseStamped, TransformStamped  # noqa: E402
+from nav2_msgs.msg import Costmap  # noqa: E402
 from nav_msgs.msg import Path  # noqa: E402
 from rclpy.action import ActionClient, ActionServer  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
@@ -29,12 +30,13 @@ from malbut_fall_approach.fall_approach_node import FallApproachNode  # noqa: E4
 class FakeNav2:
     """Straight-line planner; driving, backing and turning are recorded.
 
-    ``follow`` lists the outcomes of successive drives (then they succeed).
+    ``follow`` lists the outcomes of successive drives (then they succeed);
+    ``detour(x, y)`` makes the path to that goal go 3 m out of the way first.
     """
 
-    def __init__(self, node, *, plan=True, backup=True, follow=()):
+    def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None):
         self.plan, self.driven, self.turns, self.backups = plan, [], [], []
-        self.backup, self.follow = backup, list(follow)
+        self.backup, self.follow, self.detour = backup, list(follow), detour
         group = ReentrantCallbackGroup()
         ActionServer(node, nav2.ComputePathToPose, 'compute_path_to_pose', self._plan,
                      callback_group=group)
@@ -50,12 +52,17 @@ class FakeNav2:
             return result
         result.path = Path()
         result.path.header.frame_id = 'map'
-        steps = max(1, int(math.hypot(goal.x, goal.y) / 0.1))
-        for i in range(steps + 1):
-            pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            pose.pose.position.x, pose.pose.position.y = goal.x * i / steps, goal.y * i / steps
-            result.path.poses.append(pose)
+        corners = [(0.0, 0.0), (goal.x, goal.y)]
+        if self.detour is not None and self.detour(goal.x, goal.y):
+            corners.insert(1, (goal.x, goal.y + 3.0))
+        for (x0, y0), (x1, y1) in zip(corners, corners[1:]):
+            steps = max(1, int(math.hypot(x1 - x0, y1 - y0) / 0.1))
+            for i in range(steps + 1):
+                pose = PoseStamped()
+                pose.header.frame_id = 'map'
+                pose.pose.position.x = x0 + (x1 - x0) * i / steps
+                pose.pose.position.y = y0 + (y1 - y0) * i / steps
+                result.path.poses.append(pose)
         handle.succeed()
         return result
 
@@ -118,10 +125,33 @@ def ros():
             time.sleep(0.02)
         return result.result().result
 
+    latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                         reliability=ReliabilityPolicy.RELIABLE)
+    costmaps = fake.create_publisher(Costmap, '/global_costmap/costmap_raw', latched)
+
+    def costmap(cells):
+        """A free 10 m x 10 m map around the robot; ``cells`` maps (x, y) in m to a cost."""
+        message = Costmap()
+        message.header.frame_id = 'map'
+        message.metadata.resolution = 0.1
+        message.metadata.size_x = message.metadata.size_y = 100
+        message.metadata.origin.position.x = message.metadata.origin.position.y = -5.0
+        message.metadata.origin.orientation.w = 1.0
+        data = bytearray(100 * 100)
+        for (x, y), cost in cells.items():
+            data[int((y + 5.0) / 0.1) * 100 + int((x + 5.0) / 0.1)] = cost
+        message.data = bytes(data)
+        node.grid = None
+        costmaps.publish(message)
+        end = time.monotonic() + 5
+        while node.grid is None and time.monotonic() < end:
+            time.sleep(0.02)
+        assert node.grid is not None
+
     deadline = time.monotonic() + 5
     while node._pose() is None and time.monotonic() < deadline:
         time.sleep(0.05)
-    yield node, fake, send, statuses
+    yield node, fake, send, statuses, costmap
     executor.shutdown()
     node.destroy_node()
     fake.destroy_node()
@@ -129,7 +159,7 @@ def ros():
 
 
 def test_drives_to_one_metre_before_the_spot_faces_it_and_goes_back(ros):
-    node, fake, send, statuses = ros
+    node, fake, send, statuses, _ = ros
     nav = FakeNav2(fake)
     result = send(request_id='q1', phase='approach', x=3.0, y=1.0, standoff_m=1.0)
     assert result.outcome == 'arrived'
@@ -144,7 +174,7 @@ def test_drives_to_one_metre_before_the_spot_faces_it_and_goes_back(ros):
 
 
 def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):
-    node, fake, send, _ = ros
+    node, fake, send, _, _ = ros
     FakeNav2(fake, plan=False)
     blocked = send(request_id='q2', phase='approach', x=3.0, y=0.0, standoff_m=1.0)
     assert blocked.outcome == 'no_path'
@@ -154,7 +184,7 @@ def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):
 
 
 def test_view_backs_up_facing_the_spot_without_turning_away(ros):
-    _, fake, send, statuses = ros
+    _, fake, send, statuses, _ = ros
     nav = FakeNav2(fake)
     # The fake robot stands at the origin facing +x, 1 m short of the spot.
     result = send(request_id='v1', phase='view', x=1.0, y=0.0, standoff_m=2.5)
@@ -165,21 +195,67 @@ def test_view_backs_up_facing_the_spot_without_turning_away(ros):
     assert statuses[-1]['phase'] == 'view' and statuses[-1]['outcome'] == 'arrived'
 
 
-def test_view_tries_the_next_side_after_a_failed_drive(ros):
-    _, fake, send, _ = ros
+def _end(nav, index=-1):
+    end = nav.driven[index].poses[-1].pose.position
+    return end.x, end.y
+
+
+def _around(turn_deg, radius=2.5):
+    """A view place around the spot (1, 0), the robot at the origin on its 180-degree side."""
+    side = math.pi + math.radians(turn_deg)
+    return 1.0 + radius * math.cos(side), radius * math.sin(side)
+
+
+def test_view_tries_the_next_nearest_place_after_a_failed_drive(ros):
+    _, fake, send, _, costmap = ros
+    costmap({})
     nav = FakeNav2(fake, backup=False, follow=[False])
     result = send(request_id='v2', phase='view', x=1.0, y=0.0, standoff_m=2.5)
     assert result.outcome == 'arrived'
     assert len(nav.backups) == 1 and len(nav.driven) == 2
-    side = math.pi + math.radians(45.0)  # The second view point, around the spot.
-    end = nav.driven[-1].poses[-1].pose.position
-    assert (end.x, end.y) == pytest.approx(
-        (1.0 + 2.5 * math.cos(side), 2.5 * math.sin(side)), abs=1e-6)
+    assert _end(nav, 0) == pytest.approx(_around(0.0), abs=1e-6)  # Straight back: nearest.
+    # Then 30 degrees round, the first side when both are as near.
+    assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
 
 
-def test_view_fails_only_after_every_side_failed(ros):
-    _, fake, send, _ = ros
-    nav = FakeNav2(fake, backup=False, follow=[False] * 5)
+def test_view_skips_places_a_wall_hides_the_spot_from(ros):
+    _, fake, send, _, costmap = ros
+    # A cupboard between the straight-back place (-1.5, 0) and the spot (1, 0).
+    costmap({(-0.6, y / 10): 254 for y in range(-3, 4)})
+    nav = FakeNav2(fake, backup=False)
+    result = send(request_id='v4', phase='view', x=1.0, y=0.0, standoff_m=2.5)
+    assert result.outcome == 'arrived'
+    assert len(nav.driven) == 1
+    assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
+
+
+def test_view_skips_places_more_than_twice_the_straight_line_away(ros):
+    _, fake, send, _, costmap = ros
+    costmap({(-0.6, y / 10): 254 for y in range(-3, 4)})
+    # The way to every place on the y < 0 side goes 3 m round: the other side.
+    nav = FakeNav2(fake, backup=False, detour=lambda x, y: y < 0.0)
+    result = send(request_id='v5', phase='view', x=1.0, y=0.0, standoff_m=2.5)
+    assert result.outcome == 'arrived'
+    assert len(nav.driven) == 1
+    assert _end(nav) == pytest.approx(_around(-30.0), abs=1e-6)
+
+
+def test_view_has_no_place_without_a_costmap_or_a_visible_spot(ros):
+    node, fake, send, _, costmap = ros
+    nav = FakeNav2(fake, backup=False)
+    node.grid = None
+    assert send(request_id='v6', phase='view', x=1.0, y=0.0, standoff_m=2.5).outcome == 'no_path'
+    # Walled in on every side, past the metre the body itself takes.
+    costmap({(x / 10, y / 10): 254 for x in range(-49, 50) for y in range(-49, 50)
+             if 1.2 < math.dist((x / 10, y / 10), (1.0, 0.0)) < 1.4})
+    assert send(request_id='v7', phase='view', x=1.0, y=0.0, standoff_m=2.5).outcome == 'no_path'
+    assert nav.driven == []
+
+
+def test_view_fails_only_after_every_place_failed(ros):
+    _, fake, send, _, costmap = ros
+    costmap({})
+    nav = FakeNav2(fake, backup=False, follow=[False] * 36)
     result = send(request_id='v3', phase='view', x=1.0, y=0.0, standoff_m=2.5)
     assert result.outcome == 'failed'
-    assert len(nav.driven) == 5
+    assert len(nav.driven) == 36  # Three rings of twelve places.

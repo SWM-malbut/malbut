@@ -87,10 +87,25 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   그 트랙의 다음 후보도 사건이 열려 있는 동안 같은 사건으로 간다. 사건이 닫히면 붙은 트랙도 풀린다.
 - 급격한 자세 변화(새로 본 낙상)는 겹쳐도 따로 연다. 옆에 있던 다른 사람이 쓰러진 것을 놓치지 않기 위해서다.
 
+2026-10-12 같은 자리 묶기와 확인한 자리(사용자 결정, 21:13~21:17 실기):
+- 낙상 한 번이 사건 두 개가 됐다. Pose 사건이 열린 뒤 Cloud가 같은 사람을 찾았는데 박스가 화면을 거의 채워
+  트랙과 못 맞췄고, 기다림(20초)이 끝나자 장면 사건을 새로 열었다. 이제 Cloud 결과가 새 사건이 되기 직전,
+  열린 사람 사건이 지도상 1 m 안(`SAME_PLACE_M`)에서 2분 안(`SAME_PLACE_CASE_S`)에 보였으면 그 사건의 클립·박스로만
+  남기고 사건을 열지 않는다(`cloud_discovery` 이유 `same_place_open_incident`). 넘어지는 순간을 본 결과
+  (`observed_fall`)는 그대로 따로 연다. 사건 자리는 확인 자리(`revisit_target`·`approach_target`) → 지금 Pose
+  위치 → 마지막 후보 때 위치 순으로 쓴다.
+- "바닥 아님"으로 닫고 돌아온 뒤, 멀리서 앉은 사람을 Pose가 누운 자세로 읽어 다시 열었다. 이제 말벗이 낙상이
+  아니라고 확인한 자리(`off_floor_verified`, `normal_verified`, `not_a_person`, 괜찮다는 대답)는 기억한다.
+  그 자리 1 m 안에서는 Pose의 쓰러져 있음(`candidate_rejected` `cleared_place`)과 Cloud의 의심
+  (`cloud_discovery` `cleared_place`)으로 사건을 열지 않는다. 넘어지는 동작(Pose `motion_seen`, Cloud
+  `observed_fall`)이면 평소처럼 열고 그 자리를 잊는다. 그 자리에서 선 사람이 보이거나(Pose `clear`) 30분이
+  지나도 잊는다(`CLEARED_PLACE_MAX_S`). 메모리에만 있어 재시작하면 평소 규칙이다.
+
 2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 켜짐, `fall_approach` 필요):
 - 침대에 걸터앉은 사람이 12 cm 카메라에 다리만 보여, 근접 확인이 "사람"이라 답하고 질문까지 갔다(10월 10일 20:43, 11일 03:39).
 - 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 2.5 m 자리로 옮기고
-  `view_result`를 주면 `view_completed(reason=outcome)`.
+  `view_result`를 주면 `view_completed(reason=outcome)`. 자리는 의심 장소가 보이는 가장 가까운 곳이다
+  (2026-10-12, `malbut_fall_approach` README).
 - 자세 판단: 도착 1초 뒤 Cloud "자세 확인"(`check_posture`, `furniture`/`standing`/`floor`/`unclear`)을 묻고,
   `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 `sitting_off_floor`(둘 다
   `standing`이면 `standing`)로 `incident_resolved(off_floor_verified)`. `floor`는 `on_floor`, 애매·실패·차단은

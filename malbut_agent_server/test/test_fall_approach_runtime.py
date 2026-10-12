@@ -284,8 +284,12 @@ def test_pose_at_the_spot_being_checked_is_left_to_that_check():
     see(monitor, clock, BAG)
     assert monitor.candidate(lying(clock)) is None, 'still the check while driving back'
     assert monitor.return_result(**ids(question), outcome='returned')
-    # The detector sends it again: a person still there is a case of its own now.
-    assert monitor.candidate(lying(clock)) is not None
+    monitor.drain_events()
+    # The robot found no person there (2026-10-12): lying there again is left to
+    # Cloud's look; only a fall seen happening opens a case of its own.
+    assert monitor.candidate(lying(clock)) is None
+    assert kinds(monitor.drain_events()) == [('candidate_rejected', 'cleared_place')]
+    assert monitor.candidate(lying(clock, kind=CandidateKind.MOTION_SEEN)) is not None
 
 
 @pytest.mark.parametrize('box,kind', [(CHAIR, CandidateKind.ALREADY_DOWN),
