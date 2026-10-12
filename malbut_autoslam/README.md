@@ -51,7 +51,7 @@ ros2 action send_goal /malbut/mission/execute \
 | 구분 | 필드 | 의미 |
 | --- | --- | --- |
 | Goal | `map_name: string` | 파일 이름, 기본 `home`. 경로·확장자 없이 입력 |
-| Feedback | `state: string` | `STARTING`, `WAITING`, `EXPLORING`, `NAVIGATING`, `SAVING`, `STOPPING`, `CANCELING` |
+| Feedback | `state: string` | `STARTING`, `WAITING`, `EXPLORING`, `NAVIGATING`, `SAVING`, `ALIGNING_VIEW`, `STOPPING`, `CANCELING` |
 | Feedback | `frontier_count: uint32` | 마지막 계획에서 선택 가능한 탐색 경계 수 |
 | Feedback·Result | `known_area_m2: float32` | 현재 지도에서 알려진 면적. 전체 집 면적 대비 관측률이 아님 |
 | Result | `success: bool`, `message: string` | 완료 여부와 사유 |
@@ -59,6 +59,13 @@ ros2 action send_goal /malbut/mission/execute \
 
 - 기존 지도 파일은 덮어쓰지 않는다. 다시 작성하려면 다른 `map_name`을 사용한다.
 - `home` 요청은 `map_directory/home.yaml`과 `home.pgm`을 생성한다.
+  저장 후 긴 벽 선분의 주된 방향을 검출해 `home.view.json`에 웹 표시 각도를 기록한다.
+  [OpenCV Hough 선분 검출](https://docs.opencv.org/4.11.0/d6/d10/tutorial_py_houghlines.html)과
+  [Manhattan 방향 정렬 연구](https://arxiv.org/abs/2107.07778)를 참고해 수평·수직 벽을
+  같은 방향 후보로 묶고 길이 가중 투표·중앙값을 사용한다. 근거가 부족하거나
+  여러 방향이 경쟁하면 원래 표시를 유지한다. 정렬은 클라우드 웹 미리보기에만 적용한다.
+  PNG와 픽셀→지도 좌표 변환을 함께 회전하므로 방·구역·로봇 표시와 클릭 좌표가 맞는다.
+  원본 YAML·PGM, `/map`, TF, 저장 위치, Nav2 설정은 바꾸지 않는다.
   저장 직후 매핑 구성을 종료하기 전에 신선한 `map` → 로봇 TF를 읽어
   `home.pose.yaml`에 초기 위치·방향도 원자적으로 저장한다. 지도 YAML·이미지의
   SHA256이 일치할 때만 주행 Bringup이 이 값을 초기 위치로 복원한다.

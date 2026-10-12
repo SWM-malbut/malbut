@@ -8,7 +8,7 @@ string message
 string map_yaml
 float32 known_area_m2
 ---
-# WAITING, EXPLORING, NAVIGATING, SAVING, CANCELING
+# WAITING, EXPLORING, NAVIGATING, SAVING, ALIGNING_VIEW, CANCELING
 string state
 # Remaining connected frontier regions, including temporarily skipped regions.
 uint32 frontier_count

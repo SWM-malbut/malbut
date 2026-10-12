@@ -16,6 +16,7 @@ from malbut_bringup.user_map import load_or_build_user_map, save_rooms, user_map
 from malbut_bringup.web_panel import PanelData, save_zones, zone_view
 from malbut_bringup.web_runtime import SavedMapCatalog
 from malbut_bringup.zones import read_zones, zones_path
+from malbut_autoslam.map_view import write_map_view
 
 
 COMMAND_ID = '7f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f'
@@ -78,6 +79,24 @@ def test_saved_map_gets_a_user_map_with_one_room_kept_beside_it(saved):
                      'map_id': cloud_map_id(runtime), 'map_revision': revision,
                      'frame_id': 'map', 'map': 'home.yaml', 'editable': True,
                      'message': '', 'features': []}
+
+
+def test_view_settings_are_reloaded_without_changing_rooms_or_map_revision(saved):
+    """View persistence is independent of room editing and map identity."""
+    catalog, runtime, path = saved
+    before, _, revision = space_documents(runtime, catalog)
+    view = write_map_view(path)
+    after, _, current = space_documents(runtime, catalog)
+    assert after['view'] == view
+    assert after['features'] == before['features'] and current == revision
+    document = save_rooms(path, after['map_id'], {
+        'map_id': after['map_id'], 'map_revision': current, 'rooms': after['features'][2:]})
+    assert document['view'] == view
+    assert load_or_build_user_map(path, after['map_id'])['view'] == view
+    path.with_suffix('.view.json').write_text('{broken')
+    fallback, _, current = space_documents(runtime, catalog)
+    assert 'view' not in fallback
+    assert fallback['features'] == before['features'] and current == revision
     # Not on a saved map (mapping): nothing to edit.
     assert space_documents({'localization': {'mode': 'MAPPING'}}, catalog) == (None, None, None)
 

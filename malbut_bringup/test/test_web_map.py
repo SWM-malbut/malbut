@@ -11,7 +11,79 @@ import cv2
 import numpy as np
 import pytest
 
-from malbut_bringup.web_map import grid_to_world, MapCache, world_to_grid
+from malbut_bringup.web_map import (
+    aligned_preview, grid_to_world, MapCache, world_to_grid,
+)
+
+
+@pytest.mark.parametrize('angle', [-35, -17, 21, 44])
+def test_aligned_display_pixels_and_clicks_keep_original_world_coordinates(angle):
+    """Rotation is a reversible display transform, not a different robot map."""
+    width, height, resolution = 40, 30, 0.05
+    origin = {'x': -2.0, 'y': 1.0, 'yaw': 0.3}
+    metadata = {'width': width, 'height': height, 'resolution': resolution,
+                'origin': origin, 'frame_id': 'map', 'version': 1}
+    image = np.full((height, width, 3), 200, dtype=np.uint8)
+    image[8, 11] = (13, 99, 201)
+    png = cv2.imencode('.png', image)[1].tobytes()
+    view = {'rotation_rad': math.radians(angle), 'source': {
+        'width': width, 'height': height, 'resolution': resolution,
+        'origin': [origin['x'], origin['y'], origin['yaw']]}}
+    result, encoded = aligned_preview(metadata, png, view)
+    pixels = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
+    assert pixels.shape[:2] == (result['height'], result['width'])
+    # The marked cell's world position still maps to that same displayed cell.
+    x, y = grid_to_world(11.5, height - 8.5, resolution, origin)
+    col, row = world_to_grid(x, y, resolution, result['origin'])
+    column, top_row = round(col - 0.5), round(result['height'] - row - 0.5)
+    assert pixels[top_row, column].tolist() == [13, 99, 201]
+    assert grid_to_world(col, row, resolution, result['origin']) == pytest.approx((x, y))
+    assert result['origin']['yaw'] == pytest.approx(origin['yaw'] + view['rotation_rad'])
+    assert metadata['width'] == width and metadata['origin'] == origin
+    assert aligned_preview(metadata, png, view) == (result, encoded)
+    # The cloud contract is still the existing geometry contract, with raw
+    # world-coordinate semantics. No frontend transform or new DB field needed.
+    from malbut_bringup.cloud_sync import map_payload
+    import base64
+
+    user_map = {'view': view, 'features': []}
+    payload = map_payload(metadata, png, {'mode': 'navigation', 'map': 'home.yaml'},
+                          user_map=user_map, map_revision='same-native-map')
+    assert payload['geometry']['originYaw'] == result['origin']['yaw']
+    assert base64.b64decode(payload['previewBase64']) == encoded
+    assert payload['mapRevision'] == 'same-native-map' and payload['userMap'] == user_map
+    draft = map_payload(metadata, png, {'mode': 'mapping'}, user_map=user_map)
+    assert base64.b64decode(draft['previewBase64']) == png
+
+
+@pytest.mark.parametrize('view', [
+    None, {}, {'rotation_rad': float('nan'), 'source': {}},
+    {'rotation_rad': 0.4, 'source': {'width': 1}},
+])
+def test_absent_bad_or_stale_display_settings_keep_original_preview(view):
+    """A view problem cannot make a previously usable map disappear."""
+    metadata = {'width': 4, 'height': 3, 'resolution': 0.1,
+                'origin': {'x': 0, 'y': 0, 'yaw': 0}}
+    assert aligned_preview(metadata, b'original', view) == (metadata, b'original')
+
+
+def test_outside_unknown_margin_is_cropped_without_moving_known_cells():
+    """Fit-to-view stays useful after rotation, including the inverse click transform."""
+    image = np.full((60, 80, 3), (247, 242, 247), dtype=np.uint8)
+    image[20:40, 25:55] = (255, 255, 255)
+    image[28:31, 38:41] = (39, 31, 25)
+    png = cv2.imencode('.png', image)[1].tobytes()
+    origin = {'x': -2.0, 'y': -1.5, 'yaw': 0.0}
+    metadata = {'width': 80, 'height': 60, 'resolution': 0.05, 'origin': origin}
+    view = {'rotation_rad': 0.3, 'source': {
+        'width': 80, 'height': 60, 'resolution': 0.05, 'origin': [-2.0, -1.5, 0.0]}}
+    result, encoded = aligned_preview(metadata, png, view)
+    assert result['width'] < 80 and result['height'] < 60
+    pixels = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
+    x, y = grid_to_world(39.5, 30.5, 0.05, origin)
+    col, row = world_to_grid(x, y, 0.05, result['origin'])
+    assert pixels[round(result['height'] - row - 0.5), round(col - 0.5)].tolist() == [39, 31, 25]
+    assert grid_to_world(col, row, 0.05, result['origin']) == pytest.approx((x, y))
 
 
 def _map(width=3, height=2, data=None, yaw=0.0):

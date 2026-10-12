@@ -21,6 +21,7 @@ const STEP_COPY: Record<string, string> = {
   EXPLORING: "집을 둘러보고 있어요",
   NAVIGATING: "새로운 곳으로 이동하고 있어요",
   SAVING: "지도를 저장하고 있어요",
+  ALIGNING_VIEW: "지도의 표시 방향을 정렬하고 있어요",
   CANCELING: "멈추는 중이에요",
 };
 
