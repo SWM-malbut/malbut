@@ -104,6 +104,111 @@ MLX 선택 경로와 한 문장 실행기는 기존 전사 방식을 사용합�
 저장 실패도 STT 결과를 바꾸지 않으며 `diagnostics_stopped`로 알립니다. 녹음·파일 쓰기
 부하가 생기므로 재현 구간에만 켭니다. 이 옵션 자체는 오인식 필터가 아닙니다.
 
+### 문제 문구 감지 시 직전 과정 저장 (기본 OFF)
+
+`stt_incident`는 최종 STT 발행 또는 짧은 음성 품질 검사 거절 시 조사 대상 문구가 일치하면,
+**직전 30초와 이후 15초**의 관측 기록을 한 폴더에 저장하는 테스트 실행 모드입니다.
+핵심 산출물은 발화 한 건의 실행 경로인 `transactions.json`입니다. 작업 큐 입출력,
+모델 호출과 원시 결과, 결과 큐 입출력, 채택·폐기·종료 후보 재사용 이유, 최종 발행,
+Agent 수신·답변 로그와 TTS 상태를 ID로 연결합니다. `--no-audio`로 실행하면
+PCM을 버퍼에 보관하거나 WAV로 저장하지 않고 실행 이벤트와 모델 메타데이터만 남깁니다.
+STT 문장, VAD 판정, 호출어 정책, Agent 전달 여부를 변경하지 않습니다.
+정상적으로 말한 문구도 일치할 수 있으므로 저장 사건을 오인식 확정으로 해석하지 않습니다.
+
+기본 트리거는 `구독`, `시청해주셔서`, `자막제공`을 포함하는 문장과,
+전체 문장이 `감사합니다`, `고신을주셔서감사합니다`, `다음편에참아`인 경우입니다.
+비교할 때만 공백·문장부호를 제거하고 Unicode NFC를 적용하며, 저장되는 원문은 보존합니다.
+일반 부분 인식, 호출어 인식 결과와 TTS 문장 자체는 저장 트리거가 아닙니다.
+품질 검사에 걸린 문구는 Agent에 보내지 않아도 저장하며, `triggers[].event`가
+`recognition_rejected`로 표시됩니다. 발행 여부는 별도의 관측 상태로 확인합니다.
+
+ROS나 마이크 없이 저장 경로부터 확인하려면 저장소 루트에서 실행합니다.
+
+```bash
+PYTHONPATH=malbut_stt python3 -m malbut_stt.incident_cli \
+  --demo --no-audio --output /tmp/malbut-stt-incident-demo
+```
+
+이 데모의 파형, 모델 결과, 큐·Agent 이벤트는 모두 합성이며 실제 재현 실험이 아닙니다.
+`incident.json`에 `metadata.synthetic=true`와 조기 종료 상태가 기록됩니다.
+
+설치한 패키지로 단독 STT 테스트를 실행할 때는 기존 `stt` 대신 아래 진입점을 사용합니다.
+`--` 뒤의 인자는 기존 STT/ROS에 그대로 전달됩니다. 필요한 ROS 환경과 모델·라이브러리는
+기존 STT 실행과 동일하게 준비해야 하며, 이미 실행 중인 STT와 중복 실행하지 않습니다.
+
+```bash
+ros2 run malbut_stt stt_incident \
+  --no-audio \
+  --output "$HOME/.ros/malbut/stt_incidents" \
+  --pre-seconds 30 --post-seconds 15 \
+  -- --ros-args -p backend:=whisper_cpp \
+  -p stt_model_path:="$HOME/.cache/malbut_speech/models/ggml-small.bin" \
+  -p stt_library_path:="$HOME/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so"
+```
+
+기존 bringup으로 실행하는 재현 실험에서는 시작 전에 아래 환경변수를 지정하면 됩니다.
+현재 실행 중인 노드에는 적용되지 않습니다. 연속 저장 모드인
+`MALBUT_STT_DIAGNOSTIC_DIR`와 동시 지정하면 시작을 거부합니다.
+
+```bash
+export MALBUT_STT_INCIDENT_CONFIG='{"directory":"/tmp/malbut-stt-incidents","pre_seconds":30,"post_seconds":15,"save_audio":false}'
+# 이후 평소 사용하는 bringup 명령으로 테스트 실행
+```
+
+다음 실행에서 끄려면 `unset MALBUT_STT_INCIDENT_CONFIG`를 사용합니다.
+CLI의 `--contains`, `--exact`는 해당 기본 목록을 대체하고 여러 번 지정할 수 있습니다.
+모든 기본 목록을 끄려면 `--no-default-triggers --exact '조사할 문장'`을 사용합니다.
+원음도 비교하려면 `--no-audio`를 생략하거나 환경변수 JSON에 `"save_audio":true`를 지정합니다.
+로그 전용 모드도 대화 원문은 포함합니다.
+
+| 저장 파일 | 내용 |
+| --- | --- |
+| `incident.json` | 트리거 원문·발화 ID, 실제 관측 시간 범위, 모델·입력 설정, 누락·종료 정보 |
+| `transactions.json` | 발화 ID별 실행 단계·관측 시각·트리거 기준 경과 시간·큐/폐기 이유와 원본 이벤트 줄 번호 |
+| `rosout.jsonl` | STT·Agent·TTS 노드의 ROS 실행 로그: 원문, 로거, 레벨, 원본 시각, 파일·함수·줄 번호 |
+| `microphone.wav` | 음성 저장 모드만: 게이트로 버린 입력까지 포함한 마이크 PCM16/16kHz |
+| `microphone_chunks.jsonl` | 각 청크의 수신 시각, 원본 샘플 위치, WAV 위치, 차단·busy·overflow 상태 |
+| `events.jsonl` | 호출어·VAD·큐·추론·결과 처리·STT 발행·ROS 로그·TTS 요청과 재생 상태의 전체 관측 이벤트 |
+| `decodes/decode-*.wav` | 음성 저장 모드만: 호출어/부분/종료 추론 각각에서 모델에 실제 전달한 오디오 |
+| `decodes/decode-*.json` | 입력 해시·인자·원시 세그먼트·오류, 발화 ID·generation, 입력/결과 확보 여부 |
+
+`utterance_id`와 TTS의 `request_id`를 연결하고, `playback_id`로 재생 상태를 추적합니다.
+Agent 수신은 `malbut_agent_communication`의 `speech_transcript/status=received` 로그를,
+답변 발행은 `dialogue_response_published` 로그를 실제로 관측했을 때만 표시합니다.
+`observed=false`는 보관된 구간에서 보지 못했다는 뜻이며, 실행 실패나 미실행을 뜻하지 않습니다.
+ROS 발행 자체를 Agent 수신 성공으로 취급하지 않습니다. `/rosout`은 테스트 시작 이후
+`malbut_stt`, `malbut_agent_communication`, `malbut_tts` 로거를 수집합니다. ID 없는 경고는
+전체 로그에 남기고 특정 발화에 임의로 붙이지 않습니다. 이름을 바꾼 노드나 ROS 로그 발행이
+꺼진 노드의 로그, 네이티브 stderr, SQL BEGIN/COMMIT, LLM 내부 프롬프트·실행은 수집하지 않습니다.
+로그의 수신 순서는 원격 실행 순서와 다를 수 있으므로 원본 시각도 함께 남깁니다.
+로그 한 건은 UTF-8 16KiB로 제한하며 넘으면 `truncated=true`로 표시합니다.
+whisper.cpp ABI 4 연결부는 `decode_result.native_decode.windows`에 실제 디코더의
+`no_speech_prob`, `avg_logprobs`, 적용 기준, 무음 제외 여부, 다음 디코딩 위치를
+기록합니다. 문장이 제외된 창도 포함하며 추론당 최대 64개 창을 보관합니다.
+이는 세그먼트 토큰으로 재계산한 점수가 아니라 무음 판정에 사용한 원래 값입니다.
+`save_audio=false`에서도 기록하며 뷰어의 **STT 실행 추적 → Whisper 원시 결과**에서
+확인할 수 있습니다. ABI 3 라이브러리는 전사를 계속 수행하되 점수는
+`unavailable/bridge_abi_3`로 표시합니다. 새 관측 기능에는 [네이티브 재빌드](native/README.md)가
+필요합니다. 기존 사건의 미수집 점수는 복원하지 않습니다.
+
+평소에는 RAM에만 보관하고 파일 쓰기는 전용 스레드에서 수행합니다. 기본 버퍼는
+페이로드 32MiB/12,000개 항목으로 제한하며, 저장 중/저장 대기 스냅샷이 각각 한 개씩
+추가 메모리를 보유할 수 있습니다. Python 객체와 직렬화 작업 메모리는 별도입니다.
+디스크는 기존 파일과 미완성 파일까지 포함해 기본 512MiB로 제한하며 자동 삭제하지 않습니다.
+CLI에서 `--buffer-mib`, `--disk-mib`로 조절할 수 있습니다.
+
+같은 발화 ID의 반복 트리거는 합치고, 첫 트리거의 15초 창 안에 발생한 다른 발화도 같은
+사건에 기록합니다. 저장 대기가 가득 차면 새 트리거 누락을 `skipped_triggers_total`로,
+버퍼 용량으로 밀려난 기록은 `buffer_evictions_total`로 표시합니다. 시작 직후나 버퍼 초과 시
+30초 전체가 없을 수 있습니다. 마이크 청크 사이의 누락은 샘플 위치로 확인해야 하며,
+연결된 WAV를 시간상 연속 녹음으로 가정하면 안 됩니다.
+
+정상 종료 시 진행 중 사건도 저장하고 `post_window_complete=false`로 표시합니다.
+강제 종료 시 아직 RAM에만 있던 기록은 남지 않을 수 있습니다. 완료된 폴더만 `incident-*`로
+보이며, 쓰기 실패 중 남은 `.partial-*`는 미완성 증거입니다. 저장 실패는 원래 인식 결과와
+ROS 발행을 유지하고 `stt_incident_stopped:<원인>`으로 알립니다. 저장 성공 시 `stt_incident_saved:<경로>`를
+출력합니다. 테스트 모드를 실제 로봇에 적용하면 음성과 대화 원문이 해당 로컬 폴더에 저장됩니다.
+
 일반 요청의 답변 대기 중에는 끼어들기를 받지 않습니다. 요청 전달 전에 다른
 재생과 겹친 발화는 검증된 AEC 입력에서 기존 끼어들기 처리를 사용합니다.
 현재 재생에 `pause`를 요청한 뒤 `utterance_id`, `playback_id`, `text`를
@@ -124,7 +229,7 @@ ROS 노드는 호출 성공음과 발화 종료 수신음을 같은 로컬 출�
 호출음은 180ms 상승 2음, 수신음은 더 작은 150ms 단음입니다. 수신음은 발화 종료를
 확정했을 때 한 번만 재생하며, 중간 인식·종료 미확정 상태의 쉼·폐기된 입력에는 재생하지 않습니다.
 이는 음성 수집 완료 표시이며 내용 이해나 명령 실행의 성공을 뜻하지 않습니다.
-재생 중과 종료 후 0.3초의 마이크 입력은 잔향 유입을 막기 위해 제외합니다. TTS가
+재생 중과 종료 후 `chime_tail_s`(기본 0.3초)의 마이크 입력은 잔향 유입을 막기 위해 제외합니다. TTS가
 재생·일시정지 상태이면 수신음을 생략하고, 수신음 출력 실패도 전사 전달을 막지 않습니다.
 수신음 재생은 동기식이므로 최종 전사 전달에는 PCM 재생 150ms와 장치 처리 시간이 추가됩니다.
 TTS 재생·중단·재개는 Manager가 중계합니다. 위 공개 Topic·Service는 Manager가 제공합니다.
@@ -563,7 +668,8 @@ ros2 run malbut_stt stt --ros-args \
 ```
 
 `waiting_for_wake`가 나오면 호출어만 부르고, `wake_detected` 뒤 호출 성공음이 끝나면 문장을 말합니다.
-호출음은 선택한 출력 장치에서 로컬 PCM으로 재생하며, 재생 중과 종료 후 0.3초의 입력은 버립니다.
+호출음은 선택한 출력 장치에서 로컬 PCM으로 재생하며, 재생 중과 종료 후 `chime_tail_s`(기본 0.3초)의 입력은 버립니다.
+호출음 직후 바로 말하면 앞부분이 제외될 수 있으므로 차단 구간 뒤에 말합니다.
 `transcribing`은 로컬 음성 인식 중입니다. Agent에 같은 ID와 원문을 포함한
 `status: received`가 나오는지 확인합니다.
 종료는 각 터미널에서 `Ctrl+C`로 합니다.
@@ -579,6 +685,8 @@ ros2 run malbut_stt stt --ros-args \
 | `playback_control_timeout_s` | `5.0` | 재생 제어 Service의 접수 응답을 기다리는 시간; 실제 재생 완료 후 대화 대기와 별개 |
 | `device_index` | `0` | sounddevice 목록의 장치 번호; 현재 로봇의 XFM 입력. `-1`을 명시하면 시스템 기본 입력 |
 | `wake_chime_device_index` | `-1` | 호출 성공음 출력 장치; 통합 speech launch에서는 TTS와 같은 출력 번호 사용 |
+| `chime_tail_s` | `0.3` | 기존 호출·수신·실패음 종료 후 입력 차단 시간 유지(0~3초); TTS 차단 시간과 별개 |
+| `short_speech_guard` | `false` | 실험용 짧은 음성 대비 긴 한글 전사 검사; 실음성 검증 전까지 기본 비활성 |
 | `stt_decode_timeout_s` | `30.0` | `whisper_cpp`의 호출어·부분·최종 전사 각각에 적용하는 협력적 취소 제한시간 |
 | `vad_mode` | `2` | WebRTC VAD의 음성 판단 모드, `0`~`3` |
 | `start_timeout_s` | `5.0` | 무음 수집 창; 발화가 없으면 새 창으로 이어서 대기 |
@@ -594,6 +702,26 @@ ros2 run malbut_stt stt --ros-args \
 mono이며 마이크가 16kHz가 아니면 실행을 중단합니다. 문장 전사는 지정한 로컬
 Whisper 모델과 한국어 설정을 사용하며 호출어용 이름 힌트를 넣지 않습니다.
 parameter는 시작 시 읽습니다. 값을 바꾸려면 새 `-p` 인자로 재실행합니다.
+
+### 실험용 짧은 음성 결과 검사
+
+기본값은 `false`입니다. 아래 기준은 실제 녹음으로 유효성을 검증하지 않았으므로
+환각 방지의 검증된 해결책으로 사용하지 않습니다. 호출음 뒤 차단 시간을 늘리는 방법도
+효과가 검증되지 않아 기존 0.3초를 유지합니다.
+
+`short_speech_guard=true`이면 후보·부분·최종 추론 결과 모두 실제 VAD 양성 프레임의
+누적 길이와 비교합니다. 무음, pre-roll 및 추론용 무음 패딩은 이 길이에 포함하지 않습니다.
+VAD 양성 시간이 0.6초 이하일 때 한글 음절 수가 `max(6, ceil(20 * voiced_s))`를
+넘으면 `InsufficientSpeechEvidence`로 거절합니다. 예를 들어 0.28초 음성 판정에서
+12음절이 나오면 거절하지만, 짧은 “네”, “아니요”, “감사합니다”는 이 검사로 막지 않습니다.
+문구별 차단 목록은 사용하지 않습니다. 긴 실제 발화에는 이 검사를 적용하지 않습니다.
+
+이는 신뢰도 점수가 아닌 실험용 휴리스틱입니다. 조용하거나 빠른 실제 발화에서 VAD가
+많이 누락되면 정상 문장도 거절할 수 있고, 짧은 오인식이나 더 긴 잡음은 통과할 수 있습니다.
+중간 거절 이후 음성이 추가되면 새 후보를 검사하고, 최종 추론도 거절되면 기존 실패음으로
+턴을 종료합니다. 자동으로 실패 문장을 Agent에 보내지 않습니다.
+음성 파일이 없는 기존 사건은 VAD 판정·길이와 고정 모델 출력으로 회귀 검증할 수 있지만,
+실제 모델·마이크 재현 검증을 대신하지 않습니다.
 
 ### 오류와 중복 처리
 

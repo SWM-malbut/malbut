@@ -142,6 +142,21 @@ class TranscriptionDiagnostics:
             record['segments_truncated'] = True
             self._fail(error)
 
+    def _decode_info(self, record, info):
+        if record is None:
+            return
+        try:
+            value = getattr(info, 'native_decode', None)
+            if value is None:
+                return
+            content = _json(value)
+            if len(_json(record)) + len(content) > _RESULT_BYTES - 8192:
+                record['native_decode'] = dict(status='unavailable', reason='result_budget')
+            else:
+                record['native_decode'] = json.loads(content)
+        except Exception as error:
+            self._fail(error)
+
     def _finish(self, record, error=None):
         if record is None:
             return
@@ -172,10 +187,12 @@ class _DiagnosticModel:
         try:
             segments, info = self._model.transcribe(audio, *args, **options)
         except Exception as error:
+            self._diagnostics._decode_info(record, error)
             self._diagnostics._finish(record, error)
             raise
         if record is None:
             return segments, info
+        self._diagnostics._decode_info(record, info)
 
         def observed():
             try:

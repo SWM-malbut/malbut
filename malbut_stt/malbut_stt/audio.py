@@ -52,6 +52,7 @@ class CaptureResult:
     silence_s: float = 0.0
     audio_start_s: float = 0.0
     start_blocked: bool = False
+    voiced_s: float = 0.0
 
 
 class UtteranceCollector:
@@ -77,6 +78,7 @@ class UtteranceCollector:
         self.audio_start_samples = 0
         self.wait_frames = 0
         self.speech_frames = 0
+        self.voiced_frames = 0
         self.silent_frames = 0
         self.candidate_frames = 0
         self.candidate_audio = bytearray()
@@ -121,6 +123,7 @@ class UtteranceCollector:
                         self.audio.extend(self.candidate_audio)
                         self.pre_roll.clear()
                         self.speech_frames = self.candidate_frames
+                        self.voiced_frames = self.candidate_frames
                         self.start_blocked = self._candidate_start_blocked
                         self.candidate_audio.clear()
                         self.candidate_frames = 0
@@ -140,6 +143,7 @@ class UtteranceCollector:
                 self.silent_frames = 0 if speech else self.silent_frames + 1
                 if speech:
                     self.revision += 1
+                    self.voiced_frames += 1
             if self.started:
                 if (self.settings.max_utterance_s is not None
                         and self.speech_frames > math.floor(
@@ -170,7 +174,8 @@ class UtteranceCollector:
         """Associate an immutable audio snapshot with its last voiced frame."""
         return CaptureResult(status, bytes(self.audio), self.revision,
                              self.silent_frames * 0.02,
-                             self.audio_start_s, self.start_blocked)
+                             self.audio_start_s, self.start_blocked,
+                             self.voiced_frames * 0.02)
 
     def discard_before(self, audio_start_s: float) -> None:
         """Release PCM only up to a successfully transcribed stable boundary."""

@@ -45,6 +45,7 @@ def dialogue():
             on_wake=lambda: run.wake_chimes.append('wake'),
             on_failure=lambda: run.failure_chimes.append('failure'),
             report=run.reports.append, clock=lambda: run.now, input_has_aec=aec,
+            chime_tail_s=.3,  # This fixture advances 320 ms between turns.
         )
         pipelines.append(pipeline)
         if awake:

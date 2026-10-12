@@ -28,6 +28,7 @@ def run():
         on_partial=lambda *args: state.partials.append(args),
         on_failure=lambda: state.chimes.append('failure'),
         report=state.reports.append, clock=lambda: state.now, input_has_aec=True,
+        chime_tail_s=.3,  # Keep explicit retry-boundary timings below.
         settings=CaptureSettings(silence_timeout_s=2.0),
     )
     state.pipeline = pipeline

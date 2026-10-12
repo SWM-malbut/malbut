@@ -1,5 +1,6 @@
 """Exercise real ROS service clients with audio and models replaced only at the boundary."""
 
+import json
 import sys
 from threading import Event
 from time import monotonic
@@ -21,11 +22,20 @@ from malbut_stt import node as stt_node, wake  # noqa: E402
 
 
 @pytest.mark.parametrize('decision', ['addressed', 'not_addressed', 'unknown'])
-def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, decision):
+@pytest.mark.parametrize('incident', [False, True])
+def test_stt_service_round_trip_and_status_topic(
+        monkeypatch, tmp_path, capsys, decision, incident):
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
                             decisions=[], statuses=[], input_statuses=[], web_talk=[],
                             web_talk_quiet=[], speech_requests=[], closed=False)
+    monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
+    monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
+    if incident:
+        monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', json.dumps({
+            'directory': str(tmp_path / 'incidents'), 'contains': [],
+            'exact': ['오늘날씨알려줘'],
+        }))
 
     create_client = Node.create_client
 
@@ -50,7 +60,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             self.speech_sent = False
 
         def start(self):
-            self.peer = Node('speech_service_test_peer')
+            self.peer = Node('malbut_agent_communication')
             self.peer.create_service(ClassifySpeechAddressee,
                                      '/malbut/speech/classify_addressee', self.classify)
             self.peer.create_service(ControlSpeechPlayback,
@@ -62,10 +72,16 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             self.speech = self.peer.create_publisher(
                 SpeechRequest, '/malbut/speech/response', 10)
             self.peer.create_subscription(SpeechTranscript, '/malbut/speech/transcript',
-                                          state.transcripts.append, 10)
+                                          self.receive_transcript, 10)
             self.peer.create_subscription(SpeechInputStatus, '/malbut/speech/input_status',
                                           state.input_statuses.append, 10)
             rclpy.get_global_executor().add_node(self.peer)
+
+        def receive_transcript(self, message):
+            state.transcripts.append(message)
+            self.peer.get_logger().info(json.dumps({
+                'event': 'speech_transcript', 'status': 'received',
+                'utterance_id': message.utterance_id, 'text': message.text}))
 
         def classify(self, request, response):
             state.classifications.append((request.utterance_id, request.playback_id, request.text))
@@ -94,6 +110,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                     client.service_is_ready() for client in state.clients)
                     and self.peer.count_publishers('/malbut/speech/transcript') == 1
                     and self.peer.count_publishers('/malbut/speech/input_status') == 1
+                    and (not incident or self.peer.count_subscribers('/rosout') >= 1)
                     and self.status.get_subscription_count() == 1):
                 self.sent = True
                 self.pending_addressee = ('utterance-1', 'playback-1', self.deadline)
@@ -122,11 +139,17 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                             return
                         # Agent speech requested during the web talk reaches STT.
                         self.speech_sent = True
-                        self.speech.publish(SpeechRequest(text='답변', playback_id='answer-1'))
+                        self.speech.publish(SpeechRequest(
+                            text='답변', playback_id='answer-1', request_id='normal-1'))
                         return
                     if self.web_active and ('answer-1', 'stop') not in state.controls:
                         return
                     if not self.web_active:
+                        if incident and not any(
+                                json.loads(e.record)['event'] == 'program_log'
+                                and json.loads(e.record).get('utterance_id') == 'normal-1'
+                                for e in self.callbacks['diagnostics']._entries):
+                            return
                         raise KeyboardInterrupt
                     self.web_active = False
                     self.web_future = None
@@ -147,9 +170,10 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
 
     monkeypatch.setattr(Node, 'create_client', record_client)
     monkeypatch.setattr(stt_node, 'DialoguePipeline', AudioBoundary)
-    monkeypatch.setattr(stt_node, 'LocalWhisperTranscriber', lambda *_, **__: object())
+    monkeypatch.setattr(stt_node, 'LocalWhisperTranscriber',
+                        lambda *_, **__: SimpleNamespace(model=object()))
     monkeypatch.setattr(wake, 'LocalWakeRecognizer', SimpleNamespace(
-        from_transcriber=lambda _: object()))
+        from_transcriber=lambda engine: SimpleNamespace(model=engine.model)))
     monkeypatch.setitem(sys.modules, 'pvrecorder', None)
     monkeypatch.setattr(stt_node, 'SoundDeviceRecorder', lambda **_: object())
     monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(
@@ -173,3 +197,15 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
     assert state.web_talk == [
         ('startup-quarantine', True, 3.0), ('web-1', True, 3.0), ('web-1', False, 0.0)]
     assert state.web_talk_quiet == [False, True, True]
+    if incident:
+        path, = (tmp_path / 'incidents').glob('incident-*')
+        events = [json.loads(line) for line in (path / 'events.jsonl').read_text().splitlines()]
+        transcript, = [e for e in events if e['event'] == 'transcript_published']
+        request, = [e for e in events if e['event'] == 'tts_request']
+        assert transcript['utterance_id'] == request['request_id'] == 'normal-1'
+        assert transcript['text'] == '오늘 날씨 알려줘' and request['text'] == '답변'
+        assert request['playback_id'] == 'answer-1'
+        assert any(e['event'] == 'tts_playback' for e in events)
+        transaction, = json.loads((path / 'transactions.json').read_text())['transactions']
+        assert transaction['observed']['agent_received']
+        assert not transaction['observed']['agent_response_published']
