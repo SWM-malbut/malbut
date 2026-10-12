@@ -31,9 +31,15 @@ _PHASES = ('planning', 'navigating', 'observing', 'stopping')
 _PARTIAL = 'No usable untried viewpoint remains'
 _WAITING = 'Waiting for a patrol goal'
 MAX_ROOM_NAMES = 32
-# A fall check takes the wheels (URGENT): the patrol ends and never resumes itself.
+# A fall check takes the wheels from a patrol (NORMAL over LOW, 2026-10-12): the
+# patrol ends and never resumes itself. 직접 움직이기 (HIGH) is never taken.
 FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
 _UNREACHED = ('no_map', 'no_path', 'timeout', 'failed')
+# The Agent fall rules' status (/malbut/falls/check/status), 목업 27번.
+_CHECK_PHASES = ('approach', 'look', 'ask', 'return', 'wait')
+# web_panel's answer to a move started during a fall check; navigation reads it back.
+FALL_CHECK_REFUSAL = 'fall check is in progress; only manual driving is available'
+_WAITING_FOR = ('manual_drive', 'busy')
 
 
 def drive_mission(system):
@@ -83,10 +89,35 @@ def last_patrol(status):
             'inaccessible_rooms': _rooms(status.get('inaccessible_rooms'))}
 
 
-def fall_check_active(system):
-    """Report whether a fall check runs or waits, so a new patrol would be refused."""
-    return any(isinstance(mission, dict) and mission.get('capability_id') in FALL_MISSIONS
-               for key in _MISSION_LISTS for mission in (system or {}).get(key) or [])
+def fall_check_active(system, check=None):
+    """
+    Report whether a fall check runs or waits, so a new move would be refused.
+
+    ``check`` is the fall rules' fresh status: it also covers the gaps between
+    missions (looking, waiting for 직접 움직이기 to end).
+    """
+    return (isinstance(check, dict) and check.get('active') is True) or any(
+        isinstance(mission, dict) and mission.get('capability_id') in FALL_MISSIONS
+        for key in _MISSION_LISTS for mission in (system or {}).get(key) or [])
+
+
+def fall_check_detail(check):
+    """Return the map screen's fall check stage (목업 27번); None unless one is active."""
+    if not isinstance(check, dict) or check.get('active') is not True:
+        return None
+    target = check.get('target')
+    point = None
+    if (isinstance(target, dict) and all(
+            type(target.get(key)) in (int, float) and math.isfinite(target[key])
+            for key in ('x', 'y'))):
+        point = {'x': round(float(target['x']), 3), 'y': round(float(target['y']), 3)}
+    return {
+        'phase': check.get('phase') if check.get('phase') in _CHECK_PHASES else None,
+        'waiting_for': (check.get('waiting_for')
+                        if check.get('waiting_for') in _WAITING_FOR else None),
+        'alerted': check.get('alerted') is True,
+        'target': point,
+    }
 
 
 def _now():
@@ -108,10 +139,10 @@ class PatrolFallStops:
         self._since = None
         self.stop = None
 
-    def observe(self, system, patrol, approach):
+    def observe(self, system, patrol, approach, check=None):
         running = bool(drive_mission(system)) or (
             isinstance(patrol, dict) and patrol.get('state') in _PHASES)
-        active = fall_check_active(system)
+        active = fall_check_active(system, check)
         result = last_patrol(patrol) if isinstance(patrol, dict) else None
         if running:
             if not self._was_running:
@@ -138,8 +169,10 @@ class PatrolFallStops:
             elif phase == 'approach' and outcome in _UNREACHED:
                 self.stop['fall_result'] = 'unreachable'
             elif phase == 'return':
-                # Closed without asking: no person, or seen off the floor (2026-10-11).
-                result = 'off_floor' if approach.get('reason') == 'off_floor' else 'not_a_person'
+                # Without asking: no person, seen off the floor (2026-10-11), or, after
+                # going back to the spot, the guardian was told what it saw (2026-10-12).
+                result = {'off_floor': 'off_floor', 'revisit': 'reported'}.get(
+                    approach.get('reason'), 'not_a_person')
                 self.stop.update(fall_result=result, returned=outcome == 'returned')
         if self.stop['fall_result'] != 'pending':
             return
@@ -157,14 +190,15 @@ class PatrolFallStops:
             return False
 
 
-def robot_drive_mode(system, patrol, tracking, *, ready, can_follow, fall_stop=None):
+def robot_drive_mode(system, patrol, tracking, *, ready, can_follow, fall_stop=None,
+                     fall_check=None):
     """
     Return the drive mode for the state upload.
 
     ``patrol`` and ``tracking`` are the latest ``/patrol/status`` and
     ``/tracking/person/status`` (None when not received). ``ready`` says the robot
     drives on a saved map with a known position; ``can_follow`` that the person
-    following server is up.
+    following server is up. ``fall_check`` is the fall rules' fresh status.
     """
     mission = drive_mission(system)
     patrol = patrol if isinstance(patrol, dict) else None
@@ -178,8 +212,11 @@ def robot_drive_mode(system, patrol, tracking, *, ready, can_follow, fall_stop=N
         'can_pause': False,
         'thoroughness_levels': list(THOROUGHNESS_LEVELS),
         'follow_distance_m': FOLLOW_DISTANCE_M,
-        'fall_check_active': fall_check_active(system),
+        'fall_check_active': fall_check_active(system, fall_check),
     }
+    check = fall_check_detail(fall_check)
+    if check is not None:
+        detail['fall_check'] = check
     if mission is None:
         result = last_patrol(patrol) if patrol else None
         if result is not None:

@@ -139,10 +139,11 @@ def link(monkeypatch):
     item.agent_presence.server_is_ready.return_value = True
     item.goals = []
 
-    def send(goal):
+    def send(goal, feedback_callback=None):
         future = Future()
         fields = json.loads(goal.arguments_yaml) | {'capability': goal.capability_id}
         item.goals.append((fields, future))
+        item.feedback = feedback_callback
         return future
     item.client.send_goal_async.side_effect = send
     item.manager_state = SimpleNamespace(
@@ -156,7 +157,7 @@ def link(monkeypatch):
     item.close()
 
 
-def finish(link, outcome, *, accepted=True, status=4):
+def finish(link, outcome, *, accepted=True, status=4, message=''):
     goal, future = link.goals[-1]
     result = Future()
     handle = Mock(accepted=accepted)
@@ -164,7 +165,7 @@ def finish(link, outcome, *, accepted=True, status=4):
     future.set_result(handle)
     if accepted:
         result.set_result(SimpleNamespace(status=status, result=SimpleNamespace(
-            message='', result_yaml=json.dumps(dict(outcome=outcome)))))
+            message=message, result_yaml=json.dumps(dict(outcome=outcome)) if status == 4 else '')))
     return goal
 
 
@@ -194,19 +195,30 @@ def test_link_asks_after_a_person_is_seen(link):
     assert link.goals[-1][0]['capability'] == 'fall_confirmation'
 
 
-@pytest.mark.parametrize('how', ['manager_rejects', 'no_path', 'aborted'])
+@pytest.mark.parametrize('how', ['no_map', 'no_path', 'aborted'])
 def test_link_asks_in_place_when_the_robot_cannot_go(link, how):
     link.on_event(SimpleNamespace(data=scene()))
-    if how == 'manager_rejects':
-        finish(link, None, accepted=False)
+    if how == 'no_map':
+        finish(link, None, status=6, message='select a saved map first; only mapping is available')
     elif how == 'no_path':
         finish(link, 'no_path')
     else:
         finish(link, None, status=6)
-    expected = {'manager_rejects': 'rejected', 'no_path': 'no_path', 'aborted': 'failed'}[how]
+    expected = {'no_map': 'no_map', 'no_path': 'no_path', 'aborted': 'failed'}[how]
     assert sent(link)[0]['outcome'] == expected
     link.tick()
     assert link.goals[-1][0]['capability'] == 'fall_confirmation'
+
+
+def test_link_waits_when_the_manager_does_not_take_the_drive(link):
+    """Not accepted (starting or stopping): the same drive goes again (2026-10-12)."""
+    link.on_event(SimpleNamespace(data=scene()))
+    finish(link, None, accepted=False)
+    assert sent(link) == [] and link.coordinator.waiting_for == 'busy'
+    link.now.value = 1.0
+    link.tick()
+    assert link.goals[-1][0] == link.goals[0][0]
+    assert len(link.goals) == 2
 
 
 def test_link_waits_while_a_fall_mission_still_runs_in_the_manager(link):

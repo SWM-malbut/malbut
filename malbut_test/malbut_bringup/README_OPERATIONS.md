@@ -142,7 +142,10 @@ Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필�
 Bringup은 홈캠·Agent 낙상 규칙·VLM에 같은 실행 ID 묶음을 전달하고,
 홈캠이 서버 설정을 받으면 낙상 규칙이 VLM에 적용한다. 준비 완료나 노드 시작만으로
 감지·Cloud 전송을 켜지는 않는다. 확인 대화는 낙상 규칙이 관리자에
-`fall_confirmation` 미션(`URGENT`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+`fall_confirmation` 미션(`NORMAL`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+낙상 확인 중(규칙의 `/malbut/falls/check/status`)에는 웹 패널이 목적지 이동·순찰·따라가기·위치 찾기·
+지도 만들기 시작을 거절하고 직접 움직이기만 받는다. 앱의 "처리 완료"는 상태 업로드 응답의
+`closedFallIncidents`로 와서 `/malbut/falls/incidents/closed`로 VLM 런타임에 전해진다.
 관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
 호환성을 위해 이름만 유지하며 낙상 규칙 ID를 담는다.
 

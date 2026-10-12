@@ -15,7 +15,8 @@ Action, 청취·재생 제어는 Service, 발화·재생 상태와 전사는 Top
 
 Agent 낙상 규칙의 `FallConfirmationLink`는 `ExecuteMission`으로
 `fall_confirmation`을 요청한다. Manager는 `capabilities/fall_confirmation.yaml`의
-`URGENT`·`BASE`·`SPEAKER` 규칙으로 중재한 뒤 `ConfirmSituation`을 호출한다.
+`NORMAL`·`BASE`·`SPEAKER` 규칙으로 중재한 뒤 `ConfirmSituation`을 호출한다(직접 움직이기 중이면
+받지 않고, 낙상 규칙이 기다렸다가 다시 신청한다).
 Agent는 기존 일반 대화를 무효화하고 TTS 전체 중단·확인 발화 우선순위로 음성을 선점한다.
 
 ## 연결
@@ -29,7 +30,7 @@ sequenceDiagram
     participant S as STT·TTS
     participant U as 사용자
     V->>F: 영상 판단 후 question_requested
-    F->>M: ExecuteMission(fall_confirmation), URGENT
+    F->>M: ExecuteMission(fall_confirmation), NORMAL
     Note over M: BASE·SPEAKER 충돌 미션 종료 확인
     M->>A: ConfirmSituation(요청 ID, 유형, 요약)
     A->>S: 기존 대화 중단 · 확인 청취 닫기

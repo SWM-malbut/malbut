@@ -371,3 +371,44 @@ def test_manual_input_polls_commands_fast_without_extra_state_uploads(monkeypatc
     assert client.request.call_args_list[0].args[:2] == ('/api/device/v1/robot/state', 'POST')
     clock[0] += 3.0
     assert sync.wait_seconds(0.0) == pytest.approx(1.0)
+
+
+INCIDENT = '5f0c1f6e-3c1b-4e0f-9a59-6b0f6c9f2a11'
+
+
+def test_closed_fall_incidents_from_the_state_reply_reach_the_fall_runtime():
+    """처리 완료 in the app stops the robot's check (2026-10-12)."""
+    from malbut_bringup.cloud_sync import closed_fall_incidents
+    sync, bridge, client = _sync()
+    bridge.publish_closed_falls = Mock()
+    client.request.side_effect = lambda path, method='GET', payload=None: (
+        {'accepted': True, 'closedFallIncidents': [INCIDENT, INCIDENT]}
+        if path.endswith('/state') else {'commands': []})
+    sync.tick()
+    bridge.publish_closed_falls.assert_called_once_with([INCIDENT])
+    assert closed_fall_incidents({'accepted': True}) == []  # An older web.
+    assert closed_fall_incidents({'closedFallIncidents': []}) == []
+    for bad in ('x', [INCIDENT, 'not-a-uuid'], [INCIDENT] * 17, [1], None):
+        assert closed_fall_incidents({'closedFallIncidents': bad}) == []
+    assert closed_fall_incidents(None) == []
+
+
+def test_an_empty_or_missing_list_publishes_nothing():
+    sync, bridge, client = _sync()
+    bridge.publish_closed_falls = Mock()
+    client.request.side_effect = lambda path, method='GET', payload=None: (
+        {'accepted': True, 'closedFallIncidents': []}
+        if path.endswith('/state') else {'commands': []})
+    sync.tick()
+    bridge.publish_closed_falls.assert_not_called()
+
+
+def test_the_state_upload_carries_the_fall_check_stage():
+    snapshot = PanelData().snapshot()
+    snapshot['fall_check'] = {'active': True, 'phase': 'approach', 'waiting_for': None,
+                              'alerted': False, 'target': {'x': 1.0, 'y': 2.0}}
+    payload = state_payload(snapshot, {'active': False}, [])
+    detail = payload['driveMode']['detail']
+    assert detail['fall_check_active'] is True
+    assert detail['fall_check'] == {'phase': 'approach', 'waiting_for': None, 'alerted': False,
+                                    'target': {'x': 1.0, 'y': 2.0}}

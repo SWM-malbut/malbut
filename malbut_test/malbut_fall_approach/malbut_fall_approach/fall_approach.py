@@ -16,7 +16,8 @@ RETURN_LIMIT_S = 60.0
 # first; furniture in the way: around the spot.
 VIEW_LIMIT_S = 60.0
 VIEW_TURNS_DEG = (0.0, 45.0, -45.0, 90.0, -90.0)
-RETURN_REASONS = ('not_a_person', 'off_floor')
+# revisit: back from the spot after waiting, the guardian told what it saw (2026-10-12).
+RETURN_REASONS = ('not_a_person', 'off_floor', 'revisit')
 # No path to the spot itself (inside furniture or a keepout edge): try points
 # pulled back toward the robot, like the follower's goal pullback.
 PULLBACK_STEP_M = 0.5
@@ -48,7 +49,7 @@ def goal_error(phase, x, y, standoff_m, reason=''):
     if phase in ('approach', 'view') and not 0.3 <= standoff_m <= 3.0:
         return 'standoff must be within 0.3-3.0 m'
     if reason not in ('', *RETURN_REASONS) or (reason and phase != 'return'):
-        return 'reason must be not_a_person or off_floor, on a return only'
+        return 'reason must be not_a_person, off_floor or revisit, on a return only'
     return None
 
 

@@ -134,7 +134,8 @@ Topic을 구독하기 위해 미션으로 등록하지 않습니다.
 | `relocalize` | `/relocalize` | NORMAL | BASE |
 | `patrol` | `/patrol` | LOW | BASE |
 | `manual_drive` | `/assisted_teleop` | HIGH | BASE |
-| `fall_confirmation` | `/malbut/agent/confirm_situation` | URGENT | BASE·SPEAKER |
+| `fall_confirmation` | `/malbut/agent/confirm_situation` | NORMAL | BASE·SPEAKER |
+| `fall_approach` | `/malbut/falls/approach` | NORMAL | BASE |
 | `get_weather` | `/malbut/weather/get` | NORMAL | 없음 |
 | `set_weather_location` | `/malbut/weather/location/set` | NORMAL | 없음 |
 | `recovery` | `/malbut/bringup/recover` | URGENT | BASE·SPEAKER |

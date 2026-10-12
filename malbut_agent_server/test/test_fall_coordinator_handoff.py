@@ -57,7 +57,7 @@ class Handoff:
         link.message_type = SimpleNamespace
         link.client, link.decisions, link.timer = Mock(), Mock(), Mock()
         link.client.server_is_ready.return_value = True
-        link.client.send_goal_async.side_effect = lambda goal: Future()
+        link.client.send_goal_async.side_effect = lambda goal, **kwargs: Future()
         link.agent_presence = Mock()
         link.agent_presence.server_is_ready.return_value = True
         link.manager_state = manager_state()
@@ -259,14 +259,16 @@ def test_scene_transport_failure_is_not_a_user_reply(handoff, fault):
     else:
         flow.complete(result, status=6 if fault == 'aborted' else 5)
     command, = flow.commands()
-    assert command['action'] == 'confirmation_failed'
+    assert command['action'] == 'confirmation_failed' and command['reason'] == 'question_error'
     assert 'help_needed' not in command and 'situation_assessment' not in command
     assert flow.apply(command)
     incident = flow.monitor.incident(question.incident_id)
     assert incident.answer is VoiceAnswer.FAILED and incident.help_needed is None
     assert incident.state is IncidentState.RECHECK_REQUIRED
-    assert not any(event.kind == 'notification_requested'
-                   for event in flow.monitor.drain_events())
+    # Not a user reply, but the robot could not check: the guardian is alerted (2026-10-12).
+    notices = [(event.reason, event.notification_level.value)
+               for event in flow.monitor.drain_events() if event.kind == 'notification_requested']
+    assert notices == [('robot_could_not_confirm', 'urgent')]
 
 
 def test_scene_waits_for_managed_confirmation_to_finish(handoff):

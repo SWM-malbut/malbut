@@ -100,10 +100,10 @@ def test_link_asks_when_the_view_cannot_be_reached(link):  # noqa: F811
     link.on_event(SimpleNamespace(data=scene()))
     finish(link, 'arrived')
     link.on_event(SimpleNamespace(data=looked('partial_body')))
-    finish(link, None, accepted=False)
+    finish(link, None, status=6, message='Action server /malbut/falls/approach is unavailable')
     assert sent(link)[-1] == dict(action='view_result', boot_id='boot-1', incident_id='incident',
                                   question_id='question', evidence_revision=1,
-                                  outcome='rejected')
+                                  outcome='failed')
     link.on_event(SimpleNamespace(data=posture('body_unseen')))
     link.tick()
     assert link.goals[-1][0]['capability'] == 'fall_confirmation'

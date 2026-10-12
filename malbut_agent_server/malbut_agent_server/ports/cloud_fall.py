@@ -9,6 +9,8 @@ from malbut_agent_server.domain.fall_monitoring import (
     PersonCheckRequest,
     PostureCheckReply,
     PostureCheckRequest,
+    SamePersonCheckReply,
+    SamePersonCheckRequest,
 )
 
 
@@ -44,4 +46,12 @@ class CloudFallProvider(Protocol):
 
     async def check_posture(self, request: PostureCheckRequest) -> PostureCheckReply:
         """One look from where the whole body is visible: on the floor or off it."""
+        ...
+
+    async def compare_person(self, request: SamePersonCheckRequest) -> SamePersonCheckReply:
+        """Whether the person seen on going back looks like the first scene's, by clothing.
+
+        Reference for the guardian only; the robot never acts on it. A provider
+        without it leaves the comparison unclear.
+        """
         ...

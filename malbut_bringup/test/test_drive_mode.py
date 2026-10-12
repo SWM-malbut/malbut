@@ -314,3 +314,38 @@ def test_a_new_patrol_clears_the_fall_reason_and_old_results_are_ignored():
     assert stops.observe({}, _status(**CANCELED), earlier)['fall_result'] == 'asked'
     assert stops.observe(_system(), _status(), None) is None
     assert stops.stop is None
+
+
+# 2026-10-12: the fall rules' own status covers the whole check, gaps included.
+CHECK = {'active': True, 'phase': 'wait', 'waiting_for': 'manual_drive', 'alerted': True,
+         'target': {'x': 1.23456, 'y': -2.0}}
+
+
+def test_the_rules_status_marks_a_fall_check_between_missions_and_reaches_the_map():
+    mode = robot_drive_mode({}, _status(), None, ready=True, can_follow=True, fall_check=CHECK)
+    assert mode['detail']['fall_check_active'] is True
+    assert mode['detail']['fall_check'] == {'phase': 'wait', 'waiting_for': 'manual_drive',
+                                            'alerted': True, 'target': {'x': 1.235, 'y': -2.0}}
+    idle = robot_drive_mode({}, _status(), None, ready=True, can_follow=True,
+                            fall_check=dict(CHECK, active=False))
+    assert idle['detail']['fall_check_active'] is False and 'fall_check' not in idle['detail']
+    odd = robot_drive_mode({}, _status(), None, ready=True, can_follow=True, fall_check=dict(
+        CHECK, phase='dance', waiting_for='nap', alerted='yes', target={'x': 'a', 'y': 1}))
+    assert odd['detail']['fall_check'] == {'phase': None, 'waiting_for': None,
+                                           'alerted': False, 'target': None}
+
+
+def test_a_patrol_stopped_while_the_check_waits_between_missions_is_not_called_asked():
+    stops = PatrolFallStops(clock=lambda: T0)
+    _stopped_by_fall(stops)
+    # 직접 움직이기 holds the robot: no fall mission runs, the rules still check.
+    stop = stops.observe({}, _status(**CANCELED), None, CHECK)
+    assert stop['fall_result'] == 'pending'
+
+
+def test_a_revisit_that_only_reported_comes_back_as_reported():
+    stops = PatrolFallStops(clock=lambda: T0)
+    _stopped_by_fall(stops)
+    back = dict(_approach('return', 'returned', 40), reason='revisit')
+    stop = stops.observe({}, _status(**CANCELED), back, None)
+    assert stop['fall_result'] == 'reported' and stop['returned'] is True

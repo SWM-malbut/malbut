@@ -22,6 +22,8 @@ def test_view_and_return_goals_are_validated():
     assert goal_error('view', 1.0, 2.0, VIEW_STANDOFF_M) is None
     assert goal_error('return', 0.0, 0.0, 1.0, 'off_floor') is None
     assert goal_error('return', 0.0, 0.0, 1.0, 'not_a_person') is None
+    assert goal_error('return', 0.0, 0.0, 1.0, 'revisit') is None  # Reported, not closed.
+    assert goal_error('approach', 1.0, 2.0, 1.0, 'revisit') is not None
     assert goal_error('view', 1.0, 2.0, 3.5) is not None
     assert goal_error('return', 0.0, 0.0, 1.0, 'tired') is not None
     assert goal_error('approach', 1.0, 2.0, 1.0, 'off_floor') is not None

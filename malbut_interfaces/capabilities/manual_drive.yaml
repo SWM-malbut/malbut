@@ -25,5 +25,6 @@ execution:
 # 입력은 /cmd_vel_teleop(geometry_msgs/Twist)이며 조이스틱과 로봇 웹 패널이 발행한다.
 # Bringup의 manual_control이 조작 입력을 받으면 이 기능을 요청하고, 5초 동안 조작이
 # 없으면 /preempt_teleop으로 끝낸다. 지도 선택 여부와 무관하게 사용할 수 있다.
-# HIGH라서 실행 중인 NORMAL 이동 미션을 취소하고, 수동 조작 중에는 NORMAL 이동 요청을 거부한다.
+# HIGH라서 실행 중인 NORMAL 이동 미션(낙상 확인 이동·질문 포함)을 취소하고, 수동 조작 중에는
+# NORMAL 이동 요청을 거부한다.
 # 끝나거나 취소되면 Nav2가 로봇을 정지한다. 자동 재개하지 않는다.
