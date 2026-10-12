@@ -118,9 +118,11 @@ def create_communication_node(
                     from malbut_agent_server.foreground_cancel import ForegroundCancellation
 
                     self._foreground_cancel = ForegroundCancellation(self)
+                    self._fall_check = self._watch_fall_check()
                     self.speech_missions = SpeechMissions(
                         self.missions,
                         cancel_foreground=self._foreground_cancel,
+                        move_refusal=self._fall_check.move_refusal,
                     )
                     from std_msgs.msg import String
 
@@ -165,6 +167,33 @@ def create_communication_node(
             except Exception:
                 self.destroy_node()
                 raise
+
+        def _watch_fall_check(self):
+            """Follow the fall check like the app's move buttons (2026-10-12)."""
+            from malbut_agent_server.fall_check_watch import (
+                FALL_CHECK_STATUS_TOPIC, FallCheckWatch,
+            )
+            from malbut_interfaces.msg import SystemState
+            from std_msgs.msg import String
+
+            watch = FallCheckWatch()
+            self.create_subscription(
+                String, FALL_CHECK_STATUS_TOPIC,
+                lambda message: watch.observe_status(message.data), 10,
+            )
+            latched = QoSProfile(depth=1)
+            latched.reliability = ReliabilityPolicy.RELIABLE
+            latched.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            self.create_subscription(
+                SystemState, '/malbut/state',
+                lambda message: watch.observe_missions(
+                    mission.capability_id
+                    for group in (message.active_foreground_missions,
+                                  message.suspended_missions, message.pending_missions)
+                    for mission in group),
+                latched,
+            )
+            return watch
 
         def _start_speech_inputs(self):
             # Bringup discovers these endpoints before starting the microphone.

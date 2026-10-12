@@ -331,6 +331,25 @@ def test_transcript_follow_and_next_spoken_cancel_cross_manager_once(speech_grap
     assert len(run.provider.calls) == 2
 
 
+def test_voice_follow_is_refused_while_the_fall_rules_report_a_check(speech_graph):
+    """2026-10-12: a same-priority voice move must not preempt a fall check."""
+    from malbut_agent_server.fall_check_watch import FALL_CHECK_RESPONSE
+    run = speech_graph
+    run.start()
+    status = run.agent.create_publisher(String, '/malbut/falls/check/status', 10)
+    status.publish(String(data=json.dumps({'active': True, 'phase': 'approach'})))
+    run.spin_until(run.agent._fall_check.active)
+    _, reply = run.say('따라와')
+    assert reply == FALL_CHECK_RESPONSE
+    assert run.manager_goals == [] and run.actuators.goals['follow_person'] == []
+    # The check ended: the same request starts following again.
+    status.publish(String(data=json.dumps({'active': False, 'phase': None})))
+    run.spin_until(lambda: not run.agent._fall_check.active())
+    run.say('따라와')
+    run.spin_until(lambda: len(run.actuators.goals['follow_person']) == 1)
+    assert [goal[0] for goal in run.manager_goals] == ['follow_person']
+
+
 def _registered_navigation(tmp_path):
     _, selected, _, _ = write_user_map(tmp_path)
     return NavigationTargets(), selected
