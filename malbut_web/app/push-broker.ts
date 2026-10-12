@@ -42,7 +42,7 @@ export async function dispatchFallPush(input: {
   reason: "fall_observed_person_okay" | "person_no_response" |
     "check_required_not_confirmed_fall" | "help_requested" | "confirmation_help_required" |
     "robot_could_not_confirm" | "revisit_same_person_off_floor" | "revisit_person_unclear_off_floor" |
-    "revisit_nobody_there" | "reopened_by_opinion";
+    "revisit_nobody_there" | "scene_answer_unconfirmed" | "reopened_by_opinion";
   occurredAt: string;
   resend?: true;
 }, hooks: PushDispatchHooks = {}) {
