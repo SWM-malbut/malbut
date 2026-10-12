@@ -41,15 +41,41 @@ test("the 14:54 cloud scene is not attributed to YOLO; unknown history stays unk
   }
 });
 
-for (const [eventKind, label] of [["voice_result", "질문에 대한 답"], ["decision_required", "추가 판단 필요"]]) {
-  test(`${eventKind}: answer is parenthesized`, () => {
-    assert.equal(fallEventLabel(event({ eventKind, answer: "unclear" })), `${label}: 낙상 의심 (응답 불분명)`);
-    assert.equal(fallEventLabel(event({ eventKind, answer: "no_response" })), `${label}: 낙상 의심 (응답 없음)`);
-    assert.equal(fallEventLabel(event({ eventKind, answer: "help_request" })), `${label}: 낙상 의심 (도움 요청)`);
-    assert.equal(fallEventLabel(event({ eventKind, assessment: null, answer: "unclear" })), `${label} (응답 불분명)`);
-    assert.equal(fallEventLabel(event({ eventKind, answer: null })), `${label}: 낙상 의심`);
-  });
-}
+test("decision_required: answer is parenthesized", () => {
+  const eventKind = "decision_required", label = "추가 판단 필요";
+  assert.equal(fallEventLabel(event({ eventKind, answer: "unclear" })), `${label}: 낙상 의심 (응답 불분명)`);
+  assert.equal(fallEventLabel(event({ eventKind, answer: "no_response" })), `${label}: 낙상 의심 (응답 없음)`);
+  assert.equal(fallEventLabel(event({ eventKind, assessment: null, answer: "unclear" })), `${label} (응답 불분명)`);
+  assert.equal(fallEventLabel(event({ eventKind, answer: null })), `${label}: 낙상 의심`);
+});
+
+// 목업 28번: 답 줄은 "질문에 대한 답 (답)", 알림 줄은 "단계 알림: 무엇"으로 통일.
+test("answers read 질문에 대한 답 (답) without the video judgment", () => {
+  for (const eventKind of ["voice_result", "confirmation_completed"]) {
+    assert.equal(fallEventLabel(event({ eventKind, answer: "help_request" })), "질문에 대한 답 (도움 요청)");
+    assert.equal(fallEventLabel(event({ eventKind, answer: "okay", assessment: "observed_fall" })),
+      "질문에 대한 답 (괜찮다고 응답)");
+    assert.equal(fallEventLabel(event({ eventKind, answer: null })), "질문에 대한 답");
+  }
+  assert.equal(fallEventLabel(event({ eventKind: "voice_result", answer: "no_response" })), "질문에 대한 답 (응답 없음)");
+});
+
+test("every alert reads level 알림: what", () => {
+  const notice = (reason, notificationLevel) => fallEventLabel(event({
+    eventKind: "notification_requested", reason, notificationLevel, answer: "help_request" }));
+  assert.equal(notice("help_requested", "urgent"), "긴급 알림: 도움 요청");
+  assert.equal(notice("confirmation_help_required", "urgent"), "긴급 알림: 상황 확인 결과 도움 필요");
+  assert.equal(notice("person_no_response", "check"), "확인 필요 알림: 질문에 응답 없음");
+  assert.equal(notice("check_required_not_confirmed_fall", "check"), "확인 필요 알림: 낙상 의심을 확인하지 못함");
+  assert.equal(notice("fall_observed_person_okay", "info"), "일반 알림: 넘어졌지만 괜찮다고 응답");
+  assert.equal(notice("robot_could_not_confirm", "urgent"), "긴급 알림: 말벗이 직접 확인하지 못함");
+  assert.equal(notice("help_requested", undefined), "긴급 알림: 도움 요청");
+  assert.equal(notice("unknown_future_reason", "check"), "확인 필요 알림");
+  // A failed question, older reasons included, reads like the reason box.
+  for (const reason of ["confirmation_transport_failed", "agent_failed", "question_error"]) {
+    assert.equal(fallEventLabel(event({ eventKind: "agent_check_failed", reason })), "질문 중 오류가 나 물을 수 없음");
+  }
+});
 
 test("a question request never invents spoken text, delivery or an old assessment", () => {
   assert.equal(fallEventLabel(event({ eventKind: "question_requested", answer: "unclear" })), "로봇 확인 질문 요청");
@@ -99,7 +125,8 @@ test("model text is rendered as text, never HTML or instructions", () => {
   assert.ok(html.includes("&lt;script&gt;"));
   assert.ok(!html.includes("<script>") && !html.includes("<img"));
   const panel = readFileSync(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
-  assert.ok(panel.includes("{fallEventLabel(e)}"));
+  // Labels come from fallHistoryLines (fallEventLabel per event) and render as text.
+  assert.ok(panel.includes("fallHistoryLines(detail.robotEvents)") && panel.includes("{label}</span>"));
   assert.ok(!panel.includes("dangerouslySetInnerHTML"));
   assert.ok(!panel.includes('incident_opened: "자세 분석: 낙상 의심"'));
 });
