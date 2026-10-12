@@ -10,12 +10,12 @@ uint8 method
 # GIVEN_POSE only; header.frame_id must be map.
 geometry_msgs/PoseWithCovarianceStamped initial_pose
 ---
-# True when AMCL's final estimate matches the map (GIVEN_POSE: when AMCL took it).
+# True when correction completed with an AMCL estimate, even below match_ratio_min.
 bool success
 string message
 # AMCL's estimate after the correction; empty when AMCL reported none.
 geometry_msgs/PoseWithCovarianceStamped pose
-# Share of LiDAR points that land on mapped obstacles at that estimate (0 to 1).
+# Most recently measured share of LiDAR points matching mapped obstacles (0 to 1).
 float32 match_ratio
 ---
 # WAITING, CHECKING_SAVED_POSE, SEARCHING, APPLYING

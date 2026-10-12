@@ -2,9 +2,22 @@
 
 import math
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 import yaml
+
+
+def test_navigation_uses_the_planner_path_without_extra_smoothing():
+    root = Path(__file__).parents[2]
+    source = root / 'malbut_bringup/config/navigate_to_pose.xml'
+    mirror = root / 'malbut_test/malbut_bringup/config/navigate_to_pose.xml'
+    assert source.read_bytes() == mirror.read_bytes()
+    tree = ElementTree.parse(source)
+    assert tree.find('.//SmoothPath') is None
+    planning = tree.find('.//RateController/RecoveryNode/ComputePathToPose')
+    assert planning.attrib['path'] == '{path}'
+    assert tree.find('.//FollowPath').attrib['path'] == '{path}'
 
 
 @pytest.fixture
@@ -70,13 +83,15 @@ def test_person_astar_keeps_the_existing_live_obstacle_layers(config):
 
 
 def test_person_controller_has_its_own_heading_checker_without_new_speed_limits(config):
-    """Only the soft forward preference and final-heading requirement differ."""
+    """Both controllers share a horizon; only arrival tolerances differ."""
     controller = config['controller_server']['ros__parameters']
     assert controller['controller_plugins'] == ['FollowPath', 'FollowPerson']
     assert controller['FollowPerson'] == {
-        **controller['FollowPath'], 'PreferForward.scale': 10.0,
+        **controller['FollowPath'],
         'xy_goal_tolerance': 0.08,
     }
+    assert controller['FollowPath']['sim_time'] == 3.0
+    assert controller['FollowPerson']['sim_time'] == 3.0
     assert controller['person_follow_goal_checker'] == {
         **controller['general_goal_checker'], 'yaw_goal_tolerance': 0.35,
         'xy_goal_tolerance': 0.08,
@@ -113,6 +128,15 @@ def test_robot_costmap_footprint_and_driver_velocity_limits(config):
     assert smoother['min_velocity'] == [-0.2, 0.0, -0.5]
     assert smoother['max_accel'] == [2.5, 0.0, 3.2]
     assert smoother['max_decel'] == [-2.5, 0.0, -3.2]
+    controller = config['controller_server']['ros__parameters']
+    assert controller['min_y_velocity_threshold'] == 0.5
+    for name in controller['controller_plugins']:
+        dwb = controller[name]
+        assert dwb['min_vel_y'] == 0.0
+        assert dwb['max_vel_y'] == 0.0
+        assert dwb['acc_lim_y'] == 0.0
+        assert dwb['decel_lim_y'] == 0.0
+        assert dwb['max_speed_xy'] == 0.2
 
 
 def test_deployed_nav2_parameters_match_source(config):
@@ -228,9 +252,9 @@ def test_autonomous_driving_prefers_forward_without_forbidding_reverse(config):
     assert follow['PreferForward.penalty'] == 1.0
     assert follow['PreferForward.strafe_x'] == 0.0
     assert follow['PreferForward.theta_scale'] == 0.0
-    # A soft preference in the range public DWB configs use (1-40 next to
-    # PathDist 32 / GoalDist 24); reverse stays available, not banned.
-    assert follow['PreferForward.scale'] == 40.0
+    # Keep reverse usable on short return paths while preferring forward.
+    assert follow['PreferForward.scale'] == 10.0
+    assert follow['sim_time'] == 3.0
     assert follow['PreferForward.scale'] <= follow['PathDist.scale'] + follow['GoalDist.scale']
     behavior = config['behavior_server']['ros__parameters']
     assert behavior['backup']['plugin'] == 'nav2_behaviors/BackUp'

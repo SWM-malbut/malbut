@@ -12,7 +12,7 @@ ARGUMENTS = [
     'rgb_topic', 'depth_topic', 'camera_info_topic', 'model_path', 'python_executable',
     'reid_python_executable', 'device', 'reid_model_path', 'inference_backend', 'dnn_target',
     'publish_debug_image', 'scan_topic', 'global_frame', 'robot_frame', 'static_map_topic',
-    'global_costmap_topic', 'following_config', 'lidar_config',
+    'global_costmap_topic', 'following_config', 'lidar_config', 'use_sim_time',
 ]
 
 
@@ -27,16 +27,18 @@ def _setup(context):
     options = {name: value(name) for name in (
         'rgb_topic', 'depth_topic', 'camera_info_topic', 'model_path',
         'python_executable', 'reid_python_executable', 'device', 'reid_model_path',
-        'inference_backend', 'dnn_target', 'publish_debug_image',
+        'inference_backend', 'dnn_target', 'publish_debug_image', 'use_sim_time',
     )}
     options.update(perception_files)
     options['reid_backend'] = 'osnet'
+    options['start_enabled'] = 'false'
     actions.append(_include(_package_file(
         'malbut_tracking', 'launch/person_detection.launch.py'), options))
     follower = {name: value(name) for name in (
         'scan_topic', 'global_frame', 'robot_frame', 'static_map_topic',
-        'global_costmap_topic',
+        'global_costmap_topic', 'use_sim_time',
     )}
+    follower['start_enabled'] = 'false'
     if value('following_config'):
         follower['config'] = _file(value('following_config'), 'follower config')
     # An empty parent LaunchConfiguration otherwise shadows the child's

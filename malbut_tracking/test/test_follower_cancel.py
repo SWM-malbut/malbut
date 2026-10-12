@@ -81,6 +81,7 @@ def follow(monkeypatch):
         _cancel_tracking_retry=Mock(),
         _reset_goal_pullback=Mock(),
         _reset_recovery=Mock(),
+        _set_follow_inputs=Mock(),
         _settings_for_goal=Mock(),
         _validate_target_request=Mock(),
         get_logger=Mock(return_value=Mock()),
@@ -124,6 +125,7 @@ def test_cancel_waits_for_motion_terminal(follow, mode, pending_acceptance, stat
     client = request_motion(follow, mode)
     handle = None if pending_acceptance else client.accept()
     cancel_follow(follow)
+    follow.node._set_follow_inputs.assert_not_called()
     assert follow.node._active_goal is None
     assert follow.node._cancel_requested_goal is follow.goal
     assert not follow.result.done()
@@ -140,6 +142,7 @@ def test_cancel_waits_for_motion_terminal(follow, mode, pending_acceptance, stat
     follow.node._cancel_guard.trigger.assert_called_once()
     follow.node._on_cancel_guard()
     assert follow.result.done()
+    follow.node._set_follow_inputs.assert_called_once_with(False)
     follow.goal.canceled.assert_called_once()
     assert follow.node._goal_callback(object()) == GoalResponse.ACCEPT
 

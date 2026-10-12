@@ -6,8 +6,6 @@ from .models import (
     CancelReason,
     ExecutionMode,
     ExecutionResource,
-    LocalizationMode,
-    MapRequirement,
     MissionCompletion,
     MissionRecord,
     MissionState,
@@ -389,14 +387,6 @@ class MissionScheduler:
         self.state.ready = ready
         return self._start_ready() if ready else SchedulerEffects()
 
-    def set_localization(
-        self,
-        mode: LocalizationMode | None,
-    ) -> SchedulerEffects:
-        """Record manager-owned localization; it gates declared map needs."""
-        self.state.localization = mode
-        return self._start_ready()
-
     def set_recharging(self, enabled: bool) -> SchedulerEffects:
         """Update the charging gate without defining a ROS endpoint."""
         self.state.recharging = enabled
@@ -465,32 +455,8 @@ class MissionScheduler:
             return 'system manager is still booting'
         if self.state.emergency:
             return 'emergency stop is active'
-        map_error = self._map_error(mission)
-        if map_error:
-            return map_error
         if mission.mode is ExecutionMode.FOREGROUND and self.state.recharging:
             return 'foreground missions are blocked while recharging'
-        return ''
-
-    def _map_error(self, mission: MissionRecord) -> str:
-        requirement = mission.capability.map_requirement
-        localization = self.state.localization
-        if localization is None:
-            return ''
-        if (localization is LocalizationMode.SWITCHING
-                and ExecutionResource.BASE in mission.resources):
-            # Finding the pose on a new map may rotate the robot.
-            return 'localization is switching; retry after it settles'
-        if requirement is None:
-            return ''
-        if localization in (LocalizationMode.SWITCHING, LocalizationMode.ERROR):
-            return f'localization is {localization.value}; retry after it settles'
-        if (requirement is MapRequirement.SELECTED
-                and localization is not LocalizationMode.LOCALIZATION):
-            return 'select a saved map first; only mapping is available'
-        if (requirement is MapRequirement.NOT_SELECTED
-                and localization is not LocalizationMode.MAPPING):
-            return 'switch to mapping first; a saved map is selected'
         return ''
 
     def base_busy(self) -> bool:

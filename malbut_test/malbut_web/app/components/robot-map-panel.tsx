@@ -17,7 +17,7 @@ import { ManagedRobotTools } from "./managed-robot-tools";
 import { useManagedRobotWorkspace } from "./managed-robot-workspace";
 import { MapDrivePad, RealRobotMapManager, useMapLabels } from "./real-robot-map-manager";
 import { mapCheckCard, mapCheckDriveHint, mapCheckFacts, readMapCheck } from "../robot-map-check-copy";
-import { FALL_CHECK_LOCK_NOTE, fallCheckView } from "../robot-fall-check-copy";
+import { fallCheckView } from "../robot-fall-check-copy";
 import {
   NAVIGATION_ESCAPING_NOTE, NAVIGATION_ESCAPING_TITLE, NAVIGATION_FAILED_TITLE, navigationFailureCopy,
 } from "../robot-navigation-copy";
@@ -368,7 +368,7 @@ export function RobotMapPanel({
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
-  // 목업 27번: 낙상 확인 중에는 직접 움직이기 말고는 이동을 보내지 않는다(말벗도 거절한다).
+  // Display only; the system manager arbitrates all mission requests by priority.
   const fallCheck = fallCheckView(driveMode?.detail);
   const navigationDriving = navigation?.state === "driving" || navigation?.state === "canceling";
   const navigationSession = typeof navigation?.session_id === "string" ? navigation.session_id : "";
@@ -536,7 +536,6 @@ export function RobotMapPanel({
     }
     const geometry = snapshot?.map?.geometry;
     if (!geometry || navigationBusy) return;
-    if (fallCheck && mapMode === "navigate") return;
     // 방·구역 편집은 말벗이 꺼져 있어도 된다(켜지면 반영). 목적지는 켜져 있을 때만 고른다.
     if (!snapshot?.online && mapMode !== "rooms" && mapMode !== "zones") return;
     if (!isOwner && mapMode !== "navigate") return;
@@ -1701,13 +1700,6 @@ export function RobotMapPanel({
             {!mapping && fallCheck && (
               <>
                 <span className="ui-map-status-detail">{fallCheck.detail}</span>
-                <div role="status" className="ui-map-notice is-danger">{FALL_CHECK_LOCK_NOTE}</div>
-                {!canStartPreview && (
-                  <div className="ui-two-buttons">
-                    <button type="button" className="ui-button" disabled>다시 선택</button>
-                    <button type="button" className="ui-button is-strong" disabled>이 위치로 이동</button>
-                  </div>
-                )}
               </>
             )}
             {!mapping && !fallCheck && showCheckCard && checkCard && (
@@ -1772,8 +1764,8 @@ export function RobotMapPanel({
             )}
             {canStartPreview && (
               <div className="ui-two-buttons">
-                <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }} disabled={Boolean(fallCheck)}>다시 선택</button>
-                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(fallCheck) || Boolean(activeCommand) || busy}>이 위치로 이동</button>
+                <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
+                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
               </div>
             )}
             {navigationDriving && typeof navigation?.session_id === "string" && (
@@ -1812,7 +1804,7 @@ export function RobotMapPanel({
                     key={featureId(room)}
                     type="button"
                     className="ui-button"
-                    disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(fallCheck) || Boolean(activeCommand) || busy}
+                    disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(activeCommand) || busy}
                     onClick={() => {
                       const point = featureWorldLabelPoint(room);
                       if (!point) return;
@@ -1829,8 +1821,7 @@ export function RobotMapPanel({
             <article className="ui-card">
               <h2>자율주행</h2>
               <span className="ui-caption">
-                {fallCheck ? "낙상 확인이 끝나면 다시 시작할 수 있어요."
-                  : realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
+                {realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
                   : "방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."}
               </span>
               {activeAutonomousMode && autonomousSession && !canPause ? (
@@ -1916,7 +1907,7 @@ export function RobotMapPanel({
                     onClick={() => void sendCommand("drive_mode_start", patrolLevels
                       ? { mode: "patrol", thoroughness: patrolLevel }
                       : { mode: "patrol" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("patrol") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
                   >{isRecord(driveMode?.detail?.last_patrol) && driveMode?.detail?.last_patrol.outcome === "fall_check"
                       ? "순찰 다시 시작" : "방 순찰 시작"}</button>
                   {/* 실로봇에는 자율 배회 기능이 없다(시뮬레이터 데모 전용). */}
@@ -1925,14 +1916,14 @@ export function RobotMapPanel({
                       type="button"
                       className="ui-button"
                       onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
-                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("roaming") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
+                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
                     >자율 배회 시작</button>
                   )}
                   <button
                     type="button"
                     className="ui-button"
                     onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("person_following") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
                   >사람 따라가기</button>
                   {typeof driveMode?.detail?.follow_distance_m === "number" && (
                     <p className="ui-note">말벗 앞에 보이는 사람을 {driveMode.detail.follow_distance_m}m 거리로 따라가요.</p>
@@ -2322,7 +2313,6 @@ export function RobotMapPanel({
           busy={busy}
           commandActive={Boolean(activeCommand)}
           driveActive={navigationBusy || autonomousModeActive}
-          fallCheckActive={fallCheckActive(driveMode)}
           roomCount={originalRooms.length}
           sendCommand={sendCommand}
         />
@@ -3618,14 +3608,6 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
     return { tone: "warn", title: "낙상 의심을 확인하느라 순찰을 멈췄어요", lines };
   }
   return null;
-}
-
-/**
- * 낙상 확인을 시작해서 끝날 때까지(사이 틈 포함): 말벗은 직접 움직이기 말고는 이동을 받지 않는다
- * (목업 27번). 예전 말벗은 낙상 미션이 바퀴를 쓰는 동안만 알려 준다.
- */
-function fallCheckActive(value: RobotDriveModeSnapshot | undefined) {
-  return value?.detail?.fall_check_active === true;
 }
 
 

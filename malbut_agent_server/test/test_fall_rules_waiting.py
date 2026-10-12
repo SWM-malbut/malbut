@@ -271,14 +271,12 @@ MANUAL = SimpleNamespace(capability_id='manual_drive')
 
 
 @pytest.mark.parametrize('message,why', [
-    ('conflicting mission 1f2e has higher priority HIGH', 'manual_drive'),
+    ('conflicting mission 1f2e has higher priority HIGH', 'busy'),
     ('conflicting mission 1f2e has higher priority URGENT', 'busy'),
     ('manual recovery is in progress', 'busy'),
     ('system manager is still booting', 'busy'),
     ('emergency stop is active', 'busy'),
     ('foreground missions are blocked while recharging', 'busy'),
-    ('localization is switching; retry after it settles', 'busy'),
-    ('localization is ERROR; retry after it settles', 'busy'),
     ('superseded before execution by 9a8b', 'busy'),
     ('mission preempted by a replacement request', 'busy'),
     ('Downstream Action server rejected the goal', 'busy'),
@@ -380,8 +378,10 @@ def test_a_drive_refused_by_its_own_server_asks_in_place(link):
 
 def test_a_drive_interrupted_by_manual_driving_waits_and_drives_again(link):
     link.on_event(SimpleNamespace(data=event(approach_target=SPOT)))
-    respond(link, message='conflicting mission x has higher priority HIGH')
+    link.manager_state.active_foreground_missions = [MANUAL]
+    respond(link, message='conflicting mission x has higher priority URGENT')
     assert link.coordinator.waiting_for == 'manual_drive' and decisions(link) == []
+    link.manager_state.active_foreground_missions = []
     link.now.value = 1.0
     link.tick()
     assert link.goals[-1][0]['phase'] == 'approach' and len(link.goals) == 2
@@ -400,16 +400,14 @@ def test_manager_words_are_the_managers_own():
         pytest.skip('malbut_system_manager is not in this checkout')
     source = ''.join((root / name).read_text()
                      for name in ('mission_scheduler.py', 'mission_executor.py'))
-    for message in link_module.WAIT_MESSAGES - {
-            'localization is ERROR; retry after it settles'}:
+    for message in link_module.WAIT_MESSAGES:
         assert f"'{message}'" in source, message
-    assert "f'localization is {localization.value}; retry after it settles'" in source
     for prefix in link_module.WAIT_PREFIXES:
         assert f"f'{prefix}" in source, prefix
     assert f"'{link_module.DOWNSTREAM_REJECTED}'" in source
-    assert f"'{link_module.NO_MAP}'" in source
+    assert not any(message.startswith('localization is ') for message in link_module.WAIT_MESSAGES)
     assert "f'priority {blocker.priority.name}'" in source
-    assert "f'Action server {mission.capability.command_name} '" in source
+    assert "f'Action server {execution.command_name} is unavailable'" in source
     capability = (root.parent.parent / 'malbut_interfaces' / 'capabilities'
                   / 'fall_confirmation.yaml')
     assert 'name: /malbut/agent/confirm_situation' in capability.read_text()

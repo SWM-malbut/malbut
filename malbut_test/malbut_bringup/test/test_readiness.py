@@ -1,0 +1,445 @@
+"""Exercise startup admission checks with no DDS, GPU, or robot processes."""
+
+from collections import deque
+from concurrent.futures import Future
+from types import SimpleNamespace
+from unittest.mock import Mock
+import json
+
+import pytest
+
+from lifecycle_msgs.msg import State
+from nav2_msgs.msg import Costmap
+from rclpy.clock import ClockType
+from rclpy.time import Time
+from sensor_msgs.msg import Image, LaserScan
+from vision_msgs.msg import Detection3DArray
+
+from malbut_bringup.readiness import RobotReadiness
+
+
+def _node(monkeypatch):
+    node = object.__new__(RobotReadiness)
+    node.settings = {'robot_frame': 'base_footprint', 'global_frame': 'map',
+                     'navigation': False}
+    node.timeout = 3.0
+    node.ready = False
+    node.seen = {'scan': 10.0, 'odom': 10.0, 'camera_info': 10.0}
+    node.frames = {'scan': 'lidar', 'odom': 'odom', 'camera_info': 'camera_optical'}
+    node.scan_headers = deque([
+        (10.0, 'lidar', Time(seconds=9.8, clock_type=ClockType.ROS_TIME)),
+        (10.0, 'lidar', Time(seconds=9.9, clock_type=ClockType.ROS_TIME)),
+    ], maxlen=32)
+    node.fixed = set()
+    node.action_clients = []
+    node.lifecycle = {}
+    node.lifecycle_requested = {}
+    node.tf = Mock()
+    node.tf.can_transform.return_value = True
+    node.last_missing = None
+    node.status_publisher = Mock()
+    node.get_logger = Mock()
+    node.get_clock = lambda: SimpleNamespace(
+        now=lambda: Time(seconds=10, clock_type=ClockType.ROS_TIME))
+    monkeypatch.setattr('malbut_bringup.readiness.time.monotonic', lambda: 10.0)
+    return node
+
+
+def test_ready_requires_data_and_transforms(monkeypatch):
+    """A server/Topic name alone is not a readiness signal."""
+    node = _node(monkeypatch)
+    node.seen['rgb'] = None
+    node.check()
+    assert not node.ready
+    import json
+    assert 'data:rgb' in json.loads(
+        node.status_publisher.publish.call_args.args[0].data)['missing']
+    node.seen['rgb'] = 10.0
+    node.frames['rgb'] = 'camera_optical'
+    node.tf.can_transform.return_value = False
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.return_value = True
+    node.check()
+    assert node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'READY', 'missing': []}
+
+
+def test_stage_progress_does_not_prematurely_admit_manager_missions(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'sensors'
+    node.started_at = 10.0
+    node.startup_timeout = 120.0
+    node.settings.update(startup_index=1, startup_total=6, startup_label='센서')
+    node.progress_publisher = Mock()
+    node._report(['data:scan'])
+    progress = json.loads(node.progress_publisher.publish.call_args.args[0].data)
+    assert progress['completed'] == 0 and progress['total'] == 6
+    assert not node.ready
+    node._report([])
+    assert node.ready
+    assert json.loads(node.progress_publisher.publish.call_args.args[0].data)['completed'] == 1
+    node.status_publisher.publish.assert_not_called()
+
+
+def test_stage_timeout_names_missing_input_and_never_reports_ready(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'perception'
+    node.started_at = 0.0
+    node.startup_timeout = 5.0
+    node.settings.update(startup_index=2, startup_total=6, startup_label='사람 인식')
+    node.progress_publisher = Mock()
+    with pytest.raises(RuntimeError, match='사람 인식: data:perception'):
+        node._report(['data:perception'])
+    assert not node.ready
+    progress = json.loads(node.progress_publisher.publish.call_args.args[0].data)
+    assert progress['state'] == 'ERROR' and progress['completed'] == 1
+
+
+def test_extension_waits_for_service_response_not_just_node_discovery(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'extensions'
+    future = Future()
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.return_value = future
+    node.probes = {'malbut_fall_pose': [client, None, False]}
+    node.probe_requested = {}
+    assert node._extension_missing() == ['init:malbut_fall_pose']
+    assert node._extension_missing() == ['init:malbut_fall_pose']
+    client.call_async.assert_called_once()
+    future.set_result(SimpleNamespace(values=[]))
+    assert node._extension_missing() == []
+    node.stage = 'speech'
+    node.speech_ready = False
+    assert node._extension_missing() == ['speech: microphone startup']
+    node._speech(SimpleNamespace(data='ready'))
+    assert node._extension_missing() == []
+
+
+def _observer(monkeypatch):
+    node = _node(monkeypatch)
+    node.settings.update(observe_only=True, speech=False, required_topics='/scan_raw')
+    node.stage = ''
+    node.probes = {}
+    node.probe_requested = {}
+    node.progress_publisher = Mock()
+    node.count_publishers = Mock(return_value=1)
+    return node
+
+
+def test_idle_lifecycle_is_connected_but_not_active_for_strict_navigation_gate(monkeypatch):
+    """Web readiness accepts intentional idle, not an unconfigured node."""
+    for observe, expected in [(True, []), (False, ['lifecycle:controller_server=inactive'])]:
+        node = _node(monkeypatch)
+        node.settings['observe_only'] = observe
+        reply = Future()
+        reply.set_result(SimpleNamespace(current_state=State(
+            id=State.PRIMARY_STATE_INACTIVE, label='inactive')))
+        client = Mock()
+        client.service_is_ready.return_value = True
+        node.lifecycle = {'controller_server': [client, reply, False, 'inactive']}
+        assert node._lifecycle_missing(10.0) == expected
+
+
+def test_dependency_preparation_signal_is_required_by_web_observer(monkeypatch):
+    """A live runtime process alone does not mean its preparation succeeded."""
+    node = _observer(monkeypatch)
+    node.settings['runtime_state_topic'] = '/malbut/runtime/state'
+    node._runtime_state(SimpleNamespace(data=json.dumps({'ready': False, 'error': 'failed'})))
+    node.check()
+    assert not node.ready
+    assert 'runtime:failed' in json.loads(
+        node.progress_publisher.publish.call_args.args[0].data)['missing']
+    node._runtime_state(SimpleNamespace(data=json.dumps({'ready': True})))
+    node.check()
+    assert node.ready
+
+
+def test_observer_reports_connections_without_sensor_or_tf_checks(monkeypatch):
+    """The persistent observer has no data gate, timeout, or process control."""
+    node = _observer(monkeypatch)
+    node.seen = {'scan': None}
+    node.check()
+    assert node.ready
+    assert json.loads(node.progress_publisher.publish.call_args.args[0].data) == {
+        'completed': 1, 'total': 1, 'stage': '노드·인터페이스 연결 확인',
+        'state': 'READY', 'missing': [],
+    }
+    node.tf.can_transform.assert_not_called()
+    node.count_publishers.return_value = 0
+    node.check()
+    assert not node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'WAITING', 'missing': ['publisher:/scan_raw'],
+    }
+    node.count_publishers.return_value = 1
+    node.check()
+    assert node.ready
+
+
+def test_observer_rechecks_node_executor_after_a_successful_reply(monkeypatch):
+    """A constructor response is not cached as permanent connection success."""
+    node = _observer(monkeypatch)
+    pending = Future()
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.return_value = pending
+    node.probes = {'autoslam': [client, None, False]}
+    node.check()
+    assert not node.ready
+    pending.set_result(SimpleNamespace(values=[]))
+    next_reply = Future()
+    client.call_async.return_value = next_reply
+    node.check()
+    assert node.ready
+    node.probe_requested['autoslam'] = 0.0
+    node.check()
+    assert not node.ready
+    assert next_reply.cancelled()
+    assert 'init:autoslam' in json.loads(
+        node.status_publisher.publish.call_args.args[0].data)['missing']
+
+
+def test_observer_requires_action_connection_and_live_speech_status(monkeypatch):
+    """Lost endpoints remove READY without shutting down any module."""
+    node = _observer(monkeypatch)
+    action = Mock()
+    action.server_is_ready.return_value = True
+    node.action_clients = [('/autoslam', action)]
+    node.settings['speech'] = True
+    node.speech_ready = True
+    node.check()
+    assert node.ready
+    action.server_is_ready.return_value = False
+    node.count_publishers.side_effect = lambda name: name != '/malbut/speech/status'
+    node.check()
+    assert not node.ready
+    missing = json.loads(node.status_publisher.publish.call_args.args[0].data)['missing']
+    assert missing == ['Action:/autoslam', 'speech: microphone startup']
+
+
+def test_disconnected_depth_frame_is_not_ready(monkeypatch):
+    """Receiving images alone cannot prove they can be used by the localizer."""
+    node = _node(monkeypatch)
+    node.seen['depth'] = 10.0
+    node.frames['depth'] = 'depth_optical'
+    node.tf.can_transform.side_effect = lambda base, frame, stamp: frame != 'depth_optical'
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.side_effect = None
+    node.check()
+    assert node.ready
+
+
+def test_restarted_lifecycle_server_can_be_queried_again(monkeypatch):
+    """Do not wait forever on an unanswered request to an exited server."""
+    node = _node(monkeypatch)
+    pending = Future()
+    service = Mock()
+    service.service_is_ready.return_value = False
+    node.lifecycle['controller_server'] = [service, pending, False, 'inactive']
+    node.check()
+    assert pending.cancelled()
+    assert node.lifecycle['controller_server'][3] == 'service_not_discovered'
+    assert node.lifecycle['controller_server'][1] is None
+    assert not node.ready
+    service.service_is_ready.return_value = True
+    node.check()
+    service.call_async.assert_called_once()
+
+
+def test_old_sensor_message_does_not_count_as_fresh_data(monkeypatch):
+    """Delivery time does not hide an old camera header."""
+    node = _node(monkeypatch)
+    node.seen['rgb'] = None
+    message = Image(width=1, height=1, data=[0, 0, 0])
+    message.header.frame_id = 'camera_optical'
+    message.header.stamp.sec = 1
+    node._receive('rgb', message)
+    assert node.seen['rgb'] is None
+    message.header.stamp.sec = 10
+    node._receive('rgb', message)
+    assert node.seen['rgb'] == 10.0
+
+
+def test_old_latched_costmap_is_not_proof_of_running_nav2(monkeypatch):
+    """A saved static map can be old; periodically published costmaps cannot."""
+    node = _node(monkeypatch)
+    node.settings['navigation'] = True
+    node.fixed = {'map', 'costmap', 'patrol_costmap'}
+    node.seen.update(map=0.0, costmap=None, patrol_costmap=10.0)
+    node.frames.update(map='map', patrol_costmap='map')
+    message = Costmap(data=[0])
+    message.header.frame_id = 'map'
+    message.header.stamp.sec = 1
+    node._receive('costmap', message)
+    node.check()
+    assert not node.ready
+    assert 'data:costmap' in node.last_missing
+    assert 'data:map' not in node.last_missing
+    assert 'frame:costmap must be map' not in node.last_missing
+    message.header.stamp.sec = 10
+    node._receive('costmap', message)
+    node.check()
+    assert node.ready
+    node.ready = False
+    node.seen['costmap'] = 0.0
+    node.check()
+    assert not node.ready
+    assert 'data:costmap' in node.last_missing
+
+
+def test_lost_lifecycle_response_retries_without_restarting_server(monkeypatch):
+    """Reproduce get_state response loss while Nav2 stays discoverable."""
+    node = _node(monkeypatch)
+    pending, retry = Future(), Future()
+    service = Mock()
+    service.service_is_ready.return_value = True
+    service.call_async.side_effect = [pending, retry, Future()]
+    node.lifecycle['amcl'] = [service, None, False, 'missing']
+    node.check()
+    assert not node.ready
+    node.check()
+    assert service.call_async.call_count == 1
+
+    monkeypatch.setattr('malbut_bringup.readiness.time.monotonic', lambda: 13.0)
+    node.seen = {name: 13.0 for name in node.seen}
+    node.check()
+    assert pending.cancelled()
+    service.remove_pending_request.assert_called_once_with(pending)
+    assert service.call_async.call_count == 2
+    assert node.lifecycle['amcl'][3] == 'response_timeout'
+    assert not node.ready  # Retrying alone is not proof that Nav2 is active.
+    retry.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
+    node.check()
+    assert node.ready
+
+
+def test_empty_detection_array_is_valid_no_person_required(monkeypatch):
+    """Booting must not require somebody to stand in front of the camera."""
+    node = _node(monkeypatch)
+    node.seen['perception'] = None
+    message = Detection3DArray()
+    message.header.frame_id = 'camera_optical'
+    message.header.stamp.sec = 10
+    node._receive('perception', message)
+    assert node.seen['perception'] == 10.0
+
+
+def test_stale_stream_stays_not_ready(monkeypatch):
+    """A camera that stopped during boot must not admit new missions."""
+    node = _node(monkeypatch)
+    node.seen['rgb'] = 6.0
+    node.check()
+    assert not node.ready
+
+
+def test_navigation_needs_matching_map_and_active_nav2(monkeypatch):
+    """An inactive Nav2 Action server must not open manager admission."""
+    node = _node(monkeypatch)
+    node.settings['navigation'] = True
+    node.fixed.add('map')
+    node.seen['map'] = 0.0  # Static map age is not a sensor-stream timeout.
+    node.frames['map'] = 'wrong_map'
+    node.check()
+    assert not node.ready
+    node.frames['map'] = 'map'
+    future = Future()
+    future.set_result(SimpleNamespace(
+        current_state=State(id=State.PRIMARY_STATE_INACTIVE, label='inactive')))
+    service = Mock()
+    service.service_is_ready.return_value = True
+    node.lifecycle['controller_server'] = [service, future, False, 'missing']
+    node.check()
+    assert not node.ready
+    # The web shows where the Nav2 lifecycle manager stopped, not just a name.
+    assert 'lifecycle:controller_server=inactive' in node.last_missing
+    future = Future()
+    future.set_result(SimpleNamespace(
+        current_state=State(id=State.PRIMARY_STATE_ACTIVE, label='active')))
+    node.lifecycle['controller_server'][1] = future
+    node.check()
+    assert node.ready
+
+
+def test_latest_tf_alone_cannot_admit_untransformable_scan_stream(monkeypatch):
+    """Static lidar mounting and latest odom TF do not prove scan-time TF."""
+    node = _node(monkeypatch)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: stamp.nanoseconds == 0
+    node.check()
+    assert not node.ready
+    assert 'TF:scan->odom@stamp' in node.last_missing
+
+
+def test_scan_tf_can_arrive_after_scan_without_waiting_in_sensor_callback(monkeypatch):
+    """Recent older samples allow startup even while newest scan awaits TF."""
+    node = _node(monkeypatch)
+    node.scan_headers.clear()
+    for stamp in (9.8, 9.9, 10.0):
+        message = LaserScan(ranges=[1.0])
+        message.header.frame_id = 'lidar'
+        message.header.stamp = Time(seconds=stamp, clock_type=ClockType.ROS_TIME).to_msg()
+        node._receive('scan', message)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        stamp.nanoseconds != 10_000_000_000)
+    node.check()
+    assert node.ready
+    # Only headers are retained, not the scan range payload.
+    assert len(node.scan_headers) == 3
+    assert all(isinstance(header[2], Time) for header in node.scan_headers)
+
+
+def test_one_success_or_expired_scan_cannot_admit_startup(monkeypatch):
+    """Do not rely on one lucky transform or an expired startup scan."""
+    node = _node(monkeypatch)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        stamp.nanoseconds in (0, 9_900_000_000))
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.side_effect = None
+    node.scan_headers = deque([
+        (10.0, 'lidar', Time(seconds=6, clock_type=ClockType.ROS_TIME)),
+        (10.0, 'lidar', Time(seconds=6.1, clock_type=ClockType.ROS_TIME)),
+    ], maxlen=32)
+    node.check()
+    assert not node.ready
+
+
+def test_navigation_also_requires_stamped_scan_transform_into_map(monkeypatch):
+    """Global costmap scan inputs need map TF, not just local odometry TF."""
+    node = _node(monkeypatch)
+    node.settings['navigation'] = True
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        not (target == 'map' and stamp.nanoseconds != 0))
+    node.check()
+    assert not node.ready
+    assert 'TF:scan->map@stamp' in node.last_missing
+    assert 'TF:scan->odom@stamp' not in node.last_missing
+
+
+def test_navigation_readiness_covers_the_motion_chain_and_pose_finding():
+    """Navigation needs the smoother; manual driving its server and the Collision Monitor."""
+    import os
+
+    import rclpy
+    from rclpy.parameter import Parameter
+
+    context = rclpy.Context()
+    rclpy.init(context=context, domain_id=100 + os.getpid() % 30)
+    node = None
+    try:
+        node = RobotReadiness(context=context, parameter_overrides=[
+            Parameter('navigation', value=True), Parameter('perception', value=False),
+            Parameter('relocalization', value=True)])
+        assert {'velocity_smoother', 'collision_monitor', 'controller_server',
+                'planner_server', 'behavior_server', 'teleop_behavior_server',
+                'bt_navigator'} == set(node.lifecycle)
+        actions = {name for name, _client in node.action_clients}
+        assert {'/relocalize', '/assisted_teleop', '/autoslam'} <= actions
+        assert '/follow_person' not in actions
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown(context=context)

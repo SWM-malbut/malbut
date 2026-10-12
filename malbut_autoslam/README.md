@@ -10,10 +10,15 @@ YAML·PGM을 저장한다.
 ## 실행
 
 실로봇 통합 Bringup이 독립 `malbut_bringup/autoslam.launch.py`를 포함한다.
-평소에는 SLAM을 켜지 않는다. AutoSLAM 요청을 받으면 시스템 관리자의
-`/malbut/localization/start_mapping`을 호출해 SLAM을 시작하고 탐색·저장한다.
-완료·취소·실패 시 Nav2 작업이 끝난 뒤 `/malbut/localization/stop_mapping`으로
-SLAM을 종료하고 기본 미확인 지도 + AMCL로 돌아온다. Nav2와 드라이버는 유지한다.
+평소에는 SLAM을 켜지 않는다. AutoSLAM 요청을 받으면 Bringup 공통 실행기에
+지도 제공자 인계를 요청하고, 이 Action이 SLAM 프로세스를 시작한다.
+실제 지도·TF 준비 후 주행 의존성을 활성화해 탐색·저장한다.
+완료·취소·실패 시 Nav2 작업과 SLAM 종료를 확인한 뒤 이전 지도 + AMCL을 복원한다.
+관리자는 지도 모드나 SLAM 프로세스를 소유하지 않는다. Nav2와 드라이버는 유지한다.
+
+통합 Bringup은 `slam_executable`로 종료 순서를 보완한 동기식 SLAM 진입점을 넘긴다.
+매핑 알고리즘·파라미터는 upstream 그대로다. 비정상 종료 코드는 Action 실패로 알리며,
+프로세스 종료가 확인됐으면 기존 지도·AMCL은 복원한다. 종료 미확인 상태에서는 인계하지 않는다.
 
 다른 환경(시뮬레이션 등)에서 이미 켠 SLAM·Nav2에 붙여 쓸 때는 서버만 실행한다.
 
@@ -104,9 +109,8 @@ ros2 action send_goal /malbut/mission/execute \
 - 같은 서버의 중복 요청은 거부한다. Manifest는 `FOREGROUND/NORMAL/[BASE]`다.
 - 취소·선점·Ctrl+C 시 하위 Nav2 Goal을 취소하고 **실제 종료까지 기다린다**.
   외부 Nav2의 응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.
-  직접 기동한 Nav2가 취소에 응답하지 않으면 준비 제한 시간 후 소유한 프로세스
-  그룹만 종료한다. 종료는 SIGINT → SIGTERM → SIGKILL 순으로 제한 시간을 두며,
-  다른 터미널의 프로세스에는 신호를 보내지 않는다.
+  Nav2 프로세스는 소유하지 않는다. 하위 이동 종료를 확인한 뒤 자신이 실행한 SLAM만
+  SIGINT → SIGTERM → SIGKILL 순으로 종료하며, 다른 프로세스에는 신호를 보내지 않는다.
 - 저장 요청은 취소 불가능한 Service이므로 이미 저장 중이면 응답 후 취소를
   완료한다. 이때 저장된 파일은 남고 `map_yaml`로 반환한다.
   서버 자체를 Ctrl+C로 종료하면 지도 저장 서버도 함께 종료될 수 있으므로,
@@ -114,8 +118,12 @@ ros2 action send_goal /malbut/mission/execute \
   않고 요청을 결과 미확인으로 종료·정리한다. 새 요청은 거부한다. 지연된 저장이
   파일을 쓸 수 있으므로 파일을 확인한 뒤 서버를 재시작한다.
 - `start_mapping_service`·`stop_mapping_service`는 함께 지정하며, 기본값은 둘 다 빈 문자열이다.
+- `slam_params_file`을 지정하면 이 Action이 SLAM 프로세스를 소유한다.
+- 지도·TF 연결은 유지하며, 지도 처리는 Action 실행 중에만 한다.
+  완료·취소·실패 시 지도 상태만 비운다. 실행 중 구독 객체를 삭제하지 않는다.
+  `ready_mapping_service`는 SLAM 지도·TF가 준비된 후 공통 주행 의존성을 활성화한다.
   비어 있으면 외부에서 실행한 SLAM·Nav2를 종료하지 않는 기존 독립 실행 방식을 유지한다.
-  실로봇 Bringup은 관리자 서비스 경로를 지정한다. 시작 요청 중 취소해도 시작 응답을
+  실로봇 Bringup은 공통 지도 제공자 서비스 경로를 지정한다. 시작 요청 중 취소해도 시작 응답을
   먼저 기다린 뒤 종료하며, 종료가 확인되지 않으면 성공으로 보고하지 않는다.
 - 저장 대상은 주행용 2D 지도이며 웹 방 라벨 생성·클라우드 업로드·pose graph 저장은
   포함하지 않는다. 기존 웹 지도 작성 기능은 별도로 유지한다.

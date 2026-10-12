@@ -1,6 +1,7 @@
 """Exercise the re-identification callback without loading a model."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 from sensor_msgs.msg import Image
@@ -22,6 +23,7 @@ def _fixture():
         return np.zeros((200, 100, 3), dtype=np.uint8)
 
     node = SimpleNamespace(
+        _processing_enabled=True,
         _frame_index=0, _refresh_interval=3,
         _tracker=ByteTrackTracker(min_confirmed_hits=1),
         _encoder=SimpleNamespace(encode=encode),
@@ -69,6 +71,34 @@ def test_no_person_publishes_empty_result_without_decoding_or_encoding_rgb():
     assert features == images == warnings == []
     assert len(output) == 1
     assert output[0].detections == []
+
+
+def test_idle_does_not_decode_track_or_publish():
+    node, features, images, output, warnings = _fixture()
+    node._processing_enabled = False
+    PersonReidentifierNode._on_rgb_detections(node, *_messages(1))
+    assert features == images == output == warnings == []
+    assert node._frame_index == 0
+
+
+def test_idle_disconnects_rgb_and_keeps_identity_gallery_on_reconnect():
+    node = object.__new__(PersonReidentifierNode)
+    node._processing_enabled = True
+    node._rgb = SimpleNamespace(sub=object(), topic='/rgb', callback=Mock())
+    node._detections = SimpleNamespace(sub=object(), topic='/boxes', callback=Mock())
+    node._synchronizer = SimpleNamespace(queues=[{1: 'old RGB'}, {1: 'old detection'}])
+    encoder, tracker = object(), object()
+    node._encoder, node._tracker = encoder, tracker
+    node.create_subscription = Mock(return_value=object())
+    node.destroy_subscription = Mock()
+    node._change_processing(False)
+    assert node._rgb.sub is node._detections.sub is None
+    assert node._synchronizer.queues == [{}, {}]
+    assert node.destroy_subscription.call_count == 2
+    node._change_processing(True)
+    node._change_processing(True)
+    assert node.create_subscription.call_count == 2
+    assert node._encoder is encoder and node._tracker is tracker
 
 
 def test_without_encoder_tracks_boxes_without_reading_appearance():

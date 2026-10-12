@@ -129,6 +129,34 @@ def _observer(monkeypatch):
     return node
 
 
+def test_idle_lifecycle_is_connected_but_not_active_for_strict_navigation_gate(monkeypatch):
+    """Web readiness accepts intentional idle, not an unconfigured node."""
+    for observe, expected in [(True, []), (False, ['lifecycle:controller_server=inactive'])]:
+        node = _node(monkeypatch)
+        node.settings['observe_only'] = observe
+        reply = Future()
+        reply.set_result(SimpleNamespace(current_state=State(
+            id=State.PRIMARY_STATE_INACTIVE, label='inactive')))
+        client = Mock()
+        client.service_is_ready.return_value = True
+        node.lifecycle = {'controller_server': [client, reply, False, 'inactive']}
+        assert node._lifecycle_missing(10.0) == expected
+
+
+def test_dependency_preparation_signal_is_required_by_web_observer(monkeypatch):
+    """A live runtime process alone does not mean its preparation succeeded."""
+    node = _observer(monkeypatch)
+    node.settings['runtime_state_topic'] = '/malbut/runtime/state'
+    node._runtime_state(SimpleNamespace(data=json.dumps({'ready': False, 'error': 'failed'})))
+    node.check()
+    assert not node.ready
+    assert 'runtime:failed' in json.loads(
+        node.progress_publisher.publish.call_args.args[0].data)['missing']
+    node._runtime_state(SimpleNamespace(data=json.dumps({'ready': True})))
+    node.check()
+    assert node.ready
+
+
 def test_observer_reports_connections_without_sensor_or_tf_checks(monkeypatch):
     """The persistent observer has no data gate, timeout, or process control."""
     node = _observer(monkeypatch)

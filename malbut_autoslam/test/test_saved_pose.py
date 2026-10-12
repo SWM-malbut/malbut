@@ -104,6 +104,7 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
     monkeypatch.setattr(module + 'map_statistics', lambda _grid: {
         'known_area_m2': 6.0, 'free_area_m2': 6.0})
     node = Mock()
+    node.slam = None
     node.lock = RLock()
     node.frontier_count = 0
     node._save.return_value = str(saved_map)

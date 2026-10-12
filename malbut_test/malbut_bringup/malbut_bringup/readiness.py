@@ -48,6 +48,7 @@ class RobotReadiness(Node):
             'startup_total': 0, 'startup_nodes': '', 'startup_timeout_s': 120.0,
             'observe_only': False, 'speech': False,
             'required_actions': '', 'required_topics': '',
+            'runtime_state_topic': '',
         }
         self.settings = {
             key: self.declare_parameter(key, default).value
@@ -79,6 +80,11 @@ class RobotReadiness(Node):
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
+        self.runtime_ready = False
+        self.runtime_error = ''
+        if self.settings['runtime_state_topic']:
+            self.subscriptions_.append(self.create_subscription(
+                String, self.settings['runtime_state_topic'], self._runtime_state, static_qos))
         self.status_publisher = self.create_publisher(
             String, '/malbut/bringup/status', static_qos)
         self.progress_publisher = self.create_publisher(
@@ -221,10 +227,23 @@ class RobotReadiness(Node):
                     return True
         return False
 
+    def _runtime_state(self, message):
+        try:
+            state = json.loads(message.data)
+            self.runtime_ready = state.get('ready') is True
+            self.runtime_error = str(state.get('error') or '')
+        except (AttributeError, ValueError):
+            self.runtime_ready = False
+            self.runtime_error = 'invalid dependency state'
+
     def check(self):
         """Poll only readiness; no fixed boot sleep and no autonomous motion."""
         if self.settings.get('observe_only'):
             missing = self._extension_missing()
+            runtime_topic = self.settings.get('runtime_state_topic', '')
+            if runtime_topic and (
+                    not self.runtime_ready or not self.count_publishers(runtime_topic)):
+                missing.append('runtime:' + (self.runtime_error or 'preparing dependencies'))
             missing.extend(self._lifecycle_missing(time.monotonic()))
             missing.extend(f'Action:{name}' for name, client in self.action_clients
                            if not client.server_is_ready())
@@ -236,7 +255,7 @@ class RobotReadiness(Node):
                            or not self.count_publishers('/malbut/speech/status')):
                 missing.append('speech: microphone startup')
             total = (len(self.probes) + len(self.lifecycle) + len(self.action_clients)
-                     + len(topics) + int(speech))
+                     + len(topics) + int(speech) + int(bool(runtime_topic)))
             self.ready = not missing
             state = 'WAITING' if missing else 'READY'
             self.status_publisher.publish(String(data=json.dumps({
@@ -250,6 +269,7 @@ class RobotReadiness(Node):
         if getattr(self, 'stage', '') in ('extensions', 'speech'):
             self._report(self._extension_missing())
             return
+
         now = time.monotonic()
         missing = [
             f'data:{label}' for label, received in self.seen.items()
@@ -310,7 +330,10 @@ class RobotReadiness(Node):
                 if future is not None:
                     try:
                         state = future.result().current_state
-                        entry[2] = state.id == State.PRIMARY_STATE_ACTIVE
+                        entry[2] = state.id in (
+                            State.PRIMARY_STATE_ACTIVE, State.PRIMARY_STATE_INACTIVE
+                        ) if self.settings.get('observe_only') else (
+                            state.id == State.PRIMARY_STATE_ACTIVE)
                         entry[3] = state.label
                     except Exception:  # A disconnected lifecycle service is not ready.
                         entry[2] = False

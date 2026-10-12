@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from .models import (
     ControlMode,
     ExecutionMode,
-    LocalizationMode,
     MissionRecord,
     MissionState,
     SystemState,
@@ -24,8 +23,6 @@ class StateStore:
         self.ready = False
         self.recharging = False
         self.emergency = False
-        # None: localization is not managed here, so maps never gate missions.
-        self.localization: LocalizationMode | None = None
         self.active_foreground: OrderedDict[str, MissionRecord] = (
             OrderedDict()
         )

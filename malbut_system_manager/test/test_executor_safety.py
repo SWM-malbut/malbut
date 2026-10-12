@@ -46,6 +46,12 @@ class _Future:
             raise self._error
         return self._result
 
+    def done(self):
+        return self._done
+
+    def cancel(self):
+        self._done = True
+
     def resolve(self, result=None, error=None):
         """Complete the future and notify all registered callbacks."""
         self._result = result
@@ -215,6 +221,9 @@ class _ServiceClient:
         """Report test-controlled discovery state."""
         return self.ready
 
+    def remove_pending_request(self, _future):
+        """Allow removing a locally canceled preparation future."""
+
     def call_async(self, request):
         """Record exactly one request and return its response future."""
         self.calls.append(request)
@@ -267,6 +276,7 @@ def _executor(
     node=None,
     goal_response_timeout_s=0.0,
     cancel_completion_timeout_s=0.0,
+    **options,
 ):
     node = node or _Node()
     events = SimpleNamespace(
@@ -287,8 +297,119 @@ def _executor(
         ),
         goal_response_timeout_s=goal_response_timeout_s,
         cancel_completion_timeout_s=cancel_completion_timeout_s,
+        **options,
     )
     return executor, events
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_preparation_precedes_dispatch_and_late_reply_cannot_restart_canceled_goal(
+    monkeypatch, cancel,
+):
+    """Prepare only registered dependencies; cancellation never sends a goal."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    node = _ServiceNode(service)
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=node, prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    assert len(service.calls) == 1
+    assert action.goal_handles == []
+    if cancel:
+        assert executor.cancel(mission.mission_id)
+        assert events.terminal[-1][2] is TerminalOutcome.CANCELED
+    service.response.resolve(SimpleNamespace(success=True, message='ready'))
+    assert len(action.goal_handles) == (0 if cancel else 1)
+
+
+def test_failed_preparation_does_not_dispatch(monkeypatch):
+    """Reject a mission before its Action sees a goal if dependencies fail."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=_ServiceNode(service), prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    service.response.resolve(SimpleNamespace(success=False, message='lifecycle failed'))
+    assert action.goal_handles == []
+    assert events.terminal[-1][2] is TerminalOutcome.ABORTED
+    assert 'lifecycle failed' in events.terminal[-1][-1]
+
+
+@pytest.mark.parametrize('path', ['preparing', 'before_dispatch'])
+def test_pre_dispatch_cancel_calls_manager_without_executor_lock(monkeypatch, path):
+    """The manager's effects lock must never be entered from the executor lock."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=_ServiceNode(service), prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    calls = []
+
+    def terminal(*args):
+        # CPython's RLock exposes ownership by the current thread. Checking
+        # it here makes the lock-order regression deterministic, without
+        # creating hung worker threads in a test runner.
+        calls.append(executor._lock._is_owned())
+        events.terminal.append(args)
+
+    executor._on_terminal = terminal
+    executor.start(mission, object())
+    if path == 'preparing':
+        executor.cancel(mission.mission_id)
+    else:
+        execution = executor._runs[mission.mission_id]
+        execution.preparing = False
+        execution.cancel_pending = True
+        executor._dispatch(execution, object())
+    assert calls == [False]
+    assert executor.active_count == 0
+    assert not action.goal_handles
+
+
+def test_preparation_client_creation_failure_completes_the_mission(monkeypatch):
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    node = _ServiceNode(_ServiceClient())
+
+    def fail_creation(*_args, **_kwargs):
+        raise RuntimeError('client creation failed')
+
+    node.create_client = fail_creation
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=node, prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    assert executor.active_count == 0
+    assert events.terminal[-1][2] is TerminalOutcome.ABORTED
+    assert 'client creation failed' in events.terminal[-1][-1]
+    assert not action.goal_handles
+
+
+def test_preparation_timeout_cannot_late_dispatch(monkeypatch):
+    """Bound unanswered preparation without retaining a phantom moving goal."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    node = _ServiceNode(service)
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=node, prepare_service_prefix='/prepare', preparation_timeout_s=0.1,
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    node.timers[0].fire()
+    assert executor.active_count == 0
+    assert events.terminal[-1][2] is TerminalOutcome.ABORTED
+    service.response.resolve(SimpleNamespace(success=True, message='late'))
+    assert action.goal_handles == []
 
 
 def _service_mission():

@@ -3,53 +3,57 @@
 저장 지도 위에서 AMCL 위치 추정을 맞추는 `/relocalize` Action 서버다.
 저장된 위치나 지정한 위치를 `/initialpose`로 보내고, AMCL이 그 위치에서 새 추정을
 낸 것까지 확인한다. 저장 위치가 라이다와 맞지 않거나 `method=GLOBAL_SEARCH`(2)면
-AMCL 전역 위치 탐색을 켜고 Nav2 Spin으로 제자리에서 한 바퀴 돈다.
-찾은 위치는 아래 **위치 다듬기**로 지도에 맞춘 뒤 결과의 `match_ratio`로 알린다.
+AMCL 전역 위치 탐색과 Nav2 Spin을 사용한다. 위치는 AMCL만 추정하며,
+일치율이 95% 이상이면 회전을 취소하고 끝낸다. 탐색은 최대 10초다.
 
 ## 인터페이스
 
 | 항목 | 내용 |
 | --- | --- |
 | Action | `/relocalize` (`malbut_interfaces/action/Relocalize`) |
-| `method=SAVED_POSE`(0) | 이 지도에서 마지막으로 저장한 AMCL 위치, 없으면 AutoSLAM이 지도와 함께 저장한 `<지도>.pose.yaml` |
+| `method=AUTO`(0) | 저장 AMCL 위치·AutoSLAM `<지도>.pose.yaml` 확인, 없거나 맞지 않으면 전역 탐색 |
 | `method=GIVEN_POSE`(1) | Goal의 `initial_pose`(map 좌표) |
 | 결과 | `success`, `message`, 보정 후 AMCL 추정 `pose` |
 | 피드백 | `WAITING`(지도 선택·AMCL 활성 대기) → `APPLYING` |
 
-선택 지도는 시스템 관리자의 `/malbut/localization/state`에서 읽는다. 저장 지도
-주행(`LOCALIZATION`) 중에만 동작하며, 지도 작성 중이거나 AMCL이 활성화되지 않으면
-`timeout_s`(10초) 뒤 실패한다. 한 번에 하나의 Goal만 받는다.
+선택 지도는 Bringup 공통 실행기의 `/malbut/localization/state`에서 읽는다.
+지도·AMCL·스캔을 사용할 수 없으면 `timeout_s`(기본 10초) 뒤 실패한다.
+한 번에 하나의 Goal만 받는다. 관리자는 지도/비지도 모드로 이 기능을 제한하지 않는다.
+스캔·TF 연결은 유지하고, Action 종료 때 사용한 스캔 상태만 비운다.
+실행 중 구독 객체를 삭제하지 않는다.
+AMCL pose 수신과 마지막 위치 저장은 유휴 상태에서도 유지한다.
+
+전역 탐색에는 알려진 빈칸이 필요하다. 전부 미확인인 기본 지도나 전부 점유된 지도에서는
+AMCL 전역 탐색 서비스를 호출하지 않고 이유를 반환한다. `GIVEN_POSE`로 위치를 직접
+지정하는 기능과 다른 센서 기반 기능은 유지한다.
 
 ## 사용처
 
-- **시스템 관리자**: 저장 지도로 바꿀 때마다 `SAVED_POSE`를 요청하고, 결과를
+- **Bringup 공통 실행기**: 저장 지도로 바꿀 때 `AUTO`를 요청하고, 결과를
   `/malbut/localization/state`의 `message`로 알린다. Bringup의
   `restore_pose:=false`면 요청하지 않는다.
 - **다른 클라이언트**: `relocalize` 기능(Capability Manifest)으로
-  `/malbut/mission/execute`에 요청한다. 저장 지도 선택 후에만 관리자가 받는다.
+  `/malbut/mission/execute`에 요청한다. AMCL을 먼저 활성화하되, 이 Action이
+  만들 초기 위치를 준비 단계에서 미리 요구하지 않는다.
 
 ```bash
 ros2 action send_goal /malbut/mission/execute malbut_interfaces/action/ExecuteMission \
   "{capability_id: relocalize, arguments_yaml: '{method: 0}'}"
 ```
 
-## 위치 다듬기
+## 위치 보정 중 파티클 증량
 
-한 바퀴 돌아 찾은 AMCL 위치는 수 cm·수 도씩 어긋나고, 시작이 무작위라 같은 자리에서도
-매번 달라진다. 5 m 앞 벽은 3°만 틀어져도 26 cm 벗어나 일치율이 크게 떨어진다.
-그래서 저장 위치를 확인할 때와 한 바퀴 찾기가 끝날 때마다, 그 위치 주변
-±30 cm·±8°에서 라이다 점이 지도의 벽 면에 가장 가깝게 놓이는 위치를 찾는다
-(5 cm·1° 간격 → 1 cm·0.2° 간격, `scan_match.refine`). 로봇청소기들이 대략 찾은 뒤 스캔을
-지도에 맞추는 방식과 같다. 일치율이 오르면 그 위치를 AMCL에 다시 넣는다(약 5 cm·3° 퍼짐).
-차체는 더 움직이지 않는다.
+기존 AMCL의 파티클 범위를 Action 실행 중에만 기본 2000~8000개로 변경한다.
+새 AMCL 노드를 실행하지 않는다. 변경 전에 기존 범위를 읽고 성공·실패·취소 후 복원한다.
+Humble AMCL은 범위를 바꾸면 필터를 초기화하므로, 같은 지도의 마지막 위치로 시작하고
+복원할 때도 AMCL의 마지막 위치와 공분산을 그대로 전달한다. 자체 위치 탐색이나
+고정 공분산으로 AMCL 결과를 덮어쓰지 않는다.
 
-Gazebo `small_house` 지도에서 잡음 2 cm·가림 10%·빈 측정 10%를 넣은 스캔으로 60번 확인했다.
-±25 cm·±7°에서 시작해도 다듬은 뒤 위치 오차는 최대 1.3 cm, 방향 오차는 최대 0.22°였다.
-일치율 중앙값은 59%에서 91%로 올라 정답 위치의 값과 같았다. 한 번에 PC에서 약 90 ms 걸린다.
-
-`GLOBAL_SEARCH`는 요청 때의 AMCL 위치도 다듬어 둔다. 찾기 결과가 그보다 낮으면 그 위치로
-돌아가 다시 다듬고 `returned to the previous pose`라고 알린다. `SAVED_POSE`도 저장 위치보다 낮게 찾으면
-저장 위치로 돌아간다(`returned to the saved pose`). 다시 찾기가 맞던 위치를 더 나쁜 위치로 바꾸지 않게 하려는 것이다.
+`scan_match`는 일치율 계산만 한다. 지도 장애물에서 0.10 m 이내인 유효 측정점의 비율을
+사용한다(`match_distance_m`, `match_ratio_min`). 95%는 조기 종료 기준이다.
+10초 내 도달하지 못해도 마지막 AMCL 위치를 유지하고, 측정한 일치율과 함께 완료로 반환한다.
+회전 종료 확인과 파티클·위치 복원은 탐색 제한 이후에도 정리될 때까지 수행한다.
+`GIVEN_POSE`는 사용자가 지정한 위치를 적용하고 일치율을 보고하는 기존 동작을 유지한다.
 
 ## 위치 기억
 

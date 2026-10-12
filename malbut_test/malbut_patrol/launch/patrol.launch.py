@@ -11,6 +11,7 @@ def generate_launch_description():
     """Expose environment inputs without preconfigured patrol coordinates."""
     defaults = {
         'use_sim_time': 'false',
+        'start_enabled': 'true',
         'room_map_file': '',
         'map_topic': '/map',
         'costmap_topic': '/global_costmap/costmap',
@@ -24,6 +25,8 @@ def generate_launch_description():
     parameters = {name: LaunchConfiguration(name) for name in defaults}
     parameters['use_sim_time'] = ParameterValue(
         LaunchConfiguration('use_sim_time'), value_type=bool)
+    parameters['start_enabled'] = ParameterValue(
+        LaunchConfiguration('start_enabled'), value_type=bool)
     parameters['room_map_file'] = ParameterValue(
         LaunchConfiguration('room_map_file'), value_type=str)
     parameters['camera_optical_frame'] = ParameterValue(

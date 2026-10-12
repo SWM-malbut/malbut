@@ -13,6 +13,7 @@ find_package(nav_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
@@ -27,6 +28,7 @@ ament_target_dependencies(lidar_foreground_preprocessor
   nav_msgs
   rclcpp
   sensor_msgs
+  std_srvs
   tf2
   tf2_ros
 )

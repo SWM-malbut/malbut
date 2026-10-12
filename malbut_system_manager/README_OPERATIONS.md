@@ -31,9 +31,9 @@ execution:
 
 | 우선순위 | 기능 | 자원 |
 |---|---|---|
-| `URGENT` | Bringup 복구 (`recovery`) | `BASE`, `SPEAKER` |
-| `HIGH` | 수동 조작 (`manual_drive`) | `BASE` |
-| `NORMAL` | 사람 추적, 목적지 이동, 자동 지도 만들기, 위치 보정, 낙상 확인 이동·질문 (`fall_approach`, `fall_confirmation`, 질문은 `BASE`·`SPEAKER`) | `BASE` |
+| `URGENT` | 수동 조작 (`manual_drive`), Bringup 복구 (`recovery`) | `BASE`, 복구는 `SPEAKER`도 |
+| `HIGH` | 낙상 확인 이동·질문 (`fall_approach`, `fall_confirmation`) | `BASE`, 질문은 `SPEAKER`도 |
+| `NORMAL` | 사람 추적, 목적지 이동, 자동 지도 만들기, 위치 보정 | `BASE` |
 | `LOW` | 순찰 (`patrol`) | `BASE` |
 
 순찰 중 추적·이동 요청은 순찰의 종료를 확인한 뒤 실행합니다. 추적·이동 중 순찰
@@ -75,27 +75,12 @@ Nav2와 `malbut_autoslam` 서버를 준비한 뒤 요청합니다. 현재 실로
   별도로 지정하면 해당 Topic의 첫 READY를 받을 때까지 `BOOTING`으로 미션을 거부합니다.
   현재 실로봇 `robot.launch.py`는 빈 값을 전달합니다. 통합 Bringup의 연결 관측기는
   웹 표시용이며 관리자 전체의 미션 허용 조건으로 연결하지 않습니다.
-- `localization_control`: 관리자 내부 모듈(`localization.py`)이 map→odom을 내는 위치
-  추정을 하나만 유지합니다. 현재 Bringup은 저장 지도 미지정 시에도 기본 미확인 지도를
-  `initial_map`으로 전달해 map_server·AMCL을 켭니다. SLAM은 지도 작성 요청 때
-  자식 프로세스로 실행하며, 완료·취소·실패 후 기본 지도·AMCL로 돌아옵니다.
-  관리자를 따로 구성하면서 `initial_map`을 비우면 기존 SLAM 시작 경로를 사용합니다.
-  전환은 `/malbut/localization/load_map`(`nav2_msgs/srv/LoadMap`),
-  `/malbut/localization/start_mapping`, `/malbut/localization/stop_mapping`
-  (`std_srvs/srv/Trigger`)으로 요청하고 상태는
-  `/malbut/localization/state`(`std_msgs/String` JSON)로 발행합니다. 지도 선택은
-  `BASE` 미션이 실행·대기 중이면 거부합니다. AutoSLAM 자신의 SLAM 시작·종료는
-  다른 활성 `BASE` 미션이 없으면 허용해 종료 정리가 가능하게 합니다.
-  Manifest의 `execution.map_requirement`는 위치 추정 모드로 판정하며,
-  `SELECTED`는 `LOCALIZATION`, `NOT_SELECTED`는 `MAPPING`에서 받습니다.
-  기본 미확인 지도도 `LOCALIZATION`이므로 실제 저장 지도·위치 정확성을 보증하는 검사는 아닙니다.
-  전환 중(`SWITCHING`)에는 둘 다 거부하고, 위치 보정이 로봇을 회전시킬 수 있으므로
-  `BASE`를 쓰는 다른 미션(수동 조작 포함)도 거부합니다. 다른 저장 지도로 바꿀 때는
-  AMCL을 RESET해 이전 지도의 위치를 넘기지 않습니다.
-- `relocalize_action`: 저장 지도를 불러올 때마다 이 Action(Bringup에서는
-  `/relocalize`, `malbut_relocalization`)을 `AUTO`로 요청하고, 결과가 나올 때까지
-  `SWITCHING`을 유지합니다. 결과는 위치 추정 상태의 `message`로 알립니다.
-  `relocalize_timeout_s`(90초)가 지나면 취소하고 수동 지정을 안내합니다.
+- `prepare_service_prefix`와 `prepared_capabilities`: 지정된 기능의 공통 준비
+  Trigger를 먼저 요청합니다. 미설정 시 기존의 하위 요청 직접 전달 동작을 유지합니다.
+  준비 중 취소되거나 실패한 미션은 하위 Action에 Goal을 보내지 않습니다.
+- 지도 선택·Nav2 유휴 제어는 Bringup의 `runtime_control`에 있고,
+  관리자는 `MAPPING / LOCALIZATION` 상태나 지도 유무 실행 제한을 갖지 않습니다.
+  기존 지도 선택 Service 이름은 유지하며, SLAM 프로세스는 AutoSLAM이 소유합니다.
 - `manual_control` 노드: `/cmd_vel_teleop`에 움직임 명령이 들어오면 `manual_drive`를
   요청하고, 조작(명령 또는 보드 Joy의 스틱 기울기)이 5초 없으면 `/preempt_teleop`으로
   AssistedTeleop을 끝냅니다. `idle_timeout_s`로 조정합니다.
