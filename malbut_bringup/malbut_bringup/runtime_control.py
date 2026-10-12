@@ -7,6 +7,7 @@ service; each lifecycle group keeps its existing Nav2 implementation.
 """
 
 import json
+from functools import partial
 import math
 from pathlib import Path
 import signal
@@ -26,6 +27,7 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.signals import SignalHandlerOptions
+from rclpy.task import Future
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 from rclpy.time import Time
@@ -101,6 +103,7 @@ class RuntimeControl(Node):
         self._capabilities = set()
         self._have_state = False
         self._synced_demand = None
+        self._preparations = []
         self._closing = False
         self._initialized = False
         self._mapping = False
@@ -159,8 +162,7 @@ class RuntimeControl(Node):
         for capability in PROFILES:
             self.create_service(
                 Trigger, PREPARE_PREFIX + capability,
-                lambda request, response, cap=capability: self._prepare(cap, response),
-                callback_group=self.control_group)
+                partial(self._prepare, capability), callback_group=self.group)
         self.create_service(LoadMap, LOAD_MAP_SERVICE, self._load_map,
                             callback_group=self.control_group)
         self.create_service(Trigger, START_MAPPING_SERVICE, self._start_mapping,
@@ -189,7 +191,7 @@ class RuntimeControl(Node):
 
     def _on_demand_changed(self):
         # State reception stays non-blocking. Serialize lifecycle work with
-        # prepare/map RPCs, and reconcile the latest (possibly coalesced) list.
+        # map RPCs, and reconcile the latest (possibly coalesced) list.
         with self._lock:
             if self._closing or not self._initialized:
                 return
@@ -198,6 +200,9 @@ class RuntimeControl(Node):
             except Exception as error:
                 self.get_logger().error(str(error))
                 self._report_usage(str(error))
+                self._resolve_preparations(str(error))
+            else:
+                self._resolve_preparations()
 
     def _receive_pose(self, message):
         with self._data_lock:
@@ -256,6 +261,7 @@ class RuntimeControl(Node):
 
     def _map_provider(self, path, pose=None):
         self._map_initialized = False
+        self._synced_demand = None
         self._publish_map(False, 'preparing map provider')
         request = LoadMap.Request(map_url=path)
         # The configured map_server is activated together with AMCL, as before.
@@ -284,7 +290,12 @@ class RuntimeControl(Node):
             # Map-source replacement needs a real estimate, not just the
             # service acknowledgement. Normal idle never pauses AMCL.
             self._wait_amcl_pose(before)
-        elif self._relocalize is not None and self._relocalize.server_is_ready():
+        elif self._relocalize is not None:
+            deadline = time.monotonic() + self.timeout
+            while not self._relocalize.server_is_ready():
+                if self._closing or time.monotonic() >= deadline:
+                    raise RuntimeError('pose restore: Action server unavailable')
+                time.sleep(0.02)
             # Preserve the existing optional saved-pose restore, but keep it
             # out of the manager. Only its local Spin dependencies wake.
             if not self._active['motion']:
@@ -419,6 +430,7 @@ class RuntimeControl(Node):
         })))
 
     def _tick(self):
+        self._resolve_preparations()
         if self._closing:
             return
         self._refresh_map_odom()
@@ -457,26 +469,42 @@ class RuntimeControl(Node):
                 self._report_usage(str(error))
         finally:
             self._lock.release()
+            self._resolve_preparations()
 
-    def _prepare(self, capability, response):
-        # State and service travel over different DDS endpoints. Wait for the
-        # manager's already-published demand before taking the transition lock.
-        deadline = time.monotonic() + self.timeout
-        while (not self._initialized or capability not in self._capabilities_now()):
-            if self._closing or time.monotonic() >= deadline:
-                response.success = False
-                response.message = 'mission demand/preparation unavailable'
-                return response
-            time.sleep(0.02)
-        with self._lock:
-            try:
-                self._sync()
-                response.success = capability in self._capabilities_now()
-                response.message = 'dependencies ready' if response.success else 'mission canceled'
-            except Exception as error:
-                response.success, response.message = False, str(error)
-                self._report_usage(str(error))
-        return response
+    async def _prepare(self, capability, request, response):
+        # A canceled Trigger RPC cannot be recalled. Await readiness without
+        # holding the transition callback group or parking an executor worker.
+        # Only the existing state-change handler performs dependency changes.
+        future = Future()
+        with self._data_lock:
+            self._preparations.append(
+                (capability, response, time.monotonic() + self.timeout, future))
+        self._demand_changed.trigger()
+        self._resolve_preparations()
+        try:
+            return await future
+        finally:
+            with self._data_lock:
+                self._preparations = [item for item in self._preparations if item[3] is not future]
+
+    def _resolve_preparations(self, error=''):
+        with self._data_lock:
+            current = (frozenset(self._capabilities), self._mapping_ready)
+            for capability, response, deadline, future in self._preparations:
+                # Keep resolved RPCs until their coroutine actually returned.
+                if future.done():
+                    continue
+                ready = (self._initialized and capability in self._capabilities
+                         and (capability == 'recovery'
+                              or (not self._uncertain and current == self._synced_demand)))
+                failed = error or self._closing or self._uncertain or time.monotonic() >= deadline
+                if ready or failed:
+                    response.success = bool(ready and not error and not self._closing)
+                    response.message = ('dependencies ready' if response.success else
+                                        error or 'mission demand/preparation unavailable')
+                    # This private Future schedules the waiting ROS callback;
+                    # finish it atomically with its response, including shutdown.
+                    future.set_result(response)
 
     def _wait_map_tf(self):
         deadline = time.monotonic() + self.timeout
@@ -695,6 +723,11 @@ def main(args=None):
         pass
     finally:
         node._closing = True
+        node._resolve_preparations()
+        # Let awaited service callbacks send their final response before the
+        # executor stops. Joining workers alone cannot resume a suspended RPC.
+        while rclpy.ok() and node._preparations:
+            executor.spin_once(timeout_sec=0.02)
         executor.shutdown()
         # Humble does not join MultiThreadedExecutor's worker pool (#893).
         # Drain queued callbacks before destroying their ROS entities.

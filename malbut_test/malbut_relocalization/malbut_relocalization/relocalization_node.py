@@ -605,12 +605,10 @@ class Relocalization(Node):
                 spin = self._wait_future(handle, sent, deadline, 'Spin goal')
             except (Canceled, RelocalizationError):
                 # An acceptance delivered after cancellation still owns motion.
-                sent.add_done_callback(self._cancel_late_spin)
-                cleanup = time.monotonic() + RESTORE_TIMEOUT_S
-                late = self._wait_future(None, sent, cleanup, 'late Spin acceptance')
+                late = self._wait_motion(sent, 'late Spin acceptance')
                 if late.accepted:
-                    self._wait_future(None, late.get_result_async(), cleanup,
-                                      'late Spin cancellation')
+                    late.cancel_goal_async()
+                    self._wait_motion(late.get_result_async(), 'late Spin cancellation')
                 raise
             if spin.accepted:
                 result = spin.get_result_async()
@@ -642,8 +640,7 @@ class Relocalization(Node):
         finally:
             if spin is not None and result is not None and not result.done():
                 spin.cancel_goal_async()
-                self._wait_future(None, result, time.monotonic() + RESTORE_TIMEOUT_S,
-                                  'Spin cancellation')
+                self._wait_motion(result, 'Spin cancellation')
         if estimate is None:
             raise RelocalizationError('AMCL reported no pose during the global search')
         with self.lock:
@@ -652,13 +649,17 @@ class Relocalization(Node):
             estimate = current
         return estimate, ratio
 
-    def _cancel_late_spin(self, future):
-        try:
-            spin = future.result()
-            if spin.accepted:
-                spin.cancel_goal_async()
-        except Exception as error:
-            self.get_logger().error(f'Late Spin cancellation failed: {error}')
+    def _wait_motion(self, future, label):
+        """Keep this Action and its dependencies until owned motion really ends."""
+        warn_at = time.monotonic() + RESTORE_TIMEOUT_S
+        warned = False
+        while not future.done():
+            self._check(None)
+            if not warned and time.monotonic() >= warn_at:
+                self.get_logger().warning(f'{label} is unconfirmed; retaining motion ownership')
+                warned = True
+            time.sleep(0.05)
+        return future.result()
 
     def _call(self, client, label, deadline, handle=None):
         return self._rpc(client, Empty.Request(), handle, deadline, label)

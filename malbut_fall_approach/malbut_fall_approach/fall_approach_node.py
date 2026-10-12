@@ -242,9 +242,12 @@ class FallApproachNode(Node):
         try:
             goal_handle = self._wait(sent, handle, deadline)
         except (Timeout, Canceled):
-            # A late acceptance must not leave Nav2 driving on its own.
-            sent.add_done_callback(lambda done: done.result() and done.result().accepted
-                                   and done.result().cancel_goal_async())
+            # An acceptance after cancellation still owns motion until the
+            # accepted Nav2 goal actually ends, not merely its cancel ACK.
+            goal_handle = self._wait_motion(sent, 'late Nav2 acceptance')
+            if goal_handle is not None and goal_handle.accepted:
+                self.child = goal_handle
+                self._settle_child()
             raise
         if goal_handle is None or not goal_handle.accepted:
             return None
@@ -264,13 +267,22 @@ class FallApproachNode(Node):
 
     def _settle_child(self):
         """Never leave Nav2 driving after this mission ended."""
-        child, self.child = self.child, None
+        child = self.child
         if child is None:
             return
-        future = child.cancel_goal_async()
-        end = time.monotonic() + CANCEL_SETTLE_S
-        while not future.done() and time.monotonic() < end and rclpy.ok():
+        child.cancel_goal_async()
+        self._wait_motion(child.get_result_async(), 'Nav2 cancellation')
+        self.child = None
+
+    def _wait_motion(self, future, label):
+        warn_at = time.monotonic() + CANCEL_SETTLE_S
+        warned = False
+        while not future.done() and rclpy.ok():
+            if not warned and time.monotonic() >= warn_at:
+                self.get_logger().warning(f'{label} is unconfirmed; retaining motion ownership')
+                warned = True
             time.sleep(0.02)
+        return future.result() if future.done() else None
 
     # ------------------------------------------------------------ helpers
 

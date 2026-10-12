@@ -66,6 +66,7 @@ def _runtime():
     node._capabilities = set()
     node._have_state = True
     node._synced_demand = None
+    node._preparations = []
     node._demand_changed = Mock()
     node._closing = False
     node._initialized = True
@@ -108,6 +109,66 @@ def _runtime():
     return node
 
 
+def _prepare(node, capability):
+    operation = node._prepare(capability, Trigger.Request(), Trigger.Response())
+    try:
+        operation.send(None)
+    except StopIteration as finished:
+        return finished.value
+    node._on_demand_changed()
+    with pytest.raises(StopIteration) as finished:
+        operation.send(None)
+    return finished.value.value
+
+
+def test_canceled_preparation_does_not_block_another_capability():
+    node = _runtime()
+    canceled = node._prepare('follow_person', Trigger.Request(), Trigger.Response())
+    canceled.send(None)  # No worker/transition lock is held.
+    assert not node._preparations[0][3].done()
+    node._state(SystemState(active_foreground_missions=[MissionStatus(
+        capability_id='manual_drive', state=MissionStatus.RUNNING)]))
+    assert _prepare(node, 'manual_drive').success
+    node._manage.assert_called_once_with('motion', ManageLifecycleNodes.Request.RESUME)
+    assert len(node._preparations) == 1  # The old RPC did not delay this result.
+    node._closing = True
+    node._resolve_preparations()
+    with pytest.raises(StopIteration) as finished:
+        canceled.send(None)
+    assert not finished.value.value.success
+
+
+def test_preparation_waits_for_state_and_completed_dependencies():
+    node = _runtime()
+    operation = node._prepare('manual_drive', Trigger.Request(), Trigger.Response())
+    operation.send(None)
+    pending = node._preparations[0][3]
+    assert not pending.done()
+    node._state(SystemState(active_foreground_missions=[MissionStatus(
+        capability_id='manual_drive', state=MissionStatus.RUNNING)]))
+    node._resolve_preparations()
+    assert not pending.done()  # Seeing demand alone is insufficient.
+    node._on_demand_changed()
+    with pytest.raises(StopIteration) as finished:
+        operation.send(None)
+    assert finished.value.value.success
+
+
+def test_missing_demand_preparation_expires_without_transition(monkeypatch):
+    node = _runtime()
+    now = [0.0]
+    monkeypatch.setattr(runtime_control.time, 'monotonic', lambda: now[0])
+    operation = node._prepare('follow_person', Trigger.Request(), Trigger.Response())
+    operation.send(None)
+    assert not node._preparations[0][3].done()
+    now[0] = 2.0
+    node._resolve_preparations()
+    with pytest.raises(StopIteration) as finished:
+        operation.send(None)
+    assert not finished.value.value.success
+    node._manage.assert_not_called()
+
+
 def test_repeated_manager_state_only_notifies_when_demand_changes():
     node = _runtime()
     node._have_state = False
@@ -139,7 +200,7 @@ def test_periodic_tick_keeps_tf_refresh_without_dependency_calculation(monkeypat
     node._on_demand_changed()
     for _ in range(6):
         node._tick()
-        node._prepare('manual_drive', Trigger.Response())
+        assert _prepare(node, 'manual_drive').success
     assert calculate.call_count == 1
     assert node._refresh_map_odom.call_count == 6
     assert node._manage.call_count == 1
@@ -304,7 +365,7 @@ def test_recovery_yields_lifecycle_control_even_after_an_unconfirmed_transition(
     node._uncertain = True
     node._capabilities = {'recovery'}
     node._active = {'motion': True, 'planning': True}
-    reply = node._prepare('recovery', Trigger.Response())
+    reply = _prepare(node, 'recovery')
     assert reply.success
     node._manage.assert_not_called()
     assert node._active == {'motion': True, 'planning': True}
@@ -543,7 +604,7 @@ def test_failed_lifecycle_never_reports_prepared():
     node = _runtime()
     node._capabilities = {'manual_drive'}
     node._manage.side_effect = RuntimeError('transition failed')
-    response = node._prepare('manual_drive', Trigger.Response())
+    response = _prepare(node, 'manual_drive')
     assert not response.success
     assert 'transition failed' in response.message
 
@@ -596,3 +657,41 @@ def test_selection_write_failure_does_not_break_loaded_map(monkeypatch):
     assert node._map_initialized
     node.get_logger().warning.assert_called_once()
     node._publish_map.assert_called_with(True, 'map provider ready')
+
+
+def test_saved_map_waits_for_late_pose_restore_server(monkeypatch):
+    node = _runtime()
+    node._map_server = object()
+    node._call = Mock(return_value=LoadMap.Response(result=LoadMap.Response.RESULT_SUCCESS))
+    finished = SimpleNamespace(done=lambda: True, result=lambda: SimpleNamespace(
+        result=SimpleNamespace(success=True, message='pose restored')))
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: finished)
+    accepted = SimpleNamespace(done=lambda: True, result=lambda: handle)
+    node._relocalize = Mock()
+    node._relocalize.server_is_ready.side_effect = [False, False, True]
+    node._relocalize.send_goal_async.return_value = accepted
+    monkeypatch.setattr(runtime_control.time, 'sleep', Mock())
+    RuntimeControl._map_provider(node, node.map_path)
+    assert node._relocalize.server_is_ready.call_count == 3
+    node._relocalize.send_goal_async.assert_called_once()
+    assert node._map_initialized
+    node._sync()
+    assert not node._active['motion']
+
+
+def test_missing_pose_restore_server_is_not_silently_reported_ready(monkeypatch):
+    node = _runtime()
+    node._map_server = object()
+    node._call = Mock(return_value=LoadMap.Response(result=LoadMap.Response.RESULT_SUCCESS))
+    node._relocalize = Mock()
+    node._relocalize.server_is_ready.return_value = False
+    now = [0.0]
+    monkeypatch.setattr(runtime_control.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(runtime_control.time, 'sleep',
+                        lambda seconds: now.__setitem__(0, now[0] + seconds))
+    with pytest.raises(RuntimeError, match='pose restore: Action server unavailable'):
+        RuntimeControl._map_provider(node, node.map_path)
+    assert not node._map_initialized
+    assert node._synced_demand is None
+    node._relocalize.send_goal_async.assert_not_called()
+    assert all(not call.args[0] for call in node._publish_map.call_args_list)

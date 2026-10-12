@@ -670,3 +670,43 @@ def test_late_spin_acceptance_is_canceled_and_settled_before_restore(monkeypatch
     handle.canceled.assert_called_once()
     assert events == ['spin stopped', 'limits restored']
     assert node.particle_limits == (500, 3000)
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_unconfirmed_spin_keeps_action_and_particles_until_actual_terminal(
+        monkeypatch, room, cancel):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    handle = _handle(Relocalize.Goal.GLOBAL_SEARCH)
+    stopped = Future()
+    child = SimpleNamespace(accepted=True, get_result_async=lambda: stopped,
+                            cancel_goal_async=Mock())
+    node.spin.send_goal_async = lambda _: _done(child)
+    normal_sleep = relocalization_node.time.sleep
+
+    def advance(seconds):
+        normal_sleep(seconds)
+        if not stopped.done():
+            node.amcl.estimate(*TRUE_POSE)
+            if cancel:
+                handle.is_cancel_requested = True
+            if node.clock.now >= 106.5:
+                stopped.set_result(SimpleNamespace())
+            else:
+                # A lost cancel result cannot release BASE or reset AMCL.
+                assert node.particle_limits == (2000, 8000)
+                handle.succeed.assert_not_called()
+                handle.canceled.assert_not_called()
+                handle.abort.assert_not_called()
+
+    monkeypatch.setattr(relocalization_node.time, 'sleep', advance)
+    node._execute(handle)
+    assert stopped.done()
+    child.cancel_goal_async.assert_called_once()
+    assert node.particle_limits == (500, 3000)
+    node.get_logger().warning.assert_called_once()
+    assert 'retaining motion ownership' in node.get_logger().warning.call_args.args[0]
+    if cancel:
+        handle.canceled.assert_called_once()
+    else:
+        handle.succeed.assert_called_once()

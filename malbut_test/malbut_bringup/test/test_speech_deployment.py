@@ -11,6 +11,10 @@ import pytest
 
 
 SOURCE = Path(__file__).parents[2]
+if not (SOURCE / 'malbut_test').is_dir():
+    SOURCE = SOURCE.parent
+if not (SOURCE / 'malbut_test').is_dir():
+    pytest.skip('Deployment parity requires the original checkout', allow_module_level=True)
 ROBOT = SOURCE / 'malbut_test'
 SPEECH_PACKAGES = ('malbut_agent_server', 'malbut_stt', 'malbut_tts')
 
@@ -59,12 +63,14 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_autoslam/launch/autoslam.launch.py',
         'malbut_autoslam/malbut_autoslam/autoslam_node.py',
         'malbut_bringup/malbut_bringup/runtime_control.py',
+        'malbut_bringup/malbut_bringup/map_selection.py',
         'malbut_bringup/scripts/runtime_control',
         'malbut_bringup/src/component_container_isolated.cpp',
         'malbut_bringup/src/sync_slam_toolbox.cpp',
         'malbut_autoslam/malbut_autoslam/slam_process.py',
         'malbut_system_manager/malbut_system_manager/mission_executor.py',
         'malbut_system_manager/malbut_system_manager/system_manager_node.py',
+        'malbut_relocalization/malbut_relocalization/relocalization_node.py',
         'malbut_interfaces/capabilities/autoslam.yaml',
         'malbut_bringup/launch/speech.launch.py',
         'malbut_bringup/malbut_bringup/speech_preflight.py',
@@ -97,6 +103,32 @@ def test_autoslam_backend_services_ship_with_runtime_dependencies():
         dependencies.append({item.text for item in manifest.findall('exec_depend')})
     assert dependencies[0] == dependencies[1]
     assert 'std_srvs' in dependencies[0]
+
+
+def test_robot_feature_idle_hooks_match_source():
+    """Ship input pause/resume and its launch wiring together on the robot."""
+    for path in (
+        'malbut_yolo/malbut_yolo/yolo_node.py', 'malbut_yolo/launch/yolo.launch.py',
+        'malbut_reid/malbut_reid/person_reidentifier_node.py',
+        'malbut_reid/launch/person_reidentification.launch.py',
+        'malbut_tracking/malbut_tracking/person_localizer_node.py',
+        'malbut_tracking/src/lidar_foreground_preprocessor.cpp',
+        'malbut_tracking/launch/person_detection.launch.py',
+        'malbut_tracking/launch/person_following.launch.py',
+        'malbut_tracking/launch/lidar_foreground.launch.py',
+    ):
+        assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
+    for path in ('malbut_patrol/patrol_manager.py', 'launch/patrol.launch.py'):
+        assert ((SOURCE / 'malbut_autonomy/malbut_patrol' / path).read_bytes() ==
+                (ROBOT / 'malbut_patrol' / path).read_bytes()), path
+    # The deployment intentionally omits benchmarks and test dependencies.
+    for base in (SOURCE, ROBOT):
+        cmake = (base / 'malbut_tracking/CMakeLists.txt').read_text()
+        assert 'find_package(std_srvs REQUIRED)' in cmake
+        for package in ('malbut_tracking', 'malbut_reid', 'malbut_yolo'):
+            manifest = ElementTree.parse(base / package / 'package.xml').getroot()
+            assert any(node.text == 'std_srvs' for node in manifest
+                       if node.tag in ('depend', 'exec_depend'))
 
 
 def _without_resource_monitor(deployed):
