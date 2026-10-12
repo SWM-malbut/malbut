@@ -12,7 +12,7 @@ from malbut_agent_server.domain.fall_monitoring import (
 )
 from malbut_agent_server.fall_runtime import event_metadata
 from malbut_agent_server.ports.fall_event_journal import FallJournalError
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 from test_cloud_fall_monitor import answer, candidate, enable, make
 from test_fall_cloud_association import BOX, HELPER, feed, finding, pose, reply
 

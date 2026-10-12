@@ -1,7 +1,7 @@
 # Malbut System Manager
 
 로봇의 기능 요청을 **검증하고, 실행 자원을 중재하며, 완료·취소 결과를 전달하는 미션 관리자**입니다.
-웹 브리지·음성 Agent·낙상 코디네이터는 같은 진입점으로 요청하고,
+웹 브리지·음성 Agent·Agent의 낙상 규칙은 같은 진입점으로 요청하고,
 관리자는 등록된 기능의 ROS Action 또는 Service를 실행합니다.
 
 사람을 찾거나 경로를 계산하는 알고리즘은 각 기능과 Nav2에 남겨 둡니다.
@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart TB
-    C["웹 브리지 · Agent · 낙상 코디네이터"]
+    C["웹 브리지 · Agent(대화 · 낙상 규칙)"]
     N["SystemManagerNode"]
     R["ManifestRegistry"]
     S["MissionScheduler"]

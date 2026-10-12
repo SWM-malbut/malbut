@@ -13,7 +13,7 @@ from pathlib import Path
 from replay_reviewed_pose_cloud import (
     REPO, digest, frozen_jpegs, read, replay_scene, require, save,
 )
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 
 
 def main():
@@ -34,9 +34,9 @@ def main():
     config_path = REPO / 'malbut_agent_server/config/fall_runtime.example.json'
     config = read(config_path)
     sources = {config_path: digest(config_path), Path(__file__): digest(__file__)}
-    for folder in ('malbut_agent_server/malbut_agent_server',
-                   'malbut_fall_coordinator/malbut_fall_coordinator'):
-        sources.update({p: digest(p) for p in (REPO / folder).rglob('*.py')})
+    # The fall rules (formerly the coordinator) are part of this folder.
+    folder = REPO / 'malbut_agent_server/malbut_agent_server'
+    sources.update({p: digest(p) for p in folder.rglob('*.py')})
     helper = Path(__file__).with_name('replay_reviewed_pose_cloud.py')
     sources[helper] = digest(helper)
     args.output.mkdir(mode=0o700, parents=True)

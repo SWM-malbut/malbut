@@ -89,7 +89,7 @@ def test_cli_records_current_coordinator_and_preserves_outputs(tmp_path, monkeyp
     plan = verification.read(output / 'plan.json')
     completed = verification.read(output / 'completed.json')
     coordinator = (verification.REPO /
-                   'malbut_fall_coordinator/malbut_fall_coordinator/fall_confirmation.py')
+                   'malbut_agent_server/malbut_agent_server/fall_rules/fall_confirmation.py')
     assert plan['code'][str(coordinator)] == verification.digest(coordinator)
     assert completed['code'] == plan['code']
     assert not any('malbut_system_manager' in name for name in plan['code'])

@@ -13,7 +13,7 @@ ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
     'homecam_agent/homecam_detector',
     'malbut_bringup', 'malbut_resource_monitor', 'malbut_interfaces', 'malbut_system_manager',
-    'malbut_fall_coordinator',
+    'malbut_fall_approach',
     'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
     'malbut_autoslam', 'malbut_relocalization',
@@ -174,16 +174,27 @@ def test_robot_copy_includes_the_same_fall_upload_startup_and_worker():
         assert (ROOT.parent / name).read_bytes() == (ROOT / name).read_bytes()
 
 
-def test_robot_fall_coordinator_matches_source_without_manager_domain_code():
-    """Ship the separated runtime, not a second relay inside the manager."""
-    package = ROOT.parent / 'malbut_fall_coordinator'
-    for source in (package / 'malbut_fall_coordinator').glob('*.py'):
-        deployed = ROOT / 'malbut_fall_coordinator' / source.relative_to(package)
+def test_robot_fall_rules_and_drive_match_source_without_manager_domain_code():
+    """Ship the Agent's fall rules and the drive, not a relay inside the manager."""
+    rules = 'malbut_agent_server/malbut_agent_server/fall_rules'
+    sources = sorted((ROOT.parent / rules).glob('*.py'))
+    assert [path.name for path in sources] == [
+        '__init__.py', 'fall_confirmation.py', 'fall_confirmation_link.py',
+        'fall_settings.py', 'fall_settings_link.py', 'node.py']
+    for source in sources:
+        assert source.read_bytes() == (ROOT / rules / source.name).read_bytes()
+    package = ROOT.parent / 'malbut_fall_approach'
+    for source in (package / 'malbut_fall_approach').glob('*.py'):
+        deployed = ROOT / 'malbut_fall_approach' / source.relative_to(package)
         assert source.read_bytes() == deployed.read_bytes()
-    for name in ('package.xml', 'setup.py', 'setup.cfg', 'resource/malbut_fall_coordinator'):
-        deployed = ROOT / 'malbut_fall_coordinator' / name
+    for name in ('package.xml', 'setup.py', 'setup.cfg', 'resource/malbut_fall_approach'):
+        deployed = ROOT / 'malbut_fall_approach' / name
         assert (package / name).read_bytes() == deployed.read_bytes()
-    assert not (ROOT / 'malbut_fall_coordinator/test').exists()
+    assert not (ROOT / 'malbut_fall_approach/test').exists()
+    assert not (ROOT / 'malbut_fall_coordinator').exists()
+    for name in ('malbut_bringup/launch/agent.launch.py',
+                 'malbut_agent_server/malbut_agent_server/ros_communication.py'):
+        assert (ROOT.parent / name).read_bytes() == (ROOT / name).read_bytes()
     manager = ROOT / 'malbut_system_manager/malbut_system_manager'
     assert not list(manager.glob('fall_*.py'))
     manifest = 'malbut_interfaces/capabilities/fall_confirmation.yaml'

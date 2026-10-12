@@ -142,10 +142,12 @@ Google Gemini 키로 대체하지 않는다. 키가 없으면 실제 실행이 �
 [전체 명세](fall_detection.md), [사건 저장](fall_storage_api.md).
 
 > **SWM25-164:** 낙상 설정 전달·heartbeat·확인 결과 검증·Agent 연결 책임은
-> 시스템 관리자에서 `malbut_fall_coordinator`로 이동했다. ROS/웹 인터페이스는 유지한다.
+> 시스템 관리자에서 `malbut_fall_coordinator`로 이동했고, 2026-10-11(SWM25-238)부터는 Agent 안의
+> 낙상 규칙(`malbut_fall_rules`)이 맡는다. ROS/웹 인터페이스는 유지한다. 이 문서의 "코디네이터"는
+> 이 낙상 규칙을 뜻한다.
 > VLM 파라미터·메시지의 `manager_runtime_id`와 홈캠의 `fall_manager_runtime_id`는
 > 이름을 유지하지만 낙상 코디네이터의 실행 ID를 담는다. 확인 대화만 일반 관리자의
-> `fall_confirmation` 미션으로 실행한다([현재 실행 구조](../../../malbut_fall_coordinator/README.md)).
+> `fall_confirmation` 미션으로 실행한다([현재 실행 구조](fall_rules.md)).
 
 ## 이번에 연결한 부분
 
@@ -262,14 +264,14 @@ ID를 아는 것만으로 호출자를 인증하지 않으며, ROS 접근 권한
 
 `robot.launch.py`의 통합 navigation 실행에서 VLM을 시작한다.
 `fall_monitor:=auto`가 기본이며,
-`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 코디네이터·VLM·낙상용 Pose를 각각 한 번 시작하고,
+`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 VLM·낙상용 Pose를 각각 한 번 시작하고(낙상 규칙은 Agent 항목이 켬),
 없으면 이유를 표시하고 건너뛴다. 설정 경로는 `MALBUT_FALL_CONFIG` 또는
 `fall_config` 인자로 지정한다. `fall_monitor:=true`는 설정 누락도 오류로 처리하고,
 `fall_monitor:=false`는 노드를 시작하지 않는다. 파일이 있는데 설정이 잘못된 경우는
 `auto`에서도 시작을 거부한다.
 
 최신 Bringup은 별도 `mode` 인자를 없앴다. Manager는 위치 추정을 위해 먼저 시작하고,
-낙상 코디네이터·VLM·Pose는 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
+낙상 규칙(Agent)·VLM·Pose는 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
 별도 `mapping_backend.launch.py`는 VLM을 시작하지 않는다.
 실제 수집·전송에는 여전히 최신 설정·연결 확인·동의가 필요하다.
 

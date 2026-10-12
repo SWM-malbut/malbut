@@ -20,7 +20,7 @@ from malbut_agent_server.domain.fall_monitoring import (
 )
 from malbut_agent_server.fall_runtime import apply_decision, event_metadata
 from malbut_agent_server.situation_dialogue import SituationDialogue, SituationInterpretation
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 
 
 def test_continuous_rest_is_one_episode_but_recovery_then_fall_starts_another(

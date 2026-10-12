@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.domain.fall_monitoring import CloudFallReply, IncidentState, VideoAssessment
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 from malbut_agent_server.fall_runtime import event_metadata
 from test_cloud_fall_monitor import candidate
 from test_fall_cloud_association import BOX, HELPER, feed, finding, pose

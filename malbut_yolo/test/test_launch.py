@@ -169,5 +169,5 @@ def test_lidar_include_does_not_replace_follower_tuning():
     assert files == [Path(original_config)]
     configured = yaml.safe_load(files[0].read_text())['person_follower']['ros__parameters']
     assert configured['desired_distance_m'] == 1.0
-    assert configured['distance_tolerance_m'] == 0.1
+    assert configured['distance_tolerance_m'] == 0.2  # One stop/resume band, 38190e0.
     assert configured['observation_loss_debounce_s'] == 0.75

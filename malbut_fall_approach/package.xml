@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>malbut_fall_approach</name>
+  <version>0.1.0</version>
+  <description>Drive near a fall suspicion, to a whole-body view, and back for the Manager.</description>
+  <maintainer email="sanggeunji0117@gmail.com">Malbut Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>action_msgs</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>malbut_interfaces</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

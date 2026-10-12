@@ -38,20 +38,12 @@ def _setup(context):
     fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
     fall_monitor = None
     fall_pose = None
-    fall_coordinator = None
-    # The legacy "manager" wire slot now belongs to the fall coordinator.
+    # The legacy "manager" wire slot belongs to the fall rules, which the agent
+    # module starts in the Agent with these same IDs from Bringup.
     fall_ids = {key: value('fall_' + key + '_runtime_id') or str(uuid4())
                 for key in ('manager', 'bridge', 'vlm')}
     if fall_inputs is not None:
         fall_config, fall_image_topic = fall_inputs
-        fall_coordinator = Node(
-            package='malbut_fall_coordinator', executable='fall_coordinator',
-            name='fall_coordinator', output='screen',
-            parameters=[{
-                'use_sim_time': False, 'runtime_id': fall_ids['manager'],
-                'bridge_runtime_id': fall_ids['bridge'], 'vlm_runtime_id': fall_ids['vlm'],
-            }],
-        )
         pose_model = _file(value('fall_pose_model_path'), 'Fall pose ONNX model')
         pose_python = str(Path(value('fall_pose_python_executable')).expanduser())
         _file(pose_python, 'Fall pose Python')
@@ -122,10 +114,19 @@ def _setup(context):
 
     if fall_inputs is None:
         return [LogInfo(msg='Fall module disabled: no configured fall runtime.')]
-    actions = [fall_coordinator, fall_monitor, fall_pose]
+    actions = [fall_monitor, fall_pose]
+    if not getattr(context.locals, 'malbut_modular_bringup', False):
+        # Run alone, this module brings the fall rules as the coordinator did;
+        # under Bringup the agent module runs them beside the dialogue.
+        actions.append(Node(
+            package='malbut_agent_server', executable='agent_communication',
+            output='screen', arguments=[
+                '--no-speech', '--fall-rules', '--fall-runtime-id', fall_ids['manager'],
+                '--fall-bridge-runtime-id', fall_ids['bridge'],
+                '--fall-vlm-runtime-id', fall_ids['vlm']]))
     if approach_on:
         actions.append(Node(
-            package='malbut_fall_coordinator', executable='fall_approach', name='fall_approach',
+            package='malbut_fall_approach', executable='fall_approach', name='fall_approach',
             output='screen', parameters=[{
                 'use_sim_time': False, 'global_frame': value('global_frame'),
                 'robot_frame': value('robot_frame')}]))

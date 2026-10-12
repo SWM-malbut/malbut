@@ -28,8 +28,9 @@ TF, Action이 없어도 먼저 켜진다. 외부 의존성은 실제 작업을 �
 | `autoslam.launch.py` | 탐색 서버·지도 저장 서버·내부 lifecycle 관리자 |
 | `manual.launch.py` | 수동 입력 adapter와 조이스틱 |
 | `relocalization.launch.py` | 위치 보정 Action 서버 |
-| `speech.launch.py` | STT·Agent·TTS |
-| `fall.launch.py` | 낙상 Pose·VLM 모니터·낙상 코디네이터 |
+| `speech.launch.py` | STT·TTS(혼자 실행하면 Agent도) |
+| `fall.launch.py` | 낙상 Pose·VLM 모니터·낙상 확인 이동(혼자 실행하면 낙상 규칙 Agent도) |
+| `agent.launch.py` | Agent: 낙상 규칙·대화 중 시작된 모듈에 맞는 쪽 |
 | `homecam.launch.py` | 기존 홈캠 미디어 launch, 공통 카메라 Topic 재사용 |
 | `bringup.launch.py` | 선택한 위 모듈을 함께 실행하는 통합 진입점 |
 
@@ -89,7 +90,7 @@ STT의 기존 CUDA 초기화 재시도와 제한시간은 유지하되, 음성 �
 
 `bringup.launch.py`는 독립 `fall.launch.py`를 통해 Cloud VLM 실행기
 `malbut-fall-monitor`를 함께 시작한다. Manager는 위치 추정을 위해 먼저 시작하며,
-설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 다른 모듈 준비를 기다리지 않고 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+설정이 준비되어 있으면 VLM·Pose와 Agent의 낙상 규칙은 다른 모듈 준비를 기다리지 않고 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
 `rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
 
 최신 Bringup은 `mode` 인자를 없앴다. `mode:=navigation`을 넘길 필요가 없다.
@@ -135,15 +136,15 @@ GPU 의존성 설치와 사전 점검은
 Jetson에서의 실제 처리 fps·CPU/GPU 부하는 별도 확인 대상이다.
 
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
-시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
-코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
+시작 시 지정한 낙상 규칙 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
+낙상 규칙의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
 Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필요하다.
-Bringup은 홈캠·낙상 코디네이터·VLM에 같은 실행 ID 묶음을 전달하고,
-홈캠이 서버 설정을 받으면 코디네이터가 VLM에 적용한다. 준비 완료나 노드 시작만으로
-감지·Cloud 전송을 켜지는 않는다. 확인 대화는 코디네이터가 관리자에
+Bringup은 홈캠·Agent 낙상 규칙·VLM에 같은 실행 ID 묶음을 전달하고,
+홈캠이 서버 설정을 받으면 낙상 규칙이 VLM에 적용한다. 준비 완료나 노드 시작만으로
+감지·Cloud 전송을 켜지는 않는다. 확인 대화는 낙상 규칙이 관리자에
 `fall_confirmation` 미션(`URGENT`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
 관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
-호환성을 위해 이름만 유지하며 코디네이터 ID를 담는다.
+호환성을 위해 이름만 유지하며 낙상 규칙 ID를 담는다.
 
 API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
 설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을

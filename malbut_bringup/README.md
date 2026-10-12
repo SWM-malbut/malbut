@@ -49,8 +49,9 @@ flowchart TB
 | [autoslam](launch/autoslam.launch.py) | 탐색 서버·지도 저장 서버 | 지도, Nav2, 관리자의 SLAM 시작·종료 서비스 |
 | [manual](launch/manual.launch.py) | 수동 입력 adapter·제조사 조이스틱 | `/cmd_vel_teleop`, 관리자, AssistedTeleop |
 | [relocalization](launch/relocalization.launch.py) | 위치 보정 Action 서버 | AMCL, LiDAR·지도, Nav2 Spin |
-| [speech](launch/speech.launch.py) | STT·Agent·TTS, 날씨·키 동기화 | 마이크·스피커, 대화 Topic·Action, 관리자 |
-| [fall](launch/fall.launch.py) | Pose·Cloud VLM·낙상 코디네이터, 사건 업로더 | 공통 영상, 감지 설정·동의, 관리자, 클라우드 |
+| [speech](launch/speech.launch.py) | STT·TTS, 날씨·키 동기화(혼자 실행하면 Agent도) | 마이크·스피커, 대화 Topic·Action, 관리자 |
+| [fall](launch/fall.launch.py) | Pose·Cloud VLM·낙상 확인 이동, 사건 업로더(혼자 실행하면 낙상 규칙 Agent도) | 공통 영상, 감지 설정·동의, 관리자, 클라우드 |
+| [agent](launch/agent.launch.py) | Agent: 낙상 규칙(낙상이 시작됐을 때)·대화(음성이 시작됐을 때) | 낙상·음성 모듈 결과, 관리자 |
 | [homecam](launch/homecam.launch.py) | 홈캠 미디어 에이전트 | 공통 영상·음성, KVS, 클라우드 |
 | [cloud](launch/cloud.launch.py) | 웹 명령·상태 브리지 | 기기 인증, 웹 API, 소유한 Bringup |
 
@@ -193,13 +194,13 @@ STT와 홈캠이 XFM 마이크 0번을 함께 쓰는 통합 구성에서는 Puls
 | [Nav2 DDS XML](config/fastdds_nav2.xml) | `nav2_container` 프로세스 | `send_buffers.dynamic=true` |
 | [마이크 입력 공유](malbut_bringup/speech_audio.py) | STT·홈캠 | 같은 입력을 두 소비자에게 전달 |
 | 낙상 전용 Python | Pose 노드 | 준비된 ONNX Runtime에서 `auto`로 CUDA 우선 선택 |
-| 낙상 실행 ID 묶음 | 홈캠·코디네이터·VLM·Pose | 같은 실행 회차의 설정·상태 연결 |
+| 낙상 실행 ID 묶음 | 홈캠·Agent 낙상 규칙·VLM·Pose | 같은 실행 회차의 설정·상태 연결 |
 
 DDS 설정은 위 범위에만 적용하며 다른 모듈의 QoS·발행 주기를 함께 바꾸지 않습니다.
 외부에서 이미 실행한 카메라에는 Bringup의 환경 설정이 적용되지 않습니다.
 
 낙상 노드 실행과 감지·클라우드 전송 허용은 별개입니다.
-실제 감지는 카메라·감지 설정·코디네이터 연결을, 클라우드 분석은 전송 동의도 확인합니다.
+실제 감지는 카메라·감지 설정·낙상 규칙 연결을, 클라우드 분석은 전송 동의도 확인합니다.
 사건 업로더는 별도 CLI 프로세스로 로컬 기록과 클립 메타데이터를 전송하며,
 KVS 영상 녹화 자체를 대신하지 않습니다.
 설정 연결은 [fall_setup.py](malbut_bringup/fall_setup.py), 전체 조건은
