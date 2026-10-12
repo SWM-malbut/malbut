@@ -390,7 +390,9 @@ def _feedback_at(x, y):
     ({'state': 'ABORTED', 'result': {
         'message': 'conflicting mission abc has higher priority HIGH'}}, None, 'manual_drive'),
     ({'state': 'ABORTED', 'result': {
-        'message': 'conflicting mission abc has higher priority URGENT'}}, None, 'fall_check'),
+        'message': 'conflicting mission abc has higher priority URGENT'}}, None, 'unknown'),
+    ({'state': 'ERROR', 'message': 'fall check is in progress; only manual driving is available'},
+     None, 'fall_check'),
     ({'state': 'ABORTED', 'result': {'message': 'mission preempted by a replacement request'}},
      {'active_foreground_missions': [{'capability_id': 'fall_confirmation'}]},
      'fall_check_started'),

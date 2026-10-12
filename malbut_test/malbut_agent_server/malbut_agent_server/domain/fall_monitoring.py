@@ -574,6 +574,35 @@ class PostureCheckRequest:
 
 
 @dataclass(frozen=True)
+class SamePersonCheckRequest:
+    """The first scene of an incident and the person seen on going back (참고 only).
+
+    ``before_box`` marks the person in the first frames (normalized left, top,
+    right, bottom), None when it was not measured. The robot faces the person
+    in ``after``, so that person is near the image centre.
+    """
+
+    request_id: str
+    before: FrameWindow = field(repr=False)
+    before_box: Optional[Tuple[float, float, float, float]]
+    after: FrameWindow = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SamePersonCheckReply:
+    """Clothing compared across the two scenes; never identity, never a decision."""
+
+    verdict: str
+    explanation: str
+
+    def __post_init__(self):
+        if (self.verdict not in ('same', 'different', 'unclear')
+                or not isinstance(self.explanation, str) or not self.explanation.strip()
+                or len(self.explanation) > 1000):
+            raise ValueError('invalid same person check reply')
+
+
+@dataclass(frozen=True)
 class PostureCheckReply:
     """furniture: on a bed, chair or sofa; standing; floor: sitting, kneeling or lying on it."""
 
@@ -645,7 +674,8 @@ class CloudAnalysisExplanation:
     def __post_init__(self):
         identifier(self.request_id)
         if (not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', self.request_id)
-                or self.purpose not in {'incident', 'crosscheck', 'person_check', 'posture_check'}
+                or self.purpose not in {'incident', 'crosscheck', 'person_check', 'posture_check',
+                                        'same_person_check'}
                 or not isinstance(self.assessment, VideoAssessment)
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):
@@ -684,6 +714,8 @@ class FallRuntimeEvent:
     analysis: Optional[CloudAnalysisExplanation] = field(default=None, repr=False)
     # Map point to look at from 1 m before asking (question_requested only).
     approach_target: Optional[Tuple[float, float]] = None
+    # Map point of the suspicion, to go back to after a minute of waiting.
+    revisit_target: Optional[Tuple[float, float]] = None
 
 
 @dataclass
@@ -739,4 +771,7 @@ class FallIncident:
     scene_request_id: Optional[str] = None
     # Not sure it is a person: drive near this map point before asking.
     approach_target: Optional[Tuple[float, float]] = None
+    # Where the suspicion is, whether or not a person is sure there: the robot
+    # goes back here before asking when it could not ask for a minute.
+    revisit_target: Optional[Tuple[float, float]] = None
     merged_into_incident_ids: Tuple[str, ...] = ()

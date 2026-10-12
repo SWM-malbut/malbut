@@ -17,6 +17,7 @@ import { ManagedRobotTools } from "./managed-robot-tools";
 import { useManagedRobotWorkspace } from "./managed-robot-workspace";
 import { MapDrivePad, RealRobotMapManager, useMapLabels } from "./real-robot-map-manager";
 import { mapCheckCard, mapCheckDriveHint, mapCheckFacts, readMapCheck } from "../robot-map-check-copy";
+import { FALL_CHECK_LOCK_NOTE, fallCheckView } from "../robot-fall-check-copy";
 import {
   NAVIGATION_ESCAPING_NOTE, NAVIGATION_ESCAPING_TITLE, NAVIGATION_FAILED_TITLE, navigationFailureCopy,
 } from "../robot-navigation-copy";
@@ -367,6 +368,8 @@ export function RobotMapPanel({
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
+  // 목업 27번: 낙상 확인 중에는 직접 움직이기 말고는 이동을 보내지 않는다(말벗도 거절한다).
+  const fallCheck = fallCheckView(driveMode?.detail);
   const navigationDriving = navigation?.state === "driving" || navigation?.state === "canceling";
   const navigationSession = typeof navigation?.session_id === "string" ? navigation.session_id : "";
   const previewToken = previewExpiresAt > clockNow && typeof navigationPreview?.preview_token === "string"
@@ -533,6 +536,7 @@ export function RobotMapPanel({
     }
     const geometry = snapshot?.map?.geometry;
     if (!geometry || navigationBusy) return;
+    if (fallCheck && mapMode === "navigate") return;
     // 방·구역 편집은 말벗이 꺼져 있어도 된다(켜지면 반영). 목적지는 켜져 있을 때만 고른다.
     if (!snapshot?.online && mapMode !== "rooms" && mapMode !== "zones") return;
     if (!isOwner && mapMode !== "navigate") return;
@@ -1620,6 +1624,10 @@ export function RobotMapPanel({
             );
             return <span className={`robot-map-goal ${runtimeMode === "mapping" ? "is-exploration" : ""}`} style={{ left: `${goal.left}%`, top: `${goal.top}%` }} aria-label={runtimeMode === "mapping" ? "다음 자동 탐색 목표" : "선택한 목적지"} />;
           })()}
+        {fallCheck?.target && (() => {
+          const spot = worldToPercent(fallCheck.target.x, fallCheck.target.y, snapshot.map.geometry);
+          return <span className="robot-map-fall-spot" style={{ left: `${spot.left}%`, top: `${spot.top}%` }} aria-label="낙상 의심 장소" />;
+        })()}
         {marker && (
           <span
             className={`robot-map-marker ${navigationDriving ? "is-driving" : ""}`}
@@ -1643,6 +1651,7 @@ export function RobotMapPanel({
   const mapLegend = (
     <div className="robot-map-legend ui-map-legend">
       <span><i className="is-robot" />말벗</span>
+      {fallCheck?.target && <span><i className="is-fall-spot" />낙상 의심 장소</span>}
       <span><i className="is-goal" />목적지</span>
       <span><i className="is-route" />경로</span>
       {roomDrafts.length > 0 && <span><i className="is-room" />방 경계·이름</span>}
@@ -1679,6 +1688,7 @@ export function RobotMapPanel({
             <strong className="ui-map-status-title">
               {mapping && realRobot ? "새 지도를 만들고 있어요 · 지도 관리에서 진행을 볼 수 있어요"
                 : mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
+                : fallCheck ? fallCheck.title
                 : showCheckCard && checkCard ? checkCard.title
                 : navigationEscaping ? NAVIGATION_ESCAPING_TITLE
                 : navigationFailed ? NAVIGATION_FAILED_TITLE
@@ -1688,7 +1698,19 @@ export function RobotMapPanel({
                       : navigating ? "지도에서 보낼 곳을 선택해 주세요"
                         : snapshot?.map ? "저장된 지도를 사용하고 있어요" : "아직 저장된 지도가 없어요"}
             </strong>
-            {!mapping && showCheckCard && checkCard && (
+            {!mapping && fallCheck && (
+              <>
+                <span className="ui-map-status-detail">{fallCheck.detail}</span>
+                <div role="status" className="ui-map-notice is-danger">{FALL_CHECK_LOCK_NOTE}</div>
+                {!canStartPreview && (
+                  <div className="ui-two-buttons">
+                    <button type="button" className="ui-button" disabled>다시 선택</button>
+                    <button type="button" className="ui-button is-strong" disabled>이 위치로 이동</button>
+                  </div>
+                )}
+              </>
+            )}
+            {!mapping && !fallCheck && showCheckCard && checkCard && (
               <>
                 <div role="status" className={`ui-map-notice is-${checkCard.tone}`}>{checkCard.note}</div>
                 {isOwner && checkCard.relocalize && (
@@ -1750,8 +1772,8 @@ export function RobotMapPanel({
             )}
             {canStartPreview && (
               <div className="ui-two-buttons">
-                <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
-                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
+                <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }} disabled={Boolean(fallCheck)}>다시 선택</button>
+                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(fallCheck) || Boolean(activeCommand) || busy}>이 위치로 이동</button>
               </div>
             )}
             {navigationDriving && typeof navigation?.session_id === "string" && (
@@ -1790,7 +1812,7 @@ export function RobotMapPanel({
                     key={featureId(room)}
                     type="button"
                     className="ui-button"
-                    disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(activeCommand) || busy}
+                    disabled={!snapshot?.online || navigationBusy || autonomousModeActive || Boolean(fallCheck) || Boolean(activeCommand) || busy}
                     onClick={() => {
                       const point = featureWorldLabelPoint(room);
                       if (!point) return;
@@ -1807,7 +1829,8 @@ export function RobotMapPanel({
             <article className="ui-card">
               <h2>자율주행</h2>
               <span className="ui-caption">
-                {realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
+                {fallCheck ? "낙상 확인이 끝나면 다시 시작할 수 있어요."
+                  : realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
                   : "방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."}
               </span>
               {activeAutonomousMode && autonomousSession && !canPause ? (
@@ -1902,14 +1925,14 @@ export function RobotMapPanel({
                       type="button"
                       className="ui-button"
                       onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
-                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
+                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("roaming") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
                     >자율 배회 시작</button>
                   )}
                   <button
                     type="button"
                     className="ui-button"
                     onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationBusy || autonomousModeActive || !availableAutonomousModes.includes("person_following") || fallCheckActive(driveMode) || Boolean(activeCommand) || busy}
                   >사람 따라가기</button>
                   {typeof driveMode?.detail?.follow_distance_m === "number" && (
                     <p className="ui-note">말벗 앞에 보이는 사람을 {driveMode.detail.follow_distance_m}m 거리로 따라가요.</p>
@@ -2299,6 +2322,7 @@ export function RobotMapPanel({
           busy={busy}
           commandActive={Boolean(activeCommand)}
           driveActive={navigationBusy || autonomousModeActive}
+          fallCheckActive={fallCheckActive(driveMode)}
           roomCount={originalRooms.length}
           sendCommand={sendCommand}
         />
@@ -3580,6 +3604,9 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
       ? (result.returned === true ? "확인 결과: 사람 아님 · 원래 자리로 돌아왔어요" : "확인 결과: 사람 아님")
       : offFloor ? (result.returned === true ? "확인 결과: 앉아 있거나 서 있어 묻지 않음 · 원래 자리로 돌아왔어요"
         : "확인 결과: 앉아 있거나 서 있어 묻지 않음")
+      // 다시 가서 본 뒤 묻지 않고 보호자에게 알림만 보냄(목업 28번).
+      : result.fall_result === "reported" ? (result.returned === true
+        ? "확인 결과: 보호자에게 알렸어요 · 원래 자리로 돌아왔어요" : "확인 결과: 보호자에게 알렸어요")
       : result.fall_result === "person" ? "확인 결과: 사람 · 말벗이 그 자리에 있어요"
         : result.fall_result === "unreachable" ? "가까이 가지 못해 그 자리에서 물어봤어요" : "확인 중이에요";
     const lines = [
@@ -3593,10 +3620,14 @@ function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
   return null;
 }
 
-/** 낙상 확인 미션이 바퀴를 쓰는 동안: 순찰을 시작해도 말벗이 받아 주지 않는다. */
+/**
+ * 낙상 확인을 시작해서 끝날 때까지(사이 틈 포함): 말벗은 직접 움직이기 말고는 이동을 받지 않는다
+ * (목업 27번). 예전 말벗은 낙상 미션이 바퀴를 쓰는 동안만 알려 준다.
+ */
 function fallCheckActive(value: RobotDriveModeSnapshot | undefined) {
   return value?.detail?.fall_check_active === true;
 }
+
 
 function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
   const available = value?.detail?.available_modes;

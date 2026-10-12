@@ -63,7 +63,7 @@ ros2 run malbut_agent_server malbut-fall-preflight --config /etc/malbut/fall_run
 - 설정 형식과 예시 device ID 사용 여부. 서버에 등록된 ID인지 조회하지는 않는다.
 - Cloud 키 파일 존재 여부·크기·소유자·권한. **키 내용을 열거나 출력하지 않는다.**
 - DB 부모 디렉터리의 쓰기 권한·소유자·보호 설정. 기존 DB가 있으면 파일 권한도 확인한다.
-- VLM·낙상 코디네이터·Manager·홈캠·인터페이스 패키지의 설치 경로와 필요한 실행 파일.
+- VLM·낙상 확인 이동·Manager·홈캠·인터페이스 패키지의 설치 경로와 필요한 실행 파일.
 - Pose 모델과 Python 실행 경로. `tracking`을 설정했다면 SAM 소스·체크포인트·Python 경로도 확인한다.
 
 설정 파일은 일반 파일이어야 하며 심볼릭 링크를 허용하지 않는다.
@@ -177,8 +177,8 @@ Python 실행 의존성이 모두 설치되는 것은 아니다.
 ### 1-1. 낙상용 YOLO-Pose 준비
 
 `malbut_test`에는 원본의 여러 사람 추적, 낙상 후보 생성, RGB/depth 처리 모듈도 함께 넣는다.
-빌드 목록에 `homecam_detector`와 `malbut_fall_coordinator`를 포함하고, Bringup이 준비되면 VLM·
-`malbut_fall_pose`·낙상 코디네이터를 각각 한 번 시작한다. 홈캠 미디어 실행 파일은 영상 전송만 하며
+빌드 목록에 `homecam_detector`와 `malbut_fall_approach`를 포함하고, Bringup이 준비되면 VLM·
+`malbut_fall_pose`를 각각 한 번 시작하고 Agent 항목이 낙상 규칙을 켠다. 홈캠 미디어 실행 파일은 영상 전송만 하며
 감지기를 띄우지 않는다(일반 감지 모드는 2026-10-03 제거).
 
 실기기 `build.sh`가 Pose 전용 `~/.cache/malbut_fall_pose/runtime`을 준비한다.

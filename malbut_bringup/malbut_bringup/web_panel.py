@@ -21,7 +21,7 @@ import uuid
 
 import yaml
 
-from .drive_mode import PatrolFallStops
+from .drive_mode import fall_check_active, FALL_CHECK_REFUSAL, PatrolFallStops
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zone_override import ZoneOverride
@@ -55,6 +55,15 @@ ZONES_STATE_TOPIC = '/malbut/zones/state'
 # Room patrol's stage, coverage and last result, whoever started it (지도 탭 자율주행).
 PATROL_STATUS_TOPIC = '/patrol/status'
 FALL_APPROACH_STATUS_TOPIC = '/malbut/falls/approach/status'
+# The Agent fall rules say every second whether a fall check is on, from its first
+# drive to the end of its return, gaps included; silent for 3 s means it is not
+# (the Agent stopped). Meanwhile only 직접 움직이기 moves the robot (목업 27번).
+FALL_CHECK_STATUS_TOPIC = '/malbut/falls/check/status'
+FALL_CHECK_STATUS_TIMEOUT_S = 3.0
+FALL_CHECK_BLOCKED = ('navigate_to_pose', 'patrol', 'follow_person', 'relocalize', 'autoslam')
+# 처리 완료 in the app, from each state upload's reply (cloud_sync): the fall
+# runtime stops checking those incidents.
+GUARDIAN_CLOSED_TOPIC = '/malbut/falls/incidents/closed'
 MISSION_ACTION = '/malbut/mission/execute'
 MAX_ZONE_REQUEST_BYTES = 64 * 1024
 # RViz's 2D Pose Estimate spread: 0.5 m and about 15 degrees.
@@ -330,6 +339,7 @@ class PanelData:
         self.zones = None
         self.patrol = None
         self.fall_approach = None
+        self.fall_check = None  # (status, monotonic time received)
         self.patrol_fall_stops = PatrolFallStops()
         self.patrol_fall = None
         self.manual = {'state': 'IDLE', 'message': ''}
@@ -400,6 +410,21 @@ class PanelData:
                 self.encoded = (frame[0], image_jpeg(message))
             return self.encoded[1]
 
+    def fall_check_status(self, now=None):
+        """Return the fall rules' latest status, or None when silent for 3 s."""
+        with self.lock:
+            if self.fall_check is None:
+                return None
+            status, received = self.fall_check
+            if (time.monotonic() if now is None else now) - received > FALL_CHECK_STATUS_TIMEOUT_S:
+                return None
+            return copy.deepcopy(status)
+
+    def fall_check_active(self):
+        """Tell whether a fall check runs or waits (Manager fall missions or the rules)."""
+        with self.lock:
+            return fall_check_active(self.system, self.fall_check_status())
+
     def snapshot(self):
         """Return a thread-safe status copy without exposing tokens or images."""
         with self.lock:
@@ -408,6 +433,7 @@ class PanelData:
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
                 'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
                 'patrol': self.patrol, 'patrol_fall': self.patrol_fall,
+                'fall_check': self.fall_check_status(),
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
                                 for key, frame in self.frames.items()},
             })
@@ -445,6 +471,8 @@ class RosBridge:
         self.to_dict = message_to_ordereddict
         self.twist = Twist
         self.teleop_publisher = self.node.create_publisher(Twist, TELEOP_TOPIC, 10)
+        self.string = String
+        self.closed_falls_publisher = self.node.create_publisher(String, GUARDIAN_CLOSED_TOPIC, 10)
         self.teleop_received = None
         self.teleop_hold_s = TELEOP_TIMEOUT_S
         self.clients = {
@@ -519,6 +547,8 @@ class RosBridge:
             self.node.create_subscription(
                 String, FALL_APPROACH_STATUS_TOPIC, self._fall_approach,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, FALL_CHECK_STATUS_TOPIC, self._fall_check, 10),
             self.node.create_subscription(
                 OccupancyGrid, self.topics['map_topic'], self._map,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
@@ -733,9 +763,25 @@ class RosBridge:
                 self.data.fall_approach = state
                 self._observe_fall_stop()
 
+    def _fall_check(self, message):
+        try:
+            state = json.loads(message.data)
+        except ValueError:
+            return
+        if isinstance(state, dict) and len(message.data) <= 4096:
+            with self.data.lock:
+                self.data.fall_check = (state, time.monotonic())
+                self._observe_fall_stop()
+
+    def publish_closed_falls(self, incident_ids):
+        """Forward incidents a member closed in the app to the fall runtime."""
+        self.closed_falls_publisher.publish(self.string(data=json.dumps(
+            {'incident_ids': list(incident_ids)})))
+
     def _observe_fall_stop(self):
         self.data.patrol_fall = self.data.patrol_fall_stops.observe(
-            self.data.system, self.data.patrol, self.data.fall_approach)
+            self.data.system, self.data.patrol, self.data.fall_approach,
+            self.data.fall_check_status())
 
     def _zones(self, message):
         try:
@@ -1040,6 +1086,11 @@ class RosBridge:
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
+        if (payload['command'] == 'start' and capability in FALL_CHECK_BLOCKED
+                and self.data.fall_check_active()):
+            # The app and this panel both start here; 직접 움직이기, recovery and the
+            # developer screen's debug_start stay open.
+            raise ValueError(FALL_CHECK_REFUSAL)
         if capability == 'navigate_to_pose':
             info = self.data.map_snapshot()
             if (not info.get('active') or info.get('frame_id') != 'map'

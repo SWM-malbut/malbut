@@ -11,7 +11,7 @@ from malbut_agent_server.application.fall_detector_input import FallDetectorInpu
 from malbut_agent_server.application.fall_pose_aliases import LowPoseAliases
 from malbut_agent_server.domain.fall_monitoring import SubjectFrame, SubjectCheckState, IncidentState
 from malbut_agent_server.fall_runtime import event_metadata, apply_decision
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 from test_cloud_fall_monitor import make, frame
 from test_fall_cloud_association import pose, finding, reply, HELPER
 

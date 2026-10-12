@@ -18,7 +18,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     CandidateKind, CloudFallReply, CloudFallRequest, CloudPersonFinding,
     CloudPersonRegion, IncidentState, VideoAssessment,
 )
-from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
 
 
 pytestmark = pytest.mark.skipif(not RUN_ROS, reason='opt-in live ROS deferred-link check')

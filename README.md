@@ -18,7 +18,7 @@
 | 사람 인식과 추적 | 영상의 사람 ID와 RGB-D 위치를 연결하고, LiDAR 관측을 보조로 사용해 선택한 사람을 따라가기 | [인식](malbut_yolo/README.md) · [ID 관리](malbut_reid/README.md) · [추적](malbut_tracking/README.md) |
 | 실내 이동과 순찰 | 목적지 이동, 구역 순찰, 수동 조작을 공통 실행·취소 정책으로 처리 | [시스템 관리자](malbut_system_manager/README.md) · [순찰](malbut_autonomy/malbut_patrol/README.md) |
 | 지도 작성과 위치 추정 | 미탐색 경계를 따라 탐색·저장하고, 저장 지도에서 AMCL로 로봇 위치 추정 | [AutoSLAM](malbut_autoslam/README.md) · [위치 보정](malbut_relocalization/README.md) |
-| 낙상 의심 상황 확인 | 사람별 자세 관측, 영상 분석, 확인 대화와 사건 상태·기록 연결 | [낙상 런타임](malbut_agent_server/docs/fall/fall_runtime.md) · [코디네이터](malbut_fall_coordinator/README.md) |
+| 낙상 의심 상황 확인 | 사람별 자세 관측, 영상 분석, 확인 대화와 사건 상태·기록 연결 | [낙상 런타임](malbut_agent_server/docs/fall/fall_runtime.md) · [낙상 규칙](malbut_agent_server/docs/fall/fall_rules.md) |
 | 원격 홈캠 | 실시간 영상·음성, 녹화·사건 조회, 로봇 지도와 기능 요청 | [미디어 에이전트](homecam_agent/README.md) · [웹](malbut_web/README.md) |
 
 ## 전체 시스템
@@ -102,9 +102,9 @@ sequenceDiagram
 
 | 요청 예시 | 우선순위 | 독점 자원 |
 | --- | --- | --- |
-| 낙상 확인 대화 | `URGENT` | `BASE`, `SPEAKER` |
 | 수동 조작 | `HIGH` | `BASE` |
 | 사람 추적 · 목적지 이동 · 지도 작성 | `NORMAL` | `BASE` |
+| 낙상 확인 이동 · 대화 (직접 조작은 끊지 않음) | `NORMAL` | `BASE`, 대화는 `SPEAKER`도 |
 | 순찰 | `LOW` | `BASE` |
 
 웹의 명령 접수 완료와 로봇 미션의 실행 완료는 별도 상태로 관리합니다.
@@ -175,7 +175,7 @@ flowchart TB
 ```
 
 Pose는 사람별 자세 관측과 의심 후보를 만들고, 사건 런타임은 영상 근거와 분석 결과를 관리합니다.
-확인 대화가 필요하면 코디네이터가 기존 관리자·Agent 경로를 이용합니다.
+확인 대화가 필요하면 Agent의 낙상 규칙이 기존 관리자·Agent 경로를 이용합니다.
 낙상 전용 대화 엔진이나 별도의 주행 관리자를 만들지 않습니다.
 
 확인 미션은 `BASE`와 `SPEAKER`를 함께 확보하며, 실행 ID·요청 ID·근거 버전으로
@@ -263,7 +263,7 @@ malbut/
 ├── malbut_autoslam/          자동 탐색 · 지도 저장
 ├── malbut_relocalization/    저장 지도에서 위치 보정
 ├── malbut_autonomy/          순찰 · 자율 순회
-├── malbut_fall_coordinator/  낙상 확인 대화 연결 · 사건/요청 버전 검증
+├── malbut_fall_approach/     낙상 확인 이동(다가가기 · 몸 전체 보기 · 돌아오기)
 ├── homecam_agent/            미디어 전송 · 사람별 Pose · 낙상 후보
 ├── malbut_web/               웹 · 장치 API · 데이터 모델 · AWS 인프라
 ├── malbut_description/       로봇 형상 · 센서 프로필
@@ -284,7 +284,7 @@ malbut/
 | ROS 기능 인터페이스 | [공용 인터페이스](malbut_interfaces/README.md) · [기능 등록](malbut_interfaces/capabilities) |
 | 대화와 사용자 기억 | [Agent 명세](malbut_agent_server/docs/malbut_agent.md) · [대화·기억 구현](malbut_agent_server/README.md) |
 | 사람 위치와 추적 정책 | [추적 설계](malbut_tracking/README.md) |
-| 낙상 사건과 확인 대화 | [사건 런타임](malbut_agent_server/docs/fall/fall_runtime.md) · [코디네이터](malbut_fall_coordinator/README.md) |
+| 낙상 사건과 확인 대화 | [사건 런타임](malbut_agent_server/docs/fall/fall_runtime.md) · [낙상 규칙](malbut_agent_server/docs/fall/fall_rules.md) · [낙상 확인 이동](malbut_fall_approach/README.md) |
 | 스트리밍·웹·배포 | [미디어 에이전트](homecam_agent/README.md) · [웹·클라우드](malbut_web/README.md) |
 | 실기기 측정과 로그 시각화 | [자원 측정 도구](malbut_test/malbut_resource_monitor/README.md) |
 

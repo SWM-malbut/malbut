@@ -421,7 +421,7 @@ def test_vlm_manager_real_agent_round_trip_applies_final_user_judgment(
     rig, mission_manager, answer, assessment, help_needed,
 ):
     from std_msgs.msg import String
-    from malbut_fall_coordinator.fall_confirmation_link import FallConfirmationLink
+    from malbut_agent_server.fall_rules.fall_confirmation_link import FallConfirmationLink
     from malbut_agent_server.fall_runtime import apply_decision, event_metadata
     from test_fall_confirmation_result import assessed
 

@@ -46,7 +46,7 @@ def replay(rig, request_id, *, summary='거실 바닥에 누워 있는 사람이
 def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
     rig, mission_manager, restart_after_result,
 ):
-    from malbut_fall_coordinator.fall_confirmation_link import FallConfirmationLink
+    from malbut_agent_server.fall_rules.fall_confirmation_link import FallConfirmationLink
     from malbut_agent_server.fall_runtime import apply_decision, event_metadata
     from test_fall_confirmation_result import assessed
 

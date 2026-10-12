@@ -50,6 +50,10 @@ def _setup(context):
                 enabled.remove(name)
                 context.locals.malbut_modules[name] = str(error)
             actions.append(LogInfo(msg=str(error)))
+    # The Agent holds the fall rules and the dialogue. Included after fall and
+    # speech so it can see which of them started (agent.launch.py "auto").
+    if 'fall' in enabled or 'speech' in enabled:
+        enabled.append('agent')
     for name in enabled:
         settings = dict(options)
         if name == 'robot' and value('relocalization') != 'true':
@@ -86,7 +90,7 @@ def _setup(context):
         'patrol': ['patrol_manager'], 'autoslam': ['autoslam', 'autoslam_map_saver'],
         'manual': ['manual_control'], 'relocalization': ['relocalization'],
         'homecam': ['homecam_media_agent'],
-        'fall': ['fall_coordinator', 'malbut_fall_pose', 'malbut_cloud_fall_monitor'],
+        'fall': ['malbut_fall_rules', 'malbut_fall_pose', 'malbut_cloud_fall_monitor'],
         'speech': ['malbut_stt', 'malbut_agent_communication', 'malbut_tts'],
     }
     endpoints = {

@@ -134,7 +134,8 @@ GROUPS = {
     'speech': ('stt', 'stt_node', 'tts_node', 'tts_receiver',
                'agent_communication', 'speech_runtime'),
     'web_media': ('homecam_media_agent_node', 'robot_cloud_sync', 'robot_web_panel'),
-    'fall': ('malbut-fall-monitor', 'fall_coordinator', 'homecam_detector_node'),
+    # The fall rules run inside agent_communication (speech) since SWM25-238.
+    'fall': ('malbut-fall-monitor', 'homecam_detector_node'),
     'observer': ('resource_recorder', 'resource_viewer', 'tegrastats'),
 }
 

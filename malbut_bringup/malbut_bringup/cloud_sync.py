@@ -55,6 +55,23 @@ MAX_RESULT_BYTES = 60 * 1024
 MANUAL_POLL_S = 0.2
 MANUAL_FAST_WINDOW_S = 3.0
 MANUAL_HOLD_S = 1.0
+# The state upload's reply names at most this many closed fall incidents.
+MAX_CLOSED_FALLS = 16
+
+
+def closed_fall_incidents(reply):
+    """
+    Return the incidents a member closed (처리 완료) that the robot still checks.
+
+    An older web answers without the list: nothing to forward. A malformed list is
+    ignored whole; the next upload brings it again.
+    """
+    value = reply.get('closedFallIncidents') if isinstance(reply, dict) else None
+    if (not isinstance(value, list) or len(value) > MAX_CLOSED_FALLS
+            or not all(isinstance(item, str) and COMMAND_ID_PATTERN.fullmatch(item)
+                       for item in value)):
+        return []
+    return list(dict.fromkeys(value))
 
 
 def validate_backend_url(value):
@@ -367,7 +384,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             ready=bool(mode == 'navigation' and runtime.get('ready') and pose
                        and servers.get('manager')),
             can_follow=bool(servers.get('follow_person')),
-            fall_stop=snapshot.get('patrol_fall')),
+            fall_stop=snapshot.get('patrol_fall'), fall_check=snapshot.get('fall_check')),
         'mapRevision': int(map_info.get('version', 0)),
         'observedAt': observed_at or datetime.now(timezone.utc).isoformat(),
     }
@@ -673,9 +690,13 @@ class CloudSync:
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
             navigation = self.navigator.target(snapshot.get('requests', []),
                                                snapshot.get('system'))
-            self.client.request('/api/device/v1/robot/state', 'POST',
-                                state_payload(snapshot, info, self.maps, navigation=navigation))
+            reply = self.client.request('/api/device/v1/robot/state', 'POST',
+                                        state_payload(snapshot, info, self.maps,
+                                                      navigation=navigation))
             self.last_state_at = now
+            closed = closed_fall_incidents(reply)
+            if closed:
+                self.bridge.publish_closed_falls(closed)
         if self.stop_event.is_set():
             return
         if info.get('active') and info.get('available') and now - self.last_map_at >= 5.0:

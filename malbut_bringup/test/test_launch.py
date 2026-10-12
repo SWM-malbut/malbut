@@ -102,6 +102,10 @@ def _parameters(context, node):
     return evaluate_parameters(context, node._Node__parameters)[0]
 
 
+def _arguments(context, node):
+    return [perform_substitutions(context, part) for part in node.cmd[1:]]
+
+
 def _core_actions(launch_module, context):
     return launch_module._setup(context)
 
@@ -447,7 +451,10 @@ def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_modul
     actions = module._setup(context)
     includes = _included_modules(actions)
     assert set(includes) == {
-        'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'fall', 'speech'}
+        'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'fall', 'speech',
+        'agent'}
+    # After fall and speech, so the Agent sees which of them started.
+    assert list(includes)[-3:] == ['fall', 'speech', 'agent']
     observer, = _nodes(actions, 'wait_for_robot')
     observed = _parameters(context, observer)
     assert observed['observe_only'] is True and observed['speech'] is True
@@ -657,11 +664,66 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
         previous = modules['fall']['fall_bridge_runtime_id']
         context.launch_configurations.update(modules['fall'])
         actions = _load('fall')._setup(context)
-        coordinator = _parameters(context, _nodes(actions, 'fall_coordinator')[0])
+        assert not _nodes(actions, 'agent_communication')  # The agent module runs the rules.
+        context.locals.malbut_modules['fall'] = ''
+        # As the include does: Bringup's settings, then the module's own defaults.
+        context.launch_configurations.update(modules['agent'], agent_speech='auto',
+                                             agent_fall_rules='auto')
+        rules = _arguments(context, _nodes(_load('agent')._setup(context),
+                                           'agent_communication')[0])
         monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
         pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
-        assert coordinator['runtime_id'] == monitor['manager_runtime_id']
-        assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
+        assert rules[rules.index('--fall-runtime-id') + 1] == monitor['manager_runtime_id']
+        assert (rules[rules.index('--fall-vlm-runtime-id') + 1] == monitor['runtime_id']
+                == pose['fall_runtime_id'])
+        assert (rules[rules.index('--fall-bridge-runtime-id') + 1]
+                == modules['fall']['fall_bridge_runtime_id'])
+
+
+@pytest.mark.parametrize('started,speech,rules', [
+    ({'fall': '', 'speech': ''}, True, True),
+    ({'fall': ''}, False, True),
+    ({'fall': '', 'speech': 'Speech STT configuration is missing'}, False, True),
+    ({'speech': '', 'fall': 'Invalid fall_config'}, True, False),
+])
+def test_agent_runs_only_the_parts_whose_modules_started(launch_module, started, speech, rules):
+    module = _load('agent')
+    ids = {f'fall_{peer}_runtime_id': peer + '-id' for peer in ('manager', 'bridge', 'vlm')}
+    context = _context(module, speech_python_executable=sys.executable, **ids)
+    context.extend_globals({'malbut_modular_bringup': True, 'malbut_modules': dict(started)})
+    node, = _nodes(module._setup(context), 'agent_communication')
+    arguments = _arguments(context, node)
+    # Without STT and TTS there is no confirmation server: questions fail at once.
+    assert ('--no-speech' in arguments) is not speech
+    assert ('--provider' in arguments) is speech
+    assert ('--fall-rules' in arguments) is rules
+    if rules:
+        assert [arguments[arguments.index(flag) + 1] for flag in (
+            '--fall-runtime-id', '--fall-bridge-runtime-id', '--fall-vlm-runtime-id')] == [
+            'manager-id', 'bridge-id', 'vlm-id']
+    # Speech uses its own Python; the fall rules alone need only ROS.
+    prefix = perform_substitutions(context, node.process_description.prefix)
+    assert prefix == (sys.executable if speech else '')
+
+
+def test_agent_without_a_started_fall_or_speech_module_is_reported(launch_module):
+    module = _load('agent')
+    context = _context(module)
+    context.extend_globals({'malbut_modular_bringup': True,
+                            'malbut_modules': {'speech': 'Shared microphone unavailable'}})
+    with pytest.raises(RuntimeError, match='nothing to run'):
+        module._setup(context)
+
+
+def test_fall_alone_brings_its_own_fall_rules(launch_module, fall_config):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    actions = module._setup(context)
+    rules = _arguments(context, _nodes(actions, 'agent_communication')[0])
+    monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+    assert rules[:2] == ['--no-speech', '--fall-rules']
+    assert rules[rules.index('--fall-runtime-id') + 1] == monitor['manager_runtime_id']
+    assert rules[rules.index('--fall-vlm-runtime-id') + 1] == monitor['runtime_id']
 
 
 def test_fall_starts_one_non_ros_uploader_with_shared_settings(launch_module, fall_config):
@@ -701,7 +763,7 @@ def test_upload_setup_failure_does_not_disable_detection(launch_module, fall_con
     context.environment.update(environment)
     actions = module._setup(context)
     assert {a.node_executable for a in actions if isinstance(a, Node)} == {
-        'malbut-fall-monitor', 'homecam_detector_node', 'fall_coordinator', 'fall_approach'}
+        'malbut-fall-monitor', 'homecam_detector_node', 'agent_communication', 'fall_approach'}
     assert not any(isinstance(a, ExecuteProcess) and not isinstance(a, Node) for a in actions)
     assert any(isinstance(a, LogInfo) for a in actions)
 

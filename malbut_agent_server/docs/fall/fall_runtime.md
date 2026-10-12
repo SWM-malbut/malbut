@@ -53,6 +53,30 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
 - `return_result`는 `approach_returned`(reason `returned`/`return_failed`)로 남긴다.
 - 웹은 이 이벤트들과 `not_a_person` 종료를 받아야 하므로 웹을 먼저 배포한다.
 
+2026-10-12 확인 못 하면 알리기 · 다시 가서 보기(낙상 규칙 문서 "직접 움직이기를 끊지 않기"):
+- 질문마다 의심 지점을 `revisit_target`으로 붙인다. `approach_target`과 달리 사람이 확실해도 잴 수 있으면 붙는다
+  (다가가기 스위치가 꺼졌거나 지도 좌표가 없으면 null → 기다린 뒤에도 그냥 묻는다). 질문을 낳은 장면의 사진
+  최대 2장과 대상 박스를 메모리에 둔다(같은 사람 비교용, 재시작하면 사라짐).
+- 결정 `check_waiting`은 `check_waiting`(reason `manual_drive`/`busy`)으로 남기기만 한다.
+  `check_not_confirmed`는 상태를 `recheck_required`로 두고 `check_not_confirmed`와 긴급 알림
+  `robot_could_not_confirm`(사건당 한 번)을 낸다. `confirmation_failed`도 이유(`speech_unavailable`/
+  `question_error`/`time_limit`)를 `agent_check_failed`에 싣고 같은 긴급 알림을 한 번 낸다.
+- `revisit_started`는 `revisit_started`를 남기고 그 지점을 확인 중으로 둔다(새 Pose가 새 사건을 열지 않게).
+  `revisit_result`는 `approach_completed`로 남기고, 도착하면 가까이 보기를 **다시 보기**로 시작한다.
+- 다시 보기는 사건을 스스로 닫지 않는다. 사람 없음 → `person_check_completed(nobody_there)` + 확인 필요 알림
+  `revisit_nobody_there`. 바닥 아님(Cloud 두 번 일치) → `posture_check_completed`, 같은 사람 비교 뒤
+  같음이면 일반 알림 `revisit_same_person_off_floor`, 다름·어려움이면 확인 필요 알림
+  `revisit_person_unclear_off_floor`. 바닥·자세 불명·몸 못 봄·사람 확인은 지금처럼 묻고 비교는 뒤이어 기록한다.
+- 같은 사람 비교(참고): 처음 사진 2장(+박스)과 지금 사진 2장을 Cloud `compare_person`에 보내 옷차림으로
+  `same`/`different`/`unclear`만 묻는다(얼굴·신원 추정 금지). Cloud 차단·실패·60초 안에 못 함은 `unclear`.
+  `same_person_compared`(analysis purpose `same_person_check`)로 남긴다. 로봇 동작은 바꾸지 않는다.
+- 알림: 기존 다섯 이유는 지금처럼 "그 이유들끼리 더 높은 단계만" 보낸다. 새 네 이유는 그 규칙과 따로 이유마다
+  한 번씩 보낸다. 그래서 "직접 확인하지 못함" 긴급 뒤에도 "도움 요청" 긴급이 나간다. 사건의 가장 높은 단계
+  (`notification_level`)는 계속 올린다.
+- 보호자 처리 완료: `/malbut/falls/incidents/closed`(`{"incident_ids": [...]}`, 최대 16개, Bringup이 웹 상태
+  응답에서 받아 냄)를 받으면 열린 사건을 `incident_resolved(guardian_closed)`로 닫는다. 그 사건 분석이 진행
+  중이면 분석이 끝난 직후 닫는다(닫힌 사건의 분석 결과는 웹에 남길 수 없어서). 모르는·이미 닫힌 ID는 무시한다.
+
 2026-10-11 한 사람은 사건 하나:
 - 2026-10-10 18:44 바닥에 누운 한 사람을 YOLO-pose가 트랙 3개로 나눠 사람 사건 3개가 열렸다.
   열린 사람 사건이 화면 속 사람 수를 넘지 않게, 새 트랙의 후보는 열린 사람 사건의 트랙(붙은 트랙 포함)과 먼저 비교한다.
@@ -142,10 +166,12 @@ Google Gemini 키로 대체하지 않는다. 키가 없으면 실제 실행이 �
 [전체 명세](fall_detection.md), [사건 저장](fall_storage_api.md).
 
 > **SWM25-164:** 낙상 설정 전달·heartbeat·확인 결과 검증·Agent 연결 책임은
-> 시스템 관리자에서 `malbut_fall_coordinator`로 이동했다. ROS/웹 인터페이스는 유지한다.
+> 시스템 관리자에서 `malbut_fall_coordinator`로 이동했고, 2026-10-11(SWM25-238)부터는 Agent 안의
+> 낙상 규칙(`malbut_fall_rules`)이 맡는다. ROS/웹 인터페이스는 유지한다. 이 문서의 "코디네이터"는
+> 이 낙상 규칙을 뜻한다.
 > VLM 파라미터·메시지의 `manager_runtime_id`와 홈캠의 `fall_manager_runtime_id`는
 > 이름을 유지하지만 낙상 코디네이터의 실행 ID를 담는다. 확인 대화만 일반 관리자의
-> `fall_confirmation` 미션으로 실행한다([현재 실행 구조](../../../malbut_fall_coordinator/README.md)).
+> `fall_confirmation` 미션으로 실행한다([현재 실행 구조](fall_rules.md)).
 
 ## 이번에 연결한 부분
 
@@ -262,14 +288,14 @@ ID를 아는 것만으로 호출자를 인증하지 않으며, ROS 접근 권한
 
 `robot.launch.py`의 통합 navigation 실행에서 VLM을 시작한다.
 `fall_monitor:=auto`가 기본이며,
-`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 코디네이터·VLM·낙상용 Pose를 각각 한 번 시작하고,
+`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 VLM·낙상용 Pose를 각각 한 번 시작하고(낙상 규칙은 Agent 항목이 켬),
 없으면 이유를 표시하고 건너뛴다. 설정 경로는 `MALBUT_FALL_CONFIG` 또는
 `fall_config` 인자로 지정한다. `fall_monitor:=true`는 설정 누락도 오류로 처리하고,
 `fall_monitor:=false`는 노드를 시작하지 않는다. 파일이 있는데 설정이 잘못된 경우는
 `auto`에서도 시작을 거부한다.
 
 최신 Bringup은 별도 `mode` 인자를 없앴다. Manager는 위치 추정을 위해 먼저 시작하고,
-낙상 코디네이터·VLM·Pose는 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
+낙상 규칙(Agent)·VLM·Pose는 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
 별도 `mapping_backend.launch.py`는 VLM을 시작하지 않는다.
 실제 수집·전송에는 여전히 최신 설정·연결 확인·동의가 필요하다.
 
@@ -330,8 +356,8 @@ VLM의 5초·15초 중단과 연결 확인 수신은 구현했다. 상태 보고
 새 대화 Agent는 이 토픽을 직접 쓰지 않는다. 코디네이터가 Manager의
 `/malbut/mission/execute`에 `fall_confirmation`을 요청하면,
 Manager가 Agent의 `/malbut/agent/confirm_situation` Action을 실행한다.
-Manager는 `URGENT`, `[BASE, SPEAKER]` 자원 규칙에 따라 충돌 미션 종료를 확인한 뒤
-질문 미션을 실행한다. 코디네이터가 Agent에 직접 질문 Goal을 보내지는 않는다.
+Manager는 `NORMAL`, `[BASE, SPEAKER]` 자원 규칙에 따라 충돌 미션 종료를 확인한 뒤
+질문 미션을 실행한다(직접 움직이기 중이면 받지 않음). 코디네이터가 Agent에 직접 질문 Goal을 보내지는 않는다.
 
 | 토픽 | 방향 | 용도 |
 |---|---|---|
@@ -372,7 +398,11 @@ Agent 요청에 복사하지 않는다. 사건·대상·버전의 연결 정보�
 | `action` | 추가 필수 필드 | 의미 |
 |---|---|---|
 | `confirmation_result` | `question_id: string`, `subject_key: string 또는 null`, `situation_assessment: string`, `help_needed: boolean` | Action 성공 결과. 대상은 원래 질문의 ID 또는 null을 유지. 상황 값은 `ConfirmSituation.Result`의 상수와 같고 도움 여부는 독립된 값 |
-| `confirmation_failed` | `question_id: string` | 음성·모델·통신 실패 또는 취소. 사용자 무응답이나 도움 필요로 바꾸지 않음 |
+| `confirmation_failed` | `question_id: string`, `reason: speech_unavailable·question_error·time_limit` | 음성 꺼짐·질문 중 오류·막혀서 10분. 사용자 무응답이나 도움 필요로 바꾸지 않고, 보호자에게 긴급 알림(사건당 한 번) |
+| `check_waiting` | `question_id`, `reason: manual_drive·busy` | 아직 묻지 못하고 기다리는 중(기록만) |
+| `check_not_confirmed` | `question_id`, `reason: waited_manual_drive·waited_busy` | 막혀서 1분: `recheck_required`, 긴급 알림(사건당 한 번) |
+| `revisit_started` | `question_id`, `reason: manual_drive·busy` | 묻기 전에 의심 지점으로 다시 가는 중 |
+| `revisit_result` | `question_id`, `outcome`(`approach_result`와 같음) | 다시 가기가 끝남. 도착하면 다시 보기(스스로 닫지 않음) |
 | `dismiss_normal` | 없음 | 대상이 확인된 사건에서 이전 낙상 관측이나 확인 대기가 없는 최신 정상 영상의 종결. 대상 미확인 장면 사건에는 적용하지 않음 |
 
 사건·질문·대상·근거 버전은 발급한 질문의 고정된 정보와 다시 대조한다. 진행 중

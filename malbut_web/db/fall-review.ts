@@ -3,6 +3,7 @@ import { getPostgresPool, type SqlExecutor } from "./postgres";
 import { quietRecordingEnd } from "./recording-end";
 import { labelFor, userLabels } from "./users";
 import type { FallClipInput } from "../app/fall-clip-contract";
+import { fallRobotCheck, type FallHistoryEvent } from "../app/fall-event-label";
 
 // Clip ranges, human review and [재발신] reminders. Robot events and their
 // first notifications stay in db/fall-incidents.ts; nothing here changes the
@@ -31,12 +32,13 @@ const MERGED_TARGETS_SQL = `(SELECT e.payload_json::jsonb->'mergedIntoIncidentId
     AND e.payload_json::jsonb->>'eventKind'='incident_merged'
   ORDER BY e.sequence DESC LIMIT 1)`;
 const ROBOT_MERGED_SQL = `(i.origin='robot' AND i.state='resolved' AND ${MERGED_TARGETS_SQL} IS NOT NULL)`;
-const ROBOT_NORMAL_SQL =
-  "(i.origin='robot' AND i.state='resolved' AND i.assessment='normal_activity' AND NOT i.fall_seen)";
 const ROBOT_CLOSE_REASON_SQL = `(SELECT e.payload_json::jsonb->>'reason' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind'='incident_resolved'
     ORDER BY e.sequence DESC LIMIT 1)`;
+// guardian_closed: the robot stopped because a member closed it, not a robot judgment.
+const ROBOT_NORMAL_SQL = `(i.origin='robot' AND i.state='resolved' AND i.assessment='normal_activity'
+  AND NOT i.fall_seen AND COALESCE(${ROBOT_CLOSE_REASON_SQL}<>'guardian_closed', TRUE))`;
 // The robot drove near the spot and found no person: closed by the robot, not a
 // normal-activity judgment. Like a merge, it closes the queue, not the review.
 const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND ${ROBOT_CLOSE_REASON_SQL}='not_a_person')`;
@@ -149,6 +151,11 @@ const SUMMARY_COLUMNS = `
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' IN ('voice_result','confirmation_completed','agent_check_failed',
         'notification_requested')) AS asked,
+  (SELECT jsonb_agg(jsonb_build_object('eventKind', e.payload_json::jsonb->>'eventKind',
+      'reason', e.payload_json::jsonb->>'reason', 'analysis', e.payload_json::jsonb->'analysis') ORDER BY e.sequence)
+    FROM fall_incident_events e WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
+      AND e.payload_json::jsonb->>'eventKind' IN ('check_not_confirmed','agent_check_failed','revisit_started',
+        'approach_completed','person_check_completed','posture_check_completed','same_person_compared')) AS check_events,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' = ANY($2::text[])
@@ -167,6 +174,7 @@ type SummaryRow = {
   reported_by: string | null; reported_moment_at: unknown; report_memo: string | null; robot_normal: boolean;
   robot_not_person: boolean; robot_off_floor: boolean; asked: boolean;
   last_approach: { kind: string; reason: string | null } | null;
+  check_events: FallHistoryEvent[] | null;
   last_analysis_kind: string | null; found_down: boolean; opinion_counts: Record<string, number> | null;
   merged_targets: string[] | null;
 };
@@ -198,6 +206,8 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
     approach: row.last_approach,
     // The person has been asked or alerted: no longer only the robot looking.
     asked: row.asked,
+    // 목업 28번: why the robot could not check by itself, and what it saw when it went back.
+    robotCheck: row.origin === "robot" ? fallRobotCheck(row.check_events ?? []) : null,
     foundDown: row.found_down,
     reportedBy: row.reported_by, reportedByName: labelFor(names, row.reported_by),
     reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
@@ -533,6 +543,22 @@ export async function closeFallIncident(deviceId: string, incidentId: string, us
     );
     return { closed: true, changed: true };
   });
+}
+
+/**
+ * 처리 완료 the robot has not stopped for yet: returned on each state upload so a
+ * robot still trying to check it stops. It drops out once the robot reports the
+ * incident resolved (guardian_closed), or after 15 minutes for a robot that never
+ * comes back online (the robot also stops by itself after 10 blocked minutes).
+ */
+export const CLOSED_FOR_ROBOT_LIMIT = 16;
+export async function listClosedFallIncidentsForRobot(deviceId: string): Promise<string[]> {
+  return (await getPostgresPool().query(
+    `SELECT incident_id FROM fall_incidents
+     WHERE device_id=$1 AND origin='robot' AND review_state='closed' AND state<>'resolved'
+       AND closed_at>CURRENT_TIMESTAMP-INTERVAL '15 minutes'
+     ORDER BY closed_at DESC,incident_id LIMIT ${CLOSED_FOR_ROBOT_LIMIT}`, [deviceId],
+  )).rows.map((row) => row.incident_id as string);
 }
 
 /** Missed fall: one user-picked moment, −10 s/+20 s, recorded without notifying anyone. */
