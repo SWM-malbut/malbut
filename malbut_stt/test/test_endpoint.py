@@ -456,7 +456,7 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     assert run.failure_chimes == ['failure']
     assert run.statuses == [('', final_job[2], 'started')]
     assert run.pipeline._reply_request_id is None
-    run.now += .31
+    run.now += run.pipeline.chime_tail_s + .01
     run.pipeline._accept_result('wake', run.pipeline._generation, None, '제이크', None)
     run.pipeline.feed(VOICE + QUIET * 50)
     next_job = run.pipeline.jobs.get_nowait()

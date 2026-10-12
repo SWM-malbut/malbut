@@ -22,6 +22,7 @@ def run():
         publish_transcript=lambda uid, text: state.transcripts.append((uid, text)),
         publish_control=lambda *_: None, publish_interruption=lambda *_: None,
         report=state.reports.append, clock=lambda: state.now, input_has_aec=True,
+        chime_tail_s=.3,  # Keep explicit race-boundary timings below.
         # These chime/endpoint races intentionally begin with a 20 ms frame.
         settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
         on_endpoint=lambda: state.chimes.append(pipeline.session.utterance_id),

@@ -10,6 +10,16 @@ from types import SimpleNamespace
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
+class _DecodeWindow(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_double) for name in (
+        'no_speech_prob', 'avg_logprobs', 'no_speech_threshold', 'logprob_threshold',
+        'start_s', 'end_s', 'next_seek_s',
+    )] + [(name, ctypes.c_int) for name in (
+        'skipped_no_speech', 'single_timestamp_ending',
+        'segment_start', 'segment_count', 'token_count',
+    )]
+
+
 def _load_library(path):
     library = ctypes.CDLL(str(path))
     signatures = {
@@ -35,8 +45,21 @@ def _load_library(path):
             function.argtypes, function.restype = arguments, result
     except AttributeError as error:
         raise ValueError('whisper.cpp requires rebuilding the packaged ABI 3 bridge') from error
-    if library.mb_whisper_abi_version() != 3:
-        raise ValueError('whisper.cpp requires rebuilding the packaged ABI 3 bridge')
+    abi = library.mb_whisper_abi_version()
+    if abi not in (3, 4):
+        raise ValueError('whisper.cpp requires an ABI 3 or ABI 4 bridge')
+    if abi == 4:
+        try:
+            for name, arguments in {
+                'mb_whisper_trace_count': [ctypes.c_void_p],
+                'mb_whisper_trace_truncated': [ctypes.c_void_p],
+                'mb_whisper_trace_window': [ctypes.c_void_p, ctypes.c_int,
+                                            ctypes.POINTER(_DecodeWindow)],
+            }.items():
+                function = getattr(library, name)
+                function.argtypes, function.restype = arguments, ctypes.c_int
+        except AttributeError as error:
+            raise ValueError('whisper.cpp requires rebuilding the packaged ABI 4 bridge') from error
     return library
 
 
@@ -50,6 +73,32 @@ class _CppModel:
         self._state_lock = Lock()
         self._closing = False
         self.last_segments = []
+
+    def _decode_info(self):
+        if self.library.mb_whisper_abi_version() == 3:
+            return dict(status='unavailable', reason='bridge_abi_3', windows=[])
+        windows = []
+        count = self.library.mb_whisper_trace_count(self.context)
+        if not 0 <= count <= 64:
+            raise ValueError('native trace window count exceeds ABI limit')
+        for index in range(count):
+            window = _DecodeWindow()
+            if not self.library.mb_whisper_trace_window(self.context, index, ctypes.byref(window)):
+                raise ValueError('native trace window unavailable')
+            value, nonfinite = {}, {}
+            for name, _ in window._fields_:
+                field = getattr(window, name)
+                if isinstance(field, float) and not math.isfinite(field):
+                    nonfinite[name] = str(field)
+                    field = None
+                value[name] = field
+            for name in ('skipped_no_speech', 'single_timestamp_ending'):
+                value[name] = bool(value[name])
+            if nonfinite:
+                value['nonfinite_fields'] = nonfinite
+            windows.append(value)
+        return dict(status='observed', windows=windows,
+                    windows_truncated=bool(self.library.mb_whisper_trace_truncated(self.context)))
 
     def transcribe(self, audio, *, language, beam_size, condition_on_previous_text,
                    initial_prompt):
@@ -73,17 +122,31 @@ class _CppModel:
                 self.library.mb_whisper_reset_cancel(self.context)
             self.last_segments = []
             if audio.size == 0 or not np.any(audio):
-                return iter(()), None
+                return iter(()), SimpleNamespace(native_decode=dict(
+                    status='not_run', reason='empty_input' if audio.size == 0 else 'exact_silence',
+                    windows=[]))
             result = self.library.mb_whisper_transcribe(
                 self.context, audio.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 audio.size, self.n_threads, prompt, self.decode_timeout_s,
             )
-            if result == -100:
-                raise RuntimeError('whisper.cpp decode cancelled')
-            if result == -101:
-                raise TimeoutError('whisper.cpp decode deadline exceeded')
+            # Copy under the inference lock: a later call must not overwrite
+            # scores for an iterator that has not yet been consumed.
+            try:
+                native_decode = self._decode_info()
+            except Exception as error:
+                # Observation failure must not suppress a valid transcript.
+                native_decode = dict(status='unavailable', reason='trace_read_failed',
+                                     error=str(error)[:512], windows=[])
+            native_decode['return_code'] = result
             if result != 0:
-                raise RuntimeError(f'whisper.cpp decode failed with code {result}')
+                if result == -100:
+                    error = RuntimeError('whisper.cpp decode cancelled')
+                elif result == -101:
+                    error = TimeoutError('whisper.cpp decode deadline exceeded')
+                else:
+                    error = RuntimeError(f'whisper.cpp decode failed with code {result}')
+                error.native_decode = native_decode
+                raise error
             for index in range(self.library.mb_whisper_segment_count(self.context)):
                 self.last_segments.append(SimpleNamespace(
                     text=self.library.mb_whisper_segment_text(self.context, index).decode('utf-8'),
@@ -92,7 +155,7 @@ class _CppModel:
                 ))
             # Copy the list while holding the lock. A later call or close must
             # not invalidate the iterator consumed by the wake/stream wrapper.
-            return iter(tuple(self.last_segments)), None
+            return iter(tuple(self.last_segments)), SimpleNamespace(native_decode=native_decode)
 
     def cancel(self):
         """Signal the current decode without waiting for its inference lock."""
@@ -140,7 +203,8 @@ class CppWhisperTranscriber(LocalWhisperTranscriber):
         try:
             self.metadata = {
                 'backend': self.backend, 'model_path': str(model_path),
-                'library_path': str(library_path), 'bridge_abi': 3,
+                'library_path': str(library_path), 'bridge_abi': library.mb_whisper_abi_version(),
+                'native_decode_trace': library.mb_whisper_abi_version() == 4,
                 'requested_use_gpu': bool(use_gpu), 'threads': n_threads,
                 'decode_timeout_s': decode_timeout_s,
                 'model_type': library.mb_whisper_model_type(context).decode(),

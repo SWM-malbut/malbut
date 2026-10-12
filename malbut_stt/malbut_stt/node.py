@@ -39,6 +39,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     pipeline = None
     close_requests = None
     close_transcriber = None
+    diagnostics = None
     phase = 'initializing_ros'
     try:
         rclpy.init(args=args)
@@ -59,6 +60,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         compute_type = parameter('compute_type', 'int8')
         device_index = parameter('device_index', 0)
         wake_chime_device_index = parameter('wake_chime_device_index', -1)
+        chime_tail_s = parameter('chime_tail_s', 0.3)
+        short_speech_guard = parameter('short_speech_guard', False)
         vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
         control_timeout = parameter('playback_control_timeout_s', 5.0)
@@ -70,6 +73,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
         if (type(wake_chime_device_index) is not int or wake_chime_device_index < -1):
             raise ValueError('wake_chime_device_index must be -1 or an output device index')
+        if (type(chime_tail_s) not in (int, float) or not isfinite(chime_tail_s)
+                or not 0 <= chime_tail_s <= 3):
+            raise ValueError('chime_tail_s must be finite and between zero and three seconds')
+        if type(short_speech_guard) is not bool:
+            raise ValueError('short_speech_guard must be a boolean')
         if (type(stt_decode_timeout_s) not in (int, float)
                 or not isfinite(stt_decode_timeout_s) or stt_decode_timeout_s <= 0):
             raise ValueError('stt_decode_timeout_s must be finite and positive')
@@ -145,16 +153,39 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             wake = LocalWakeRecognizer(wake_path, compute_type=compute_type)
             phase = 'initializing_stt'
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
-        diagnostics = None
+        if os.environ.get('MALBUT_STT_INCIDENT_CONFIG', '').strip():
+            from dataclasses import asdict
+            from malbut_stt.incident import from_environment
+
+            diagnostics = from_environment(
+                os.environ,
+                metadata=dict(backend=backend, stt_model_path=str(stt_path),
+                              wake_model_path=str(wake_path), device_index=device_index,
+                              vad_mode=vad_mode, input_has_aec=input_has_aec,
+                              chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
+                              capture_settings=asdict(settings),
+                              model=getattr(transcriber, 'metadata', {})),
+                on_saved=lambda path: node.get_logger().info('stt_incident_saved:' + str(path)),
+                on_error=lambda error: node.get_logger().warning('stt_incident_stopped:' + error),
+            )
+            from rcl_interfaces.msg import Log
+
+            node.create_subscription(Log, '/rosout', diagnostics.ros_log, QoSProfile(
+                history=HistoryPolicy.KEEP_LAST, depth=100,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+            ))
+            node.get_logger().info('stt_incident_capture_enabled:observation_only')
         diagnostic_directory = os.environ.get('MALBUT_STT_DIAGNOSTIC_DIR', '').strip()
         if diagnostic_directory:
             from malbut_stt.diagnostics import TranscriptionDiagnostics
 
             diagnostics = TranscriptionDiagnostics(diagnostic_directory)
+            node.get_logger().info('stt_diagnostics_enabled:local_audio_limit_64MiB')
+        if diagnostics is not None:
             shared = wake.model is transcriber.model
             transcriber.model = diagnostics.wrap_model(transcriber.model)
             wake.model = transcriber.model if shared else diagnostics.wrap_model(wake.model)
-            node.get_logger().info('stt_diagnostics_enabled:local_audio_limit_64MiB')
         phase = 'initializing_vad'
         vad = webrtcvad.Vad(vad_mode)
         phase = 'creating_publisher'
@@ -220,6 +251,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     utterance_id=utterance_id, text=text,
                     session_id=pipeline.session.session_id,
                 ))
+                if diagnostics is not None:
+                    diagnostics.event('transcript_published', utterance_id=utterance_id,
+                                      text=text, session_id=pipeline.session.session_id)
 
         def publish_input_status(session_id, utterance_id, state):
             if rclpy.ok():
@@ -362,12 +396,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             on_failure=lambda: play_failure_chime(wake_chime_device_index),
             settings=settings,
             input_has_aec=input_has_aec,
+            chime_tail_s=chime_tail_s,
+            short_speech_guard=short_speech_guard,
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),
         )
 
         def playback_status(message):
+            if diagnostics is not None:
+                diagnostics.event('tts_playback', playback_id=message.playback_id,
+                                  state=message.state, interim=getattr(message, 'interim', None),
+                                  request_id=getattr(message, 'request_id', None))
             if message.state == SpeechPlaybackStatus.ACCEPTED:
                 return  # Manager admission is not audible playback.
             if rclpy.ok():
@@ -383,6 +423,12 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
 
         def speech_request(message):
+            if diagnostics is not None:
+                diagnostics.event('tts_request', playback_id=message.playback_id,
+                                  text=getattr(message, 'text', None),
+                                  request_type=getattr(message, 'request_type', None),
+                                  interim=getattr(message, 'interim', None),
+                                  request_id=getattr(message, 'request_id', None))
             if rclpy.ok():
                 pipeline.on_speech_request(message.playback_id)
 
@@ -451,7 +497,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     finally:
         cleanup_failed = False
         for cleanup in (close_requests, pipeline.close if pipeline is not None else None,
-                        close_transcriber):
+                        close_transcriber, getattr(diagnostics, 'close', None)):
             if cleanup is None:
                 continue
             try:

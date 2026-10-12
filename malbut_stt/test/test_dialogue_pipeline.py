@@ -73,6 +73,9 @@ def harness():
         return '문장 ' + str(len(state.command_calls))
 
     def create(*, aec=True, **options):
+        # Race fixtures use the supported 300 ms setting; default-tail coverage
+        # and the recorded delayed signal are in test_short_speech_guard.py.
+        options.setdefault('chime_tail_s', .3)
         # Keep the one-frame onsets used by these session/race boundary fixtures.
         options.setdefault('settings', CaptureSettings(
             silence_timeout_s=2.0, min_speech_s=.02))

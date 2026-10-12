@@ -21,6 +21,32 @@ MICROPHONE_TIMEOUT_SECONDS = 5.0
 RETRY_NOTICE_TIMEOUT_SECONDS = 45.0
 
 
+class _SpeechPCM(bytes):
+    """Keep voiced duration with an immutable non-streaming inference snapshot."""
+
+    def __new__(cls, pcm, voiced_s):
+        value = super().__new__(cls, pcm)
+        value.voiced_s = voiced_s
+        return value
+
+
+def _short_speech_rejection(text, voiced_s):
+    """Conservative Korean length check, not a transcript blacklist.
+
+    This heuristic only covers <=600 ms of VAD-positive audio. Six syllables
+    remain allowed for short replies; longer text needs up to 20 syllables/s.
+    VAD can miss quiet speech, so this is a tunable safeguard, not confidence.
+    """
+    if not isinstance(text, str) or voiced_s is None or voiced_s > 0.6:
+        return None
+    syllables = sum('\uac00' <= char <= '\ud7a3' for char in text)
+    maximum = max(6, math.ceil(voiced_s * 20))
+    if syllables > maximum:
+        return dict(reason='short_speech_text_mismatch', voiced_s=voiced_s,
+                    korean_syllables=syllables, max_korean_syllables=maximum)
+    return None
+
+
 @dataclass(frozen=True)
 class _StreamInput:
     pcm: bytes
@@ -28,6 +54,7 @@ class _StreamInput:
     final: bool
     speech_end_s: float
     audio_start_s: float = 0.0
+    voiced_s: float | None = None
 
 
 class DialoguePipeline:
@@ -47,7 +74,15 @@ class DialoguePipeline:
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
-                 stop_speech=None, on_failure=None):
+                 stop_speech=None, on_failure=None, chime_tail_s=0.3,
+                 short_speech_guard=False):
+        if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
+                or not 0 <= chime_tail_s <= 3):
+            raise ValueError('chime_tail_s must be finite and between zero and three seconds')
+        if type(short_speech_guard) is not bool:
+            raise ValueError('short_speech_guard must be a boolean')
+        self.chime_tail_s = chime_tail_s
+        self.short_speech_guard = short_speech_guard
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -58,6 +93,7 @@ class DialoguePipeline:
         self.stop_speech = stop_speech
         self._report = report
         self.diagnostics = diagnostics
+        self._observe_audio = getattr(diagnostics, 'audio', None)
         self._diagnostic_error_reported = False
         self.clock = clock
         self._event_time = None
@@ -84,14 +120,17 @@ class DialoguePipeline:
             or not 0 < endpoint_predecode_s <= 1.0 < settings.silence_timeout_s
         ):
             raise ValueError('predecode must start by 1.0 seconds before the fallback')
+        observe_vad = getattr(diagnostics, 'wrap_vad', None)
         self.command_stream = StreamingUtteranceCollector(
-            is_speech, settings=settings,
+            observe_vad(is_speech, kind='command') if callable(observe_vad) else is_speech,
+            settings=settings,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
                               else 1.0 if settings.silence_timeout_s > 1.0 else None),
             partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
         )
         self.wake_stream = StreamingUtteranceCollector(
-            is_speech, settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
+            observe_vad(is_speech, kind='wake') if callable(observe_vad) else is_speech,
+            settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
         )
         self.audio = Queue(maxsize=64)
         self.jobs = Queue(maxsize=1)
@@ -151,6 +190,7 @@ class DialoguePipeline:
                 utterance_id=self.session.utterance_id, capture_id=self._capture_id,
                 reply_request_id=self._reply_request_id,
                 chime_gate_until=self._chime_gate_until,
+                chime_tail_s=self.chime_tail_s,
                 command_start_deadline=self._command_start_deadline)
             if self.diagnostics.error and not self._diagnostic_error_reported:
                 self._diagnostic_error_reported = True
@@ -245,7 +285,8 @@ class DialoguePipeline:
             self._reply_request_id = reply_request_id
             self._retry_notice_deadline = retry_notice_deadline
             self._tail_stream = None
-            self._drain(self.results)
+            self._drain(self.results, lambda result: self._trace_job(
+                'result_rejected', *result[:3], reason='web_talk_started'))
         if quiet and not self._web_talk_quiet:
             # The guardian owns the speaker: drop current and queued speech for good.
             self._web_talk_quiet = True
@@ -332,6 +373,12 @@ class DialoguePipeline:
                 # Quiet frames and echo-gated frames still prove capture is alive.
                 self._last_capture_at = monotonic()
                 self.capture_ready.set()
+                if callable(self._observe_audio):
+                    self._observe_audio(
+                        pcm_bytes(samples), captured_at=captured_at,
+                        audio_generation=generation,
+                        blocked=blocked or self._input_blocked(captured_at),
+                        busy=busy, overflow=self.overflow.is_set())
                 if (self.overflow.is_set() or generation != self._audio_generation
                         or blocked or self._input_blocked(captured_at)):
                     continue
@@ -346,13 +393,30 @@ class DialoguePipeline:
             if not self.stopping.is_set() and self.capture_error is None:
                 self.capture_error = error
 
+    def _trace_job(self, event, kind, generation, uid, **fields):
+        if self.diagnostics is not None:
+            self.diagnostics.event(
+                event, kind=kind, generation=generation,
+                utterance_id=uid[0] if isinstance(uid, tuple) else uid,
+                revision=uid[1] if isinstance(uid, tuple) else None, **fields)
+
+    def _enqueue_job(self, job):
+        try:
+            self.jobs.put_nowait(job)
+        except Full:
+            self._trace_job('job_rejected', *job[:3], reason='jobs_queue_full')
+            raise
+        self._trace_job('job_enqueued', *job[:3])
+
     def _infer(self):
         while not self.stopping.is_set():
             try:
                 kind, generation, uid, pcm = self.jobs.get(timeout=0.05)
             except Empty:
                 continue
+            self._trace_job('job_dequeued', kind, generation, uid)
             if self.stopping.is_set():
+                self._trace_job('job_discarded', kind, generation, uid, reason='shutdown')
                 break
             text, error_name = None, None
             retained_start_s = 0.0
@@ -363,6 +427,7 @@ class DialoguePipeline:
                 audio_start_s=getattr(pcm, 'audio_start_s', 0.0),
                 speech_end_s=getattr(pcm, 'speech_end_s', None),
                 final=getattr(pcm, 'final', kind == 'command'),
+                voiced_s=getattr(pcm, 'voiced_s', None),
             ) if self.diagnostics is not None else nullcontext())
             with context:
                 error_detail = None
@@ -381,6 +446,17 @@ class DialoguePipeline:
                     else:
                         engine = self.wake if kind == 'wake' else self.transcriber
                         text = engine.transcribe(pcm, 16000)
+                    rejection = (_short_speech_rejection(text, getattr(pcm, 'voiced_s', None))
+                                 if self.short_speech_guard and kind != 'wake' else None)
+                    if rejection is not None:
+                        if self.diagnostics is not None:
+                            self.diagnostics.event(
+                                'recognition_rejected', text=text,
+                                utterance_id=uid[0] if isinstance(uid, tuple) else uid,
+                                **rejection)
+                        text = None
+                        error_name = 'InsufficientSpeechEvidence'
+                        error_detail = rejection['reason']
                 except Exception as error:
                     error_name = type(error).__name__
                     if self.diagnostics is not None:
@@ -391,18 +467,28 @@ class DialoguePipeline:
                         self.diagnostics.event('inference_result', text=text,
                                                error=error_name, error_detail=error_detail)
             result = (kind, generation, uid, text, error_name, retained_start_s)
+            waiting_reported = False
             while not self.stopping.is_set():
                 try:
                     self.results.put(result, timeout=0.05)
+                    self._trace_job('result_enqueued', kind, generation, uid,
+                                    text=text, error=error_name)
                     break
                 except Full:
+                    if not waiting_reported:
+                        self._trace_job('result_queue_wait', kind, generation, uid)
+                        waiting_reported = True
                     continue
+            else:
+                self._trace_job('result_rejected', kind, generation, uid, reason='shutdown')
 
     @staticmethod
-    def _drain(queue):
+    def _drain(queue, observe=None):
         while True:
             try:
-                queue.get_nowait()
+                item = queue.get_nowait()
+                if observe is not None:
+                    observe(item)
             except Empty:
                 return
 
@@ -441,7 +527,8 @@ class DialoguePipeline:
         # In-flight inference belongs to the old generation. Keep its worker,
         # but allow a new turn to capture and queue one bounded job behind it.
         self._busy = False
-        self._drain(self.jobs)
+        self._drain(self.jobs, lambda job: self._trace_job(
+            'job_discarded', *job[:3], reason=reason))
         self._endpoint_job = None
         self._endpoint_requested_at = None
         self._endpoint_is_partial = False
@@ -480,6 +567,8 @@ class DialoguePipeline:
             result = self.results.get_nowait()
         except Empty:
             result = None
+        if result is not None:
+            self._trace_job('result_dequeued', *result[:3], text=result[3], error=result[4])
         if result is not None and result[0] in ('endpoint', 'partial'):
             # Release an already acknowledged prefix before buffered capture can
             # fill the PCM budget. Endpoint decisions still wait for that audio:
@@ -635,9 +724,8 @@ class DialoguePipeline:
             kind = 'partial' if partial else 'endpoint'
             payload = self._inference_input(
                 event.pcm if self._stream is not None else pcm, silence_s=event.silence_s,
-                audio_start_s=event.audio_start_s)
-            self.jobs.put_nowait((kind, key[0], (uid, event.revision),
-                                 payload))
+                audio_start_s=event.audio_start_s, voiced_s=event.voiced_s)
+            self._enqueue_job((kind, key[0], (uid, event.revision), payload))
         except Full:
             return
         self._endpoint_job = key
@@ -651,11 +739,12 @@ class DialoguePipeline:
     def _usable_text(text, error):
         return error is None and isinstance(text, str) and bool(text.strip())
 
-    def _inference_input(self, pcm, *, final=False, silence_s=0.0, audio_start_s=0.0):
+    def _inference_input(self, pcm, *, final=False, silence_s=0.0, audio_start_s=0.0,
+                         voiced_s=None):
         if self._stream is None:
-            return pcm
+            return _SpeechPCM(pcm, voiced_s)
         speech_end_s = audio_start_s + max(0.0, len(pcm) / 32000 - silence_s)
-        return _StreamInput(pcm, self._stream, final, speech_end_s, audio_start_s)
+        return _StreamInput(pcm, self._stream, final, speech_end_s, audio_start_s, voiced_s)
 
     def _complete_capture(self, kind, event):
         uid = self._capture_id
@@ -672,13 +761,17 @@ class DialoguePipeline:
                 _, text, error = self._endpoint_result
                 self._endpoint_result = None
                 self._busy = False
+                self._trace_job('endpoint_reused', 'endpoint', key[0], (uid, event.revision),
+                                reason='cached_result')
                 self._accept_result('command', key[0], uid, text, error)
                 return
             if self._endpoint_job == key and not self._endpoint_is_partial:
+                self._trace_job('endpoint_wait', 'endpoint', key[0], (uid, event.revision),
+                                reason='in_flight_result')
                 self._endpoint_final = key
                 self._final_input = self._inference_input(
                     event.pcm, final=True, silence_s=event.silence_s,
-                    audio_start_s=event.audio_start_s)
+                    audio_start_s=event.audio_start_s, voiced_s=event.voiced_s)
                 return
         # A resumed utterance can finish before its obsolete candidate is taken
         # by the worker. Replace only that queued candidate with the final audio.
@@ -688,15 +781,17 @@ class DialoguePipeline:
             except Empty:
                 pass
             else:
+                self._trace_job('job_discarded', *stale[:3], reason='final_capture_replaced_job')
                 if stale[0] not in ('endpoint', 'partial'):
                     self._terminate('transcription_queue_full')
                     return
                 if self._endpoint_job == (stale[1], *stale[2]):
                     self._endpoint_job = None
         payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s,
-                                         audio_start_s=event.audio_start_s)
+                                         audio_start_s=event.audio_start_s,
+                                         voiced_s=event.voiced_s)
                    if kind == 'command' else event.pcm)
-        self.jobs.put_nowait((kind, self._generation, uid, payload))
+        self._enqueue_job((kind, self._generation, uid, payload))
 
     def _fail_command(self, reason):
         """End an ordinary failed turn locally, without an Agent retry notice."""
@@ -713,7 +808,7 @@ class DialoguePipeline:
                 except Exception as error:
                     self.report('failure_chime_failed:' + type(error).__name__)
         finally:
-            self._chime_gate_until = self.clock() + 0.3
+            self._chime_gate_until = self.clock() + self.chime_tail_s
             self._reset_audio()
             self._chime_playing = False
         self.report('waiting_for_wake')
@@ -730,7 +825,7 @@ class DialoguePipeline:
         except Exception as error:
             self.report('endpoint_chime_failed:' + type(error).__name__)
         finally:
-            self._chime_gate_until = self.clock() + 0.3
+            self._chime_gate_until = self.clock() + self.chime_tail_s
             self._audio_generation += 1
             # Keep the completed PCM, stream, generation and endpoint job alive.
             # Only unfinished capture fragments and speaker echo are discarded.
@@ -741,6 +836,7 @@ class DialoguePipeline:
     def _accept_endpoint(self, generation, token, text, error_name, retained_start_s=0.0,
                          *, partial=False):
         uid, revision = token
+        kind = 'partial' if partial else 'endpoint'
         key = (generation, uid, revision)
         if self._endpoint_job == key:
             self._endpoint_job = None
@@ -748,20 +844,28 @@ class DialoguePipeline:
             self._endpoint_requested_at = None
             self.report(f'endpoint_checked:wait_s={elapsed:.3f}')
         if generation != self._generation:
+            self._trace_job('result_rejected', kind, generation, token, reason='stale_generation')
             return
         if self._endpoint_final == key:
             self._endpoint_final = None
             payload, self._final_input = self._final_input, None
             if self._usable_text(text, error_name):
                 self._busy = False
+                self._trace_job('endpoint_reused', kind, generation, token,
+                                reason='final_capture_waiting')
                 self._accept_result('command', generation, uid, text, error_name)
             else:
+                self._trace_job('result_rejected', kind, generation, token,
+                                reason='unusable_endpoint_retry_final', error=error_name)
                 self.report('partial_failed')
-                self.jobs.put_nowait(('command', generation, uid, payload))
+                self._enqueue_job(('command', generation, uid, payload))
             return
         if uid != self._capture_id or not self.session.active:
+            self._trace_job('result_rejected', kind, generation, token,
+                            reason='inactive_or_different_capture')
             return
         if self._usable_text(text, error_name):
+            self._trace_job('preview_accepted', kind, generation, token, text=text)
             # Apply only to this live utterance. Its VAD revision may advance
             # during inference; the acknowledged prefix still remains valid.
             self.command_stream.collector.discard_before(retained_start_s)
@@ -769,13 +873,19 @@ class DialoguePipeline:
             if self.on_partial is not None:
                 self.on_partial(uid, text)
         else:
+            self._trace_job('result_rejected', kind, generation, token,
+                            reason='unusable_preview', error=error_name)
             self.report('partial_failed')
         # Speech-time previews do not cover quiet/weak trailing syllables yet.
         # Only an endpoint snapshot can supply a final result, even if VAD's
         # last voiced revision did not change while that tail was recorded.
         if partial or revision != self.command_stream.collector.revision:
+            self._trace_job('endpoint_not_cached', kind, generation, token,
+                            reason='preview_only' if partial else 'speech_revision_changed')
             return
         self._endpoint_result = (key, text, error_name)
+        self._trace_job('endpoint_cached', kind, generation, token,
+                        usable=self._usable_text(text, error_name))
         self._finish_ready_endpoint()
 
     def _finish_ready_endpoint(self):
@@ -788,6 +898,8 @@ class DialoguePipeline:
                 or not self.command_stream.collector.started
                 or self.command_stream.collector.revision != revision):
             self._endpoint_result = None
+            self._trace_job('endpoint_cache_discarded', 'endpoint', generation, (uid, revision),
+                            reason='capture_or_revision_changed')
             return
         if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
                 and error_name is None and is_complete_korean_utterance(text)):
@@ -797,8 +909,11 @@ class DialoguePipeline:
 
     def _accept_result(self, kind, generation, uid, text, error_name, retained_start_s=0.0):
         if generation != self._generation:
+            self._trace_job('result_rejected', kind, generation, uid, reason='stale_generation')
             return
         if kind != 'wake' and (not self.session.active or uid != self.session.utterance_id):
+            self._trace_job('result_rejected', kind, generation, uid,
+                            reason='inactive_or_different_utterance')
             return
         failure = (
             'transcription_failed:' + error_name if error_name is not None
@@ -806,6 +921,7 @@ class DialoguePipeline:
             else None
         )
         if failure is not None:
+            self._trace_job('result_rejected', kind, generation, uid, reason=failure)
             if kind == 'wake':
                 self._terminate(failure)
             elif not self.session.session_id:
@@ -819,6 +935,7 @@ class DialoguePipeline:
             return
         if kind == 'wake':
             if is_wake_phrase(text):
+                self._trace_job('result_accepted', kind, generation, uid, reason='wake_match')
                 self.session.activate()
                 self._reset_audio()
                 self.report('wake_detected')
@@ -833,7 +950,7 @@ class DialoguePipeline:
                     except Exception as error:
                         self._terminate('wake_chime_failed:' + type(error).__name__)
                     finally:
-                        self._chime_gate_until = self.clock() + 0.3
+                        self._chime_gate_until = self.clock() + self.chime_tail_s
                         self._reset_audio()
                         self._chime_playing = False
                 if self.session.active:
@@ -843,17 +960,21 @@ class DialoguePipeline:
                     if self.diagnostics is not None:
                         self.report('wake_input_ready')
             else:
+                self._trace_job('result_rejected', kind, generation, uid, reason='not_wake')
                 self.report('not_wake')
             return
         pid = self._utterance_playback_id
         if pid is not None:
             if pid != self.session.playback_id:
+                self._trace_job('result_rejected', kind, generation, uid, reason='stale_playback')
                 self._terminate('addressee_unknown:stale_playback')
                 return
             self._pending = (uid, pid, text, self.clock() + 45.0)
+            self._trace_job('result_held', kind, generation, uid, reason='awaiting_addressee')
             self.report('awaiting_addressee:timeout_s=45')
             self.publish_interruption(uid, pid, text)
         else:
+            self._trace_job('result_accepted', kind, generation, uid, reason='final_utterance')
             self.session.finish_utterance(uid, text, addressed=True)
         self._utterance_playback_id = None
 
@@ -940,8 +1061,10 @@ class DialoguePipeline:
             if self.asr_thread.is_alive():
                 self.report('asr_shutdown_pending')
         self._drain(self.audio)
-        self._drain(self.jobs)
-        self._drain(self.results)
+        self._drain(self.jobs, lambda job: self._trace_job(
+            'job_discarded', *job[:3], reason='shutdown'))
+        self._drain(self.results, lambda result: self._trace_job(
+            'result_rejected', *result[:3], reason='shutdown'))
         self._endpoint_job = None
         self._endpoint_requested_at = None
         self._endpoint_candidate = None

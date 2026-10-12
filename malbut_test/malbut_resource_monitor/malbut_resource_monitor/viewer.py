@@ -10,12 +10,15 @@ from pathlib import Path
 import tempfile
 from urllib.parse import parse_qs, urlparse
 
+from malbut_resource_monitor.incidents import DOWNLOADS, IncidentStore
+
 
 class LogServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, root):
+    def __init__(self, address, root, incident_root='~/.ros/malbut/stt_incidents'):
         self.root = Path(root).expanduser().resolve()
+        self.incidents = IncidentStore(incident_root)
         super().__init__(address, Handler)
 
 
@@ -134,6 +137,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(Path(__file__).with_name('viewer.html').read_bytes(),
                           'text/html; charset=utf-8')
                 return
+            if url.path == '/incident-viewer.js':
+                self.send(Path(__file__).with_name('incident-viewer.js').read_bytes(),
+                          'text/javascript; charset=utf-8')
+                return
+            if url.path.startswith('/api/incident'):
+                self.incident_request(url.path, query)
+                return
             if url.path == '/api/sessions':
                 paths = [path for path in
                          sorted(self.server.root.glob('*/metadata.json'), reverse=True)
@@ -218,14 +228,56 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError, KeyError) as error:
             self.send_error(400, str(error))
 
+    def incident_request(self, route, query):
+        """Evidence is separate from resource sessions; join only by explicit IDs."""
+        store = self.server.incidents
+        if route == '/api/incidents':
+            paths = [p / f for p in store.paths() for f in ('incident.json', 'transactions.json')]
+            etag = self.unchanged(paths)
+            if etag is not None:
+                self.json(store.list(query.get('q', [''])[0]), etag)
+            return
+        name = query.get('incident', [''])[0]
+        if route == '/api/incident':
+            etag = self.unchanged([store.file(name, f) for f in DOWNLOADS[:2]])
+            if etag is not None:
+                self.json(store.detail(name), etag)
+        elif route == '/api/incident/events':
+            etag = self.unchanged([store.file(name, 'events.jsonl')])
+            if etag is not None:
+                self.json(store.events(
+                    name, source=query.get('source', ['all'])[0], query=query.get('q', [''])[0],
+                    offset=int(query.get('offset', ['0'])[0]),
+                    limit=int(query.get('limit', ['200'])[0])), etag)
+        elif route == '/api/incident/download':
+            path = store.file(name, query.get('file', [''])[0])
+            with path.open('rb') as stream:
+                remaining = os.fstat(stream.fileno()).st_size
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Disposition', f'attachment; filename="{path.name}"')
+                self.send_header('Content-Length', str(remaining))
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                while remaining:
+                    chunk = stream.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        else:
+            self.send_error(404)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', default='~/.ros/malbut/resource_logs')
+    parser.add_argument('--incident-root', default='~/.ros/malbut/stt_incidents',
+                        help='Completed STT incident bundles (read only).')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8766)
     args = parser.parse_args(argv)
-    with LogServer((args.host, args.port), args.root) as server:
+    with LogServer((args.host, args.port), args.root, args.incident_root) as server:
         print(f'Log viewer (session labels editable): http://{args.host}:{server.server_port}',
               flush=True)
         print('No authentication: bind to LAN only on a trusted network. No robot control.',

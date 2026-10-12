@@ -2,6 +2,7 @@
 
 import os
 import threading
+from urllib.parse import urljoin
 
 import pytest
 
@@ -39,7 +40,7 @@ def viewer(browser, tmp_path):
         store.write('system', dict(sample, t=t))
         store.write('processes/perception', dict(t=t, identity='123-45', cpu_percent=5))
         store.write('topics/scan', dict(t=t, received_hz=10))
-    server = LogServer(('127.0.0.1', 0), tmp_path)
+    server = LogServer(('127.0.0.1', 0), tmp_path, tmp_path / 'incidents')
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     context = browser.new_context(viewport={'width': 1280, 'height': 900})
@@ -194,3 +195,111 @@ def test_action_and_speech_live_in_separate_pages(viewer):
     playwright.expect(page.locator('#speechRows')).to_contain_text('안녕하세요')
     assert page.locator('#actionPanel').is_hidden()
     assert page.locator('#catalogPanel').is_hidden()
+
+
+def test_incident_trace_logs_pagination_download_and_selection_restore(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    evidence = write_incident(store.path.parent / 'incidents', extra_events=205,
+                              text='<img src=x onerror="window.injected=true">')
+    page.get_by_role('link', name='STT 실행 추적', exact=True).click()
+    playwright.expect(page.locator('#traceStages')).to_contain_text('추론 작업 큐에 저장')
+    playwright.expect(page.locator('#traceStages')).to_contain_text('stale_generation')
+    assert page.locator('#traceWarning').text_content().startswith('합성 테스트 데이터')
+    assert '음성 저장 안 함' in page.locator('#traceWindow').text_content()
+    assert 'Agent 답변 · 미관측' in page.locator('#traceCoverage').text_content()
+    assert page.locator('#tracePanel img').count() == 0
+    assert page.evaluate('window.injected') is None
+    assert page.locator('#sessionField').is_hidden()
+    assert page.locator('#dataPanel').is_hidden()
+    page.locator('#traceSource').select_option('program')
+    playwright.expect(page.locator('#traceLogs')).to_contain_text('Agent received u1')
+    page.locator('#traceLogs summary').click()
+    assert 'source_stamp_ns' in page.locator('#traceLogs pre').text_content()
+    assert '1791728505899334199' in page.locator('#traceLogs pre').text_content()
+    page.locator('#traceSource').select_option('vad')
+    playwright.expect(page.locator('#traceLogSummary')).to_contain_text('205개 중 1–200')
+    page.get_by_role('button', name='다음 200개', exact=True).click()
+    playwright.expect(page.locator('#traceLogSummary')).to_contain_text('205개 중 201–205')
+    assert page.locator('#traceLogs tr').count() == 5
+    page.reload()
+    playwright.expect(page.locator('#traceSource')).to_have_value('vad')
+    playwright.expect(page.locator('#traceLogSummary')).to_contain_text('205개 중 1–200')
+    link = page.get_by_role('link', name='events.jsonl 저장', exact=True).get_attribute('href')
+    assert page.request.get(urljoin(page.url, link)).body() == (evidence / 'events.jsonl').read_bytes()
+    page.set_viewport_size({'width': 390, 'height': 844})
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
+def test_native_decode_scores_and_missing_measurements_are_distinct(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    trace = dict(status='observed', return_code=0, windows_truncated=False, windows=[
+        dict(start_s=0, end_s=1.08, next_seek_s=1.08,
+             no_speech_prob=.95, avg_logprobs=-1.2,
+             no_speech_threshold=.6, logprob_threshold=-1,
+             skipped_no_speech=True, single_timestamp_ending=True),
+        dict(start_s=1.08, end_s=2.08, next_seek_s=2.08,
+             no_speech_prob=.95, avg_logprobs=-.2,
+             no_speech_threshold=.6, logprob_threshold=-1,
+             skipped_no_speech=False, single_timestamp_ending=False),
+    ])
+    write_incident(store.path.parent / 'incidents', native_trace=trace)
+    page.get_by_role('link', name='STT 실행 추적', exact=True).click()
+    stages = page.locator('#traceStages')
+    playwright.expect(stages).to_contain_text('무음 확률 0.9500')
+    playwright.expect(stages).to_contain_text('평균 로그확률 -1.2000')
+    playwright.expect(stages).to_contain_text('무음으로 제외')
+    playwright.expect(stages).to_contain_text('무음 제외 조건 미충족')
+    playwright.expect(stages).to_contain_text('종료 타임스탬프로 창 건너뜀')
+    page.set_viewport_size({'width': 390, 'height': 844})
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    write_incident(store.path.parent / 'incidents', 'incident-300-old-bridge',
+                   native_trace=dict(status='unavailable', reason='bridge_abi_3', windows=[]))
+    page.reload()
+    page.locator('#incidentSelect').select_option('incident-300-old-bridge')
+    playwright.expect(stages).to_contain_text('unavailable · bridge_abi_3')
+    assert '무음 확률' not in stages.text_content()
+
+
+def test_speech_row_opens_exact_utterance_and_missing_evidence_stays_empty(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    write_incident(store.path.parent / 'incidents', uid='linked-turn')
+    store.register('speech', kind='speech', label='speech')
+    store.write('speech', dict(t=1, event='stt_transcript', text='기록 있는 발화',
+                               utterance_id='linked-turn'))
+    store.write('speech', dict(t=2, event='stt_transcript', text='과거 미수집 발화',
+                               utterance_id='missing-turn'))
+    page.get_by_role('link', name='음성 대화', exact=True).click()
+    page.locator('#speechRows tr').filter(has_text='기록 있는 발화').get_by_role('button').click()
+    playwright.expect(page.locator('#traceUtterance')).to_have_value('linked-turn')
+    assert page.locator('#incidentSearch').input_value() == 'linked-turn'
+    page.go_back()
+    playwright.expect(page.locator('#pageTitle')).to_have_text('음성 대화')
+    page.locator('#speechRows tr').filter(has_text='과거 미수집 발화').get_by_role('button').click()
+    playwright.expect(page.locator('#incidentSummary')).to_contain_text('연결된 실행 기록이 없습니다')
+    assert page.locator('#traceDetail').is_hidden()
+    assert page.locator('#traceStages tr').count() == 0
+    page.get_by_role('button', name='모든 저장 사건 보기', exact=True).click()
+    playwright.expect(page.locator('#traceDetail')).to_be_visible()
+
+
+def test_trace_works_without_any_resource_session_and_updates_new_bundles(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    (store.path / 'metadata.json').unlink()
+    page.goto(page.url.split('#')[0] + '#stt-trace')
+    playwright.expect(page.locator('#incidentSummary')).to_contain_text('저장된 STT 실행 기록이 없습니다')
+    write_incident(store.path.parent / 'incidents')
+    playwright.expect(page.locator('#traceStages')).to_contain_text('최종 STT 발행')
+    page.locator('#traceQuery').fill('stale_generation')
+    playwright.expect(page.locator('#traceLogSummary')).to_contain_text('1개 중 1–1')
+    assert page.locator('#traceLogs tr').count() == 1
+    write_incident(store.path.parent / 'incidents', 'incident-200-later', uid='next-turn')
+    playwright.expect(page.locator('#incidentSummary')).to_contain_text('2개 저장 사건')
+    assert page.locator('#traceUtterance').input_value() == 'u1', 'live refresh must retain selection'

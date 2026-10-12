@@ -133,6 +133,20 @@ def test_exact_silence_is_empty_without_native_inference(native):
     assert native.calls == []
 
 
+def test_abi_3_scores_are_explicitly_unavailable_and_errors_keep_decode_status(native):
+    with engine(native) as transcriber:
+        options = dict(language='ko', beam_size=1, condition_on_previous_text=False,
+                       initial_prompt=None)
+        _, info = transcriber.model.transcribe(np.ones(320), **options)
+        assert info.native_decode == dict(status='unavailable', reason='bridge_abi_3',
+                                          windows=[], return_code=0)
+        assert not transcriber.metadata['native_decode_trace']
+        native.result = -101
+        with pytest.raises(TimeoutError) as caught:
+            transcriber.model.transcribe(np.ones(320), **options)
+        assert caught.value.native_decode['return_code'] == -101
+
+
 def test_native_failure_does_not_expose_stale_segments(native):
     with engine(native) as transcriber:
         assert transcriber.transcribe(b'\x01\x00' * 320, 16000) == '제이크야.'

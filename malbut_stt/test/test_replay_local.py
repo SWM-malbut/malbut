@@ -132,7 +132,8 @@ def test_slow_inference_after_eof_keeps_capture_alive(runtime, tmp_path):
 
 
 def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime, tmp_path):
-    pcm = b'\x01\x00' * 1600 + bytes(2 * 27200) + b'\x02\x00' * 3200
+    # Seven Korean syllables need more than the old 300 ms voiced fixture.
+    pcm = b'\x01\x00' * 1600 + bytes(2 * 27200) + b'\x02\x00' * 6400
     path = write_wav(tmp_path / 'resumed-before-finalization.wav', pcm)
     transcriber = LocalWhisperTranscriber(runtime.model_dir)
     calls = []
