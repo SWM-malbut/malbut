@@ -16,6 +16,8 @@ def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
+    monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
+                        str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
     model.mkdir()
     state = SimpleNamespace(
@@ -403,11 +405,14 @@ def test_incident_does_not_claim_publication_after_shutdown(runtime, monkeypatch
     assert all(json.loads(e.record)['event'] != 'transcript_published' for e in recorder._entries)
 
 
-def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
+def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, tmp_path):
     assert main(['--ros-args']) == 0
     assert runtime.calls['ros_args'] == ['--ros-args']
     assert runtime.calls['node_name'] == 'malbut_stt'
-    assert runtime.pipeline_args['diagnostics'] is None
+    recorder = runtime.pipeline_args['diagnostics']
+    assert recorder.directory == tmp_path / 'resource_logs' / 'stt_incidents'
+    assert recorder.save_audio is False
+    assert not recorder._worker.is_alive()
     defaults = runtime.calls['defaults']
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
@@ -456,7 +461,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
         {'utterance_id': 'u1', 'text': '원문 그대로', 'session_id': ''},
     ]
     assert set(runtime.calls['subscriptions']) == {
-        '/malbut/speech/playback_status', '/malbut/speech/response',
+        '/malbut/speech/playback_status', '/malbut/speech/response', '/rosout',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
@@ -471,11 +476,36 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     }
     assert ('info', 'playback_control_accepted:pause') in runtime.logs
     for _, qos in [runtime.calls['publishers']['/malbut/speech/transcript'],
-                   *runtime.calls['subscriptions'].values()]:
+                   *(value for topic, value in runtime.calls['subscriptions'].items()
+                     if topic != '/rosout')]:
         assert vars(qos) == {
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+
+def test_default_capture_saves_final_phrase_without_extra_launch_or_environment(runtime):
+    def spin():
+        runtime.pipeline_args['publish_transcript']('automatic', '구독과 좋아요 부탁드려요!')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main([]) == 0
+    recorder = runtime.pipeline_args['diagnostics']
+    assert recorder.last_incident.is_dir()
+    assert not list(recorder.last_incident.rglob('*.wav'))
+    manifest = json.loads((recorder.last_incident / 'incident.json').read_text())
+    assert manifest['triggers'][0]['utterance_id'] == 'automatic'
+    assert manifest['audio_saved'] is False
+    assert any(message.text == '구독과 좋아요 부탁드려요!'
+               for topic, message in runtime.published if topic == '/malbut/speech/transcript')
+
+
+def test_automatic_capture_can_be_disabled(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{"enabled":false}')
+    assert main([]) == 0
+    assert runtime.pipeline_args['diagnostics'] is None
+    assert '/rosout' not in runtime.callbacks
 
 
 @pytest.mark.parametrize('accepted', [True, False])

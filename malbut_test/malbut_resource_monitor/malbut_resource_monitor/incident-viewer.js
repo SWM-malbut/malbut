@@ -76,6 +76,8 @@ class IncidentView {
     const result = await this.get('/api/incidents?' + new URLSearchParams({q:this.$('incidentSearch').value}), signal);
     if (signal.aborted) return;
     this.$('incidentRoot').textContent = '저장 폴더: ' + result.root;
+    if (result.legacy_roots?.length) this.$('incidentRoot').textContent +=
+      ' · 이전 기록도 표시: ' + result.legacy_roots.join(', ');
     const pairs = result.items.map(item=>[item.id,
       (item.synthetic?'[합성 테스트] ':'') + this.date(item.triggers[0]?.wall_ns) + ' · ' +
       (item.triggers[0]?.text || item.id)]);
@@ -84,7 +86,7 @@ class IncidentView {
     this.$('incidentSummary').textContent = result.total
       ? `${result.total}개 저장 사건${result.truncated?' · 최신 200개 표시, 검색으로 범위를 좁히세요.':''}`
       : this.$('incidentSearch').value ? '이 문구·발화 ID에 연결된 실행 기록이 없습니다. 과거 대화만으로 내부 처리 과정을 복원할 수는 없습니다.'
-        : '저장된 STT 실행 기록이 없습니다. 테스트 기록을 켠 후 대상 문구가 감지되어야 표시됩니다.';
+        : '저장된 STT 실행 기록이 없습니다. 업데이트한 STT를 실행하면 자동 수집하며, 대상 문구 감지 후 약 15초 뒤 표시됩니다.';
     if (result.unreadable) this.$('incidentSummary').textContent += ` · 읽을 수 없는 사건 ${result.unreadable}개`;
     if (!pairs.length) { this.selected = ''; this.clear(); return; }
     const selected = this.$('incidentSelect').value;

@@ -74,18 +74,30 @@ source /home/ubuntu/ros2_ws/install/malbut_test/local_setup.zsh
 ros2 run malbut_resource_monitor resource_viewer --host 0.0.0.0 --port 8766
 ```
 
-기본 기록 폴더는 `~/.ros/malbut/stt_incidents`입니다. 다른 위치에 저장했다면 뷰어에
-`--incident-root /기록/폴더`를 추가합니다. 이 폴더는 `--root`로 지정하는 자원 측정
-회차와 별개이며, 자원 회차 없이도 STT 실행 추적을 조회할 수 있습니다.
+업데이트한 STT는 평소 Bringup으로 실행하면 **자동으로 실행 로그를 수집**합니다.
+수집기를 따로 실행하거나 환경변수를 추가할 필요 없이 위 뷰어를 열면 됩니다.
+기본값은 음성 파일 없이 로그만 저장하며, 문제 문구 감지 전 30초와 후 15초를 보관합니다.
+뷰어를 나중에 열어도 이미 저장한 사건을 확인할 수 있습니다. STT가 실행되지 않았다면
+새 기록은 생기지 않습니다. 업데이트 전부터 실행 중인 STT에는 다음 실행부터 적용됩니다.
 
-STT 기록은 기본 OFF입니다. 업데이트한 STT 패키지로 다음 **테스트 실행을 시작하기 전**
-아래 환경변수를 지정하면 음성 파일 없이 처리 로그를 저장합니다. 이미 실행 중인
-프로세스에는 적용되지 않습니다. 뷰어를 켜는 것만으로 STT 수집이 활성화되지는 않습니다.
+기본 저장 구조는 다음과 같습니다.
 
-```zsh
-export MALBUT_STT_INCIDENT_CONFIG='{"directory":"/home/ubuntu/.ros/malbut/stt_incidents","save_audio":false,"pre_seconds":30,"post_seconds":15}'
-# 이후 평소 사용하는 테스트 Bringup/STT 실행 명령 사용
+```text
+~/.ros/malbut/resource_logs/
+├── <측정 회차>/             # 자원·대화 로그
+└── stt_incidents/
+    └── incident-*/          # STT 처리 과정·프로그램 로그
 ```
+
+뷰어는 `--root` 아래 `stt_incidents`를 자동으로 읽습니다. 기본 경로에서는 예전
+`~/.ros/malbut/stt_incidents` 기록도 이동·삭제 없이 함께 표시합니다. 자원 회차 없이도
+STT 실행 추적을 조회할 수 있습니다. 다른 위치의 기존 기록을 보려면
+`--incident-root /기록/폴더`를 지정합니다. `--root`를 바꿔 새로 수집하려면 STT의
+`MALBUT_STT_INCIDENT_CONFIG`에서 `directory`도 그 아래 `stt_incidents`로 맞춥니다.
+
+기록을 끌 때만 STT 실행 전에
+`export MALBUT_STT_INCIDENT_CONFIG='{"enabled":false}'`를 지정합니다.
+`unset MALBUT_STT_INCIDENT_CONFIG`는 기본 자동 수집으로 되돌립니다.
 
 **음성 대화 → STT 행의 실행 로그 보기**는 정확히 같은 발화 ID가 포함된 저장 사건으로
 이동합니다. 사건에는 트리거 외에 전후에 함께 관측한 발화가 있을 수 있으며, **추적할 발화**에서

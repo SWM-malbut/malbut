@@ -57,6 +57,16 @@ MANUAL_FAST_WINDOW_S = 3.0
 MANUAL_HOLD_S = 1.0
 # The state upload's reply names at most this many closed fall incidents.
 MAX_CLOSED_FALLS = 16
+# One web channel (2026-10-12): the homecam's one-second heartbeat rides on the
+# state upload. The homecam keeps every decision (consent, settings, talk lease,
+# fall settings); this bridge only carries its request and the web's answer.
+HOMECAM_REQUEST_TOPIC = '/malbut/homecam/heartbeat/request'
+HOMECAM_REPLY_TOPIC = '/malbut/homecam/heartbeat/reply'
+# The homecam asks every second; an older request means it stopped.
+HOMECAM_REQUEST_MAX_AGE_S = 3.0
+MAX_HOMECAM_REQUEST_BYTES = 16 * 1024
+HOMECAM_FAILURES = ('server_timeout', 'server_transport_error', 'server_auth_failed',
+                    'server_invalid_settings')
 
 
 def closed_fall_incidents(reply):
@@ -113,10 +123,91 @@ def read_device_token(filename):
 class CloudError(RuntimeError):
     """Expose only an HTTP status or a fixed diagnostic, never credentials."""
 
-    def __init__(self, message, status=None):
+    def __init__(self, message, status=None, *, timeout=False):
         """Retain the HTTP status for bounded retry decisions."""
         super().__init__(message)
         self.status = status
+        self.timeout = timeout
+
+
+def homecam_request(text):
+    """
+    Return (sequence, body) of the homecam's heartbeat request, or None.
+
+    The body is the one POST /api/device/v1/heartbeat took; the web checks it.
+    """
+    if not isinstance(text, str) or len(text.encode('utf-8')) > MAX_HOMECAM_REQUEST_BYTES:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    if (not isinstance(value, dict) or set(value) != {'sequence', 'body'}
+            or type(value['sequence']) is not int or not 0 < value['sequence'] < 2 ** 63
+            or not isinstance(value['body'], dict)):
+        return None
+    return value['sequence'], value['body']
+
+
+def homecam_failure(error):
+    """Name the failure the homecam's own HTTPS heartbeat reported for this error."""
+    if error.status in (401, 403):
+        return 'server_auth_failed'
+    return 'server_timeout' if error.timeout else 'server_transport_error'
+
+
+def homecam_answer(reply):
+    """Return (body, None) as POST /heartbeat answered, or (None, failure code)."""
+    value = reply.get('homecam') if isinstance(reply, dict) else None
+    if isinstance(value, dict) and set(value) == {'error', 'status'}:
+        return None, ('server_auth_failed' if value['status'] in (401, 403)
+                      else 'server_transport_error')
+    if isinstance(value, dict):
+        return value, None
+    # An older web without the channel answers nothing: like a failed request.
+    return None, 'server_transport_error' if value is None else 'server_invalid_settings'
+
+
+class HomecamHeartbeatRelay:
+    """Carry the homecam's newest heartbeat request and hand the answer back."""
+
+    def __init__(self, node, clock=time.monotonic):
+        """Listen for the homecam on the bridge's node; nothing is sent yet."""
+        from std_msgs.msg import String
+
+        self._string = String
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._latest = None
+        self._replies = node.create_publisher(String, HOMECAM_REPLY_TOPIC, 10)
+        node.create_subscription(String, HOMECAM_REQUEST_TOPIC, self.on_request, 10)
+
+    def on_request(self, message):
+        """Keep only the newest request; it repeats the whole status every second."""
+        request = homecam_request(message.data)
+        if request is not None:
+            with self._lock:
+                self._latest = (*request, self._clock())
+
+    def take(self):
+        """Return the newest fresh request once, as (sequence, body), else None."""
+        with self._lock:
+            latest, self._latest = self._latest, None
+        if latest is None or self._clock() - latest[2] > HOMECAM_REQUEST_MAX_AGE_S:
+            return None
+        return latest[:2]
+
+    def answer(self, sequence, requested_at, observed_at, *, body=None, failure=None):
+        """Publish the web's reply body, or the failure the homecam acts on."""
+        data = {'sequence': sequence, 'requestedAt': requested_at,
+                'observedAt': observed_at, 'ok': body is not None}
+        if body is not None:
+            data['body'] = body
+        else:
+            data['failureCode'] = (failure if failure in HOMECAM_FAILURES
+                                   else 'server_transport_error')
+        self._replies.publish(self._string(data=json.dumps(
+            data, ensure_ascii=False, allow_nan=False, separators=(',', ':'))))
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -167,8 +258,10 @@ class CloudClient:
                 return value
         except HTTPError as error:
             raise CloudError(f'Cloud returned HTTP {error.code}', error.code) from None
-        except (URLError, TimeoutError, OSError):
-            raise CloudError('Cloud request failed') from None
+        except (URLError, TimeoutError, OSError) as error:
+            timeout = isinstance(error, TimeoutError) or isinstance(
+                getattr(error, 'reason', None), TimeoutError)
+            raise CloudError('Cloud request failed', timeout=timeout) from None
         except (ValueError, UnicodeError):
             raise CloudError('Cloud response is not valid JSON') from None
 
@@ -476,13 +569,14 @@ def map_payload(metadata, png, runtime, zones=None, user_map=None, map_revision=
 class CloudSync:
     """Poll off the ROS executor and report dispatch separately from completion."""
 
-    def __init__(self, bridge, client, *, interval=1.0):
+    def __init__(self, bridge, client, *, interval=1.0, homecam=None):
         """Prepare an idle bounded worker without starting any robot process."""
         if not 1.0 <= interval <= 60.0:
             raise ValueError('Cloud interval must be between 1 and 60 seconds')
         self.bridge = bridge
         self.client = client
         self.interval = interval
+        self.homecam = homecam
         self.stop_event = threading.Event()
         self.pending = OrderedDict()
         self.seen = OrderedDict()
@@ -694,9 +788,22 @@ class CloudSync:
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
             navigation = self.navigator.target(snapshot.get('requests', []),
                                                snapshot.get('system'))
-            reply = self.client.request('/api/device/v1/robot/state', 'POST',
-                                        state_payload(snapshot, info, self.maps,
-                                                      navigation=navigation))
+            payload = state_payload(snapshot, info, self.maps, navigation=navigation)
+            homecam = self.homecam.take() if self.homecam is not None else None
+            if homecam is not None:
+                payload['homecam'] = homecam[1]
+            requested_at = time.monotonic()
+            try:
+                reply = self.client.request('/api/device/v1/robot/state', 'POST', payload)
+            except CloudError as error:
+                if homecam is not None:
+                    self.homecam.answer(homecam[0], requested_at, time.monotonic(),
+                                        failure=homecam_failure(error))
+                raise
+            if homecam is not None:
+                body, failure = homecam_answer(reply)
+                self.homecam.answer(homecam[0], requested_at, time.monotonic(),
+                                    body=body, failure=failure)
             self.last_state_at = now
             closed = closed_fall_incidents(reply)
             if closed:
@@ -784,7 +891,8 @@ def main(args=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError('A cloud bridge already owns this device credential') from None
-        sync = CloudSync(bridge, CloudClient(backend, token), interval=float(interval))
+        sync = CloudSync(bridge, CloudClient(backend, token), interval=float(interval),
+                         homecam=HomecamHeartbeatRelay(bridge.node))
         sync.thread.start()
         bridge.node.get_logger().info('Real robot cloud bridge started; no motion requested')
         executor.spin()

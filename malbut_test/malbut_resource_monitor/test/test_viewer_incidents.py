@@ -1,6 +1,7 @@
 """Read-only evidence APIs: correlation, bounds, original bytes and safe paths."""
 
 import json
+from pathlib import Path
 import threading
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -88,6 +89,67 @@ def test_evidence_is_available_without_resource_sessions_and_preserves_raw_bytes
     with get('/incident-viewer.js') as response:
         assert 'javascript' in response.headers['Content-Type']
         assert '원본 필드 보기' in response.read().decode()
+
+
+def test_default_stt_capture_is_visible_when_viewer_opens_later(tmp_path, monkeypatch):
+    # Exercise the real recorder and HTTP store across packages, with no ROS,
+    # microphone, model, environment setting or custom incident-root argument.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / 'malbut_stt'))
+    from malbut_stt import incident
+    from malbut_resource_monitor import viewer as viewer_module
+
+    assert incident.DEFAULT_DIRECTORY == viewer_module.DEFAULT_LOG_ROOT + '/stt_incidents'
+    root = tmp_path / 'resource_logs'
+    monkeypatch.setattr(incident, 'DEFAULT_DIRECTORY', str(root / 'stt_incidents'))
+    recorder = incident.from_environment({})
+    try:
+        recorder.audio(bytes(640), blocked=False)
+        recorder.event('job_enqueued', utterance_id='automatic', kind='command')
+        recorder.event('transcript_published', utterance_id='automatic', text='구독과 좋아요!')
+    finally:
+        recorder.close()
+    assert not list(root.rglob('*.wav'))
+    assert recorder.last_incident.is_dir()
+    with LogServer(('127.0.0.1', 0), root) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}'
+            with urlopen(base + '/api/incidents') as response:
+                data = json.load(response)
+            assert data['total'] == 1
+            assert data['items'][0]['utterance_ids'] == ['automatic']
+            assert data['root'] == str(root / 'stt_incidents')
+            with urlopen(base + '/api/incident?' + urlencode(
+                    {'incident': data['items'][0]['id']})) as response:
+                detail = json.load(response)
+            assert detail['manifest']['audio_saved'] is False
+            assert detail['trace']['transactions'][0]['observed']['stt_published']
+            with urlopen(base + '/api/sessions') as response:
+                assert json.load(response) == [], 'incident storage is not a resource session'
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def test_default_viewer_reads_legacy_and_new_evidence_without_moving_files(tmp_path, monkeypatch):
+    from malbut_resource_monitor import viewer as viewer_module
+
+    root, legacy = tmp_path / 'resource_logs', tmp_path / 'stt_incidents'
+    monkeypatch.setattr(viewer_module, 'DEFAULT_LOG_ROOT', str(root))
+    monkeypatch.setattr(viewer_module, 'LEGACY_INCIDENT_ROOT', str(legacy))
+    old = write_incident(legacy, 'incident-100-old', text='이전 기록')
+    new = write_incident(root / 'stt_incidents', 'incident-200-new', text='새 기록')
+    snapshot = {p: p.read_bytes() for path in (old, new) for p in path.iterdir()}
+    with LogServer(('127.0.0.1', 0), root) as server:
+        data = server.incidents.list()
+        assert data['total'] == 2
+        assert data['legacy_roots'] == [str(legacy)]
+        assert server.incidents.detail(old.name)['manifest']['triggers'][0]['text'] == '이전 기록'
+        assert server.incidents.detail(new.name)['manifest']['triggers'][0]['text'] == '새 기록'
+    assert all(path.read_bytes() == raw for path, raw in snapshot.items())
+    with LogServer(('127.0.0.1', 0), root, root / 'stt_incidents') as server:
+        assert server.incidents.list()['total'] == 1, 'explicit roots must remain isolated'
 
 
 def test_event_filters_pagination_and_damage_keep_original_line_numbers(viewer):

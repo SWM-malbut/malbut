@@ -153,21 +153,21 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             wake = LocalWakeRecognizer(wake_path, compute_type=compute_type)
             phase = 'initializing_stt'
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
-        if os.environ.get('MALBUT_STT_INCIDENT_CONFIG', '').strip():
-            from dataclasses import asdict
-            from malbut_stt.incident import from_environment
+        from dataclasses import asdict
+        from malbut_stt.incident import from_environment
 
-            diagnostics = from_environment(
-                os.environ,
-                metadata=dict(backend=backend, stt_model_path=str(stt_path),
-                              wake_model_path=str(wake_path), device_index=device_index,
-                              vad_mode=vad_mode, input_has_aec=input_has_aec,
-                              chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
-                              capture_settings=asdict(settings),
-                              model=getattr(transcriber, 'metadata', {})),
-                on_saved=lambda path: node.get_logger().info('stt_incident_saved:' + str(path)),
-                on_error=lambda error: node.get_logger().warning('stt_incident_stopped:' + error),
-            )
+        diagnostics = from_environment(
+            os.environ,
+            metadata=dict(backend=backend, stt_model_path=str(stt_path),
+                          wake_model_path=str(wake_path), device_index=device_index,
+                          vad_mode=vad_mode, input_has_aec=input_has_aec,
+                          chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
+                          capture_settings=asdict(settings),
+                          model=getattr(transcriber, 'metadata', {})),
+            on_saved=lambda path: node.get_logger().info('stt_incident_saved:' + str(path)),
+            on_error=lambda error: node.get_logger().warning('stt_incident_stopped:' + error),
+        )
+        if diagnostics is not None:
             from rcl_interfaces.msg import Log
 
             node.create_subscription(Log, '/rosout', diagnostics.ros_log, QoSProfile(

@@ -31,6 +31,8 @@ def test_stt_service_round_trip_and_status_topic(
                             web_talk_quiet=[], speech_requests=[], closed=False)
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
+    monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
+                        str(tmp_path / 'automatic-incidents'))
     if incident:
         monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', json.dumps({
             'directory': str(tmp_path / 'incidents'), 'contains': [],

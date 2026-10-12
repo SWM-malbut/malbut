@@ -1,6 +1,7 @@
 #include "homecam_media_agent/heartbeat_client.hpp"
 #include <charconv>
 
+#include <cmath>
 #include <limits>
 #include <regex>
 #include <sstream>
@@ -8,14 +9,7 @@
 #include <unordered_set>
 #include <utility>
 
-#include "homecam_media_agent/config.hpp"
-#include "homecam_media_agent/build_features.hpp"
-#include "homecam_media_agent/http_runtime.hpp"
 #include "nlohmann/json.hpp"
-
-#if HOMECAM_HAVE_CURL
-#include <curl/curl.h>
-#endif
 
 namespace homecam_media_agent
 {
@@ -50,51 +44,8 @@ std::string json_escape(const std::string & value)
   return output.str();
 }
 
-#if HOMECAM_HAVE_CURL
-struct ResponseBuffer
-{
-  std::string body;
-  bool overflow{false};
-};
-
-std::size_t collect_response(
-  char * data, std::size_t size, std::size_t count, void * output)
-{
-  auto * const response = static_cast<ResponseBuffer *>(output);
-  if (count != 0U && size > std::numeric_limits<std::size_t>::max() / count) {
-    response->overflow = true;
-    return 0U;
-  }
-  const std::size_t bytes = size * count;
-  if (!append_heartbeat_response_chunk(&response->body, data, bytes)) {
-    response->overflow = true;
-    return 0U;
-  }
-  return bytes;
-}
-#endif
 
 }  // namespace
-
-bool append_heartbeat_response_chunk(
-  std::string * const response_body,
-  const char * const data,
-  const std::size_t bytes)
-{
-  if (response_body == nullptr || (data == nullptr && bytes != 0U)) {
-    return false;
-  }
-  if (bytes > kMaximumResponseBytes ||
-    response_body->size() > kMaximumResponseBytes - bytes)
-  {
-    return false;
-  }
-  if (bytes == 0U) {
-    return true;
-  }
-  response_body->append(data, bytes);
-  return true;
-}
 
 std::string heartbeat_to_json(const HeartbeatStatus & status)
 {
@@ -250,127 +201,77 @@ bool parse_desired_settings(
   return true;
 }
 
-HeartbeatClient::HeartbeatClient(
-  std::string backend_url, std::string bearer_token)
-: backend_url_(std::move(backend_url)),
-  bearer_token_(std::move(bearer_token))
+std::string heartbeat_relay_request(const HeartbeatStatus & status, const std::uint64_t sequence)
 {
+  return "{\"sequence\":" + std::to_string(sequence) + ",\"body\":" + heartbeat_to_json(status) + "}";
 }
 
-bool HeartbeatClient::available() const
+bool parse_heartbeat_relay_reply(
+  const std::string & message,
+  HeartbeatRelayReply * const reply,
+  std::string * const error)
 {
-#if HOMECAM_HAVE_CURL
-  return is_allowed_backend_url(backend_url_) &&
-         is_valid_device_token(bearer_token_);
-#else
-  return false;
-#endif
-}
-
-bool HeartbeatClient::post(
-  const HeartbeatStatus & status,
-  DesiredDeviceSettings * const desired,
-  std::string * const error,
-  std::string * const failure_code) const
-{
-  if (failure_code != nullptr) {*failure_code = "server_transport_error";}
-#if HOMECAM_HAVE_CURL
-  if (!available()) {
-    if (error != nullptr) {
-      *error = "backend URL or HOMECAM_DEVICE_TOKEN is missing";
-    }
-    return false;
+  const auto fail = [error](const std::string & text) {
+      if (error != nullptr) {*error = text;}
+      return false;
+    };
+  if (reply == nullptr) {return fail("heartbeat reply output is required");}
+  // The relayed body keeps the 64 KiB limit the HTTPS heartbeat had.
+  if (message.size() > kMaximumResponseBytes + 1024U) {
+    return fail("heartbeat reply exceeds its size limit");
   }
-  if (!ensure_http_runtime(error)) {
-    return false;
+  const auto root = nlohmann::json::parse(message, nullptr, false);
+  if (root.is_discarded() || !root.is_object() || root.size() != 5U) {
+    return fail("heartbeat reply must be an object with five fields");
   }
-
-  CURL * curl = curl_easy_init();
-  if (curl == nullptr) {
-    if (error != nullptr) {
-      *error = "curl_easy_init failed";
-    }
-    return false;
+  const auto time = [&root](const char * key) {
+      const auto value = root.find(key);
+      return value != root.end() && value->is_number() &&
+             std::isfinite(value->get<double>()) && value->get<double>() >= 0.0;
+    };
+  const auto sequence = root.find("sequence");
+  const auto ok = root.find("ok");
+  if (sequence == root.end() || !sequence->is_number_unsigned() ||
+    sequence->get<std::uint64_t>() == 0U || !time("requestedAt") || !time("observedAt") ||
+    ok == root.end() || !ok->is_boolean() ||
+    root["observedAt"].get<double>() < root["requestedAt"].get<double>())
+  {
+    return fail("heartbeat reply has a missing or invalid field");
   }
-
-  const std::string url = backend_url_ + "/api/device/v1/heartbeat";
-  const std::string payload = heartbeat_to_json(status);
-  ResponseBuffer response;
-  const std::string authorization = "Authorization: Bearer " + bearer_token_;
-  curl_slist * headers = nullptr;
-  headers = curl_slist_append(headers, "Content-Type: application/json");
-  headers = curl_slist_append(headers, authorization.c_str());
-
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_POST, 1L);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
-  // Production backends may need a few seconds for serverless cold starts and
-  // database work. Keep the heartbeat asynchronous, but do not cancel a valid
-  // response before it can complete.
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 10000L);
-  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 0L);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect_response);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-  const CURLcode result = curl_easy_perform(curl);
-  long response_code = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
-
-  if (response.overflow) {
-    if (failure_code != nullptr) {*failure_code = "server_invalid_settings";}
-    if (error != nullptr) {
-      *error = "backend response exceeded 64 KiB";
+  HeartbeatRelayReply parsed;
+  parsed.sequence = sequence->get<std::uint64_t>();
+  parsed.requested_at = root["requestedAt"].get<double>();
+  parsed.observed_at = root["observedAt"].get<double>();
+  if (ok->get<bool>()) {
+    const auto body = root.find("body");
+    if (body == root.end() || !body->is_object()) {
+      return fail("heartbeat reply body must be an object");
     }
-    return false;
+    std::string parse_error;
+    const std::string text = body->dump();
+    // Same outcome as an oversized or malformed HTTPS heartbeat response.
+    if (text.size() > kMaximumResponseBytes) {
+      parsed.failure_code = "server_invalid_settings";
+      parsed.error = "backend response exceeded 64 KiB";
+    } else if (!parse_desired_settings(text, &parsed.desired, &parse_error)) {
+      parsed.failure_code = "server_invalid_settings";
+      parsed.error = "invalid heartbeat response: " + parse_error;
+    } else {
+      parsed.success = true;
+      parsed.failure_code = "none";
+    }
+  } else {
+    static const std::unordered_set<std::string> failures{
+      "server_timeout", "server_transport_error", "server_auth_failed", "server_invalid_settings"};
+    const auto code = root.find("failureCode");
+    if (code == root.end() || !code->is_string() || !failures.count(code->get<std::string>())) {
+      return fail("heartbeat reply failure code is invalid");
+    }
+    parsed.failure_code = code->get<std::string>();
+    parsed.error = "robot_cloud_sync reported " + parsed.failure_code;
   }
-  if (result != CURLE_OK) {
-    if (failure_code != nullptr && result == CURLE_OPERATION_TIMEDOUT) {
-      *failure_code = "server_timeout";
-    }
-    if (error != nullptr) {
-      *error = curl_easy_strerror(result);
-    }
-    return false;
-  }
-  if (response_code < 200 || response_code >= 300) {
-    if (failure_code != nullptr && (response_code == 401 || response_code == 403)) {
-      *failure_code = "server_auth_failed";
-    }
-    if (error != nullptr) {
-      *error = "backend returned HTTP " + std::to_string(response_code);
-    }
-    return false;
-  }
-  DesiredDeviceSettings parsed_desired;
-  std::string parse_error;
-  if (!parse_desired_settings(response.body, &parsed_desired, &parse_error)) {
-    if (failure_code != nullptr) {*failure_code = "server_invalid_settings";}
-    if (error != nullptr) {
-      *error = "invalid heartbeat response: " + parse_error;
-    }
-    return false;
-  }
-  if (desired != nullptr) {
-    *desired = parsed_desired;
-  }
-  if (failure_code != nullptr) {*failure_code = "none";}
+  *reply = std::move(parsed);
   return true;
-#else
-  (void)status;
-  (void)desired;
-  if (error != nullptr) {
-    *error = "homecam_media_agent was built without libcurl";
-  }
-  return false;
-#endif
 }
 
 }  // namespace homecam_media_agent

@@ -141,8 +141,8 @@ test("camera OFF ends affected media sessions and refuses monitoring without cam
       ('p2p','ROOMA1','robot-a','device',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '1 hour','p2p'),
       ('storage','ROOMA2','robot-a','device',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '1 hour','storage');
       INSERT INTO recording_sessions(session_id,kvs_stream_arn,kvs_channel_arn,started_at) VALUES('storage','arn:stream','arn:channel',CURRENT_TIMESTAMP);
-      INSERT INTO device_state(device_id,monitoring_enabled,p2p_session_id,storage_session_id,active_session_id,active_stream_mode)
-      VALUES('robot-a',1,'p2p','storage','storage','storage');`);
+      INSERT INTO device_state(device_id,monitoring_enabled,monitoring_preferred,p2p_session_id,storage_session_id,active_session_id,active_stream_mode)
+      VALUES('robot-a',1,1,'p2p','storage','storage','storage');`);
     assert.equal((await repo.operateVoiceDevice(device, input("homecam_settings", { cameraEnabled: false }))).success, true);
     const state = (await h.db.query("SELECT * FROM device_state WHERE device_id='robot-a'")).rows[0];
     assert.equal(state.monitoring_enabled, 0);
@@ -154,6 +154,10 @@ test("camera OFF ends affected media sessions and refuses monitoring without cam
     const denied = await repo.operateVoiceDevice(device, input("homecam_settings", { monitoringEnabled: true }, "monitoring"));
     assert.equal(denied.code, "CAMERA_DISABLED");
     assert.equal((await h.db.query("SELECT state FROM device_voice_requests WHERE request_id='monitoring'")).rows[0].state, "failed");
+    // Camera on again restores the recording the user had chosen (0026).
+    assert.equal((await repo.operateVoiceDevice(device, input("homecam_settings", { cameraEnabled: true }, "camera-on"))).success, true);
+    assert.deepEqual((await h.db.query("SELECT camera_enabled,monitoring_enabled,monitoring_preferred FROM device_state WHERE device_id='robot-a'")).rows,
+      [{ camera_enabled: 1, monitoring_enabled: 1, monitoring_preferred: 1 }]);
   });
 });
 

@@ -76,6 +76,21 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(cameraAndMonitoringOn.cameraEnabled, true);
       assert.equal(cameraAndMonitoringOn.monitoringEnabled, true);
 
+      // Recording follows the camera (0026): camera on alone restores the choice.
+      const settings = (patch) => homecam.updateDeviceSettings({
+        deviceId: "living-room",
+        userId: "u-owner",
+        patch,
+      });
+      assert.equal((await settings({ cameraEnabled: false })).monitoringEnabled, false);
+      const cameraBack = await settings({ cameraEnabled: true });
+      assert.equal(cameraBack.cameraEnabled, true);
+      assert.equal(cameraBack.monitoringEnabled, true);
+      await settings({ monitoringEnabled: false });
+      await settings({ cameraEnabled: false });
+      assert.equal((await settings({ cameraEnabled: true })).monitoringEnabled, false);
+      assert.equal((await settings({ monitoringEnabled: true })).monitoringEnabled, true);
+
       const p2pSession = await homecam.prepareDeviceMediaSession({
         deviceId: "living-room",
         mode: "p2p",
