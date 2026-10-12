@@ -16,7 +16,7 @@ from malbut_bringup.user_map import load_or_build_user_map, save_rooms, user_map
 from malbut_bringup.web_panel import PanelData, save_zones, zone_view
 from malbut_bringup.web_runtime import SavedMapCatalog
 from malbut_bringup.zones import read_zones, zones_path
-from malbut_autoslam.map_view import write_map_view
+from malbut_autoslam.map_view import read_map_view, write_map_view
 
 
 COMMAND_ID = '7f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f'
@@ -95,10 +95,51 @@ def test_view_settings_are_reloaded_without_changing_rooms_or_map_revision(saved
     assert load_or_build_user_map(path, after['map_id'])['view'] == view
     path.with_suffix('.view.json').write_text('{broken')
     fallback, _, current = space_documents(runtime, catalog)
-    assert 'view' not in fallback
+    assert fallback['view'] == read_map_view(path)
     assert fallback['features'] == before['features'] and current == revision
     # Not on a saved map (mapping): nothing to edit.
     assert space_documents({'localization': {'mode': 'MAPPING'}}, catalog) == (None, None, None)
+
+
+def test_selecting_an_old_map_creates_alignment_once_without_changing_navigation(saved, monkeypatch):
+    catalog, runtime, path = saved
+    original = [item.read_bytes() for item in (path, path.with_suffix('.pgm'))]
+    write = Mock(wraps=write_map_view)
+    monkeypatch.setattr('malbut_bringup.user_map.write_map_view', write)
+    assert not path.with_suffix('.view.json').exists()
+    document, _, revision = space_documents(runtime, catalog)
+    assert document['view'] == read_map_view(path)
+    assert [item.read_bytes() for item in (path, path.with_suffix('.pgm'))] == original
+    cloud_sync._SPACE_CACHE.clear()  # As after reselecting a map or restarting the bridge.
+    again, _, current = space_documents(runtime, catalog)
+    assert again['view'] == document['view'] and current == revision
+    write.assert_called_once_with(path)
+
+
+def test_selecting_a_changed_map_refreshes_stale_alignment(saved, monkeypatch):
+    catalog, runtime, path = saved
+    before, _, _ = space_documents(runtime, catalog)
+    path.write_text(path.read_text() + '\n# updated map metadata\n')
+    assert read_map_view(path) is None
+    write = Mock(wraps=write_map_view)
+    monkeypatch.setattr('malbut_bringup.user_map.write_map_view', write)
+    after, _, _ = space_documents(runtime, catalog)
+    assert after['view'] == read_map_view(path)
+    assert after['view']['map_signature'] != before['view']['map_signature']
+    assert after['features'] == before['features']
+    write.assert_called_once_with(path)
+
+
+@pytest.mark.parametrize('error', [OSError('read-only'), ValueError('alignment failed')])
+def test_alignment_failure_does_not_prevent_loading_the_selected_map(saved, monkeypatch, error):
+    catalog, runtime, path = saved
+    write = Mock(side_effect=error)
+    monkeypatch.setattr('malbut_bringup.user_map.write_map_view', write)
+    document, zones, revision = space_documents(runtime, catalog)
+    assert 'view' not in document
+    assert document['features'][-1]['properties']['role'] == 'room'
+    assert zones['editable'] and revision == document['map_revision']
+    assert not path.with_suffix('.view.json').exists()
 
 
 def test_rooms_from_the_web_editor_replace_only_the_rooms(saved):
@@ -216,14 +257,16 @@ def test_map_upload_carries_the_user_map_and_trims_it_before_the_size_limit(save
     assert map_payload(metadata, b'png', runtime, zones, huge, revision)['userMap'] is None
 
 
-def test_deleting_a_map_removes_its_user_map(saved, tmp_path):
+def test_deleting_a_map_removes_its_user_map_and_alignment(saved, tmp_path):
     catalog, runtime, path = saved
     space_documents(runtime, catalog)
     other = _house(tmp_path, 'office')
     load_or_build_user_map(other, 'real-office')
     assert user_map_path(other).exists()
+    assert other.with_suffix('.view.json').exists()
     removed = catalog.delete('office.yaml')
     assert 'office.user-map.geojson' in removed and not user_map_path(other).exists()
+    assert 'office.view.json' in removed and not other.with_suffix('.view.json').exists()
     assert not zones_path(other).exists()
 
 
