@@ -21,8 +21,7 @@ colcon build --base-paths "$repo_root/homecam_agent" "$repo_root/malbut_interfac
 homecam_source_setup_file "$workspace/install/setup.bash"
 homecam_prepare_media_runtime "$workspace"
 bash "$repo_root/homecam_agent/test/test_portable_runtime.sh"
-export PYTHONPATH="$repo_root/malbut_agent_server${PYTHONPATH:+:$PYTHONPATH}"
-python3 -m pytest -q "$repo_root/homecam_agent/test"
+python3 "$repo_root/.github/scripts/run-python-tests.py" homecam "$@"
 # Gazebo contracts run in the ROS job for simulation/bridge changes or full CI.
 colcon test --base-paths "$repo_root/homecam_agent" \
   --packages-select homecam_detector homecam_media_agent \

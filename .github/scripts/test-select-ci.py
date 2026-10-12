@@ -25,6 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 ament_package()
 '''
+FLAGS = ('web', 'infra', 'ros', 'ros_full', 'homecam')
 
 
 @contextmanager
@@ -53,6 +54,116 @@ def cmake_diff(after, path='malbut_interfaces/CMakeLists.txt', before=CMAKE):
             yield base
         finally:
             os.chdir(previous)
+
+
+class ModuleSelectionTests(unittest.TestCase):
+    """General module matrix, formerly duplicated in the shell test runner."""
+
+    def test_module_flags_and_mixed_changes(self):
+        # Five bits follow FLAGS; package ownership is tested separately below.
+        cases = (
+            ('malbut_web/app/page.tsx', '10000'),
+            ('malbut_web/infra/cdk/lib/stack.ts', '11000'),
+            ('homecam_agent/homecam_media_agent/src/node.cpp', '00001'),
+            ('malbut_agent_server/malbut_agent_server/memory.py', '00100'),
+            ('malbut_description/urdf/robot.xacro', '00100'),
+            ('malbut_gazebo/launch/navigation.launch.py', '00110'),
+            ('malbut_autonomy/malbut_patrol/patrol.py', '00100'),
+            ('malbut_tracking/src/lidar_foreground_preprocessor.cpp', '00100'),
+            ('malbut_reid/malbut_reid/person_reidentifier_node.py', '00100'),
+            ('malbut_yolo/scripts/prepare_yolo26_model.sh', '00100'),
+            ('malbut_gazebo_plugins/src/actor_pose_system.cpp', '00100'),
+            ('malbut_yolo/vendor/yolo_ros/yolo_ros/package.xml', '00100'),
+            ('malbut_interfaces/action/FollowPerson.action', '00110'),
+            ('malbut_scenarios/malbut_scenarios/text_agent_server.py', '00110'),
+            ('malbut_system_manager/malbut_system_manager/system_manager_node.py', '00100'),
+            ('malbut_autoslam/malbut_autoslam/autoslam_node.py', '00100'),
+            ('malbut_bringup/launch/robot.launch.py', '00100'),
+            ('malbut_stt/malbut_stt/node.py', '00100'),
+            ('malbut_tts/malbut_tts/receiver.py', '00100'),
+            ('README.md', '00000'),
+            ('.github/workflows/ci.yml', '11111'),
+            ('.github/scripts/detect-ci-modules.sh', '11111'),
+            ('.github/scripts/test-detect-ci-modules.sh', '11111'),
+            ('', '00000'),
+            ('malbut_agent_server/memory.py malbut_web/app/page.tsx', '10100'),
+            ('malbut_agent_server/memory.py malbut_stt/node.py', '00100'),
+            ('malbut_stt/node.py malbut_agent_server/memory.py', '00100'),
+            ('.github/workflows/ci.yml malbut_agent_server/memory.py', '11111'),
+        )
+        for paths, expected in cases:
+            with self.subTest(paths=paths):
+                result = SELECTOR.selection(paths.split())
+                self.assertEqual(''.join('1' if result[key] == 'true' else '0'
+                                         for key in FLAGS), expected)
+
+    def test_build_dependencies_do_not_expand_the_test_owners(self):
+        cases = (
+            ('malbut_bringup/launch/robot.launch.py', 'ros_test_packages', 'malbut_bringup'),
+            ('malbut_bringup/config/nav2_params.yaml', 'agent', 'false'),
+            ('malbut_tracking/src/lidar_foreground_preprocessor.cpp',
+             'ros_test_packages', 'malbut_tracking'),
+            ('malbut_test/malbut_bringup/config/nav2_params.yaml',
+             'ros_test_packages', 'malbut_bringup'),
+            ('malbut_test/COLCON_IGNORE', 'ros_test_packages', 'malbut_bringup'),
+            ('malbut_test/malbut_patrol/launch/patrol.launch.py',
+             'ros_test_packages', 'malbut_patrol'),
+            ('malbut_agent_server/malbut_agent_server/node.py', 'agent', 'true'),
+            ('malbut_yolo/vendor/yolo_ros/yolo_ros/yolo_node.py',
+             'ros_test_packages', 'malbut_yolo'),
+            ('malbut_bringup/README.md', 'ros_test_packages', ''),
+            ('malbut_gazebo/web/index.html', 'assets', 'false'),
+            ('malbut_gazebo/models/humanoid_actor/model.sdf', 'assets', 'true'),
+            ('homecam_agent/scripts/spawn_event_test_person.sh',
+             'ros_test_packages', 'malbut_gazebo'),
+            ('homecam_agent/homecam_media_agent/src/node.cpp', 'ros_packages', ''),
+            ('homecam_agent/homecam_media_agent/src/node.cpp', 'ros_test_packages', ''),
+        )
+        for path, key, expected in cases:
+            with self.subTest(path=path, key=key):
+                self.assertEqual(SELECTOR.selection([path])[key], expected)
+        result = SELECTOR.selection(['malbut_interfaces/action/FollowPerson.action'])
+        self.assertTrue({'malbut_system_manager', 'malbut_tracking', 'malbut_patrol'}
+                        <= set(result['ros_test_packages'].split()))
+        for path in ('malbut_bringup/launch/robot.launch.py', '.github/workflows/ci.yml'):
+            with self.subTest(path=path):
+                self.assertIn('homecam_agent/homecam_media_agent',
+                              SELECTOR.selection([path])['ros_paths'].split())
+
+    def test_shell_entrypoint_uses_git_diff_and_conservative_base_fallbacks(self):
+        def invoke(*args):
+            output = subprocess.check_output(
+                ['bash', str(SCRIPT.with_name('detect-ci-modules.sh')), *args], text=True)
+            return dict(line.split('=', 1) for line in output.splitlines())
+
+        # Real Git fixtures preserve spaces, deletion, rename and event bases.
+        with cmake_diff('changed', path='malbut_agent_server/memory source.py',
+                        before='base') as base:
+            for revision in (base, '', 'invalid-base', '0' * 40):
+                with self.subTest(revision=revision):
+                    self.assertEqual(invoke(revision), SELECTOR.selection(
+                        SELECTOR.changed_paths(revision), base=revision))
+            self.assertEqual(invoke('HEAD')['ros'], 'false')
+            target = Path('malbut_agent_server/memory source.py')
+            before_delete = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
+                                                     text=True).strip()
+            target.unlink()
+            subprocess.run(['git', 'add', '.'], check=True)
+            subprocess.run(['git', 'commit', '--quiet', '-m', 'Deleted'], check=True)
+            self.assertEqual(invoke(before_delete)['agent'], 'true')
+            node = Path('malbut_stt/node.py')
+            node.parent.mkdir()
+            node.write_text('node')
+            subprocess.run(['git', 'add', '.'], check=True)
+            subprocess.run(['git', 'commit', '--quiet', '-m', 'Node'], check=True)
+            before_move = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
+                                                   text=True).strip()
+            subprocess.run(['git', 'mv', str(node), 'malbut_agent_server/node.py'], check=True)
+            subprocess.run(['git', 'commit', '--quiet', '-m', 'Moved'], check=True)
+            self.assertEqual(invoke(before_move)['agent'], 'true')
+            self.assertEqual(invoke(before_move)['ros'], 'true')
+        self.assertEqual(invoke('--all'), SELECTOR.selection([], full=True))
+        self.assertEqual(invoke('--paths'), SELECTOR.selection([]))
 
 
 class SpeechSelectionTests(unittest.TestCase):
@@ -129,7 +240,8 @@ class SpeechSelectionTests(unittest.TestCase):
                 result = SELECTOR.selection([path])
                 builds = set(result['ros_packages'].split())
                 self.assertTrue(SPEECH_BUILD <= builds)
-                self.assertIn('homecam_detector', builds)
+                self.assertTrue({'homecam_detector', 'homecam_media_agent', 'yolo_msgs',
+                                 'malbut_tracking', 'malbut_system_manager'} <= builds)
                 self.assertIn('homecam_agent/homecam_detector', result['ros_paths'].split())
                 self.assertFalse({'malbut_gazebo', 'malbut_scenarios'} & builds)
                 self.assertEqual(result['ros_test_packages'], 'malbut_bringup')
