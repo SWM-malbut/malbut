@@ -80,7 +80,7 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 
 ```
 person_check_completed
-  ├ partial_body(사람) → fall_approach(phase=view, standoff 2.5 m): 뒤로, 안 되면 좌우 45°·90°
+  ├ partial_body(사람) → fall_approach(phase=view, standoff 2.5 m): 바라본 채 후진, 안 되면 둘레 자리(뒤·좌우 45°·90°)
   │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
   └ posture_check_completed
        ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
@@ -148,3 +148,4 @@ Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 
 `alerted`는 맨 앞 사건이 1분 알림을 보냈는지, `target`은 의심 지점. Bringup 웹 패널은 3초 넘게 안 오면 끝난
 것으로 보고(Agent가 멈춰도 이동이 영영 막히지 않게), 그동안 목적지 이동·순찰·따라가기·위치 찾기·지도 만들기
 시작을 거절한다(`fall check is in progress; only manual driving is available`). 지도 화면 카드에도 같은 값이 간다.
+Agent의 음성 명령도 같은 규칙으로 이 이동들을 받지 않는다(2026-10-12, `MANAGER_VOICE_COMMANDS.md` "낙상 확인 중 이동 명령").

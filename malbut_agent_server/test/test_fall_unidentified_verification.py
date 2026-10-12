@@ -7,7 +7,7 @@ import json
 import pytest
 
 from malbut_agent_server.domain.fall_monitoring import (
-    CloudFallReply, IncidentState, VideoAssessment, VoiceAnswer,
+    CloudFallReply, IncidentState, NotificationLevel, VideoAssessment, VoiceAnswer,
 )
 from malbut_agent_server.fall_runtime import apply_decision, event_metadata
 from test_cloud_fall_monitor import candidate, enable, frame, make
@@ -93,9 +93,26 @@ def test_scene_no_help_reply_is_recorded_but_cannot_clear_unidentified_person(as
     assert incident.situation_assessment == assessment and incident.help_needed is False
     assert incident.close_reason is None and not monitor.pending_questions()
     events = monitor.drain_events()
-    assert [e.kind for e in events] == ['voice_result', 'decision_required']
+    # The guardian is told once (2026-10-12 16:31 sent nothing).
+    assert [e.kind for e in events] == ['voice_result', 'notification_requested', 'decision_required']
+    assert (events[1].reason, events[1].notification_level) == (
+        'scene_answer_unconfirmed', NotificationLevel.CHECK)
+    assert incident.notification_level is NotificationLevel.CHECK
     assert confirm(monitor, q, situation_assessment=assessment)
     assert not monitor.drain_events()
+
+
+def test_scene_answer_to_older_evidence_alerts_once_without_lowering_the_level():
+    monitor, _, _, q, _ = setup()
+    current = monitor._incidents[q.incident_id]
+    assert monitor._questions[q.incident_id].revision == 1
+    # Newer evidence arrived and an urgent alert went out while the person answered.
+    current.revision, current.notification_level = 2, NotificationLevel.URGENT
+    assert confirm(monitor, q)
+    alerts = [e for e in monitor.drain_events() if e.kind == 'notification_requested']
+    assert [(e.reason, e.notification_level) for e in alerts] == [
+        ('scene_answer_unconfirmed', NotificationLevel.CHECK)]
+    assert monitor.incident(q.incident_id).notification_level is NotificationLevel.URGENT
 
 
 def test_scene_help_request_enters_help_state_without_claiming_confirmed_fall():

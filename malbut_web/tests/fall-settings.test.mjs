@@ -46,7 +46,8 @@ test("migration runner applies shared-prefix migrations once by full filename", 
       assert.deepEqual(applied, ["0011_fall_settings", "0011_manual_move_stream", "0012_fall_incident_review",
         "0013_fall_ai_review", "0014_fall_report_memo", "0015_fall_incident_people", "0016_user_identities", "0017_social_login",
         "0018_registration_codes", "0019_device_invites", "0020_service_keys", "0021_robot_semantic_drafts",
-        "0022_talk_lease_readiness", "0023_robot_map_labels", "0024_voice_agent", "0025_fall_push_per_reason"]);
+        "0022_talk_lease_readiness", "0023_robot_map_labels", "0024_voice_agent", "0025_fall_push_per_reason",
+        "0026_monitoring_follows_camera"]);
       const versions = (await h.db.query(
         "SELECT version FROM homecam_schema_migrations ORDER BY version",
       )).rows.map((row) => row.version);
@@ -238,6 +239,54 @@ test("web owner save, camera change, heartbeat delivery and apply receipt round-
     assert.equal(old.status, 200);
     assert.equal((await old.json()).fallSettings, undefined);
     assert.equal((await heartbeat.POST(beat({ fallSettingsReport: applied }))).status, 503);
+  });
+});
+
+test("robot state upload carries the homecam heartbeat: same reply, errors never fail the state", async () => {
+  await withDatabase(async (h, repo, originalLoad) => {
+    const stored = [];
+    const load = moduleLoader({
+      [path.join(h.root, "db/postgres.ts")]: originalLoad("db/postgres.ts"),
+      [path.join(h.root, "app/device-auth.ts")]: { getRequestDevice: async (r) =>
+        r.headers.get("authorization") === "Bearer robot-a" ? { deviceId: "robot-a" } : null },
+      [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment: () => ({}) },
+      [path.join(h.root, "app/robot-contract.ts")]: {
+        parseRobotState: (value) => (value.state ? { state: value.state } : null),
+        readRobotJson: async (request) => request.json() },
+      [path.join(h.root, "db/robot-map.ts")]: { storeRobotState: async (_deviceId, value) => { stored.push(value); } },
+      [path.join(h.root, "db/fall-review.ts")]: { listClosedFallIncidentsForRobot: async () => [] },
+    });
+    const heartbeat = load("app/api/device/v1/heartbeat/route.ts");
+    const robotState = load("app/api/device/v1/robot/state/route.ts");
+    const post = (route, body) => route.POST(new Request("https://test/api", { method: "POST",
+      headers: { authorization: "Bearer robot-a", "content-type": "application/json" }, body: JSON.stringify(body) }));
+    const beat = { streamMode: "idle", mediaHealthy: true };
+    const direct = await (await post(heartbeat, beat)).json();
+    const response = await post(robotState, { state: "idle", homecam: beat });
+    assert.equal(response.status, 202);
+    const carried = await response.json();
+    assert.deepEqual(Object.keys(carried).sort(), ["accepted", "closedFallIncidents", "homecam"]);
+    // Same answer as POST /heartbeat; only the times of this second call differ.
+    const settled = ({ reportedState, ...rest }) => ({ ...rest,
+      reportedState: { ...reportedState, lastSeenAt: null, updatedAt: null } });
+    assert.deepEqual(settled(carried.homecam), settled(direct));
+    assert.ok(carried.homecam.desiredState && "talkLease" in carried.homecam);
+    // A homecam error is answered beside the saved state, never instead of it.
+    const bad = await post(robotState, { state: "idle", homecam: { streamMode: "warp" } });
+    assert.equal(bad.status, 202);
+    assert.deepEqual((await bad.json()).homecam, { error: "장치 상태 형식을 확인해 주세요.", status: 400 });
+    const first = await post(robotState, { state: "idle", homecam: { fallSettingsReport: report() } });
+    assert.equal("error" in (await first.json()).homecam, false);
+    const conflict = await post(robotState, { state: "idle",
+      homecam: { fallSettingsReport: report({ runtimeId: "other" }) } });
+    assert.equal(conflict.status, 202);
+    assert.equal((await conflict.json()).homecam.status, 409);
+    // Bringup off: no homecam, no homecam answer and no homecam heartbeat.
+    const seen = (await h.db.query("SELECT last_seen_at FROM device_state WHERE device_id='robot-a'")).rows[0];
+    const idle = await post(robotState, { state: "idle" });
+    assert.equal("homecam" in (await idle.json()), false);
+    assert.deepEqual((await h.db.query("SELECT last_seen_at FROM device_state WHERE device_id='robot-a'")).rows[0], seen);
+    assert.equal(stored.length, 5);
   });
 });
 

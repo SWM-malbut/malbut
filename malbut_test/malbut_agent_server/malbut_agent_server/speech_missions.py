@@ -25,6 +25,12 @@ _CAPABILITIES = {
     'request_manual_control': 'manual_drive',
     'request_recovery': 'recovery',
 }
+# Moves the app also locks while a fall check runs (2026-10-12); 직접 움직이기 and
+# recovery stay available, as in the app.
+_FALL_CHECK_LOCKED = frozenset({
+    'request_navigation', 'request_follow_person', 'request_patrol',
+    'request_mapping', 'request_relocalization',
+})
 _TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELED', 'REJECTED', 'UNAVAILABLE'}
 _MAP_UNAVAILABLE = '사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.'
 _NAV_CHANGED = '지도나 목적지 설정이 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
@@ -66,10 +72,15 @@ class SpeechMissions:
     """
 
     def __init__(self, manager, navigation_targets=None, clock=time.monotonic,
-                 cancel_foreground=None):
-        """Bind an existing Manager client without creating ROS entities."""
+                 cancel_foreground=None, move_refusal=None):
+        """Bind an existing Manager client without creating ROS entities.
+
+        ``move_refusal`` returns a spoken refusal while a fall check runs, or
+        None; a fall check would otherwise be preempted by a voice move.
+        """
         self._manager = manager
         self._cancel_foreground = cancel_foreground
+        self._move_refusal = move_refusal
         self._targets = navigation_targets if navigation_targets is not None else NavigationTargets()
         self._clock = clock
         self._owner = get_ident()
@@ -191,6 +202,10 @@ class SpeechMissions:
                 'prepared_at': self._clock(), 'message': '요청을 확인하고 있어요.',
                 '_issuer': self._issuer,
             }
+            refusal = self._fall_check_refusal(tool_name)
+            if refusal is not None:
+                # Said instead of "네, …시작하겠습니다": nothing will start.
+                return self._blocked(fields, refusal)
             if tool_name == 'request_navigation':
                 fields.update(
                     location=location, map_path=self._active_map or '',
@@ -269,6 +284,9 @@ class SpeechMissions:
         ).hexdigest()
         arguments = json.loads(proposal.arguments_json)
         refusal = self._guard_refusal(guard)
+        if refusal is None:
+            # A fall check may have started since the request was prepared.
+            refusal = self._fall_check_refusal(proposal.tool_name)
         if refusal is not None:
             return refusal
         self._owned[manager_id] = _OwnedMission(capability)
@@ -322,6 +340,11 @@ class SpeechMissions:
         if uncertain:
             return NOTICE_TEXTS['cancel.unknown']
         return NOTICE_TEXTS['cancel.requested']
+
+    def _fall_check_refusal(self, tool_name):
+        if self._move_refusal is None or tool_name not in _FALL_CHECK_LOCKED:
+            return None
+        return self._guard_refusal(self._move_refusal)
 
     @staticmethod
     def _guard_refusal(guard):

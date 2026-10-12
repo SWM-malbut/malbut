@@ -74,6 +74,11 @@ flowchart TD
 
 기존 `POST /api/device/v1/heartbeat`를 사용한다. 장치 토큰으로 확인한 로봇에만 저장한다.
 
+2026-10-12부터 같은 요청 본문을 로봇 상태 업로드 `POST /api/device/v1/robot/state`의 `homecam`에 실어도 된다(웹 통로
+하나, 상주 프로그램이 나름). 응답 `homecam`은 아래 heartbeat 응답과 같은 객체이고, 실패면 `{"error":…,"status":400|409|503|500}`이다.
+홈캠 처리가 실패해도 로봇 상태 저장(202)은 실패시키지 않는다. `homecam`이 없으면(Bringup 꺼짐) 홈캠 온라인 시각을 갱신하지 않는다.
+`/heartbeat`는 옛 로봇을 위해 당분간 남긴다. 두 경로는 `app/homecam-heartbeat.ts` 하나로 처리한다.
+
 ### 응답에 추가한 `fallSettings`
 
 ```json
@@ -84,6 +89,8 @@ flowchart TD
 ```
 
 - 기존 `desiredState` 필드 세 개는 유지한다. 두 객체의 카메라 값은 한 DB 조회에서 읽어 일치시킨다.
+- 카메라가 꺼져 있으면 `monitoringEnabled`는 항상 false다. 카메라를 다시 켜면 사용자가 마지막으로 고른 녹화 값
+  (`device_state.monitoring_preferred`, 0026)으로 돌아간다. 앱 설정과 음성 명령 모두 같다(2026-10-12).
 - 감지·카메라·Cloud 동의 중 하나라도 바뀌면 설정 번호가 증가한다. 마이크·영상 저장·상태 보고는 번호를 바꾸지 않는다.
 - ROS uint64 설정 번호를 JSON 숫자로 바꾸지 않는다. DB에서도 `NUMERIC(20,0)`으로 손실 없이 저장한다.
 

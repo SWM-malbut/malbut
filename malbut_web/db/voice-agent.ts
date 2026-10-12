@@ -201,17 +201,19 @@ async function saveSettings(client: PoolClient, deviceId: string, args: Record<s
   await client.query("INSERT INTO device_state(device_id) VALUES($1) ON CONFLICT DO NOTHING", [deviceId]);
   const old = (await client.query("SELECT * FROM device_state WHERE device_id=$1 FOR UPDATE", [deviceId])).rows[0];
   const camera = args.cameraEnabled ?? old.camera_enabled === 1;
-  const monitoring = args.monitoringEnabled ?? old.monitoring_enabled === 1;
+  // The recording choice survives a camera-off period (0026): camera on restores it.
+  const monitoring = args.monitoringEnabled ?? old.monitoring_preferred === 1;
   if (args.monitoringEnabled === true && !camera) throw new Error("CAMERA_DISABLED");
   const mediaChange = args.cameraEnabled !== undefined || args.monitoringEnabled !== undefined;
   const row = (await client.query(`UPDATE device_state SET camera_enabled=$2,microphone_enabled=$3,
-    monitoring_enabled=$4,fall_enabled=$5,updated_at=clock_timestamp(),
+    monitoring_enabled=$4,monitoring_preferred=$8,fall_enabled=$5,updated_at=clock_timestamp(),
     media_healthy=CASE WHEN $6 THEN 0 ELSE media_healthy END,
     storage_healthy=CASE WHEN $6 THEN 0 ELSE storage_healthy END,
     p2p_healthy=CASE WHEN $7 THEN 0 ELSE p2p_healthy END
     WHERE device_id=$1 RETURNING fall_settings_revision::text AS revision,media_settings_revision::text AS "mediaRevision"`,
   [deviceId, Number(camera), Number(args.microphoneEnabled ?? old.microphone_enabled === 1),
-    Number(camera && monitoring), args.fallEnabled ?? old.fall_enabled, mediaChange, args.cameraEnabled !== undefined])).rows[0];
+    Number(camera && monitoring), args.fallEnabled ?? old.fall_enabled, mediaChange, args.cameraEnabled !== undefined,
+    Number(monitoring)])).rows[0];
   // End the same media leases as the existing owner settings endpoint, in the
   // transaction holding the delegation lock. No viewer URL or AWS secret leaves it.
   const ending = [!camera ? old.p2p_session_id : null, !camera || !monitoring ? old.storage_session_id : null].filter(Boolean);

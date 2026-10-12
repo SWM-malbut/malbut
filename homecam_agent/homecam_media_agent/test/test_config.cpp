@@ -6,13 +6,14 @@
 #include "homecam_media_agent/heartbeat_client.hpp"
 
 using homecam_media_agent::MediaConfig;
-using homecam_media_agent::append_heartbeat_response_chunk;
 using homecam_media_agent::detector_monitoring_enabled;
 using homecam_media_agent::media_generation_allows_io;
 using homecam_media_agent::trim_trailing_slashes;
 using homecam_media_agent::validate_config;
 using homecam_media_agent::HeartbeatStatus;
+using homecam_media_agent::heartbeat_relay_request;
 using homecam_media_agent::heartbeat_to_json;
+using homecam_media_agent::parse_heartbeat_relay_reply;
 using homecam_media_agent::is_allowed_backend_url;
 using homecam_media_agent::is_valid_device_id;
 using homecam_media_agent::is_valid_device_token;
@@ -212,15 +213,75 @@ TEST(HeartbeatContract, UsesCamelCaseAndParsesDesiredState)
   EXPECT_TRUE(*desired.monitoring_enabled);
 }
 
-TEST(HeartbeatContract, RejectsResponsePast64KiBWithoutGrowingTheBuffer)
+TEST(HeartbeatRelay, RequestCarriesTheSameBodyWithASequence)
 {
-  std::string response(64U * 1024U - 1U, 'a');
-  ASSERT_TRUE(append_heartbeat_response_chunk(&response, "b", 1U));
-  EXPECT_EQ(response.size(), 64U * 1024U);
-  EXPECT_FALSE(append_heartbeat_response_chunk(&response, "c", 1U));
-  EXPECT_EQ(response.size(), 64U * 1024U);
-  EXPECT_FALSE(append_heartbeat_response_chunk(nullptr, "d", 1U));
-  EXPECT_FALSE(append_heartbeat_response_chunk(&response, nullptr, 1U));
+  homecam_media_agent::HeartbeatStatus status;
+  status.stream_mode = "p2p";
+  const auto request = nlohmann::json::parse(heartbeat_relay_request(status, 7U));
+  EXPECT_EQ(request.size(), 2U);
+  EXPECT_EQ(request["sequence"], 7U);
+  EXPECT_EQ(request["body"], nlohmann::json::parse(heartbeat_to_json(status)));
+}
+
+TEST(HeartbeatRelay, AnswerIsReadLikeTheHttpsResponse)
+{
+  const nlohmann::json body = {
+    {"desiredState", {{"cameraEnabled", false}, {"microphoneEnabled", true},
+      {"monitoringEnabled", true}}},
+    {"talkLease", {{"leaseId", "8d9b0a52-6f6e-4c5a-9a7f-0d7c2f9c5b11"}, {"remainingMs", 9000}}}};
+  const nlohmann::json reply = {{"sequence", 3U}, {"requestedAt", 10.0}, {"observedAt", 10.4},
+    {"ok", true}, {"body", body}};
+  homecam_media_agent::HeartbeatRelayReply parsed;
+  std::string error;
+  ASSERT_TRUE(parse_heartbeat_relay_reply(reply.dump(), &parsed, &error)) << error;
+  EXPECT_TRUE(parsed.success);
+  EXPECT_EQ(parsed.failure_code, "none");
+  EXPECT_EQ(parsed.sequence, 3U);
+  EXPECT_DOUBLE_EQ(parsed.requested_at, 10.0);
+  EXPECT_DOUBLE_EQ(parsed.observed_at, 10.4);
+  ASSERT_TRUE(parsed.desired.camera_enabled.has_value());
+  EXPECT_FALSE(*parsed.desired.camera_enabled);
+  EXPECT_EQ(parsed.desired.talk_remaining_ms, 9000);
+  // A body the HTTPS path would reject fails the same way, as a received answer.
+  auto bad = reply;
+  bad["body"] = {{"desiredState", {{"cameraEnabled", "no"}}}};
+  ASSERT_TRUE(parse_heartbeat_relay_reply(bad.dump(), &parsed, &error));
+  EXPECT_FALSE(parsed.success);
+  EXPECT_EQ(parsed.failure_code, "server_invalid_settings");
+  // Past 64 KiB is the HTTPS overflow answer; far past it is not read at all.
+  bad["body"] = {{"padding", std::string(64U * 1024U, 'a')}};
+  ASSERT_TRUE(parse_heartbeat_relay_reply(bad.dump(), &parsed, &error));
+  EXPECT_FALSE(parsed.success);
+  EXPECT_EQ(parsed.failure_code, "server_invalid_settings");
+  bad["body"] = {{"padding", std::string(66U * 1024U, 'a')}};
+  EXPECT_FALSE(parse_heartbeat_relay_reply(bad.dump(), &parsed, &error));
+}
+
+TEST(HeartbeatRelay, FailuresKeepTheHttpsFailureCodes)
+{
+  homecam_media_agent::HeartbeatRelayReply parsed;
+  std::string error;
+  for (const std::string code : {"server_timeout", "server_transport_error", "server_auth_failed",
+      "server_invalid_settings"})
+  {
+    const nlohmann::json reply = {{"sequence", 1U}, {"requestedAt", 1.0}, {"observedAt", 2.0},
+      {"ok", false}, {"failureCode", code}};
+    ASSERT_TRUE(parse_heartbeat_relay_reply(reply.dump(), &parsed, &error)) << code;
+    EXPECT_FALSE(parsed.success);
+    EXPECT_EQ(parsed.failure_code, code);
+  }
+  for (const std::string text : {
+      R"({"sequence":1,"requestedAt":1,"observedAt":2,"ok":false,"failureCode":"none"})",
+      R"({"sequence":0,"requestedAt":1,"observedAt":2,"ok":false,"failureCode":"server_timeout"})",
+      R"({"sequence":1,"requestedAt":3,"observedAt":2,"ok":false,"failureCode":"server_timeout"})",
+      R"({"sequence":1,"requestedAt":1,"observedAt":2,"ok":true,"body":[]})",
+      R"({"sequence":1,"requestedAt":1,"observedAt":2,"ok":"yes","failureCode":"server_timeout"})",
+      R"({"sequence":1,"requestedAt":1,"observedAt":2,"ok":true,"body":{},"extra":1})",
+      R"([])", R"(not json)"})
+  {
+    EXPECT_FALSE(parse_heartbeat_relay_reply(text, &parsed, &error)) << text;
+  }
+  EXPECT_FALSE(parse_heartbeat_relay_reply("{}", nullptr, &error));
 }
 
 TEST(HeartbeatContract, MediaReceiptRevisionIsOptionalAndNeverUsesAnInvalidOrOldValue)

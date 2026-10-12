@@ -89,6 +89,7 @@ const NOTICE: Record<string, [string, string]> = {
   help_requested: ["urgent", "도움 요청"],
   confirmation_help_required: ["urgent", "상황 확인 결과 도움 필요"],
   robot_could_not_confirm: ["urgent", "말벗이 직접 확인하지 못함"],
+  scene_answer_unconfirmed: ["check", "괜찮다는 답, 쓰러진 분인지 모름"],
 };
 const SAME_PERSON: Record<string, string> = {
   same: "같은 분으로 보임", different: "다른 분으로 보임", unclear: "같은 분인지 알 수 없음",
@@ -139,6 +140,8 @@ function approachLabel(event: FallHistoryEvent): string | null {
   }
   if (event.eventKind === "voice_result" || event.eventKind === "confirmation_completed") {
     // 답 줄은 "질문에 대한 답 (답)"으로 통일한다. 영상 판정은 붙이지 않는다.
+    // 영상만 본 장면에서 괜찮다는 답은 누운 분의 답인지 몰라 answer가 unclear다.
+    if (reason === "scene_answer_unassociated") return "질문에 대한 답 (괜찮다고 답함 · 쓰러진 분인지 모름)";
     return event.answer ? `질문에 대한 답 (${ANSWER[event.answer] ?? event.answer})` : "질문에 대한 답";
   }
   if (event.eventKind === "incident_resolved" && reason === "guardian_closed") return "처리 완료 → 말벗이 확인을 멈춤";
