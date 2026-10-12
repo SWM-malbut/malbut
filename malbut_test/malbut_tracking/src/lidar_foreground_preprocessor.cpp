@@ -143,7 +143,7 @@ private:
       "processing_trace_topic", "/perception/sensor_processing_trace");
     declare_parameter("global_frame", "map");
     declare_parameter("static_occupied_threshold", 65);
-    declare_parameter("static_exclusion_radius_m", 0.20);
+    declare_parameter("static_exclusion_radius_m", 0.10);
     declare_parameter("cluster_gap_m", 0.20);
     declare_parameter("minimum_cluster_points", 3);
     declare_parameter("minimum_cluster_density_points_per_m", 5.0);

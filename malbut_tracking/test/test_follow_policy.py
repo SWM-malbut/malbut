@@ -128,3 +128,38 @@ def test_recovery_turn_uses_the_last_camera_exit_side_first():
     assert directed_recovery_turn(-0.20, 0.80, 0.70) == pytest.approx(-0.70)
     assert directed_recovery_turn(0.30, -0.90, 0.70) == pytest.approx(0.70)
     assert directed_recovery_turn(0.0, -0.90, 0.70) == pytest.approx(-0.90)
+
+
+@pytest.mark.parametrize('target_x', [0.8, 0.81, 0.89, 1.0, 1.11, 1.19, 1.2])
+def test_target_inside_the_single_twenty_centimetre_band_does_not_translate(target_x):
+    """Both exact boundaries and the whole requested band permit alignment only."""
+    settings = FollowSettings(1.0, 0.2, 0.2, 0.75)
+    decision = decide_follow_motion(
+        Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
+    )
+    assert decision.command == FollowCommand.ALIGN
+
+
+@pytest.mark.parametrize('target_x,expected', [
+    (0.79, FollowCommand.RETREAT), (1.21, FollowCommand.NAVIGATE),
+    (0.19, FollowCommand.RETREAT),
+])
+def test_motion_outside_the_single_band_preserves_the_hard_minimum(target_x, expected):
+    """There is no separate entry/release threshold depending on prior motion."""
+    settings = FollowSettings(1.0, 0.2, 0.2, 0.75)
+    assert decide_follow_motion(
+        Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
+    ).command == expected
+
+
+@pytest.mark.parametrize('desired,target_x,expected', [
+    (0.6, 0.4, FollowCommand.ALIGN), (0.6, 0.8, FollowCommand.ALIGN),
+    (0.6, 0.39, FollowCommand.RETREAT), (0.6, 0.81, FollowCommand.NAVIGATE),
+    (0.3, 0.15, FollowCommand.RETREAT),
+])
+def test_single_band_follows_requested_distance_and_keeps_minimum(desired, target_x, expected):
+    """The same +/-0.20 m rule also applies to non-default Action distances."""
+    settings = FollowSettings(desired, 0.2, 0.2, 0.75)
+    assert decide_follow_motion(
+        Point2D(0.0, 0.0), Point2D(target_x, 0.0), settings,
+    ).command == expected
