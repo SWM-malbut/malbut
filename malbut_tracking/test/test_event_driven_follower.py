@@ -13,6 +13,35 @@ from malbut_tracking.person_follower_node import (
     PersonFollowerNode,
 )
 from tf2_ros import TransformException
+from malbut_tracking import person_follower_node
+
+
+def test_idle_follow_inputs_disconnect_and_wake_with_fresh_buffers(monkeypatch):
+    follower = SimpleNamespace(
+        _tf_listener=None, _tf_buffer=Mock(), _costmap_subscription=None,
+        _latest_global_costmap=object(),
+        create_subscription=Mock(side_effect=[object(), object()]),
+        destroy_subscription=Mock(), _on_global_costmap=Mock(),
+        get_parameter=Mock(return_value=SimpleNamespace(value='/global_costmap/costmap_raw')),
+    )
+    listeners = [Mock(), Mock()]
+    create_listener = Mock(side_effect=listeners)
+    monkeypatch.setattr(person_follower_node, 'TransformListener', create_listener)
+    PersonFollowerNode._set_follow_inputs(follower, True)
+    subscription = follower._costmap_subscription
+    PersonFollowerNode._set_follow_inputs(follower, True)
+    create_listener.assert_called_once()
+    follower.create_subscription.assert_called_once()
+    PersonFollowerNode._set_follow_inputs(follower, False)
+    PersonFollowerNode._set_follow_inputs(follower, False)
+    listeners[0].unregister.assert_called_once()
+    follower.destroy_subscription.assert_called_once_with(subscription)
+    assert follower._tf_listener is None and follower._costmap_subscription is None
+    assert follower._latest_global_costmap is None
+    PersonFollowerNode._set_follow_inputs(follower, True)
+    assert follower._tf_listener is listeners[1]
+    assert follower._costmap_subscription is not subscription
+    assert follower._tf_buffer.clear.call_count == 3
 
 
 def test_goal_distance_accepts_minimum_and_retains_zero_as_default():

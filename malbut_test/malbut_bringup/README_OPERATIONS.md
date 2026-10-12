@@ -66,16 +66,26 @@ PulseAudio 공유 설정을 적용하며, 단독 실행에서는 같은 입력 �
 
 | 저장 지도 | 위치 추정 | 가능한 이동 미션 |
 | --- | --- | --- |
-| 선택 안 됨 (기본, `map` 인자 없음) | 기본 미확인 지도 + AMCL | 센서 기반 주행, 자동 지도 만들기, 수동 조작 |
-| 선택됨 (`map:=...` 또는 실행 중 선택) | 저장 지도 + AMCL, 선택할 때 위치 보정 | 사람 추적, 순찰, 목적지 이동, 위치 보정, 수동 조작 |
+| 선택 이력 없음 | 기본 미확인 지도 + AMCL | 센서 기반 주행, 자동 지도 만들기, 수동 조작 |
+| 선택됨 (`map:=...`, 이전 선택 복원 또는 실행 중 선택) | 저장 지도 + AMCL, 선택할 때 위치 보정 | 사람 추적, 순찰, 목적지 이동, 위치 보정, 수동 조작 |
 
-관리자는 시작하자마자 위치 추정을 켠다. Nav2 global costmap은 `map` TF가 생겨야
-활성화되기 때문이다. 관리자는 선택 기능 전체의 READY를 기다리지 않으며,
-미션별 Action 연결·지도 모드·안전 조건을 확인한다([위치 추정 전환](#위치-추정-전환)).
+마지막으로 성공한 저장 지도 로드는 `~/.ros/malbut/last_selected_map.txt`에 경로 하나로
+기억한다. 다음 Bringup은 `map` 인자를 우선하고, 없으면 마지막 선택 지도를 불러온다.
+기록이 없거나 해당 YAML이 삭제됐으면 기본 지도를 사용한다. 기본 지도와 AutoSLAM 임시
+지도는 선택 이력을 덮어쓰지 않는다. 저장 위치는 `map_selection_file`로 바꾸거나
+빈 문자열로 지정해 저장·복원을 끌 수 있다.
+
+Bringup 공통 실행기는 기본/선택 지도를 초기화한 뒤 Nav2 주행·계획 그룹을 유휴로 둔다.
+준비 표시는 쉬고 있는 costmap 출력의 발행자를 요구하지 않는다.
+추적용 영상·LiDAR 전처리와 순찰 영상·costmap 입력도 해당 미션이 없으면 구독을 해제한다.
+map_server·AMCL은 계속 켜 두며, 주행 요청 때 global costmap은 `map` TF를 확인한 뒤
+활성화한다. 관리자는 선택 기능 전체의 READY를 기다리지 않으며,
+미션별 Action 연결·의존성 준비·안전 조건을 확인한다([위치 추정 전환](#위치-추정-전환)).
 
 STT·Agent·TTS는 기본 포함이며 Nav2·관리자 준비를 기다리지 않고 시작한다.
 STT의 기존 CUDA 초기화 재시도와 제한시간은 유지하되, 음성 실패가 전체 Bringup을
-종료하지 않는다. 관리자가 없으면 Agent의 실제 로봇 명령만 실행할 수 없다.
+종료하지 않는다. STT가 종료되면 5초 후 STT만 다시 실행하며, 음성을 소유한 launch를
+종료하면 재시도도 멈춘다. 관리자가 없으면 Agent의 실제 로봇 명령만 실행할 수 없다.
 시뮬레이션 지도를 실로봇에 대신 넣지 않는다.
 
 실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
@@ -83,7 +93,7 @@ STT의 기존 CUDA 초기화 재시도와 제한시간은 유지하되, 음성 �
 카메라와 영상 노드를 함께 관리한다. `HOMECAM_BACKEND_URL`이 설정되어 있으면
 기존 `homecam_robot.launch.py`를 한 번 포함하며 토큰 파일 환경을 그대로 전달한다.
 별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
-전체 절차는 [실기기 클라우드 연결](../README_CLOUD.md)을 따른다.
+전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
 ### Cloud VLM 자동 실행
 
@@ -133,6 +143,7 @@ GPU 의존성 설치와 사전 점검은
 소스만 갱신하고 로봇 빌드를 생략하면 기존 Python 환경은 바뀌지 않는다.
 `MALBUT_BUILD_FALL_POSE=0`으로 환경 준비를 생략할 수 있으며 실행 시 `auto` 정책은 그대로다.
 Jetson에서의 실제 처리 fps·CPU/GPU 부하는 별도 확인 대상이다.
+[PC 비교 결과와 실행 예시](../homecam_agent/docs/FALL_POSE_PERFORMANCE_20260929.md)를 참고한다.
 
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
 시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
@@ -353,11 +364,12 @@ TF가 맞는지도 확인한다. 시뮬레이션의 frame 보정이나 fake stat
 
 기존에 별도로 켠 Bringup·SLAM·Nav2와 겹치지 않게 정리한 뒤, 로봇에서
 `cloud.launch.py`로 서비스 웹([malbut_web](../malbut_web/README.md))에 연결하고
-웹의 **로봇 기능**에서 진행한다([실기기 클라우드 연결](../README_CLOUD.md)).
+웹의 **로봇 기능**에서 진행한다([실기기 클라우드 연결](../malbut_test/README_CLOUD.md)).
 연결만으로는 다른 노드를 켜거나 움직이지 않는다. LAN 테스트 패널
 (`robot_web_panel`)도 남아 있지만 현재 사용하지 않는다.
 
-1. **Bringup 시작** → 기본 미확인 지도 + AMCL로 켜지고 연결 상태를 표시한다.
+1. **Bringup 시작** → 마지막에 고른 저장 지도가 있으면 그 지도로 켜고 4번처럼 위치를 찾는다.
+   고른 적이 없으면 기본 미확인 지도 + AMCL로 켜진다. 어느 쪽이든 연결 상태를 표시한다.
 2. 새 지도 이름 입력 → **자동 지도 만들기**. 이 요청에서만 SLAM을 켜고 탐색한다.
 3. 완료 결과와 저장 지도를 확인한다. 완료·취소·실패 시 SLAM만 종료하고 기본 지도로 돌아온다.
 4. 저장 지도 목록에서 지도를 선택 → **선택한 지도로 전환**. 재시작 없이 저장 지도와
@@ -395,7 +407,8 @@ ros2 action send_goal /malbut/mission/execute \
   "{capability_id: autoslam, arguments_yaml: '{map_name: home2}'}" --feedback
 ```
 
-AutoSLAM은 관리자에게 SLAM 시작·종료만 요청한다. Nav2 launch·설정·lifecycle 그룹은 바꾸지 않는다.
+AutoSLAM은 SLAM 프로세스를 직접 소유하고, Bringup 공통 실행기에 지도 제공자 인계·복원을 요청한다.
+SLAM 지도·TF가 나온 뒤 기존 Nav2 주행·계획 그룹을 깨운다. 별도 Nav2나 주행 설정은 만들지 않는다.
 
 저장 결과는 `~/.ros/malbut/maps/home2.yaml`과 이미지다. 같은 이름은 덮어쓰지 않는다.
 실행 중 저장 지도로 바꾸려면:
@@ -430,33 +443,42 @@ RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
 ros2 launch navigation rviz_navigation.launch.py
 ```
 
+웹 연결 브리지는 전환마다 스캔이 지도와 맞는 비율을 본다. 75% 미만이거나 위치를 못 찾았으면
+지도 전체에서 한 번 더 찾고(제자리 회전), 그래도 낮으면 웹 지도 카드에 "지도와 주변이 잘
+맞지 않아요"를 띄운다. 자동 재시도는 전환마다 한 번이며, 다른 미션이 이미 돌고 있으면 경고만 한다.
+
 ## 위치 추정 전환
 
-시스템 관리자가 map→odom을 내는 위치 추정을 하나만 유지한다. 표준 타입을 사용한다.
+Bringup의 `runtime_control`이 지도 제공자를 하나만 유지한다.
+관리자는 지도/비지도 모드와 지도 유무 허용 조건을 갖지 않는다.
 
 | 이름 | 타입 | 동작 |
 | --- | --- | --- |
-| `/malbut/localization/load_map` | `nav2_msgs/srv/LoadMap` | slam_toolbox 종료 → map_server·AMCL 시작 → 지도 로드 → 위치 보정 |
-| `/malbut/localization/start_mapping` | `std_srvs/srv/Trigger` | map_server·AMCL 정리(RESET) → slam_toolbox 시작 |
-| `/malbut/localization/stop_mapping` | `std_srvs/srv/Trigger` | slam_toolbox 종료 확인 → 기본 지도·AMCL 복원 |
-| `/malbut/localization/state` | `std_msgs/String`(JSON) | `mode`(`SWITCHING`·`MAPPING`·`LOCALIZATION`·`ERROR`), `map`, `message` |
+| `/malbut/localization/load_map` | `nav2_msgs/srv/LoadMap` | 지도 변경 시 AMCL 정리 → 지도 로드 → 선택적 위치 보정 |
+| `/malbut/localization/start_mapping` | `std_srvs/srv/Trigger` | 기존 지도·AMCL cleanup, SLAM 제공자 인계 |
+| `/malbut/localization/mapping_ready` | `std_srvs/srv/Trigger` | SLAM 지도·TF 준비 후 주행·계획 활성화 |
+| `/malbut/localization/stop_mapping` | `std_srvs/srv/Trigger` | SLAM 종료 후 이전 지도·AMCL 복원 |
+| `/malbut/localization/state` | `std_msgs/String`(JSON) | 실제 `source`·`ready`·지도·결과, 기존 웹 필드 호환 |
+| `/malbut/runtime/state` | `std_msgs/String`(JSON) | 준비 완료·활성 그룹·오류 |
 
-- `BASE`를 쓰는 미션이 실행·대기 중이면 전환을 거부한다. 먼저 취소한다.
-- 전환 중(`SWITCHING`, 위치 보정 포함)에는 `BASE`를 쓰는 미션을 모두 거부한다.
-  위치 보정이 로봇을 회전시킬 수 있기 때문이다. 수동 조작도 이때만 거부되며
-  전환이 끝나면 다시 요청된다. 오류 상태에서는 지도가 필요한 미션과 자동 지도
-  만들기를 거부한다.
-- 다른 저장 지도로 바꿀 때는 AMCL을 RESET한 뒤 다시 켠다. AMCL이 이전 지도의
-  위치를 새 지도에 넘기지 않게 하기 위해서다.
-- slam_toolbox는 관리자가 자식 프로세스로 실행하며, 관리자가 종료되거나 강제
-  종료되어도 함께 종료된다. AMCL·map_server는 `lifecycle_manager_localization`
-  (autostart 끔)을 통해 켜고 정리한다.
+- 지도 변경은 다른 주행 기능이 끝난 후 요청한다.
+- 일반 유휴 전환에서는 Nav2 주행·계획 그룹만 PAUSE/RESUME한다.
+  추적·순찰 입력은 표준 `SetBool` 서비스로 구독을 해제/재연결하며,
+  모델과 ID 갤러리는 유지하고 영상 동기화 큐만 비운다.
+  AMCL은 재초기화하지 않으며, 전역 주행 Goal 전달 전 새 지도 TF를 확인한다.
+- 지도 교체 실패는 READY로 바꾸지 않는다.
+- 기존 수동 복구에는 lifecycle 제어를 양보하고, 종료 후 실제 그룹 상태를 한 번 읽는다.
+- SLAM은 AutoSLAM Action이 소유한다. 종료를 확인한 뒤 기존 지도 제공자를 복원한다.
+- AutoSLAM·위치 보정의 지도·스캔·TF 연결은 유지하며, 계산만 Action 실행 중에 한다.
+  순찰·추적용 LiDAR 전처리의 TF도 입력 유휴 전환에 함께 해제한다.
+  위치 보정의 AMCL pose 수신·마지막 위치 저장은 계속 유지한다.
+- 유휴를 프로세스 종료나 장애 복구와 혼동하지 않는다. 이 기능은 자동 복구를 추가하지 않는다.
 
 ## 위치 보정
 
 위치 보정은 별도 패키지 [malbut_relocalization](../malbut_relocalization/README.md)의
-`/relocalize` Action(`malbut_interfaces/action/Relocalize`)이다. 관리자는 저장 지도를
-불러올 때마다 `AUTO`로 요청하고, 끝날 때까지 `SWITCHING`을 유지한다. 결과는
+`/relocalize` Action(`malbut_interfaces/action/Relocalize`)이다. Bringup의 공통 실행기가 저장 지도를
+불러올 때 기존 위치 보정 Action을 `AUTO`로 요청한다. 결과는
 `/malbut/localization/state`의 `message`와 웹의 **위치 추정** 줄에 나온다.
 
 1. 이 지도의 저장 위치(마지막 AMCL 위치, 없으면 AutoSLAM의 `.pose.yaml`)를
@@ -468,7 +490,7 @@ ros2 launch navigation rviz_navigation.launch.py
    또는 RViz **2D Pose Estimate**로 지정한다.
 
 다른 클라이언트는 `relocalize` 기능으로 요청한다(저장 지도 선택 후, `BASE` 사용).
-`restore_pose:=false`면 관리자가 요청하지 않고, `relocalization:=false`면 노드를 켜지 않는다.
+`restore_pose:=false`면 공통 실행기가 요청하지 않고, `relocalization:=false`면 노드를 켜지 않는다.
 기초 구현이며, 비슷한 방이 여러 개인 집에서는 전역 탐색이 틀린 곳을 고를 수 있다.
 
 ## 주행 설정·장애물 입력
@@ -537,7 +559,7 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
 
 | 구역 | 마스크 값 | 주행 |
 | --- | --- | --- |
-| 진입 금지(`restricted`) | 100 + 0.2m 여유 | 통과 불가. 차체가 걸치지 않도록 여유를 더한다 |
+| 진입 금지(`restricted`) | 100, 둘레 0.2m는 70 | 구역은 통과 불가. 둘레 0.2m 여유는 우회 권장과 같은 비용이라 지나갈 수 있다 |
 | 우회 권장(`avoid`) | 70 | 통과 가능하지만 비용이 높아 가능하면 피한다 |
 | 통행 허용(`allow`) | 0 | 비용 변화 없음(기존 형식 호환) |
 
@@ -549,6 +571,13 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   누른다. 로봇 브리지가 이 파일에 저장하고, 저장 지도 업로드에 구역을 함께 싣는다.
 - 이전 Gazebo 구현(`malbut_gazebo/zone_filter_mask.py`)의 구역 형식과 비용을 옮겼다.
   벽 주변 비용은 로봇의 inflation이 맡으므로 넣지 않았다.
+- 진입 금지의 0.2m 여유를 통과 불가로 두면, 로봇이 여유 안에 서는 순간 주행·회전·수동 조작이
+  모두 멈췄다(2026-10-08 실기). 지금은 구역만 막고, 차체가 구역에 닿는 움직임은 주행 제어기·
+  행동·수동 조작의 차체 윤곽 검사가 막는다. 목적지는 여유 밖으로 옮겨 받는다.
+- 그래도 차체가 구역에 닿아 있다고 판단되면(로봇 자리에 구역을 그림, 위치 추정이 튐)
+  웹에서 보낸 목적지·순찰은 먼저 1m 안의 구역 밖 지점으로 빠져나간다. 그동안 Local·Global
+  costmap의 keepout 필터를 끄고(Nav2 `<costmap>/keepout_filter/toggle_filter`, 최대 60초),
+  빠져나오면 켠 뒤 원래 일을 시작한다. 나갈 곳이 없거나 실패하면 웹 지도 카드에 이유를 보인다.
 
 ## 수동 조작
 
@@ -565,6 +594,10 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   있는 동안은 보드의 `/ros_robot_controller/joy`에서 스틱 기울기를 확인해 조작 중으로
   본다. 보드가 스틱 값을 변화 시에만 보내는 펌웨어라면 5초 이상 같은 방향으로 잡고
   있을 때 멈출 수 있으며, 스틱을 다시 움직이면 다시 시작한다.
+- 진입 금지 구역은 보지 않는다. 수동 조작이 실행되는 동안 웹 패널 브리지가 Local costmap의
+  keepout 필터만 끈다. 구역에 갇힌 로봇도 원격으로 빼낼 수 있고, 실제 장애물은 local
+  costmap의 라이다 장애물과 Collision Monitor가 계속 막는다. 사람이 운전하면 구역 안으로도
+  들어갈 수 있다.
 - 우선순위 `HIGH`, 자원 `BASE`. 실행 중인 추적·목적지 이동·위치 보정(`NORMAL`)과
   순찰(`LOW`)을 취소한 뒤 시작하고, 수동 조작 중에는 `NORMAL`·`LOW` 이동 요청을 거부한다. 이 동안
   `/malbut/state`의 `control_mode`는 `MANUAL`이다. 지도 선택 여부와 무관하지만, 위치

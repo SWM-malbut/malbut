@@ -27,6 +27,7 @@ flowchart TB
     H["제조사 하드웨어 launch"]
     N["nav2_container"]
     M["시스템 관리자"]
+    D["공통 의존성·지도 제공자 관리"]
     O["bringup_connections"]
 
     B -->|공통 기반| R
@@ -35,7 +36,10 @@ flowchart TB
     B -->|설정된 연동 launch| C
     R -->|드라이버·센서·TF| H
     R -->|공식 Nav2 컴포넌트| N
-    R -->|미션·위치 추정 관리| M
+    R -->|미션 중재| M
+    R -->|기능별 활성·유휴 전환| D
+    M -->|현재 미션·준비 요청| D
+    D -->|기존 lifecycle 그룹| N
     B -.->|연결 관측| O
 ```
 
@@ -46,7 +50,7 @@ flowchart TB
 | [robot](launch/robot.launch.py) | 차체·센서·TF·오도메트리, Nav2, Zone, 시스템 관리자 | 제조사 하드웨어, `/scan_raw`, `/odom` |
 | [tracking](launch/tracking.launch.py) | YOLO·사람 ID·RGB-D 위치 추정, LiDAR 보조 추정, 추적 서버 | RGB·Depth·CameraInfo, TF, Nav2 Action |
 | [patrol](launch/patrol.launch.py) | 순찰 서버 | 지도·costmap·영상, Nav2 Action |
-| [autoslam](launch/autoslam.launch.py) | 탐색 서버·지도 저장 서버 | 지도, Nav2, 관리자의 SLAM 시작·종료 서비스 |
+| [autoslam](launch/autoslam.launch.py) | 탐색 서버·지도 저장 서버·요청 중 SLAM | 지도, Nav2, Bringup의 지도 제공자 인계·복원 서비스 |
 | [manual](launch/manual.launch.py) | 수동 입력 adapter·제조사 조이스틱 | `/cmd_vel_teleop`, 관리자, AssistedTeleop |
 | [relocalization](launch/relocalization.launch.py) | 위치 보정 Action 서버 | AMCL, LiDAR·지도, Nav2 Spin |
 | [speech](launch/speech.launch.py) | STT·Agent·TTS, 날씨·키 동기화 | 마이크·스피커, 대화 Topic·Action, 관리자 |
@@ -119,27 +123,73 @@ stateDiagram-v2
     state "저장 지도 + AMCL" as Saved
     Default --> Mapping: AutoSLAM 요청
     Saved --> Mapping: AutoSLAM 요청
-    Mapping --> Default: 완료·취소·실패 / SLAM 종료
+    Mapping --> Default: 기본 지도에서 시작 / SLAM 종료
+    Mapping --> Saved: 저장 지도에서 시작 / SLAM 종료
     Default --> Saved: 저장 지도 선택 / 위치 보정
     Saved --> Saved: 다른 지도 선택 / 위치 보정
 ```
 
-- 시스템 관리자가 `map→odom`을 제공하는 위치 추정 주체를 하나만 유지합니다.
-  지도 작성 시 map_server·AMCL을 정리하고 SLAM Toolbox를 실행합니다.
-- AutoSLAM은 탐색과 지도 저장을 맡으며, SLAM 시작·종료는 관리자 서비스로 요청합니다.
-  완료·취소·실패 후에는 SLAM을 종료하고 기본 지도·AMCL로 돌아옵니다.
-  만든 지도는 저장 지도 목록에서 선택합니다.
-- 저장 지도 선택 시 기존 위치 기록을 활용하거나 전역 위치 보정을 수행합니다.
-  이 과정은 제자리 회전을 포함할 수 있습니다.
-- 노드 연결 완료와 저장 지도에서의 위치 확정은 다른 상태입니다.
-  지도와 위치 추정이 필요한 미션의 허용 조건은 관리자가 따로 판단합니다.
+- 관리자는 지도/비지도 모드와 지도 유무 실행 제한을 갖지 않습니다.
+  기존 미션 전달·자원 중재·취소·결과 전달만 유지합니다.
+- Bringup의 [runtime_control.py](malbut_bringup/runtime_control.py)가 지도 제공자와
+  기능별 고정 의존성을 관리합니다. SLAM과 AMCL의 `map→odom`·`/map`은 겹치지 않습니다.
+- AutoSLAM Action이 SLAM 프로세스를 시작하고 완료·취소·실패 때 종료를 확인합니다.
+  이후 이전에 사용하던 지도·AMCL을 복원합니다. 만든 지도는 목록에서 선택합니다.
+- 일반 유휴 전환은 Nav2 주행·경로 계획 그룹의 `PAUSE → RESUME`입니다.
+  map_server·AMCL은 활성 상태를 유지하고, 새 지도 선택·SLAM 인계 때만 cleanup합니다.
+- Nav2는 같은 isolated executor 구성의 종료 보완 진입점으로 실행합니다.
+  이미 끝난 executor를 다시 기다리지 않으며, 별도 상주 프로세스는 추가하지 않습니다.
+  SLAM도 upstream 동기식 매퍼를 그대로 사용하되 큐 파괴 전에 작업 스레드를 정리합니다.
+- Bringup 준비 표시는 유휴 상태의 costmap·인식 결과 발행을 요구하지 않습니다.
+  노드·Action 연결과 의존성 준비 신호만 확인합니다.
+- 마지막으로 불러온 저장 지도 경로는 로봇에 기억합니다. 다음 시작 시
+  `map` 인자 → 마지막 선택 지도 → 기본 미확인 지도 순으로 사용합니다.
+  웹 선택과 CLI 선택 모두 같으며, AutoSLAM이 만든 지도를 자동 선택하지는 않습니다.
+- 기능의 Goal 전달 전에 의존성 준비를 확인합니다. 준비 중 취소된 요청은 전달하지 않습니다.
+  취소 중에는 의존성을 유지하고, 하위 종료가 확인된 후 유휴로 돌아갑니다.
+- 웹 경로 미리보기도 기존 `ExecuteMission`으로 경로 계산을 요청합니다.
+  주행 그룹은 깨우지 않고 계획 그룹만 사용하며, 결과·취소 후 다시 유휴로 돌아갑니다.
+- 시스템 관리자·Agent·VLM은 유휴 제어 대상이 아닙니다.
+  공용 카메라·LiDAR 드라이버·odom·TF도 계속 실행합니다.
+- 추적용 YOLO·ID 연결·RGB-D 위치 추정·LiDAR 전처리는 추적 요청 때만 입력을 받습니다.
+  프로세스·모델·ID 갤러리는 유지하고, 유휴 전환 때 영상 동기화 큐만 비웁니다.
+- 순찰의 RGB·costmap·TF 입력도 순찰 요청 때만 연결합니다.
+  새로운 영상·costmap을 받은 후 Goal을 전달하며, 완료·취소 후 구독을 해제합니다.
+  일반 카메라 영상·별도 낙상 Pose/VLM 경로는 이 전환과 무관합니다.
+- 의존성은 실행 중인 기능 목록이 달라질 때만 다시 계산합니다.
+  같은 목록의 반복 수신과 준비 요청은 기존 판정을 재사용하며,
+  초기화·TF 갱신용 0.5초 타이머는 그대로 유지합니다.
+  지도 제공자 전환·수동 복구 완료 시에는 실제 상태를 다시 맞춥니다.
+- 추적 follower의 TF·전역 costmap 구독은 추적 Action 실행 중에만 유지하며,
+  취소한 Nav2 동작의 종료를 확인한 뒤 해제합니다.
+- AutoSLAM·위치 보정은 지도·스캔·TF 연결을 유지합니다.
+  지도 처리와 위치 보정 계산만 각 Action 실행 중에 수행합니다.
+  마지막 위치 저장을 위한 AMCL pose 수신은 유지합니다.
+- 추적용 LiDAR 전처리의 TF도 입력과 함께 쉬며, RGB-D 위치 추정은
+  출력 좌표 변환이 필요할 때만 TF를 받습니다.
+- 기존 수동 복구 중에는 lifecycle 제어를 양보합니다. 복구 종료 후 실제 그룹
+  상태를 한 번 읽어 맞추며, 자동 복구나 별도 재시작 정책은 추가하지 않습니다.
+
+| 구성 | 활성화 조건 |
+| --- | --- |
+| map_server·AMCL | 평소 활성 유지, AutoSLAM 실행 중에만 SLAM으로 제공자 교체 |
+| controller·behavior·teleop·velocity smoother·collision monitor | 주행·추적·순찰·위치 보정 회전·AutoSLAM |
+| planner·BT navigator·path smoother·waypoint follower | 전역 경로를 쓰는 기능 |
+| Zone mask·filter info | 가벼운 이벤트형 공급자, 활성 유지 |
+| 추적 YOLO·ID 연결·RGB-D·LiDAR 전처리 | `follow_person`의 실행·취소 처리 중 |
+| 순찰 RGB·costmap 수신 | `patrol`의 준비·실행·취소 처리 중 |
+| SLAM Toolbox | AutoSLAM Action 실행 중 |
 
 | 인터페이스 | 역할 |
 | --- | --- |
-| `/malbut/localization/start_mapping` | SLAM 시작 |
-| `/malbut/localization/stop_mapping` | SLAM 종료·기본 지도 복원 |
-| `/malbut/localization/load_map` | 저장 지도 로드·위치 보정 |
-| `/malbut/localization/state` | 위치 추정 모드·지도·결과 표시 |
+| `/malbut/runtime/prepare/<기능>` | 하위 요청 전달 전 의존성 준비 |
+| `/malbut/runtime/state` | 의존 그룹 활성 상태·준비 오류·웹 준비 표시 |
+| 각 처리 노드의 `~/set_processing` | 표준 `SetBool`; 모델/프로세스 유지, 입력 구독 재개·해제 |
+| `/malbut/localization/start_mapping` | AMCL·기존 지도에서 SLAM으로 제공자 인계 |
+| `/malbut/localization/mapping_ready` | SLAM 지도·TF 준비 후 전역 주행 활성화 |
+| `/malbut/localization/stop_mapping` | SLAM 종료 후 이전 지도·AMCL 복원 |
+| `/malbut/localization/load_map` | 저장 지도 로드·선택적 위치 보정 |
+| `/malbut/localization/state` | 실제 지도 제공자·지도·결과; 기존 웹 필드 호환 |
 
 세부 전환 조건은 [위치 추정 운영 안내](README_OPERATIONS.md#위치-추정-전환),
 탐색 알고리즘은 [AutoSLAM](../malbut_autoslam/README.md),

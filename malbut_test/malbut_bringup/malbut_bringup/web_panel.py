@@ -38,8 +38,7 @@ RUNTIME_ACTIONS = ('/malbut/mission/execute', '/autoslam', '/follow_person', '/p
                    '/assisted_teleop', '/relocalize')
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
 # The web map screen's destination preview plans with Nav2 before anything moves.
-PLAN_ACTION = '/compute_path_to_pose'
-PLAN_TIMEOUT_S = 5.0
+PLAN_TIMEOUT_S = 40.0  # Includes waking the idle planner before computing.
 # The planner Nav2's navigate_to_pose tree uses. planner_server also loads person
 # following's planner, and with two loaded it refuses a request that names none.
 PLAN_PLANNER_ID = 'GridBased'
@@ -425,7 +424,6 @@ class RosBridge:
         from action_msgs.msg import GoalStatusArray
         from action_msgs.srv import CancelGoal
         from geometry_msgs.msg import Twist
-        from nav2_msgs.action import ComputePathToPose
         from nav2_msgs.srv import LoadMap
         from std_srvs.srv import SetBool, Trigger
         from nav_msgs.msg import OccupancyGrid
@@ -453,8 +451,6 @@ class RosBridge:
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
             'autoslam': ActionClient(self.node, AutoSlam, '/autoslam'),
         }
-        self.planner = ActionClient(self.node, ComputePathToPose, PLAN_ACTION)
-        self.plan_goal = ComputePathToPose.Goal
         self.catalog = SavedMapCatalog(self.node.declare_parameter(
             'map_directory', str(Path.home() / '.ros/malbut/maps')).value)
         self.runtime = (RuntimeSupervisor(self.catalog) if self.node.declare_parameter(
@@ -888,8 +884,9 @@ class RosBridge:
         return future.result(timeout=timeout)
 
     def plan_path(self, x, y, yaw, timeout=PLAN_TIMEOUT_S):
-        """Ask the Nav2 planner for a path from the robot to a map pose; return [x, y] points."""
+        """Request a plan through the manager so idle dependencies wake first."""
         result = Future()
+        accepted_handle = None
 
         def fail(error):
             if not result.done():
@@ -899,38 +896,51 @@ class RosBridge:
             try:
                 wrapped = future.result()
                 if wrapped.status != 4:  # GoalStatus.STATUS_SUCCEEDED
-                    raise ValueError('Nav2 planner found no path')
-                result.set_result([(item.pose.position.x, item.pose.position.y)
-                                   for item in wrapped.result.path.poses])
+                    raise ValueError(wrapped.result.message or 'Nav2 planner found no path')
+                plan = yaml.safe_load(wrapped.result.result_yaml)
+                points = [(item['pose']['position']['x'], item['pose']['position']['y'])
+                          for item in plan['path']['poses']]
+                if not result.done():
+                    result.set_result(points)
             except Exception as error:
                 fail(error)
 
         def accepted(future):
+            nonlocal accepted_handle
             try:
                 handle = future.result()
+                accepted_handle = handle
                 if not handle.accepted:
                     raise ValueError('Nav2 planner rejected the goal')
+                if result.cancelled():
+                    handle.cancel_goal_async()
+                    return
                 handle.get_result_async().add_done_callback(finished)
             except Exception as error:
                 fail(error)
 
         def send():
-            if not self.planner.server_is_ready():
-                raise ValueError('Nav2 planner is not available')
-            goal = self.plan_goal()
-            goal.goal.header.frame_id = 'map'
-            goal.goal.pose.position.x = float(x)
-            goal.goal.pose.position.y = float(y)
-            goal.goal.pose.orientation.z = math.sin(yaw / 2.0)
-            goal.goal.pose.orientation.w = math.cos(yaw / 2.0)
-            goal.use_start = False  # From where the robot is now.
-            goal.planner_id = PLAN_PLANNER_ID
-            self.planner.send_goal_async(goal).add_done_callback(accepted)
+            client = self.clients['manager']
+            if not client.server_is_ready():
+                raise ValueError('System manager is not available')
+            goal = self.mission_goal()
+            goal.capability_id = 'compute_path_to_pose'
+            goal.arguments_yaml = json.dumps({
+                'goal': {'header': {'frame_id': 'map'}, 'pose': {
+                    'position': {'x': float(x), 'y': float(y)},
+                    'orientation': {'z': math.sin(yaw / 2.0), 'w': math.cos(yaw / 2.0)}}},
+                'use_start': False, 'planner_id': PLAN_PLANNER_ID,
+            })
+            client.send_goal_async(goal).add_done_callback(accepted)
 
         self.call(send)
         try:
             return result.result(timeout=timeout)
         except FutureTimeout:
+            # Release the manager's dependency demand, including a late accept.
+            result.cancel()
+            if accepted_handle is not None and accepted_handle.accepted:
+                self.call(accepted_handle.cancel_goal_async)
             raise ValueError('Nav2 planner did not answer in time') from None
 
     def diagnostics(self):

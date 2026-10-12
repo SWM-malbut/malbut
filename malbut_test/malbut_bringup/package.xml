@@ -18,10 +18,22 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>slam_toolbox</exec_depend>
+  <depend>slam_toolbox</depend>
+  <depend>rclcpp</depend>
+  <depend>boost</depend>
+  <build_depend>message_filters</build_depend>
+  <build_depend>interactive_markers</build_depend>
+  <build_depend>visualization_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
+  <build_depend>tf2_ros</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>tf2_geometry_msgs</build_depend>
+  <build_depend>tf2_sensor_msgs</build_depend>
   <!-- Every Nav2 server that nav2_stack.py composes, incl. the Collision Monitor. -->
   <exec_depend>navigation2</exec_depend>
-  <exec_depend>rclcpp_components</exec_depend>
+  <depend>rclcpp_components</depend>
   <exec_depend>rmw_fastrtps_cpp</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
@@ -32,7 +44,6 @@
   <exec_depend>rcl_interfaces</exec_depend>
   <exec_depend>vision_msgs</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
-  <exec_depend>malbut_resource_monitor</exec_depend>
   <exec_depend>malbut_yolo</exec_depend>
   <exec_depend>malbut_reid</exec_depend>
   <exec_depend>malbut_tracking</exec_depend>

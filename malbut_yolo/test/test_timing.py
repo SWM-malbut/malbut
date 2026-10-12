@@ -36,6 +36,7 @@ def wrapper(monkeypatch):
 def _instance(module, enabled=True):
     node = module.TimedYoloNode.__new__(module.TimedYoloNode)
     node.enable = enabled
+    node._processing_enabled = True
     node.seen = []
     node.failure = False
     node._timing_sequence = 0
@@ -86,6 +87,13 @@ def test_disabled_detection_does_not_publish_fake_timing(wrapper):
     assert not node.seen
     assert not node.traces
     assert node._timing_sequence == 0
+
+
+def test_idle_does_not_run_inference_even_if_vendor_enable_is_true(wrapper):
+    node = _instance(wrapper)
+    node._processing_enabled = False
+    node.image_cb(_image())
+    assert node.seen == node.traces == []
 
 
 def test_failed_inference_does_not_publish_completed_trace(wrapper):

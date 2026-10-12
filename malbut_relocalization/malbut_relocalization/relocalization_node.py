@@ -1,7 +1,7 @@
 """
 Find the robot's pose on the selected saved map and remember its last pose.
 
-The system manager selects the saved map and requests /relocalize after each
+Bringup's map provider selects the saved map and requests /relocalize after each
 switch. AUTO first tries the pose saved for this map and checks it against the
 LiDAR scan; when it does not fit (the robot was moved while off) or no pose is
 saved, it runs AMCL's global localization while rotating in place with Nav2
@@ -214,6 +214,14 @@ class Relocalization(Node):
             goal_callback=self._goal, cancel_callback=lambda _: CancelResponse.ACCEPT,
             callback_group=group)
 
+    def _start_observing(self):
+        with self.lock:
+            self.scan = None
+
+    def _stop_observing(self):
+        with self.lock:
+            self.scan = None
+
     def _localization(self, message):
         try:
             state = json.loads(message.data)
@@ -339,6 +347,7 @@ class Relocalization(Node):
     def _execute(self, handle):
         result = Relocalize.Result()
         try:
+            self._start_observing()
             found, message, estimate, ratio = self._relocalize(handle)
             result.success, result.message, result.match_ratio = found, message, ratio
             if estimate is not None:
@@ -356,6 +365,7 @@ class Relocalization(Node):
             self.get_logger().warning(f'Relocalization failed: {error}')
             handle.abort()
         finally:
+            self._stop_observing()
             with self.lock:
                 self.busy = False
         return result
@@ -519,6 +529,15 @@ class Relocalization(Node):
 
     def _search(self, handle, deadline, minimum):
         """Run AMCL global localization while rotating; keep the best estimate."""
+        with self.lock:
+            message = self.map_message
+        # Humble AMCL's uniformPoseGenerator indexes the free-space vector
+        # without an empty check. The all-unknown default map has no entries.
+        # Reject only this operation, not other map-independent functions or
+        # an operator's explicit GIVEN_POSE request.
+        if message is None or not any(value == 0 for value in message.data):
+            raise RelocalizationError(
+                'selected map has no known free cells for global localization')
         best, best_ratio = None, 0.0
         for _ in range(self.settings['search_attempts']):
             self._feedback(handle, 'SEARCHING', best_ratio)
@@ -643,9 +662,12 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        executor.shutdown()
+        # Humble's executor does not join its worker pool. Drain callbacks
+        # before destroying the ROS handles those callbacks may still use.
+        executor._executor.shutdown(wait=True)
         if node is not None:
             node.save_latest()
             node.destroy_node()
-        executor.shutdown()
         if rclpy.ok():
             rclpy.shutdown()

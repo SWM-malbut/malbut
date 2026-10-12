@@ -11,22 +11,30 @@ AMCL 전역 위치 탐색을 켜고 Nav2 Spin으로 제자리에서 한 바퀴 �
 | 항목 | 내용 |
 | --- | --- |
 | Action | `/relocalize` (`malbut_interfaces/action/Relocalize`) |
-| `method=SAVED_POSE`(0) | 이 지도에서 마지막으로 저장한 AMCL 위치, 없으면 AutoSLAM이 지도와 함께 저장한 `<지도>.pose.yaml` |
+| `method=AUTO`(0) | 저장 AMCL 위치·AutoSLAM `<지도>.pose.yaml` 확인, 없거나 맞지 않으면 전역 탐색 |
 | `method=GIVEN_POSE`(1) | Goal의 `initial_pose`(map 좌표) |
 | 결과 | `success`, `message`, 보정 후 AMCL 추정 `pose` |
 | 피드백 | `WAITING`(지도 선택·AMCL 활성 대기) → `APPLYING` |
 
-선택 지도는 시스템 관리자의 `/malbut/localization/state`에서 읽는다. 저장 지도
-주행(`LOCALIZATION`) 중에만 동작하며, 지도 작성 중이거나 AMCL이 활성화되지 않으면
-`timeout_s`(10초) 뒤 실패한다. 한 번에 하나의 Goal만 받는다.
+선택 지도는 Bringup 공통 실행기의 `/malbut/localization/state`에서 읽는다.
+지도·AMCL·스캔을 사용할 수 없으면 `timeout_s`(60초) 뒤 실패한다.
+한 번에 하나의 Goal만 받는다. 관리자는 지도/비지도 모드로 이 기능을 제한하지 않는다.
+스캔·TF 연결은 유지하고, Action 종료 때 사용한 스캔 상태만 비운다.
+실행 중 구독 객체를 삭제하지 않는다.
+AMCL pose 수신과 마지막 위치 저장은 유휴 상태에서도 유지한다.
+
+전역 탐색에는 알려진 빈칸이 필요하다. 전부 미확인인 기본 지도나 전부 점유된 지도에서는
+AMCL 전역 탐색 서비스를 호출하지 않고 이유를 반환한다. `GIVEN_POSE`로 위치를 직접
+지정하는 기능과 다른 센서 기반 기능은 유지한다.
 
 ## 사용처
 
-- **시스템 관리자**: 저장 지도로 바꿀 때마다 `SAVED_POSE`를 요청하고, 결과를
+- **Bringup 공통 실행기**: 저장 지도로 바꿀 때 `AUTO`를 요청하고, 결과를
   `/malbut/localization/state`의 `message`로 알린다. Bringup의
   `restore_pose:=false`면 요청하지 않는다.
 - **다른 클라이언트**: `relocalize` 기능(Capability Manifest)으로
-  `/malbut/mission/execute`에 요청한다. 저장 지도 선택 후에만 관리자가 받는다.
+  `/malbut/mission/execute`에 요청한다. AMCL을 먼저 활성화하되, 이 Action이
+  만들 초기 위치를 준비 단계에서 미리 요구하지 않는다.
 
 ```bash
 ros2 action send_goal /malbut/mission/execute malbut_interfaces/action/ExecuteMission \

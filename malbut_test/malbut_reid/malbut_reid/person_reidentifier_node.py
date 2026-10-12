@@ -11,6 +11,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_srvs.srv import SetBool
 from vision_msgs.msg import Detection2DArray
 from yolo_msgs.msg import DetectionArray
 
@@ -26,6 +27,7 @@ class PersonReidentifierNode(Node):
         """Load the encoder once and subscribe to shared detections."""
         super().__init__('person_reidentifier')
         defaults = {
+            'start_enabled': True,
             'rgb_topic': '/camera/color/image_raw',
             'yolo_detections_topic': '/yolo/detections',
             'detections_2d_topic': '/perception/person/detections_2d',
@@ -100,10 +102,33 @@ class PersonReidentifierNode(Node):
             queue_size=self.get_parameter('sync_queue_size').value,
         )
         self._synchronizer.registerCallback(self._on_rgb_detections)
+        self._processing_enabled = True
+        self.create_service(SetBool, '~/set_processing', self._set_processing)
+        self._change_processing(bool(self.get_parameter('start_enabled').value))
         self.get_logger().info(
             'Person tracking ready: YOLO boxes + matching RGB; '
             'OSNet and color appearance matching are disabled for this test.'
         )
+
+    def _change_processing(self, enabled):
+        if enabled == self._processing_enabled:
+            return
+        self._processing_enabled = enabled
+        for queue in self._synchronizer.queues:
+            queue.clear()
+        for subscriber, kind in ((self._rgb, Image), (self._detections, DetectionArray)):
+            if enabled:
+                subscriber.sub = self.create_subscription(
+                    kind, subscriber.topic, subscriber.callback, qos_profile_sensor_data)
+            else:
+                self.destroy_subscription(subscriber.sub)
+                subscriber.sub = None
+
+    def _set_processing(self, request, response):
+        # Serialized with image callbacks; retain the identity gallery/model.
+        self._change_processing(request.data)
+        response.success = True
+        return response
 
     def _validate_parameters(self) -> None:
         for name in ('sync_queue_size', 'opencv_num_threads',
@@ -159,6 +184,8 @@ class PersonReidentifierNode(Node):
     def _on_rgb_detections(
         self, image: Image, message: DetectionArray,
     ) -> None:
+        if not self._processing_enabled:
+            return
         if image.header != message.header:
             self.get_logger().warning(
                 'YOLO/RGB headers differ; refusing mismatched image crops.',

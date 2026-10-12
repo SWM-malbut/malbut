@@ -14,11 +14,39 @@ option(MALBUT_DEPTH_COSTMAP "Build the unused Nav2 depth costmap plugin" OFF)
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(slam_toolbox REQUIRED)
+find_package(Boost REQUIRED COMPONENTS thread serialization)
+
+# Native servers/plugins are unchanged; these small entrypoints fix Humble's
+# worker lifetime on process exit, without adding another resident process.
+add_executable(component_container_isolated src/component_container_isolated.cpp)
+ament_target_dependencies(component_container_isolated rclcpp rclcpp_components)
+target_link_libraries(component_container_isolated ${CMAKE_DL_LIBS})
+add_executable(sync_slam_toolbox src/sync_slam_toolbox.cpp)
+ament_target_dependencies(sync_slam_toolbox rclcpp tf2_ros message_filters
+  nav_msgs sensor_msgs std_srvs visualization_msgs interactive_markers
+  pluginlib tf2_geometry_msgs tf2_sensor_msgs)
+target_include_directories(sync_slam_toolbox PRIVATE ${slam_toolbox_INCLUDE_DIRS})
+# slam_toolbox's exported target is its RViz plugin, not the mapping library.
+# Link only the installed mapper libraries used by this native entrypoint.
+find_library(MALBUT_SLAM_SYNC_LIBRARY sync_slam_toolbox
+  HINTS "${slam_toolbox_DIR}/../../../lib" REQUIRED)
+find_library(MALBUT_SLAM_COMMON_LIBRARY toolbox_common
+  HINTS "${slam_toolbox_DIR}/../../../lib" REQUIRED)
+find_library(MALBUT_KARTO_LIBRARY kartoSlamToolbox
+  HINTS "${slam_toolbox_DIR}/../../../lib" REQUIRED)
+target_link_libraries(sync_slam_toolbox ${MALBUT_SLAM_SYNC_LIBRARY}
+  ${MALBUT_SLAM_COMMON_LIBRARY} ${MALBUT_KARTO_LIBRARY} Boost::thread Boost::serialization)
+install(TARGETS component_container_isolated sync_slam_toolbox
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/wait_for_robot scripts/zone_filter scripts/robot_web_panel scripts/robot_cloud_sync
   scripts/speech_preflight
+  scripts/runtime_control
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)

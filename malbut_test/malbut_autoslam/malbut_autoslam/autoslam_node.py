@@ -7,6 +7,7 @@ import threading
 import time
 
 from action_msgs.msg import GoalStatus
+from ament_index_python.packages import get_package_prefix
 from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
@@ -27,6 +28,7 @@ from malbut_autoslam.frontier import (
     search_frontiers,
 )
 from malbut_autoslam.saved_pose import write_mapping_pose
+from malbut_autoslam.slam_process import SlamProcess
 
 
 class Interrupted(RuntimeError):
@@ -115,6 +117,8 @@ class AutoSlamNode(Node):
             'max_exploration_time_s': 1200.0,
             # Empty keeps standalone/simulation deployments externally managed.
             'start_mapping_service': '', 'stop_mapping_service': '',
+            'ready_mapping_service': '', 'slam_params_file': '', 'slam_executable': '',
+            'scan_topic': '/scan_raw',
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -131,19 +135,28 @@ class AutoSlamNode(Node):
         self.save_uncertain = False
         self.message = None
         self.received_at = 0.0
+        self._owned_map_after = None
         self.map_revision = 0
         self.child = None
         self.planned_path = []
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.group = ReentrantCallbackGroup()
+        params = self.settings['slam_params_file']
+        self.slam = (SlamProcess([
+            self.settings['slam_executable'] or (
+                get_package_prefix('slam_toolbox') + '/lib/slam_toolbox/sync_slam_toolbox_node'),
+            '--ros-args', '-r', '__node:=slam_toolbox', '--params-file', params,
+            '-p', 'use_sim_time:=' + str(self.get_parameter('use_sim_time').value).lower(),
+            '-p', 'scan_topic:=' + self.settings['scan_topic'],
+        ]) if params else None)
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self)
-        self.create_subscription(
+        self._map_subscription = self.create_subscription(
             OccupancyGrid, self.settings['map_topic'], self._receive_map,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
-            callback_group=self.group,
-        )
+            callback_group=self.group)
+        self._observing = False
         self.navigation = ActionClient(
             self, NavigateToPose, self.settings['navigation_action'],
             callback_group=self.group,
@@ -162,6 +175,9 @@ class AutoSlamNode(Node):
                 Trigger, self.settings[operation + '_mapping_service'], callback_group=self.group)
             for operation in ('start', 'stop')
         } if self.settings['start_mapping_service'] else {})
+        if self.settings['ready_mapping_service']:
+            self.mapping_clients['ready'] = self.create_client(
+                Trigger, self.settings['ready_mapping_service'], callback_group=self.group)
         self.mapping_requested = False
         self.server = ActionServer(
             self, AutoSlam, '/autoslam', execute_callback=self._execute,
@@ -172,12 +188,40 @@ class AutoSlamNode(Node):
     def destroy_node(self):
         """Release owned Action waitables before destroying their ROS node."""
         self.server.destroy()
+        if self.slam is not None:
+            self.slam.stop()
+        self._stop_observing()
+        self.listener.unregister()
         self.navigation.destroy()
         self.planner.destroy()
         super().destroy_node()
 
+    def _start_observing(self):
+        self.tf.clear()
+        with self.lock:
+            self.message = None
+            self.received_at = 0.0
+            self._observing = True
+
+    def _stop_observing(self):
+        with self.lock:
+            self._observing = False
+            self.message = None
+            self.received_at = 0.0
+        # Keep ROS entities stable while the executor runs. Idle map callbacks
+        # return immediately; deleting listeners from an Action races its
+        # executor's already-built wait set in Humble.
+
     def _receive_map(self, message):
         with self.lock:
+            if not self._observing:
+                return
+            if (self._owned_map_after is not None
+                    and Time.from_msg(message.header.stamp).nanoseconds
+                    < self._owned_map_after):
+                # A queued/durable map from map_server is not proof that this
+                # Action's newly started SLAM process has produced a map.
+                return
             self.message = message
             self.received_at = time.monotonic()
             self.map_revision += 1
@@ -591,6 +635,8 @@ class AutoSlamNode(Node):
         self.planned_path = []
         self.mapping_requested = False
         try:
+            self._check(handle)
+            self._start_observing()
             if self.mapping_clients:
                 self._check(handle)
                 self._mapping_call('start', handle)
@@ -598,6 +644,25 @@ class AutoSlamNode(Node):
                     self.message = None
                     self.received_at = 0.0
                 self._check(handle)
+            if self.slam is not None:
+                self._check(handle)
+                with self.lock:
+                    self.message = None
+                    self.received_at = 0.0
+                    self._owned_map_after = self.get_clock().now().nanoseconds
+                self.tf.clear()  # The previous AMCL frame is not SLAM startup evidence.
+                self.slam.start()
+                # Wait for SLAM, not a previous latched map, before waking the
+                # global costmap whose activation waits for map->base TF.
+                deadline = time.monotonic() + self.settings['ready_timeout_s']
+                while (self.message is None or not self.tf.can_transform(
+                        'map', self.settings['base_frame'], Time())):
+                    self._check(handle)
+                    if not self.slam.alive or time.monotonic() >= deadline:
+                        raise RuntimeError('SLAM map/TF startup failed')
+                    self._pause()
+                if 'ready' in self.mapping_clients:
+                    self._mapping_call('ready', handle)
             self._explore(handle, result)
         except Interrupted as error:
             result.message = str(error)
@@ -607,7 +672,21 @@ class AutoSlamNode(Node):
         finally:
             # Do not report completion while an accepted or pending goal can move.
             self._settle_child(handle)
-            if self.mapping_requested:
+            slam_stopped = True
+            if self.slam is not None:
+                try:
+                    self.slam.stop()
+                except Exception as error:
+                    # An abnormal exit is a failure, but a confirmed dead
+                    # backend must still release /map and restore AMCL.
+                    slam_stopped = not self.slam.alive
+                    self.save_uncertain = self.save_uncertain or not slam_stopped
+                    result.success = False
+                    result.message += f'; SLAM cleanup failed: {error}'
+            if slam_stopped:
+                with self.lock:
+                    self._owned_map_after = None
+            if self.mapping_requested and slam_stopped:
                 try:
                     self._mapping_call('stop', handle)
                 except Exception as error:
@@ -615,6 +694,7 @@ class AutoSlamNode(Node):
                     result.message += f'; mapping cleanup failed: {error}'
                     # Do not accept another run after an uncertain backend switch.
                     self.save_uncertain = True
+            self._stop_observing()
             with self.lock:
                 if handle.is_cancel_requested:
                     result.success = False
@@ -644,6 +724,7 @@ def main(args=None):
             executor.spin_once(timeout_sec=0.2)
     finally:
         executor.shutdown()
+        executor._executor.shutdown(wait=True)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

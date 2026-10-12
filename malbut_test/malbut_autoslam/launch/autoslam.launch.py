@@ -20,6 +20,10 @@ def generate_launch_description():
         DeclareLaunchArgument('planning_action', default_value='/compute_path_to_pose'),
         DeclareLaunchArgument('start_mapping_service', default_value=''),
         DeclareLaunchArgument('stop_mapping_service', default_value=''),
+        DeclareLaunchArgument('ready_mapping_service', default_value=''),
+        DeclareLaunchArgument('slam_params_file', default_value=''),
+        DeclareLaunchArgument('slam_executable', default_value=''),
+        DeclareLaunchArgument('scan_topic', default_value='/scan_raw'),
         DeclareLaunchArgument('ready_timeout_s', default_value='30.0'),
         DeclareLaunchArgument('max_exploration_time_s', default_value='1200.0'),
         DeclareLaunchArgument('map_directory', default_value=str(
@@ -48,7 +52,9 @@ def generate_launch_description():
                     name: LaunchConfiguration(name) for name in (
                         'map_topic', 'base_frame', 'navigation_action',
                         'planning_action', 'map_directory',
-                        'start_mapping_service', 'stop_mapping_service')
+                        'start_mapping_service', 'stop_mapping_service',
+                        'ready_mapping_service', 'slam_params_file',
+                        'slam_executable', 'scan_topic')
                 }}],
         ),
     ])

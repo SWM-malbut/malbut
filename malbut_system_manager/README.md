@@ -115,7 +115,7 @@ TTS가 없으면 발화는 `failed`다. `speech_playback_timeout_s`(기본 180�
 | `execution.mode` | 시스템 상태에 반영할 전경·백그라운드 구분 |
 | `execution.priority` | 충돌하는 요청 사이의 우선순위 |
 | `execution.resources` | 독점할 출력 자원 |
-| `execution.map_requirement` | 필요한 위치 추정 모드. 필요한 기능에만 선언 |
+| `execution.map_requirement` | 이전 Manifest 호환용 메타데이터. 미션 허용 조건으로 사용하지 않음 |
 
 입력은 실제 ROS Goal·Request 메시지로 변환해 타입을 확인합니다.
 따라서 기능을 연결할 때는 **응용 서버의 ROS 계약 + Manifest**를 등록하며,
@@ -237,25 +237,20 @@ Action의 Goal 응답·취소 완료에는 기본 5초의 통신 watchdog이 있
 
 | 구성 | 관리 대상 |
 | --- | --- |
-| Malbut System Manager | 기능 요청, 미션 자원·우선순위, 위치 추정 전환 |
+| Malbut System Manager | 기능 요청, 미션 자원·우선순위, 하위 요청 전달 |
 | 공식 Nav2 Lifecycle Manager | Nav2 노드의 configure·activate·cleanup |
 | `managed_bringup` | 자신이 시작한 launch·자식 프로세스 소유권, 기존 단계형 복구 실행기 |
 
-현재 `robot.launch.py`는 시스템 관리자를 공통 기반으로 켜고
-`ready_topic=''`, `localization_control=true`를 전달합니다.
-선택 기능 전체의 준비를 기다려 관리자 요청을 막지 않으며,
-웹 준비 표시는 Bringup의 별도 연결 관측기가 담당합니다.
+현재 `robot.launch.py`는 관리자에 `ready_topic=''`를 전달합니다.
+관리자는 지도/비지도 모드를 소유하지 않으며, 지도 유무로 미션을 제한하지 않습니다.
+기존 `ExecuteMission`과 자원 중재·취소·결과 전달 인터페이스는 유지합니다.
 
-[localization.py](malbut_system_manager/localization.py)는
-map_server·AMCL과 관리자가 소유한 SLAM Toolbox 중 하나를 위치 추정 주체로 유지합니다.
-
-- 저장 지도가 없으면 Bringup이 전달한 기본 미확인 지도·AMCL로 시작합니다.
-- AutoSLAM 요청 때 SLAM을 실행하고, 완료·취소·실패 후 기본 지도·AMCL을 복원합니다.
-- 저장 지도 전환은 BASE 미션이 없는 때에 수행합니다.
-  AutoSLAM 자신의 SLAM 시작·종료는 별도로 허용해 탐색과 종료 정리가 가능하게 합니다.
-- 위치 보정 중인 `SWITCHING`에서는 다른 BASE 미션을 받지 않습니다.
-- Manifest의 `SELECTED`는 현재 `LOCALIZATION` 모드로 판정합니다.
-  기본 미확인 지도도 이 모드이므로, 실제 저장 지도의 존재·위치 정확성을 보증하는 검사는 아닙니다.
+- 공통 준비 훅은 지정된 기능에만 Trigger를 요청하고, 성공한 뒤 하위 요청을 전달합니다.
+- 기능 의존성 목록·Nav2 lifecycle·지도 선택은 Bringup의 `runtime_control`이 담당합니다.
+- 유휴 전환은 PAUSE/RESUME이며 파티클·마지막 위치·설정을 유지합니다.
+- SLAM 프로세스는 AutoSLAM Action이 시작하고, 완료·취소 후 종료를 확인합니다.
+- 웹의 기존 위치 추정 상태 필드는 실제 지도 제공자를 보여 주는 호환 표시이며,
+  관리자의 전역 상태나 실행 허용 모드가 아닙니다.
 
 모듈형 Bringup의 복구는 아직 연결되지 않았습니다.
 기존 [recovery.py](malbut_system_manager/recovery.py)와

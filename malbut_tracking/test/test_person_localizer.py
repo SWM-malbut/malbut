@@ -1,6 +1,7 @@
 """Check preserved RGB-D projection and independent diagnostic timing."""
 
 from types import MethodType, SimpleNamespace
+from unittest.mock import Mock
 
 from cv_bridge import CvBridge
 from malbut_interfaces.msg import SensorProcessingTrace
@@ -43,6 +44,7 @@ def _fixture(depth_value=2.0):
     }
     published, traces, healthy, warnings = [], [], [], []
     node = SimpleNamespace(
+        _processing_enabled=True,
         _camera_info=info, _output_frame='', _bridge=bridge,
         _timing=CameraTiming(),
         get_parameter=lambda name: SimpleNamespace(value=params[name]),
@@ -90,6 +92,34 @@ def test_projection_keeps_upstream_identity_optical_axes_and_covariance():
     assert detection.bbox.center.position.z == 2.0
     assert detection.results[0].hypothesis.score == 0.9
     assert detection.results[0].pose.covariance[0] == pytest.approx(0.0001)
+
+
+def test_idle_does_not_project_or_publish_stale_observations():
+    node, images, _, output, traces, healthy = _fixture()
+    node._processing_enabled = False
+    PersonLocalizerNode._on_observation(node, images, _identity(images))
+    assert output == traces == healthy == []
+
+
+def test_idle_clears_frame_sync_queues_and_resumes_with_new_subscriptions():
+    node = object.__new__(PersonLocalizerNode)
+    node._output_frame = ''
+    node._tf_listener = None
+    node._processing_enabled = True
+    node._rgb_depth_sync = SimpleNamespace(queues=[{1: 'rgb'}, {1: 'depth'}])
+    node._identity_sync = SimpleNamespace(queues=[{1: 'pair'}, {1: 'identity'}])
+    for name in ('_rgb_subscription', '_depth_subscription', '_identities'):
+        setattr(node, name, SimpleNamespace(sub=object(), topic=name, callback=Mock()))
+    node.create_subscription = Mock(return_value=object())
+    node.destroy_subscription = Mock()
+    node._publish_health = Mock()
+    node._change_processing(False)
+    assert node._rgb_depth_sync.queues == node._identity_sync.queues == [{}, {}]
+    assert node.destroy_subscription.call_count == 3
+    node._publish_health.assert_called_once_with(False)
+    node._change_processing(True)
+    node._change_processing(True)
+    assert node.create_subscription.call_count == 3
 
 
 def test_far_depth_preserves_existing_bearing_only_observation():

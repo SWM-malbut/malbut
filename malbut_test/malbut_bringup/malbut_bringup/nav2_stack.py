@@ -20,17 +20,19 @@ from launch_ros.descriptions import ComposableNode
 CONTAINER = 'nav2_container'
 # AssistedTeleop output; the Collision Monitor passes it on to /cmd_vel.
 PRE_COLLISION_TOPIC = 'cmd_vel_pre_collision'
-# Lifecycle order: the Zone mask servers start before the costmaps that read
-# them. The global costmap in planner_server waits for map->base_footprint, so
-# everything that works without a map pose comes first: manual driving and the
-# relocalization spin need behaviors, the smoother and the Collision Monitor.
-NAVIGATION_NODES = (
-    'zone_filter_mask_server', 'zone_filter_info_server',
-    'controller_server', 'smoother_server', 'behavior_server',
-    'teleop_behavior_server', 'velocity_smoother', 'collision_monitor',
-    'planner_server', 'bt_navigator', 'waypoint_follower',
-)
-# Unconfigured until the system manager selects a saved map.
+# Light Zone providers stay active. Motion and planning are independently
+# paused by runtime_control; activation order still follows their dependencies.
+ZONE_NODES = ('zone_filter_mask_server', 'zone_filter_info_server')
+MOTION_NODES = ('controller_server', 'behavior_server', 'teleop_behavior_server',
+                'velocity_smoother', 'collision_monitor')
+PLANNING_NODES = ('planner_server', 'bt_navigator', 'smoother_server', 'waypoint_follower')
+NAVIGATION_NODES = ZONE_NODES + MOTION_NODES + PLANNING_NODES
+NAVIGATION_GROUPS = {
+    'lifecycle_manager_zones': ZONE_NODES,
+    'lifecycle_manager_navigation': MOTION_NODES,
+    'lifecycle_manager_global_navigation': PLANNING_NODES,
+}
+# runtime_control selects the default/saved map, independently of the manager.
 LOCALIZATION_NODES = ('map_server', 'amcl')
 COMPONENTS = {
     'zone_filter_mask_server': ('nav2_map_server', 'nav2_map_server::MapServer'),
@@ -74,7 +76,7 @@ def missing_packages(names=None):
     return absent
 
 
-def nav2_actions(params_file, *, scan_topic, odom_topic):
+def nav2_actions(params_file, *, scan_topic, odom_topic, use_sim_time=False):
     """Return the container, its components and the Zone mask loader."""
     absent = missing_packages()
     if absent:
@@ -106,26 +108,28 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
         package, plugin = COMPONENTS[name]
         return ComposableNode(
             package=package, plugin=plugin, name=name,
-            parameters=[params_file] + ([overrides] if overrides else []),
+            parameters=[params_file, {'use_sim_time': use_sim_time}] + (
+                [overrides] if overrides else []),
             remappings=remappings + MOTION_REMAPPINGS.get(name, []))
 
     def lifecycle_manager(name, nodes, autostart):
         return ComposableNode(
             package='nav2_lifecycle_manager',
             plugin='nav2_lifecycle_manager::LifecycleManager', name=name,
-            parameters=[{'use_sim_time': False, 'autostart': autostart,
+            parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
                          # Keep bond failure detection, but only the explicit
                          # manual recovery may reactivate a failed group.
                          'attempt_respawn_reconnection': False,
                          'node_names': list(nodes)}])
 
     nodes = [component(name) for name in NAVIGATION_NODES]
-    nodes.append(lifecycle_manager('lifecycle_manager_navigation', NAVIGATION_NODES, True))
+    nodes.extend(lifecycle_manager(name, members, name == 'lifecycle_manager_zones')
+                 for name, members in NAVIGATION_GROUPS.items())
     nodes.extend(component(name) for name in LOCALIZATION_NODES)
     nodes.append(lifecycle_manager(
         'lifecycle_manager_localization', LOCALIZATION_NODES, False))
     container = Node(
-            package='rclcpp_components', executable='component_container_isolated',
+            package='malbut_bringup', executable='component_container_isolated',
             name=CONTAINER, output='screen',
             # Only this process uses the growable DDS send-buffer pool. Manual
             # recovery preserves its expanded environment when restarting it.
@@ -136,7 +140,7 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
             },
             # The costmaps inside the servers read the same file through the
             # container's global arguments, as in nav2_bringup.
-            parameters=[params_file, {'autostart': True, 'use_sim_time': False}],
+            parameters=[params_file, {'autostart': False, 'use_sim_time': use_sim_time}],
             remappings=remappings)
 
     def recovery_parameters(localization, pose):
@@ -163,8 +167,8 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
         if localization.get('mode') == 'LOCALIZATION' and localization.get('map'):
             groups.append(dict(manager='lifecycle_manager_localization',
                                nodes=LOCALIZATION_NODES, parameters=parameters))
-        groups.append(dict(manager='lifecycle_manager_navigation',
-                           nodes=NAVIGATION_NODES, parameters=parameters))
+        groups.extend(dict(manager=name, nodes=members, parameters=parameters)
+                      for name, members in NAVIGATION_GROUPS.items())
         return groups
 
     def recovery_components(localization, pose):
@@ -172,8 +176,8 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
         # groups explicitly after loading; no competing autostart transition.
         parameters = recovery_parameters(localization, pose)
         restored = [component(name, parameters.get(name)) for name in NAVIGATION_NODES]
-        restored.append(lifecycle_manager(
-            'lifecycle_manager_navigation', NAVIGATION_NODES, False))
+        restored.extend(lifecycle_manager(name, members, False)
+                        for name, members in NAVIGATION_GROUPS.items())
         restored.extend(component(name, parameters[name]) for name in LOCALIZATION_NODES)
         restored.append(lifecycle_manager(
             'lifecycle_manager_localization', LOCALIZATION_NODES, False))
@@ -189,5 +193,5 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
                             composable_node_descriptions=nodes),
         Node(
             package='malbut_bringup', executable='zone_filter', name='zone_filter',
-            output='screen', parameters=[{'use_sim_time': False}]),
+            output='screen', parameters=[{'use_sim_time': use_sim_time}]),
     ]

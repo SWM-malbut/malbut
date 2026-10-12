@@ -20,6 +20,7 @@ def generate_launch_description():
     arguments = [
         DeclareLaunchArgument('config', default_value=str(share / 'config/yolo.yaml')),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('start_enabled', default_value='true'),
         DeclareLaunchArgument('rgb_topic', default_value='/camera/color/image_raw'),
         DeclareLaunchArgument('detections_topic', default_value='/yolo/detections'),
         DeclareLaunchArgument('namespace', default_value='yolo'),
@@ -40,6 +41,7 @@ def generate_launch_description():
         prefix=['"', LaunchConfiguration('python_executable'), '"'],
         parameters=[LaunchConfiguration('config'), {
             'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'start_enabled': ParameterValue(LaunchConfiguration('start_enabled'), value_type=bool),
             'model': LaunchConfiguration('model_path'),
             'device': ParameterValue(LaunchConfiguration('device'), value_type=str),
             'opencv_num_threads': LaunchConfiguration('opencv_num_threads'),

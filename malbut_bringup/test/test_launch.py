@@ -220,6 +220,7 @@ def test_nav2_send_buffer_profile_is_process_local(launch_module, monkeypatch):
     before = dict(context.environment)
     actions = _core_actions(launch_module, context)
     container = _nodes(actions, 'component_container_isolated')[0]
+    assert container.node_package == 'malbut_bringup'
     extra = {perform_substitutions(context, key): perform_substitutions(context, value)
              for key, value in container.process_description.additional_env}
     assert extra == {
@@ -292,27 +293,33 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
     for name, item in components.items():
         if not name.startswith('lifecycle_manager'):
             assert str(item['parameters'][0]) == params, name
+            assert item['parameters'][1] == {'use_sim_time': False}, name
             if name == 'bt_navigator':
                 directory = ROOT / 'malbut_bringup/config'
-                assert item['parameters'][1] == {
+                assert item['parameters'][2] == {
                     'default_nav_to_pose_bt_xml': str(directory / 'navigate_to_pose.xml'),
                     'default_nav_through_poses_bt_xml': str(
                         directory / 'navigate_through_poses.xml'),
                 }
             else:
-                assert len(item['parameters']) == 1, name
+                assert len(item['parameters']) == 2, name
             assert item['remappings']['/scan_raw'] == '/laser_raw', name
     navigation = components['lifecycle_manager_navigation']['parameters'][0]
     localization = components['lifecycle_manager_localization']['parameters'][0]
-    assert navigation['autostart'] is True and localization['autostart'] is False
+    assert navigation['autostart'] is False and localization['autostart'] is False
     assert navigation['attempt_respawn_reconnection'] is False
     assert localization['attempt_respawn_reconnection'] is False
     order = list(navigation['node_names'])
-    assert order[:2] == ['zone_filter_mask_server', 'zone_filter_info_server']
+    assert list(components['lifecycle_manager_zones']['parameters'][0]['node_names']) == [
+        'zone_filter_mask_server', 'zone_filter_info_server']
+    assert components['lifecycle_manager_zones']['parameters'][0]['autostart'] is True
     # Spinning to find the pose must not wait for the map-frame global costmap.
     for name in ('behavior_server', 'teleop_behavior_server', 'velocity_smoother',
                  'collision_monitor'):
-        assert order.index(name) < order.index('planner_server'), name
+        assert name in order, name
+    planning = components['lifecycle_manager_global_navigation']['parameters'][0]
+    assert planning['autostart'] is False
+    assert 'planner_server' not in order and 'planner_server' in planning['node_names']
     assert list(localization['node_names']) == ['map_server', 'amcl']
     assert _nodes(actions, 'zone_filter')[0].node_package == 'malbut_bringup'
 
@@ -332,9 +339,9 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     second = reload({'mode': 'MAPPING'}, None)
     assert first[0] is not second[0]
     saved = _components(context, first)
-    assert saved['map_server']['parameters'][1]['yaml_filename'] == '/maps/home.yaml'
-    assert saved['amcl']['parameters'][1]['set_initial_pose'] is True
-    assert saved['amcl']['parameters'][1]['initial_pose.x'] == 1.5
+    assert saved['map_server']['parameters'][2]['yaml_filename'] == '/maps/home.yaml'
+    assert saved['amcl']['parameters'][2]['set_initial_pose'] is True
+    assert saved['amcl']['parameters'][2]['initial_pose.x'] == 1.5
     assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
     assert saved['lifecycle_manager_navigation']['parameters'][0]['autostart'] is False
     mapping = _components(context, second)
@@ -342,11 +349,14 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     groups = container._malbut_recovery_lifecycle(
         {'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'}, pose)
     assert [group['manager'] for group in groups] == [
-        'lifecycle_manager_localization', 'lifecycle_manager_navigation']
+        'lifecycle_manager_localization', 'lifecycle_manager_zones',
+        'lifecycle_manager_navigation', 'lifecycle_manager_global_navigation']
     assert groups[0]['parameters']['map_server']['yaml_filename'] == '/maps/home.yaml'
     assert groups[0]['parameters']['amcl']['initial_pose.x'] == 1.5
     groups = container._malbut_recovery_lifecycle({'mode': 'MAPPING'}, None)
-    assert [group['manager'] for group in groups] == ['lifecycle_manager_navigation']
+    assert [group['manager'] for group in groups] == [
+        'lifecycle_manager_zones', 'lifecycle_manager_navigation',
+        'lifecycle_manager_global_navigation']
 
 
 def test_general_navigation_trees_select_the_position_only_checker():
@@ -371,7 +381,8 @@ def test_nav2_preserves_custom_navigation_trees(launch_module, tmp_path):
     params.write_text(yaml.safe_dump(config))
     context = _context(launch_module, nav2_params_file=str(params))
     components = _components(context, _core_actions(launch_module, context))
-    assert len(components['bt_navigator']['parameters']) == 1
+    assert len(components['bt_navigator']['parameters']) == 2
+    assert components['bt_navigator']['parameters'][1] == {'use_sim_time': False}
 
 
 @pytest.fixture
@@ -395,17 +406,18 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     context = _context(launch_module)
     actions = launch_module._setup(context)
     assert {item.node_executable for item in actions if isinstance(item, Node)} == {
-        'component_container_isolated', 'zone_filter', 'system_manager'}
+        'component_container_isolated', 'zone_filter', 'system_manager', 'runtime_control'}
     assert len(_includes(actions)) == 1
     hardware = dict(_includes(actions)[0].launch_arguments)
     assert hardware['robot_name'] == hardware['master_name'] == '/'
     assert hardware['point_cloud_enable'] == hardware['use_joy'] == 'false'
     manager = _parameters(context, _nodes(actions, 'system_manager')[0])
     assert manager['ready_topic'] == ''
-    assert manager['localization_control'] is True
-    assert manager['relocalize_action'] == '/relocalize'
-    assert manager['initial_map'] == str(ROOT / 'malbut_bringup/config/default_map.yaml')
-    assert manager['default_map'] == manager['initial_map']
+    assert 'localization_control' not in manager
+    assert manager['prepare_service_prefix'] == '/malbut/runtime/prepare/'
+    runtime = _parameters(context, _nodes(actions, 'runtime_control')[0])
+    assert runtime['initial_map'] == str(ROOT / 'malbut_bringup/config/default_map.yaml')
+    assert runtime['default_map'] == runtime['initial_map']
 
 
 def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():
@@ -442,6 +454,11 @@ def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_modul
     assert 'slam_toolbox' not in observed['startup_nodes']
     assert '/autoslam' in observed['required_actions'].split(',')
     assert '/navigate_to_pose' in observed['required_actions'].split(',')
+    topics = observed['required_topics'].split(',')
+    assert '/map' in topics and '/scan_raw' in topics and '/odom' in topics
+    assert '/global_costmap/costmap_raw' not in topics
+    assert '/global_costmap/costmap' not in topics
+    assert '/perception/person/detections_3d' not in topics
     assert not any(type(item).__name__ in ('TimerAction', 'RegisterEventHandler')
                    for item in actions)
     assert 'control_server' not in includes['speech']
@@ -461,15 +478,39 @@ def test_optional_modules_can_all_be_disabled(launch_module):
     assert _parameters(context, observer)['speech'] is False
 
 
-def test_selected_map_and_explicit_pose_choice_reach_common_manager(launch_module, tmp_path):
+def test_selected_map_and_explicit_pose_choice_reach_runtime_not_manager(launch_module, tmp_path):
     path = tmp_path / 'real map.yaml'
     path.write_text('image: real.png\n')
     context = _context(launch_module, map=str(path), restore_pose='false')
-    params = _parameters(context, _nodes(launch_module._setup(context), 'system_manager')[0])
+    params = _parameters(context, _nodes(launch_module._setup(context), 'runtime_control')[0])
     assert params['initial_map'] == str(path)
     assert params['relocalize_action'] == ''
     with pytest.raises(RuntimeError, match='saved map YAML'):
         launch_module._setup(_context(launch_module, map='/missing.yaml'))
+
+
+def test_startup_remembers_selected_map_but_explicit_map_wins(launch_module, tmp_path):
+    from malbut_bringup.map_selection import remember_map
+
+    selected = tmp_path / 'last selected.yaml'
+    selected.write_text('image: home.pgm\n')
+    preference = tmp_path / 'selection.txt'
+    remember_map(preference, selected)
+    context = _context(launch_module, map_selection_file=str(preference))
+    params = _parameters(context, _nodes(launch_module._setup(context), 'runtime_control')[0])
+    assert params['initial_map'] == str(selected)
+    assert params['map_selection_file'] == str(preference)
+
+    explicit = tmp_path / 'explicit.yaml'
+    explicit.write_text('image: other.pgm\n')
+    context = _context(launch_module, map_selection_file=str(preference), map=str(explicit))
+    params = _parameters(context, _nodes(launch_module._setup(context), 'runtime_control')[0])
+    assert params['initial_map'] == str(explicit)
+
+    selected.unlink()
+    context = _context(launch_module, map_selection_file=str(preference))
+    params = _parameters(context, _nodes(launch_module._setup(context), 'runtime_control')[0])
+    assert params['initial_map'] == params['default_map']
 
 
 @pytest.mark.parametrize('name', [
@@ -568,6 +609,36 @@ def test_application_topic_wiring_and_manual_input_are_preserved(launch_module):
             for a, b in joystick._Node__remappings] == [
                 ('controller/cmd_vel', '/cmd_vel_teleop')]
     assert not _nodes(module._setup(_context(module, start_hardware='false')), 'joystick_control')
+
+
+def test_simulation_clock_reaches_runtime_modules(launch_module):
+    module = _load('bringup')
+    context = _context(module, use_sim_time='true', speech='false',
+                       homecam='false', fall_monitor='false')
+    includes = _included_modules(module._setup(context))
+    for name in ('robot', 'tracking', 'patrol', 'autoslam', 'manual'):
+        assert includes[name]['use_sim_time'] == 'true'
+    for name in ('tracking', 'patrol', 'autoslam'):
+        module = _load(name)
+        context = _context(module, use_sim_time='true')
+        assert all(dict(item.launch_arguments)['use_sim_time'] == 'true'
+                   for item in _includes(module._setup(context)))
+    module = _load('manual')
+    context = _context(module, use_sim_time='true', start_hardware='false')
+    node, = _nodes(module._setup(context), 'manual_control')
+    assert _parameters(context, node)['use_sim_time'] is True
+
+
+def test_relocalization_uses_common_lidar_and_clock(launch_module):
+    module = _load('relocalization')
+    context = _context(module, scan_topic='/scenario/laser', use_sim_time='true')
+    node, = _nodes(module._setup(context), 'relocalization')
+    assert _parameters(context, node) == {
+        'scan_topic': '/scenario/laser', 'use_sim_time': True}
+    context = _context(module)
+    node, = _nodes(module._setup(context), 'relocalization')
+    assert _parameters(context, node) == {
+        'scan_topic': '/scan_raw', 'use_sim_time': False}
 
 
 def test_media_and_fall_share_session_ids_without_start_order(launch_module, fall_config):

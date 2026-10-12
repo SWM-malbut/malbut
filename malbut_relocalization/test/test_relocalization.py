@@ -18,9 +18,27 @@ from malbut_relocalization.relocalization_node import (
 import pytest
 from rclpy.time import Time
 from std_msgs.msg import String
+from malbut_relocalization import relocalization_node
 
 TRUE_POSE = (0.8, 0.4, 0.3)
 WRONG_POSE = (-0.9, -0.5, 2.0)
+
+
+def test_shutdown_drains_workers_before_destroying_node(monkeypatch):
+    events = []
+    node, executor = Mock(), Mock()
+    executor.spin.side_effect = KeyboardInterrupt
+    executor.shutdown.side_effect = lambda: events.append('stop executor')
+    executor._executor.shutdown.side_effect = lambda **_: events.append('join workers')
+    node.save_latest.side_effect = lambda: events.append('save pose')
+    node.destroy_node.side_effect = lambda: events.append('destroy node')
+    monkeypatch.setattr(relocalization_node, 'Relocalization', lambda: node)
+    monkeypatch.setattr(relocalization_node, 'MultiThreadedExecutor', lambda **_: executor)
+    monkeypatch.setattr(relocalization_node.rclpy, 'init', Mock())
+    monkeypatch.setattr(relocalization_node.rclpy, 'ok', lambda: False)
+    relocalization_node.main()
+    assert events == ['stop executor', 'join workers', 'save pose', 'destroy node']
+    executor._executor.shutdown.assert_called_once_with(wait=True)
 
 
 def _pose(x=1.0, y=2.0, yaw=0.3, **values):
@@ -91,6 +109,8 @@ def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node.initial_stamp = 0
     node.estimate = None
     node.busy = False
+    node._start_observing = Mock()
+    node._stop_observing = Mock()
     node.amcl_active = True
     node.state_future = None
     node.state_requested = 100.0
@@ -224,6 +244,33 @@ def test_global_search_skips_the_saved_pose(monkeypatch, room):
     _save(node, room, *TRUE_POSE)
     result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
     assert result.success and node.amcl.calls[0] == 'global'
+
+
+@pytest.mark.parametrize('cell', [-1, 100])
+def test_global_search_rejects_a_map_without_known_free_cells(monkeypatch, room, cell):
+    """Never enter AMCL's uniform sampler with an empty free-space vector."""
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    grid = room.grid()
+    grid.data = [cell] * len(grid.data)
+    node._map(grid)
+    handle = _handle(Relocalize.Goal.GLOBAL_SEARCH)
+    result = node._execute(handle)
+    assert not result.success and 'no known free cells' in result.message
+    handle.abort.assert_called_once()
+    assert node.amcl.calls == [] and not node.spin.goals
+
+
+def test_given_pose_remains_available_on_the_unknown_default_map(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    grid = room.grid()
+    grid.data = [-1] * len(grid.data)
+    node._map(grid)
+    given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
+    result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
+    assert result.success and result.match_ratio == 0.
+    assert node.amcl.calls == ['initialpose'] and not node.spin.goals
 
 
 def test_search_that_never_matches_fails_after_the_attempts(monkeypatch, room):

@@ -427,6 +427,7 @@ def test_system_manager_uses_registered_patrol_and_cancels_nav2(patrol_runtime):
 def test_costmap_patch_updates_candidate_safety_without_corrupting_grid():
     """Apply valid occupancy patches and ignore malformed extents atomically."""
     manager = object.__new__(PatrolManager)
+    manager._processing_enabled = True
     manager.lock = RLock()
     manager.settings = {'maximum_goal_cost': 80}
     manager.costmap_received = 0.0

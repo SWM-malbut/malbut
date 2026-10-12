@@ -13,7 +13,6 @@ from malbut_system_manager.models import (
     ControlMode,
     ExecutionMode,
     ExecutionResource,
-    LocalizationMode,
     MapRequirement,
     MissionPriority,
     MissionRecord,
@@ -142,7 +141,6 @@ def _registered_mission(manifest_directory, capability_id):
 def test_registered_autoslam_can_start_with_the_default_or_saved_map(manifest_directory):
     """Allow AutoSLAM to switch to SLAM when a map is already selected."""
     state, scheduler = _ready_scheduler()
-    state.localization = LocalizationMode.LOCALIZATION
     mission = _registered_mission(manifest_directory, 'autoslam')
     assert mission.capability.map_requirement is None
     assert scheduler.submit(mission).start == ['autoslam']
@@ -737,28 +735,16 @@ def test_high_priority_manual_drive_reports_manual_and_blocks_normal_motion():
     assert state.system_state is SystemState.IDLE
 
 
-@pytest.mark.parametrize('localization,allowed', [
-    (None, {'map', 'mapping', 'any', 'speak'}),
-    (LocalizationMode.MAPPING, {'mapping', 'any', 'speak'}),
-    (LocalizationMode.LOCALIZATION, {'map', 'any', 'speak'}),
-    # Finding the pose may rotate the robot: nothing that drives starts meanwhile.
-    (LocalizationMode.SWITCHING, {'speak'}),
-    (LocalizationMode.ERROR, {'any', 'speak'}),
+@pytest.mark.parametrize('requirement', [
+    None, MapRequirement.SELECTED, MapRequirement.NOT_SELECTED,
 ])
-def test_map_requirement_gates_only_declared_capabilities(localization, allowed):
-    """Without a selected map only mapping runs; unmanaged maps never gate."""
-    requirements = {
-        'map': (MapRequirement.SELECTED, None),
-        'mapping': (MapRequirement.NOT_SELECTED, None),
-        'any': (None, None),
-        'speak': (None, [ExecutionResource.SPEAKER]),
-    }
-    for name, (requirement, resources) in requirements.items():
-        state, scheduler = _ready_scheduler()
-        scheduler.set_localization(localization)
-        effects = scheduler.submit(_mission(
-            name, map_requirement=requirement, resources=resources))
-        assert (effects.start == [name]) is (name in allowed), name
+def test_legacy_map_metadata_does_not_gate_missions(requirement):
+    """The manager schedules missions, not map/no-map runtime modes."""
+    state, scheduler = _ready_scheduler()
+    assert not hasattr(state, 'localization')
+    assert not hasattr(scheduler, 'set_localization')
+    effects = scheduler.submit(_mission('motion', map_requirement=requirement))
+    assert effects.start == ['motion']
 
 
 def test_base_busy_counts_pending_and_active_base_missions():
