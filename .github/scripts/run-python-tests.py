@@ -74,7 +74,10 @@ def main(argv=None):
         print('\n'.join(map(str, paths)))
         return 0
     env = os.environ.copy()
-    roots = [str(ROOT / 'malbut_agent_server'), str(ROOT / 'homecam_agent/homecam_detector')]
+    # Navigation fixtures import Bringup's User Map, which uses AutoSLAM's map_view.
+    roots = [str(ROOT / 'malbut_agent_server'),
+             str(ROOT / 'homecam_agent/homecam_detector'),
+             str(ROOT / 'malbut_autoslam')]
     if env.get('PYTHONPATH'):
         roots.append(env['PYTHONPATH'])
     env['PYTHONPATH'] = os.pathsep.join(roots)

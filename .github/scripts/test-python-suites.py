@@ -110,7 +110,18 @@ class PythonSuiteTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs['env']['PYTHONPATH'].split(SUITES.os.pathsep),
                          [str(SUITES.ROOT / 'malbut_agent_server'),
                           str(SUITES.ROOT / 'homecam_agent/homecam_detector'),
+                          str(SUITES.ROOT / 'malbut_autoslam'),
                           '/test/ros/overlay'])
+
+    def test_runners_include_map_view_dependency_without_a_ros_overlay(self):
+        for suite in ('agent', 'fall', 'homecam', 'agent-ros'):
+            with self.subTest(suite=suite), \
+                    patch.dict(SUITES.os.environ, {'PYTHONPATH': ''}), \
+                    patch.object(SUITES.subprocess, 'call', return_value=0) as run, \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(SUITES.main([suite]), 0)
+                roots = run.call_args.kwargs['env']['PYTHONPATH'].split(SUITES.os.pathsep)
+                self.assertIn(str(SUITES.ROOT / 'malbut_autoslam'), roots)
 
     def test_list_mode_does_not_run_tests_or_load_models(self):
         with patch.object(SUITES.subprocess, 'call') as run, \

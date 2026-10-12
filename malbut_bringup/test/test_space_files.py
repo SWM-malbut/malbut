@@ -101,7 +101,8 @@ def test_view_settings_are_reloaded_without_changing_rooms_or_map_revision(saved
     assert space_documents({'localization': {'mode': 'MAPPING'}}, catalog) == (None, None, None)
 
 
-def test_selecting_an_old_map_creates_alignment_once_without_changing_navigation(saved, monkeypatch):
+def test_selecting_an_old_map_creates_alignment_once_without_changing_navigation(
+        saved, monkeypatch):
     catalog, runtime, path = saved
     original = [item.read_bytes() for item in (path, path.with_suffix('.pgm'))]
     write = Mock(wraps=write_map_view)
