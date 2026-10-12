@@ -531,12 +531,10 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   앞뒤(0.139 m)와 모서리(0.174 m)가 검사되지 않기 때문이다. 외곽선 아래 팽창 비용은
   차체 여유 0.35 m 안에서 174~253으로 거의 같아 거리 점수로 쓸 수 없으므로, 이 critic의
   가중치는 거부 판정만 남도록 작게 둔다(0이면 critic을 건너뛴다).
-- `FollowPath`의 `PreferForward` critic(Nav2 기본 제공, 원래 설정에는 꺼져 있었음)은 후진
-  궤적에만 벌점(scale 40 × penalty 1.0)을 더한다. `theta_scale`·`strafe_x`를 0으로 두어
-  회전·전진은 벌점이 없다. 40은 공개 DWB 설정들이 PathDist 32·GoalDist 24 옆에 두는
-  범위(1~40)의 위쪽으로, 전진을 약하게 선호하는 값이다. 후진이 경로 거리를 크게 줄이거나
-  전진 궤적이 모두 장애물에 걸리면 여전히 후진한다. 사람 추적의 후퇴는 DWB 경로가 아니라
-  `BackUp` behavior라서 이 벌점과 무관하다.
+- `FollowPath`의 `PreferForward` critic은 후진 궤적에만 벌점(scale 10 × penalty 1.0)을
+  더한다. `theta_scale`·`strafe_x`가 0이므로 회전·전진은 벌점이 없다. 일반 주행 `FollowPath`와
+  사람 추적 `FollowPerson`의 DWB 궤적 예측 시간(`sim_time`)은 모두 3.0초다.
+  사람 추적의 후퇴는 DWB 경로가 아니라 `BackUp` behavior라서 이 벌점과 무관하다.
 - 도착 판정 `xy_goal_tolerance`는 0.12 m다(제조사 0.25 m는 차체 길이만큼 앞에서 멈추고,
   사람 추적의 0.90~1.10 m 거리 띠 밖에서 멈췄다). 방향은 보지 않는다(`yaw_goal_tolerance`
   6.28 rad). 도착 반경 안에서 DWB는 제자리 회전만 하고, footprint critic은 직사각형 차체가

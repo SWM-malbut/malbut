@@ -263,7 +263,7 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
   // 목업 25번: 바닥에 있지 않아 묻지 않았으면 "낙상 의심"이라는 말 없이 회색.
   assert.match(panel, /tone: "neutral", title: "말벗이 확인하느라 순찰을 멈췄어요"/);
   assert.ok(panel.includes("확인 결과: 앉아 있거나 서 있어 묻지 않음 · 원래 자리로 돌아왔어요"));
-  assert.match(panel, /fallCheckActive\(driveMode\) \|\| Boolean\(activeCommand\)/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("patrol"\) \|\| Boolean\(activeCommand\) \|\| busy/);
   assert.match(styles, /\.ui-map-sync\.is-warn \{[^}]*var\(--ui-warn-soft\)/);
   assert.match(styles, /\.ui-map-sync\.is-neutral \{[^}]*var\(--ui-neutral-soft\)/);
 });

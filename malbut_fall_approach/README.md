@@ -9,7 +9,9 @@
 - Action `/malbut/falls/approach`(`FallApproach`): `phase` = `approach`(1 m 앞, 의심 장소를 바라봄),
   `view`(요청한 거리로 물러남, 안 되면 좌우 45°·90°), `return`(질문 ID별로 기억한 시작 위치로).
 - ComputePathToPose(GridBased, 금지 구역 반영) → 1 m 원에서 경로를 자름(`standoff_route`) →
-  FollowPath → Spin으로 바라봄. 이동마다 60초 상한.
+  FollowPath → Spin으로 바라봄. 접근·몸 전체 보기의 기존 방식은 유지한다.
+- 복귀는 저장한 출발 위치를 NavigateToPose에 전달해 Nav2의 재계획·복구를 사용하고,
+  도착 후 Spin으로 출발 방향을 복원한다. 이동마다 60초 상한.
 - 결과는 `/malbut/falls/approach/status`(래치 JSON)에도 낸다(웹 순찰 카드의 "낙상 확인으로 멈춤").
 - 능력 정의: [`fall_approach.yaml`](../malbut_interfaces/capabilities/fall_approach.yaml)
   (`[BASE]`, `map_requirement: SELECTED`).

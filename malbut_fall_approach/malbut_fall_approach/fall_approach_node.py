@@ -19,7 +19,7 @@ from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FallApproach
-from nav2_msgs.action import ComputePathToPose, FollowPath, Spin
+from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose, Spin
 from nav_msgs.msg import Path
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -75,7 +75,7 @@ class FallApproachNode(Node):
             'planner_id': 'GridBased', 'controller_id': 'FollowPath',
             'goal_checker_id': 'general_goal_checker',
             'compute_path_action': 'compute_path_to_pose', 'follow_path_action': 'follow_path',
-            'spin_action': 'spin',
+            'spin_action': 'spin', 'navigate_action': 'navigate_to_pose',
         }
         self.settings = {name: self.declare_parameter(name, value).value
                          for name, value in settings.items()}
@@ -88,6 +88,8 @@ class FallApproachNode(Node):
                                      callback_group=self.group)
         self.spinner = ActionClient(self, Spin, self.settings['spin_action'],
                                     callback_group=self.group)
+        self.navigator = ActionClient(self, NavigateToPose, self.settings['navigate_action'],
+                                      callback_group=self.group)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
         self.status = self.create_publisher(String, STATUS_TOPIC, latched)
@@ -190,11 +192,13 @@ class FallApproachNode(Node):
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
-        path = self._plan(handle, robot, (start.x, start.y), deadline, yaw=start.yaw)
-        if path is None:
-            return 'no_path', 'no path back'
+        # Return to a fixed pose through Nav2's normal replanning/recovery tree.
+        # Only approach/view need to calculate and trim a path themselves.
+        goal = NavigateToPose.Goal()
+        goal.pose = self._pose_stamped((start.x, start.y), start.yaw)
         self._feedback(handle, 'DRIVING')
-        if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
+        result = self._call(self.navigator, goal, handle, deadline)
+        if result is None or result.status != GoalStatus.STATUS_SUCCEEDED:
             return 'failed', 'Nav2 did not finish the path back'
         robot = self._pose() or robot
         turn = returning_turn(robot, start)
