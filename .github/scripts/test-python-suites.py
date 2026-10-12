@@ -68,6 +68,14 @@ class PythonSuiteTests(unittest.TestCase):
         self.assertEqual(self.files('agent-ros'), expected)
         self.assertEqual(self.files('agent-ros', fall_job=True), expected)
 
+    def test_runner_preserves_the_existing_suite_order(self):
+        paths = SUITES.test_files('fall')
+        agent = [p for p in paths if p.parts[0] == 'malbut_agent_server']
+        homecam = [p for p in paths if p.parts[0] == 'homecam_agent']
+        self.assertEqual(paths, sorted(agent) + sorted(homecam))
+        self.assertEqual(SUITES.test_files('agent-ros'),
+                         [SUITES.AGENT_TESTS / name for name in SUITES.AGENT_ROS_TESTS])
+
     def test_new_nested_tests_are_not_silently_omitted(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

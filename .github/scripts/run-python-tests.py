@@ -51,7 +51,11 @@ def test_files(suite, *, fall_job=False, root=ROOT):
     missing = [str(path) for path in sorted(selected) if not (root / path).is_file()]
     if missing:
         raise ValueError('Missing CI tests: ' + ', '.join(missing))
-    return sorted(selected)
+    if suite == 'agent-ros':
+        return [AGENT_TESTS / name for name in AGENT_ROS_TESTS]
+    # Keep the former command's Agent-before-Homecam order. CLI evaluation
+    # tests can temporarily alter process settings such as the file mask.
+    return sorted(selected, key=lambda path: (path.parts[0] != AGENT_TESTS.parts[0], str(path)))
 
 
 def main(argv=None):

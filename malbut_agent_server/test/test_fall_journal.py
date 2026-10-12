@@ -167,6 +167,7 @@ def test_wrong_device_and_insecure_paths_rejected_without_changing_identity(tmp_
         SqliteFallJournal(link, device_id='robot')
     public = tmp_path / 'public'
     public.mkdir(mode=0o755)
+    public.chmod(0o755)  # Negative fixture must remain public even with umask 077.
     with pytest.raises(ValueError, match='private'):
         SqliteFallJournal(public / 'fall.sqlite', device_id='robot')
 
