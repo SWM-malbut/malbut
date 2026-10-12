@@ -49,6 +49,9 @@ def _setup(context):
     audio_directory = value('audio_directory')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
+    # Under Bringup the agent module starts the Agent (with the fall rules),
+    # whether or not speech is on. Run alone, speech keeps its own Agent.
+    own_agent = not getattr(context.locals, 'malbut_modular_bringup', False)
     command = [python, '-m', 'malbut_bringup.speech_preflight']
     supervised = [python, '-m', 'malbut_bringup.speech_process',
                   '--startup-timeout-s', str(timeouts['preflight_timeout_s'])]
@@ -104,14 +107,14 @@ def _setup(context):
             '--prerecorded-audio' if prerecorded_audio else '--no-prerecorded-audio']
         if manager_commands:
             mission_arguments.append('--enable-manager-commands')
-        agent = Node(
+        agents = [Node(
             package='malbut_agent_server', executable='agent_communication',
             prefix=prefix, output='screen', arguments=[
                 '--provider', agent_provider, '--user-id', agent_user_id,
                 '--conversation-db', agent_conversation_db,
                 *mission_arguments,
             ],
-        )
+        )] if own_agent else []
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
             parameters=[{'backend': 'openai', 'output_device': output_device,
@@ -140,9 +143,9 @@ def _setup(context):
         managers = [Node(
             package='malbut_system_manager', executable='system_manager', output='screen',
         )] if start_manager else []
-        runtime_nodes.extend([*managers, agent, tts, stt, weather, key_sync])
+        runtime_nodes.extend([*managers, *agents, tts, stt, weather, key_sync])
         stage = 'running'
-        return [*managers, agent, tts, weather, stt, key_sync]
+        return [*managers, *agents, tts, weather, stt, key_sync]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:

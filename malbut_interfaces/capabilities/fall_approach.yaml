@@ -14,7 +14,7 @@ input:
   fields:
     request_id:
       type: string
-      description: 낙상 코디네이터의 확인 요청 식별자(질문 ID)
+      description: Agent 낙상 규칙의 확인 요청 식별자(질문 ID)
     phase:
       type: string
       description: approach(가기), view(몸 전체가 보이는 자리로 옮기기) 또는 return(돌아가기)

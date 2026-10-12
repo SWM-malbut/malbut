@@ -11,7 +11,7 @@ input:
   fields:
     request_id:
       type: string
-      description: 낙상 코디네이터가 부여한 확인 요청 식별자
+      description: Agent 낙상 규칙이 부여한 확인 요청 식별자
     situation_type:
       type: string
       description: 확인할 상황 종류

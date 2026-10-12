@@ -20,7 +20,6 @@ import time
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / 'homecam_agent/homecam_detector'),
-                str(REPO / 'malbut_fall_coordinator'),
                 str(REPO / 'malbut_agent_server')]
 
 from homecam_detector.fall_candidate import FallCandidateConfig, FallCandidateDetector

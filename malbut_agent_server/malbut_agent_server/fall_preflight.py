@@ -19,7 +19,7 @@ from malbut_agent_server.fall_runtime import FallNodeSettings
 
 PACKAGE_EXECUTABLES = {
     'malbut_agent_server': 'malbut-fall-monitor',
-    'malbut_fall_coordinator': 'fall_coordinator',
+    'malbut_fall_approach': 'fall_approach',
     'malbut_system_manager': 'system_manager',
     'homecam_detector': 'homecam_detector_node',
     'homecam_media_agent': 'homecam_media_agent_node',
