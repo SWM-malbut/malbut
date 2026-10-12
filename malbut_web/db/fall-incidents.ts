@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { getPostgresPool } from "./postgres";
+import { getPostgresPool, type SqlExecutor } from "./postgres";
 import { parseFallEvent, type FallEventInput } from "../app/fall-contract";
+import { PER_REASON_FALL_REASONS } from "../infra/aws/push-broker/fall-notification.mjs";
 
 const rank = { info: 1, check: 2, urgent: 3 };
 const LEVEL_RANK_SQL = "CASE level WHEN 'info' THEN 1 WHEN 'check' THEN 2 ELSE 3 END";
@@ -8,6 +9,13 @@ const LEVEL_RANK_SQL = "CASE level WHEN 'info' THEN 1 WHEN 'check' THEN 2 ELSE 3
 export async function ensureFallSchema() {
   const result = await getPostgresPool().query(
     "SELECT 1 FROM homecam_schema_migrations WHERE version = '0009_fall_incidents'",
+  );
+  if (!result.rowCount) throw new Error("FALL_MIGRATION_REQUIRED");
+}
+
+async function ensurePerReasonPush(client: SqlExecutor) {
+  const result = await client.query(
+    "SELECT 1 FROM homecam_schema_migrations WHERE version = '0025_fall_push_per_reason'",
   );
   if (!result.rowCount) throw new Error("FALL_MIGRATION_REQUIRED");
 }
@@ -67,17 +75,37 @@ export async function storeFallEvent(deviceId: string, input: FallEventInput) {
         event.assessment, event.answer, event.occurredAt],
     );
     if (event.notificationLevel) {
-      await client.query(
-        `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status)
-         VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(device_id,incident_id,level) DO NOTHING`,
-        [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt,
-          noticeRank < current.notification_rank ? "superseded" : "pending"],
-      );
-      await client.query(
-        `UPDATE fall_push_outbox SET status='superseded',lease_id=NULL,lease_until=NULL
-         WHERE device_id=$1 AND incident_id=$2 AND status='pending' AND (${LEVEL_RANK_SQL})<$3`,
-        [deviceId, event.incidentId, Math.max(noticeRank, current.notification_rank)],
-      );
+      await ensurePerReasonPush(client);
+      if (PER_REASON_FALL_REASONS.includes(event.reason as string)) {
+        // Once per reason, whatever was sent before or after.
+        await client.query(
+          `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status)
+           VALUES($1,$2,$3,$4,$5,$6,'pending') ON CONFLICT(device_id,incident_id,reason) DO NOTHING`,
+          [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt],
+        );
+      } else {
+        // The older reasons: one per level, and only a higher level than any of them goes out.
+        const sent = (await client.query(
+          `SELECT COALESCE(MAX(${LEVEL_RANK_SQL}),0)::int AS rank,
+             COALESCE(bool_or(level=$3),FALSE) AS same_level FROM fall_push_outbox
+           WHERE device_id=$1 AND incident_id=$2 AND NOT (reason = ANY($4::text[]))`,
+          [deviceId, event.incidentId, event.notificationLevel, PER_REASON_FALL_REASONS],
+        )).rows[0];
+        if (!sent.same_level) {
+          await client.query(
+            `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status)
+             VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(device_id,incident_id,reason) DO NOTHING`,
+            [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt,
+              noticeRank < sent.rank ? "superseded" : "pending"],
+          );
+        }
+        await client.query(
+          `UPDATE fall_push_outbox SET status='superseded',lease_id=NULL,lease_until=NULL
+           WHERE device_id=$1 AND incident_id=$2 AND status='pending' AND (${LEVEL_RANK_SQL})<$3
+             AND NOT (reason = ANY($4::text[]))`,
+          [deviceId, event.incidentId, Math.max(noticeRank, sent.rank), PER_REASON_FALL_REASONS],
+        );
+      }
     }
     await client.query("COMMIT");
     return { stored: true, created: true, eventId: event.eventId };
@@ -91,7 +119,8 @@ export type ClaimedFallPush = {
   deviceId: string; notificationId: string; incidentId: string;
   level: "info" | "check" | "urgent";
   reason: "fall_observed_person_okay" | "person_no_response" | "check_required_not_confirmed_fall" |
-    "help_requested" | "confirmation_help_required";
+    "help_requested" | "confirmation_help_required" | "robot_could_not_confirm" | "revisit_same_person_off_floor" |
+    "revisit_person_unclear_off_floor" | "revisit_nobody_there";
   occurredAt: string; leaseId: string; subscriptionResults: Record<string, number>;
 };
 

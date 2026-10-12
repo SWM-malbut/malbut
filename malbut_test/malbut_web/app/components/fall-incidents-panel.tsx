@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
-import { fallEventLabel } from "../fall-event-label";
-import type { FallHistoryEvent } from "../fall-event-label";
+import { fallHistoryLines } from "../fall-event-label";
+import type { FallHistoryEvent, FallRobotCheck } from "../fall-event-label";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
 // a list page and a detail page in one column. The automatic judgment (robot /
@@ -30,6 +30,8 @@ type IncidentSummary = {
   approach?: { kind: string; reason: string | null } | null;
   /** 사람에게 물었거나 알렸음: 말벗이 보는 중이 아님. */
   asked?: boolean;
+  /** 말벗이 직접 확인하지 못함(목업 28번): 이유, 다시 가서 본 결과. */
+  robotCheck?: FallRobotCheck | null;
 };
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
@@ -140,9 +142,14 @@ function subtitle(i: IncidentSummary) {
   if (i.origin === "user_report") {
     return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedByName ?? "사용자"} 신고`;
   }
-  const reason = i.aiFailed ? "AI가 시간 안에 답하지 못함"
+  const check = i.robotCheck;
+  const reason = check?.stopped ? "막혀서 10분 동안 확인하지 못해 멈춤"
+    : check?.failed ? check.failed
+    : i.aiFailed ? "AI가 시간 안에 답하지 못함"
     : i.answer ? ANSWER_LABEL[i.answer] ?? null : i.foundDown ? "이미 쓰러진 모습 발견" : null;
-  return [when(i.occurredAt), approachText(i), reason].filter(Boolean).join(" · ");
+  // 목업 28번: 1분째 확인 못 함 · 다시 가 보니 무엇이 있었는지.
+  return [when(i.occurredAt), check?.waited ? "1분째 확인 못 함" : null, check?.revisit?.subtitle ?? approachText(i),
+    reason].filter(Boolean).join(" · ");
 }
 
 function badges(i: IncidentSummary): Array<[string, string]> {
@@ -151,7 +158,11 @@ function badges(i: IncidentSummary): Array<[string, string]> {
     list.push(["is-alert", "아무도 확인하지 않음"]);
     if (i.notification) list.push(["is-alert-soft", `알림: ${LEVEL_LABEL[i.notification.level]} · ${i.notification.sent}/${i.notification.total}회 발송`]);
   } else if (looking(i)) list.push(["is-info", "말벗이 확인하는 중"]);
-  else if (i.reviewState === "open" && i.needsCheck) list.push(["is-check", "확인 필요"]);
+  else {
+    // 말벗이 직접 확인하지 못하면 언제나 긴급 알림을 보낸다(목업 28번).
+    if (i.reviewState === "open" && i.robotCheck) list.push(["is-alert-soft", "긴급 알림 보냄"]);
+    if (i.reviewState === "open" && i.needsCheck) list.push(["is-check", "확인 필요"]);
+  }
   if (i.category === "normal") list.push(["is-ok", "정상으로 확인됨"]);
   if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
   if (i.category === "not_person") list.push(["is-neutral", "처리 완료"], ["is-neutral", "사람 아님"]);
@@ -556,6 +567,19 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           ))}
         </header>
         {notice && <p className="fall-notice" role="status">{notice}</p>}
+        {detail.robotCheck && (
+          <section className="fall-robot-check is-alert">
+            <span>말벗이 직접 확인하지 못한 이유</span>
+            <strong>{detail.robotCheck.reason}</strong>
+          </section>
+        )}
+        {detail.robotCheck?.revisit && (
+          <section className="fall-robot-check">
+            <span>말벗이 다시 가서 본 결과</span>
+            <strong>{detail.robotCheck.revisit.title}</strong>
+            {detail.robotCheck.revisit.note && <p>{detail.robotCheck.revisit.note}</p>}
+          </section>
+        )}
 
         <section className="fall-scene-section">
           {detail.clips.length > 1 && (
@@ -669,11 +693,11 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <p className="fall-hint">로봇과 AI의 판단이에요. 사용자 의견으로 바뀌지 않아요.</p>
           <p className="fall-hint">AI 이유는 모델이 작성한 설명이에요. 주기 확인의 이유는 장면 전체에 대한 설명이며, 실제 원인이 확인됐다는 뜻은 아니에요.</p>
           <div className="fall-log">
-            {detail.robotEvents.map((e) => (
+            {fallHistoryLines(detail.robotEvents).map(({ event: e, label }) => (
               <div key={e.sequence}>
                 <span>{clock(e.occurredAt, true)}</span>
                 <span title={e.analysis?.purpose === "crosscheck" ? "장면 전체 분석 이유" : undefined}>
-                  {fallEventLabel(e)}</span>
+                  {label}</span>
               </div>
             ))}
             {detail.robotEvents.length === 0 && <div><span /><span>자동 판정 기록이 없어요 (사용자 신고).</span></div>}
@@ -715,6 +739,9 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           )}
           {detail.category === "off_floor" && (
             <p>묻지도, 알리지도 않았어요. 쓰러졌던 거라고 생각하면 낙상이나 낙상 의심으로 의견을 남겨 주세요. 사건이 다시 열리고 모두에게 알려요.</p>
+          )}
+          {detail.reviewState === "open" && detail.robotCheck && (
+            <p>말벗은 이 사건을 스스로 닫지 않아요. 상태를 확인한 뒤 처리 완료를 눌러 주세요.</p>
           )}
           {detail.reviewState === "open" && !robotChecked(detail) && detail.opinions.length === 0 && (
             <p className="fall-needs-opinion">의견을 먼저 남겨 주세요. 누구든 의견이 하나 있어야 처리 완료할 수 있어요.</p>
