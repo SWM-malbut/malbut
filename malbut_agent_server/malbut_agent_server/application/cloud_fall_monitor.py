@@ -1356,6 +1356,10 @@ class CloudFallMonitor:
                        incident, question_id=question_id,
                        reason=('scene_answer_unassociated' if incident.answer is VoiceAnswer.UNCLEAR
                                else situation_assessment))
+            if incident.answer is VoiceAnswer.UNCLEAR:
+                incident.notification_level = current.notification_level
+                self._notify_once(incident, NotificationLevel.CHECK, 'scene_answer_unconfirmed')
+                current.notification_level = incident.notification_level
             if help_needed:
                 current.state = IncidentState.HELP_REQUIRED
                 current.answer = VoiceAnswer.HELP
@@ -1372,9 +1376,12 @@ class CloudFallMonitor:
             incident.answer = VoiceAnswer.UNCLEAR
             if incident.state is not IncidentState.HELP_REQUIRED:
                 incident.state = IncidentState.RECHECK_REQUIRED
-            self._questions[incident_id] = replace(incident)
             self._emit('voice_result', incident, question_id=question_id,
                        reason='scene_answer_unassociated')
+            # Someone said they were fine, maybe not the person seen down: tell
+            # the guardian (2026-10-12 16:31 sent nothing while someone lay by a bed).
+            self._notify_once(incident, NotificationLevel.CHECK, 'scene_answer_unconfirmed')
+            self._questions[incident_id] = replace(incident)
             self._emit('decision_required', incident, reason='target_unidentified')
             return True
         incident.answer = VoiceAnswer.HELP if help_needed else VoiceAnswer.OKAY

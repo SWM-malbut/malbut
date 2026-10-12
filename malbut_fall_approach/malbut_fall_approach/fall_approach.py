@@ -16,6 +16,13 @@ RETURN_LIMIT_S = 60.0
 # first; furniture in the way: around the spot.
 VIEW_LIMIT_S = 60.0
 VIEW_TURNS_DEG = (0.0, 45.0, -45.0, 90.0, -90.0)
+# Turning away to drive to the spot behind the robot failed beside a bed
+# (2026-10-12 16:32): the half turn alone used most of Nav2's 10 s / 0.5 m
+# progress check. Facing the spot, the robot backs up instead, camera on the
+# person; slow, as it moves blind to the camera.
+BACKUP_SPEED_MPS = 0.1
+BACKUP_FACING_RAD = math.radians(30.0)
+BACKUP_MIN_M = 0.1
 # revisit: back from the spot after waiting, the guardian told what it saw (2026-10-12).
 RETURN_REASONS = ('not_a_person', 'off_floor', 'revisit')
 # No path to the spot itself (inside furniture or a keepout edge): try points
@@ -59,6 +66,16 @@ def view_points(robot, target, distance):
     return [(target[0] + distance * math.cos(base + math.radians(turn)),
              target[1] + distance * math.sin(base + math.radians(turn)))
             for turn in VIEW_TURNS_DEG]
+
+
+def backup_distance(robot, target, distance):
+    """How far to back straight away from the spot, or 0 when not facing it."""
+    gap = math.hypot(target[0] - robot.x, target[1] - robot.y)
+    if gap <= 1e-6:
+        return 0.0
+    off = normalize_angle(math.atan2(target[1] - robot.y, target[0] - robot.x) - robot.yaw)
+    back = distance - gap
+    return back if abs(off) <= BACKUP_FACING_RAD and back >= BACKUP_MIN_M else 0.0
 
 
 def plan_targets(robot, target):
