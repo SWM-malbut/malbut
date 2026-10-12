@@ -84,6 +84,30 @@ test("contract: four new alerts with fixed levels and copy", () => {
   }
 });
 
+test("contract: a fine answer the robot cannot tie to the person seen alerts once (check)", async () => {
+  const { parseFallEvent } = moduleLoader()("app/fall-contract.ts");
+  const alert = notCheckedAlert({ reason: "scene_answer_unconfirmed", notificationLevel: "check",
+    answer: "unclear" });
+  assert.ok(parseFallEvent(alert));
+  assert.equal(parseFallEvent({ ...alert, notificationLevel: "urgent" }), null);
+  assert.equal(buildFallNotification({ deviceId: "robot-a", notificationId: alert.eventId,
+    incidentId: alert.incidentId, level: "check", reason: alert.reason, occurredAt: alert.occurredAt }).body,
+  "누군가 괜찮다고 답했지만, 쓰러진 분인지 확인하지 못했습니다. 상태를 확인해 주세요.");
+  await withRepo(async ({ h, events }) => {
+    const [opened, unconfirmed, help] = journal([
+      ["incident_opened", "target_unidentified"],
+      ["notification_requested", "scene_answer_unconfirmed",
+        { state: "recheck_required", answer: "unclear", notificationLevel: "check" }],
+      ["notification_requested", "help_requested",
+        { state: "help_required", answer: "help_request", notificationLevel: "urgent" }],
+    ]);
+    for (const e of [opened, unconfirmed, help, unconfirmed]) await events.storeFallEvent("robot-a", e);
+    // Its own row, kept pending after a later 도움 요청 (per reason, not per level).
+    assert.deepEqual((await h.db.query("SELECT reason,status FROM fall_push_outbox ORDER BY reason")).rows
+      .map((r) => [r.reason, r.status]), [["help_requested", "pending"], ["scene_answer_unconfirmed", "pending"]]);
+  });
+});
+
 test("alerts: 직접 확인하지 못함 never swallows a later 도움 요청 or revisit result", async () => {
   await withRepo(async ({ h, events }) => {
     const [opened, notChecked, revisit, help] = journal([
