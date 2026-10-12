@@ -477,7 +477,7 @@ def test_guardian_closed_incidents_reach_the_runtime_from_their_topic(tmp_path, 
             return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
 
         def get_logger(self):
-            return SimpleNamespace(warning=self.logs.append)
+            return SimpleNamespace(warning=self.logs.append, info=lambda *_: None)
 
     monkeypatch.setattr(node_module, 'Node', Node)
     _, clock, provider = make()
