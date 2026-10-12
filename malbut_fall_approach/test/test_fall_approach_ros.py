@@ -27,15 +27,20 @@ from malbut_fall_approach.fall_approach_node import FallApproachNode  # noqa: E4
 
 
 class FakeNav2:
-    """Straight-line planner; driving and turning always succeed and are recorded."""
+    """Straight-line planner; driving, backing and turning are recorded.
 
-    def __init__(self, node, *, plan=True):
-        self.plan, self.driven, self.turns = plan, [], []
+    ``follow`` lists the outcomes of successive drives (then they succeed).
+    """
+
+    def __init__(self, node, *, plan=True, backup=True, follow=()):
+        self.plan, self.driven, self.turns, self.backups = plan, [], [], []
+        self.backup, self.follow = backup, list(follow)
         group = ReentrantCallbackGroup()
         ActionServer(node, nav2.ComputePathToPose, 'compute_path_to_pose', self._plan,
                      callback_group=group)
         ActionServer(node, nav2.FollowPath, 'follow_path', self._follow, callback_group=group)
         ActionServer(node, nav2.Spin, 'spin', self._spin, callback_group=group)
+        ActionServer(node, nav2.BackUp, 'backup', self._back_up, callback_group=group)
 
     def _plan(self, handle):
         goal = handle.request.goal.pose.position
@@ -56,13 +61,24 @@ class FakeNav2:
 
     def _follow(self, handle):
         self.driven.append(handle.request.path)
-        handle.succeed()
+        if self.follow and not self.follow.pop(0):
+            handle.abort()  # Like controller_server's "Failed to make progress".
+        else:
+            handle.succeed()
         return nav2.FollowPath.Result()
 
     def _spin(self, handle):
         self.turns.append(handle.request.target_yaw)
         handle.succeed()
         return nav2.Spin.Result()
+
+    def _back_up(self, handle):
+        self.backups.append((handle.request.target.x, handle.request.speed))
+        if self.backup:
+            handle.succeed()
+        else:
+            handle.abort()  # Something behind the robot in the local costmap.
+        return nav2.BackUp.Result()
 
 
 @pytest.fixture
@@ -135,3 +151,35 @@ def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):
     unknown = send(request_id='unknown', phase='return', x=0.0, y=0.0, standoff_m=1.0)
     assert unknown.outcome == 'failed'
     assert send(request_id='q3', phase='drive', x=3.0, y=0.0, standoff_m=1.0) is None
+
+
+def test_view_backs_up_facing_the_spot_without_turning_away(ros):
+    _, fake, send, statuses = ros
+    nav = FakeNav2(fake)
+    # The fake robot stands at the origin facing +x, 1 m short of the spot.
+    result = send(request_id='v1', phase='view', x=1.0, y=0.0, standoff_m=2.5)
+    assert result.outcome == 'arrived'
+    assert nav.backups == [pytest.approx((1.5, 0.1))]
+    assert nav.driven == [] and nav.turns == []
+    time.sleep(0.2)
+    assert statuses[-1]['phase'] == 'view' and statuses[-1]['outcome'] == 'arrived'
+
+
+def test_view_tries_the_next_side_after_a_failed_drive(ros):
+    _, fake, send, _ = ros
+    nav = FakeNav2(fake, backup=False, follow=[False])
+    result = send(request_id='v2', phase='view', x=1.0, y=0.0, standoff_m=2.5)
+    assert result.outcome == 'arrived'
+    assert len(nav.backups) == 1 and len(nav.driven) == 2
+    side = math.pi + math.radians(45.0)  # The second view point, around the spot.
+    end = nav.driven[-1].poses[-1].pose.position
+    assert (end.x, end.y) == pytest.approx(
+        (1.0 + 2.5 * math.cos(side), 2.5 * math.sin(side)), abs=1e-6)
+
+
+def test_view_fails_only_after_every_side_failed(ros):
+    _, fake, send, _ = ros
+    nav = FakeNav2(fake, backup=False, follow=[False] * 5)
+    result = send(request_id='v3', phase='view', x=1.0, y=0.0, standoff_m=2.5)
+    assert result.outcome == 'failed'
+    assert len(nav.driven) == 5
