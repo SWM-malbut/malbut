@@ -241,6 +241,54 @@ test("web owner save, camera change, heartbeat delivery and apply receipt round-
   });
 });
 
+test("robot state upload carries the homecam heartbeat: same reply, errors never fail the state", async () => {
+  await withDatabase(async (h, repo, originalLoad) => {
+    const stored = [];
+    const load = moduleLoader({
+      [path.join(h.root, "db/postgres.ts")]: originalLoad("db/postgres.ts"),
+      [path.join(h.root, "app/device-auth.ts")]: { getRequestDevice: async (r) =>
+        r.headers.get("authorization") === "Bearer robot-a" ? { deviceId: "robot-a" } : null },
+      [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment: () => ({}) },
+      [path.join(h.root, "app/robot-contract.ts")]: {
+        parseRobotState: (value) => (value.state ? { state: value.state } : null),
+        readRobotJson: async (request) => request.json() },
+      [path.join(h.root, "db/robot-map.ts")]: { storeRobotState: async (_deviceId, value) => { stored.push(value); } },
+      [path.join(h.root, "db/fall-review.ts")]: { listClosedFallIncidentsForRobot: async () => [] },
+    });
+    const heartbeat = load("app/api/device/v1/heartbeat/route.ts");
+    const robotState = load("app/api/device/v1/robot/state/route.ts");
+    const post = (route, body) => route.POST(new Request("https://test/api", { method: "POST",
+      headers: { authorization: "Bearer robot-a", "content-type": "application/json" }, body: JSON.stringify(body) }));
+    const beat = { streamMode: "idle", mediaHealthy: true };
+    const direct = await (await post(heartbeat, beat)).json();
+    const response = await post(robotState, { state: "idle", homecam: beat });
+    assert.equal(response.status, 202);
+    const carried = await response.json();
+    assert.deepEqual(Object.keys(carried).sort(), ["accepted", "closedFallIncidents", "homecam"]);
+    // Same answer as POST /heartbeat; only the times of this second call differ.
+    const settled = ({ reportedState, ...rest }) => ({ ...rest,
+      reportedState: { ...reportedState, lastSeenAt: null, updatedAt: null } });
+    assert.deepEqual(settled(carried.homecam), settled(direct));
+    assert.ok(carried.homecam.desiredState && "talkLease" in carried.homecam);
+    // A homecam error is answered beside the saved state, never instead of it.
+    const bad = await post(robotState, { state: "idle", homecam: { streamMode: "warp" } });
+    assert.equal(bad.status, 202);
+    assert.deepEqual((await bad.json()).homecam, { error: "장치 상태 형식을 확인해 주세요.", status: 400 });
+    const first = await post(robotState, { state: "idle", homecam: { fallSettingsReport: report() } });
+    assert.equal("error" in (await first.json()).homecam, false);
+    const conflict = await post(robotState, { state: "idle",
+      homecam: { fallSettingsReport: report({ runtimeId: "other" }) } });
+    assert.equal(conflict.status, 202);
+    assert.equal((await conflict.json()).homecam.status, 409);
+    // Bringup off: no homecam, no homecam answer and no homecam heartbeat.
+    const seen = (await h.db.query("SELECT last_seen_at FROM device_state WHERE device_id='robot-a'")).rows[0];
+    const idle = await post(robotState, { state: "idle" });
+    assert.equal("homecam" in (await idle.json()), false);
+    assert.deepEqual((await h.db.query("SELECT last_seen_at FROM device_state WHERE device_id='robot-a'")).rows[0], seen);
+    assert.equal(stored.length, 5);
+  });
+});
+
 test("uint64 report IDs and saved revision survive beyond JavaScript safe integer", async () => {
   await withDatabase(async (h, repo) => {
     // Insert a restored device state at a high revision; updates still use the DB trigger.
