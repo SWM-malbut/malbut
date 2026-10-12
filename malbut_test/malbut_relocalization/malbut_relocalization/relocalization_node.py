@@ -5,10 +5,9 @@ Bringup's map provider selects the saved map and requests /relocalize after each
 switch. AUTO first tries the pose saved for this map and checks it against the
 LiDAR scan; when it does not fit (the robot was moved while off) or no pose is
 saved, it runs AMCL's global localization while rotating in place with Nav2
-Spin. Every pose found is then fitted to the map (scan_match.refine) and given
-back to AMCL. A search that ends worse than the pose it started from returns
-to that pose. Only /initialpose, AMCL services and Spin are used; no velocity
-is sent.
+Spin. AMCL alone estimates the position: the scan match only scores it. Particle
+limits are raised during this Action and restored with the resulting AMCL pose
+and covariance afterwards. No velocity is sent.
 """
 
 import json
@@ -29,6 +28,8 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import GetParameters, SetParametersAtomically
 from rclpy.qos import (
     DurabilityPolicy, qos_profile_sensor_data, QoSProfile, ReliabilityPolicy,
 )
@@ -39,7 +40,7 @@ from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .pose_store import map_identity, read_initial_pose, valid_pose, write_pose
-from .scan_match import distance_field, match_ratio, refine
+from .scan_match import distance_field, match_ratio
 
 
 LOCALIZATION_STATE_TOPIC = '/malbut/localization/state'
@@ -49,14 +50,8 @@ MIN_ACCEPT_DISTANCE_M = 0.5
 MIN_ACCEPT_ANGLE_RAD = 0.5
 SCAN_MAX_AGE_S = 2.0
 FULL_TURN_RAD = 2.0 * math.pi
-# Right after Bringup starts, Nav2's behavior server (Spin) comes up after
-# /relocalize; the startup search used to give up after 2 s and search without
-# turning (2026-10-09). Wait up to this, keeping time for the turn itself.
-SPIN_WAIT_S = 30.0
-SEARCH_RESERVE_S = 20.0
-# AMCL's spread around a pose fitted to the map: about 5 cm and 3 degrees.
-FITTED_COVARIANCE = [0.0025 if index in (0, 7) else 0.0027 if index == 35 else 0.0
-                     for index in range(36)]
+SPIN_WAIT_S = 2.0
+RESTORE_TIMEOUT_S = 5.0
 
 
 class RelocalizationError(RuntimeError):
@@ -143,21 +138,23 @@ class Relocalization(Node):
         super().__init__('relocalization', **kwargs)
         defaults = {
             'pose_file': str(Path.home() / '.ros/malbut/localization/last_pose.yaml'),
-            'save_period_s': 5.0, 'timeout_s': 60.0,
+            'save_period_s': 5.0, 'timeout_s': 10.0,
             'scan_topic': '/scan_raw', 'map_topic': '/map', 'base_frame': 'base_footprint',
             # A scan endpoint within this distance of a mapped obstacle is a hit.
-            'match_distance_m': 0.15,
+            'match_distance_m': 0.10,
             # Share of hits needed to trust a pose; a moved robot scores far lower.
-            'match_ratio_min': 0.5, 'max_scan_range_m': 8.0,
-            'search_attempts': 2,
+            'match_ratio_min': 0.95, 'max_scan_range_m': 8.0,
+            'min_particles': 2000, 'max_particles': 8000,
         }
         settings = {name: self.declare_parameter(name, value).value
                     for name, value in defaults.items()}
         for name in ('save_period_s', 'timeout_s', 'match_distance_m', 'max_scan_range_m'):
             if not math.isfinite(settings[name]) or settings[name] <= 0:
                 raise ValueError(f'{name} must be positive')
-        if not 0 < settings['match_ratio_min'] <= 1 or settings['search_attempts'] < 1:
-            raise ValueError('match_ratio_min must be in (0, 1] and search_attempts >= 1')
+        if not 0 < settings['match_ratio_min'] <= 1:
+            raise ValueError('match_ratio_min must be in (0, 1]')
+        if not 0 < settings['min_particles'] <= settings['max_particles']:
+            raise ValueError('particle limits must satisfy 0 < min <= max')
         self.settings = settings
         self.path = settings['pose_file']
         self.period = settings['save_period_s']
@@ -206,6 +203,10 @@ class Relocalization(Node):
             Empty, '/reinitialize_global_localization', callback_group=group)
         self.nomotion_update = self.create_client(
             Empty, '/request_nomotion_update', callback_group=group)
+        self._particle_reader = self.create_client(
+            GetParameters, '/amcl/get_parameters', callback_group=group)
+        self._particle_writer = self.create_client(
+            SetParametersAtomically, '/amcl/set_parameters_atomically', callback_group=group)
         self.spin = ActionClient(self, Spin, '/spin', callback_group=group)
         self.create_timer(0.5, self._poll_amcl, callback_group=group)
         self.create_timer(self.period, self.save_latest, callback_group=group)
@@ -377,19 +378,95 @@ class Relocalization(Node):
             raise RelocalizationError(f'unknown relocalization method {request.method}')
         deadline = time.monotonic() + self.timeout
         self._wait_ready(handle, deadline)
+        original = self._particle_limits(handle, deadline)
+        boosted = (self.settings['min_particles'], self.settings['max_particles'])
+        if original == boosted:
+            return self._locate(handle, deadline)
+        with self.lock:
+            before = self.estimate
+            map_file, identity = self.map_file, self.identity
+        seed = before[1] if before is not None else None
+        if request.method == goal.AUTO:
+            seed = read_initial_pose(self.path, map_file, identity) or seed
+        elif request.method == goal.GIVEN_POSE:
+            seed = pose_record(request.initial_pose)
+            if seed is None:
+                raise RelocalizationError('initial_pose must be a finite pose in the map frame')
+        restored_pose = seed
+        seeded = None
+        try:
+            # Set both limits together. Even a lost response needs restoration:
+            # the server may already have reset its particle filter.
+            self._set_particle_limits(boosted, handle, deadline)
+            seeded = self._apply(handle, seed, deadline) if seed is not None else None
+            located = self._locate(handle, deadline, seeded)
+            with self.lock:
+                # Spin has stopped before _locate returns: keep its final AMCL
+                # heading, not an earlier scored heading from mid-rotation.
+                current = self.estimate
+            if current is not None:
+                restored_pose = current[1]
+            return located
+        finally:
+            # Cancellation during a running search also keeps the last live
+            # estimate, but a reset before seeding must not replace the seed.
+            if seeded is not None:
+                with self.lock:
+                    current = self.estimate
+                if current is not None:
+                    restored_pose = current[1]
+            cleanup = time.monotonic() + RESTORE_TIMEOUT_S
+            self._set_particle_limits(original, None, cleanup)
+            if restored_pose is not None:
+                # Humble resets its filter when limits change. Preserve AMCL's
+                # own pose AND uncertainty, never manufacture a fitted pose.
+                self._apply(None, restored_pose, cleanup)
+
+    def _particle_limits(self, handle, deadline):
+        reply = self._rpc(self._particle_reader, GetParameters.Request(
+            names=['min_particles', 'max_particles']), handle, deadline, 'read particle limits')
+        if (len(reply.values) != 2 or any(
+                value.type != ParameterType.PARAMETER_INTEGER for value in reply.values)):
+            raise RelocalizationError('AMCL particle limits are unavailable')
+        limits = tuple(value.integer_value for value in reply.values)
+        if not 0 < limits[0] <= limits[1]:
+            raise RelocalizationError('AMCL particle limits are invalid')
+        return limits
+
+    def _set_particle_limits(self, limits, handle, deadline):
+        request = SetParametersAtomically.Request(parameters=[
+            Parameter(name=name, value=ParameterValue(
+                type=ParameterType.PARAMETER_INTEGER, integer_value=int(value)))
+            for name, value in zip(('min_particles', 'max_particles'), limits)])
+        reply = self._rpc(self._particle_writer, request, handle, deadline,
+                          'set particle limits')
+        if not reply.result.successful:
+            raise RelocalizationError(f'AMCL rejected particle limits: {reply.result.reason}')
+
+    def _rpc(self, client, request, handle, deadline, label):
+        while not client.wait_for_service(timeout_sec=0.05):
+            self._check(handle)
+            if time.monotonic() >= deadline:
+                raise RelocalizationError(f'AMCL {label} service is unavailable')
+        self._check(handle)
+        if time.monotonic() >= deadline:
+            raise RelocalizationError(f'AMCL {label} did not finish in time')
+        return self._wait_future(handle, client.call_async(request), deadline, label)
+
+    def _locate(self, handle, deadline, seeded=None):
+        request = handle.request
+        goal = Relocalize.Goal
         minimum = self.settings['match_ratio_min']
         if request.method == goal.GIVEN_POSE:
             pose = pose_record(request.initial_pose)
             if pose is None:
                 raise RelocalizationError('initial_pose must be a finite pose in the map frame')
             self._feedback(handle, 'APPLYING')
-            estimate = self._apply(handle, pose, deadline)
+            estimate = seeded or self._apply(handle, pose, deadline)
             ratio = self._score(handle, estimate, deadline)
             # An operator's pose is kept even when the scan disagrees; report it.
             return True, f'pose set; {ratio:.0%} of the scan matches the map', estimate, ratio
         reason = 'global search requested'
-        # (label, pose, ratio) to return to when the search ends worse.
-        start = None
         if request.method == goal.AUTO:
             with self.lock:
                 map_file, identity = self.map_file, self.identity
@@ -397,29 +474,15 @@ class Relocalization(Node):
             reason = 'no saved pose for this map'
             if saved is not None:
                 self._feedback(handle, 'CHECKING_SAVED_POSE')
-                estimate = self._apply(handle, saved, deadline)
-                estimate, ratio = self._refine(handle, estimate, deadline)
+                estimate = seeded or self._apply(handle, saved, deadline)
+                ratio = self._score(handle, estimate, deadline)
                 self._feedback(handle, 'CHECKING_SAVED_POSE', ratio)
                 if ratio >= minimum:
                     return (True, f'saved pose confirmed; {ratio:.0%} of the scan matches the map',
                             estimate, ratio)
                 reason = f'saved pose matched only {ratio:.0%} of the scan'
-                start = ('saved', estimate[1], ratio)
             self.get_logger().info(f'Relocalization: {reason}; searching the whole map')
-        else:
-            with self.lock:
-                current = self.estimate
-            if current is not None:
-                # A retry or a user's search may start from a pose that was nearly right.
-                pose, ratio = self._fit(handle, current, deadline)
-                start = ('previous', pose, ratio)
         estimate, ratio = self._search(handle, deadline, minimum)
-        if start is not None and start[2] > ratio:
-            label, pose, _ = start
-            estimate, kept = self._return_to(handle, pose, deadline)
-            return (kept >= minimum, f'{reason}; global search matched only {ratio:.0%} of the '
-                    f'scan; returned to the {label} pose, {kept:.0%} of the scan matches the map',
-                    estimate, kept)
         if ratio >= minimum:
             return (True, f'{reason}; found by global search, {ratio:.0%} of the scan '
                     'matches the map', estimate, ratio)
@@ -471,33 +534,6 @@ class Relocalization(Node):
         pose = estimate[1]
         return self._ratio(field, message, laser, (pose['x'], pose['y'], pose['yaw']))
 
-    def _return_to(self, handle, pose, deadline):
-        """Put a pose from before a turn back into AMCL, fitted again to the scan."""
-        # Spin ends within a few degrees of a full turn, so fit the pose once more.
-        return self._refine(handle, self._apply(handle, pose, deadline), deadline)
-
-    def _refine(self, handle, estimate, deadline):
-        """Give AMCL the best-fitting pose near its estimate; return (estimate, ratio)."""
-        pose, ratio = self._fit(handle, estimate, deadline)
-        if pose is estimate[1]:
-            return estimate, ratio
-        estimate = self._apply(handle, pose, deadline)
-        return estimate, self._score(handle, estimate, deadline)
-
-    def _fit(self, handle, estimate, deadline):
-        """Return (pose, ratio) fitted near the estimate; its own pose when no better."""
-        message, laser, field = self._observe(handle, estimate, deadline)
-        pose = estimate[1]
-        start = (pose['x'], pose['y'], pose['yaw'])
-        ratio = self._ratio(field, message, laser, start)
-        fitted = refine(field, message, laser, start,
-                        max_range_m=self.settings['max_scan_range_m'])
-        fitted_ratio = self._ratio(field, message, laser, fitted)
-        if fitted_ratio <= ratio:
-            return pose, ratio
-        return dict(pose, x=fitted[0], y=fitted[1], yaw=fitted[2],
-                    covariance=list(FITTED_COVARIANCE)), fitted_ratio
-
     def _ratio(self, field, scan, laser, pose):
         ratio, beams = match_ratio(
             field, scan, laser, pose, hit_distance_m=self.settings['match_distance_m'],
@@ -528,7 +564,7 @@ class Relocalization(Node):
         return message, laser, field
 
     def _search(self, handle, deadline, minimum):
-        """Run AMCL global localization while rotating; keep the best estimate."""
+        """Let AMCL converge; stop at the requested score or the deadline."""
         with self.lock:
             message = self.map_message
         # Humble AMCL's uniformPoseGenerator indexes the free-space vector
@@ -538,81 +574,86 @@ class Relocalization(Node):
         if message is None or not any(value == 0 for value in message.data):
             raise RelocalizationError(
                 'selected map has no known free cells for global localization')
-        best, best_ratio = None, 0.0
-        for _ in range(self.settings['search_attempts']):
-            self._feedback(handle, 'SEARCHING', best_ratio)
-            self._call(self.global_localization, 'global localization', deadline)
-            started = time.monotonic()
-            self._rotate(handle, deadline)
-            estimate = self._settle(handle, deadline, started)
-            estimate, ratio = self._refine(handle, estimate, deadline)
-            if ratio >= best_ratio or best is None:
-                best, best_ratio = estimate, ratio
-            self._feedback(handle, 'SEARCHING', best_ratio)
-            if ratio >= minimum:
-                break
-        if best is not estimate:
-            # AMCL holds the last attempt; put the better earlier one back.
-            best, best_ratio = self._return_to(handle, best[1], deadline)
-        return best, best_ratio
+        with self.lock:
+            # A pose from the saved-position check is not a global-search result.
+            self.estimate = None
+            self.latest = None
+        self._feedback(handle, 'SEARCHING')
+        self._call(self.global_localization, 'global localization', deadline, handle)
+        return self._rotate(handle, deadline, minimum)
 
     def _spin_ready(self, handle, deadline):
-        patience = min(SPIN_WAIT_S, deadline - time.monotonic() - SEARCH_RESERVE_S)
-        if patience <= 0:
-            return self.spin.wait_for_server(timeout_sec=2.0)
-        until = time.monotonic() + patience
-        while not self.spin.wait_for_server(timeout_sec=0.5):
+        until = min(deadline, time.monotonic() + SPIN_WAIT_S)
+        while not self.spin.wait_for_server(timeout_sec=0.05):
             self._check(handle)
             if time.monotonic() >= until:
                 return False
-            time.sleep(0.1)
+            time.sleep(0.05)
         return True
 
-    def _rotate(self, handle, deadline):
-        """Turn in place once with Nav2 Spin; AMCL updates while it rotates."""
-        if not self._spin_ready(handle, deadline):
+    def _rotate(self, handle, deadline, minimum):
+        """Observe AMCL during Spin, cancel motion before restoring its limits."""
+        started = time.monotonic()
+        spin = result = None
+        if self._spin_ready(handle, deadline):
+            remaining = max(0.0, deadline - time.monotonic())
+            goal = Spin.Goal(target_yaw=FULL_TURN_RAD, time_allowance=Duration(
+                sec=int(remaining), nanosec=int((remaining % 1) * 1e9)))
+            sent = self.spin.send_goal_async(goal)
+            try:
+                spin = self._wait_future(handle, sent, deadline, 'Spin goal')
+            except (Canceled, RelocalizationError):
+                # An acceptance delivered after cancellation still owns motion.
+                sent.add_done_callback(self._cancel_late_spin)
+                cleanup = time.monotonic() + RESTORE_TIMEOUT_S
+                late = self._wait_future(None, sent, cleanup, 'late Spin acceptance')
+                if late.accepted:
+                    self._wait_future(None, late.get_result_async(), cleanup,
+                                      'late Spin cancellation')
+                raise
+            if spin.accepted:
+                result = spin.get_result_async()
+            else:
+                spin = None
+                self.get_logger().warning('Spin was rejected; searching without rotating')
+        else:
             self.get_logger().warning('Spin is unavailable; searching without rotating')
-            return
-        goal = Spin.Goal()
-        goal.target_yaw = FULL_TURN_RAD
-        remaining = max(1.0, deadline - time.monotonic())
-        goal.time_allowance = Duration(sec=int(remaining))
-        sent = self.spin.send_goal_async(goal)
-        spin = self._wait_future(handle, sent, deadline, 'Spin goal')
-        if not spin.accepted:
-            self.get_logger().warning('Spin was rejected; searching without rotating')
-            return
-        result = spin.get_result_async()
+        estimate, ratio, scored_at, update_at = None, 0.0, None, 0.0
         try:
-            self._wait_future(handle, result, deadline, 'Spin')
-        except (Canceled, RelocalizationError):
-            spin.cancel_goal_async()
-            raise
-
-    def _settle(self, handle, deadline, since):
-        """Force a few stationary AMCL updates and return the newest estimate."""
-        for _ in range(3):
-            requested = time.monotonic()
-            self._call(self.nomotion_update, 'AMCL update', deadline)
-            while True:
+            while time.monotonic() < deadline:
                 self._check(handle)
                 with self.lock:
-                    estimate = self.estimate
-                if estimate is not None and estimate[0] > requested:
+                    current = self.estimate
+                if current is not None and current[0] >= started and current[0] != scored_at:
+                    ratio = self._score(handle, current, deadline)
+                    estimate, scored_at = current, current[0]
+                    self._feedback(handle, 'SEARCHING', ratio)
+                if estimate is not None and ratio >= minimum:
                     break
-                if time.monotonic() - requested > 2.0 or time.monotonic() >= deadline:
-                    break
+                now = time.monotonic()
+                if (result is None or result.done()) and now - update_at >= 0.2:
+                    self._call(self.nomotion_update, 'AMCL update', deadline, handle)
+                    update_at = now
                 time.sleep(0.05)
-        with self.lock:
-            estimate = self.estimate
-        if estimate is None or estimate[0] < since:
+        finally:
+            if spin is not None and result is not None and not result.done():
+                spin.cancel_goal_async()
+                self._wait_future(None, result, time.monotonic() + RESTORE_TIMEOUT_S,
+                                  'Spin cancellation')
+        if estimate is None:
             raise RelocalizationError('AMCL reported no pose during the global search')
-        return estimate
+        return estimate, ratio
 
-    def _call(self, client, label, deadline):
-        if not client.wait_for_service(timeout_sec=2.0):
-            raise RelocalizationError(f'AMCL {label} service is unavailable')
-        self._wait_future(None, client.call_async(Empty.Request()), deadline, label)
+    def _cancel_late_spin(self, future):
+        try:
+            spin = future.result()
+            if spin.accepted:
+                spin.cancel_goal_async()
+        except Exception as error:
+            self.get_logger().error(f'Late Spin cancellation failed: {error}')
+
+    def _call(self, client, label, deadline, handle=None):
+        return self._rpc(client, Empty.Request(), handle, deadline, label)
 
     def _wait_future(self, handle, future, deadline, label):
         while not future.done():
@@ -621,10 +662,13 @@ class Relocalization(Node):
             if time.monotonic() >= deadline:
                 raise RelocalizationError(f'{label} did not finish in time')
             time.sleep(0.05)
-        return future.result()
+        try:
+            return future.result()
+        except Exception as error:
+            raise RelocalizationError(f'{label} failed: {error}') from error
 
     def _check(self, handle):
-        if handle.is_cancel_requested:
+        if handle is not None and handle.is_cancel_requested:
             raise Canceled('relocalization canceled')
         if not rclpy.ok(context=self.context):
             raise RelocalizationError('relocalization server is shutting down')
@@ -639,7 +683,8 @@ class Relocalization(Node):
         """Write only a new, recent estimate while AMCL localizes on a saved map."""
         with self.lock:
             identity, latest, received = self.identity, self.latest, self.received
-        if (identity is None or not self.saving or not self.amcl_active or latest is None
+        if (identity is None or self.busy or not self.saving or not self.amcl_active
+                or latest is None
                 or received == self.saved_received
                 or time.monotonic() - received > 2 * self.period):
             return

@@ -153,9 +153,9 @@ Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필�
 Bringup은 홈캠·Agent 낙상 규칙·VLM에 같은 실행 ID 묶음을 전달하고,
 홈캠이 서버 설정을 받으면 낙상 규칙이 VLM에 적용한다. 준비 완료나 노드 시작만으로
 감지·Cloud 전송을 켜지는 않는다. 확인 대화는 낙상 규칙이 관리자에
-`fall_confirmation` 미션(`NORMAL`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
-낙상 확인 중(규칙의 `/malbut/falls/check/status`)에는 웹 패널이 목적지 이동·순찰·따라가기·위치 찾기·
-지도 만들기 시작을 거절하고 직접 움직이기만 받는다. 앱의 "처리 완료"는 상태 업로드 응답의
+`fall_confirmation` 미션(`HIGH`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+낙상 확인 상태(`/malbut/falls/check/status`)는 표시용이다. 이동 요청은 기존 관리자에 전달하고
+Manifest 우선순위로 중재한다. 앱의 "처리 완료"는 상태 업로드 응답의
 `closedFallIncidents`로 와서 `/malbut/falls/incidents/closed`로 VLM 런타임에 전해진다.
 관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
 호환성을 위해 이름만 유지하며 낙상 규칙 ID를 담는다.
@@ -602,8 +602,8 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   keepout 필터만 끈다. 구역에 갇힌 로봇도 원격으로 빼낼 수 있고, 실제 장애물은 local
   costmap의 라이다 장애물과 Collision Monitor가 계속 막는다. 사람이 운전하면 구역 안으로도
   들어갈 수 있다.
-- 우선순위 `HIGH`, 자원 `BASE`. 실행 중인 추적·목적지 이동·위치 보정(`NORMAL`)과
-  순찰(`LOW`)을 취소한 뒤 시작하고, 수동 조작 중에는 `NORMAL`·`LOW` 이동 요청을 거부한다. 이 동안
+- 우선순위 `URGENT`, 자원 `BASE`. 낙상 확인(`HIGH`)과 추적·목적지 이동·위치 보정(`NORMAL`),
+  순찰(`LOW`)을 취소한 뒤 시작하고, 수동 조작 중에는 더 낮은 우선순위 요청을 거부한다. 이 동안
   `/malbut/state`의 `control_mode`는 `MANUAL`이다. 지도 선택 여부와 무관하지만, 위치
   추정 전환 중에는 받지 않으며 조작을 계속하면 전환이 끝난 뒤 시작된다.
 - 입력: Bringup이 하드웨어를 직접 켜면 제조사 조이스틱을 `use_joy:=false`로 끄고,

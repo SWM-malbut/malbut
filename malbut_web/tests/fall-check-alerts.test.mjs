@@ -369,7 +369,7 @@ test("incident list carries the robot check summary from storage", async () => {
 });
 
 test("map screen: fall check stages read as mockup 27", () => {
-  const { fallCheckView, FALL_CHECK_LOCK_NOTE } = moduleLoader()("app/robot-fall-check-copy.ts");
+  const { fallCheckView } = moduleLoader()("app/robot-fall-check-copy.ts");
   const detail = (fall_check, extra = {}) => ({ fall_check_active: true, fall_check, ...extra });
   const target = { x: 1.2, y: 3.4 };
   assert.equal(fallCheckView({ fall_check_active: false }), null);
@@ -398,10 +398,9 @@ test("map screen: fall check stages read as mockup 27", () => {
   assert.deepEqual(fallCheckView({ fall_check_active: true }),
     { title: "낙상 의심을 확인하고 있어요", detail: "확인이 끝나면 다시 이동할 수 있어요.", target: null });
   assert.equal(fallCheckView(detail({ phase: "wait", target: { x: "1", y: 2 } })).target, null);
-  assert.equal(FALL_CHECK_LOCK_NOTE, "낙상 확인 중이라 잠시 이동할 수 없어요. 직접 움직이기는 할 수 있어요.");
 });
 
-test("map screen: every move control but 직접 움직이기 waits for the fall check", () => {
+test("map screen: fall status does not gate mission requests outside the Manager", () => {
   const root = path.resolve(import.meta.dirname, "..");
   const panel = readFileSync(path.join(root, "app/components/robot-map-panel.tsx"), "utf8");
   const manager = readFileSync(path.join(root, "app/components/real-robot-map-manager.tsx"), "utf8");
@@ -410,13 +409,13 @@ test("map screen: every move control but 직접 움직이기 waits for the fall 
     assert.ok(index > 0, label);
     return panel.slice(panel.lastIndexOf("<button", index), index);
   };
-  assert.match(disabledLine("이 위치로 이동"), /Boolean\(fallCheck\)/);
-  assert.match(disabledLine("사람 따라가기"), /fallCheckActive\(driveMode\)/);
-  assert.match(disabledLine("자율 배회 시작"), /fallCheckActive\(driveMode\)/);
+  for (const label of ["이 위치로 이동", "사람 따라가기", "자율 배회 시작"]) {
+    assert.doesNotMatch(disabledLine(label), /fallCheck/);
+  }
   assert.match(panel, /"순찰 다시 시작" : "방 순찰 시작"/);
-  assert.match(panel, /autonomousModeActive \|\| Boolean\(fallCheck\) \|\| Boolean\(activeCommand\) \|\| busy\}\n\s+onClick=\{\(\) => \{\n\s+const point = featureWorldLabelPoint\(room\)/);
-  assert.match(panel, /if \(fallCheck && mapMode === "navigate"\) return;/);
-  assert.match(manager, /!driveActive && !fallCheckActive &&/);
+  assert.doesNotMatch(panel, /if \(fallCheck && mapMode === "navigate"\) return;/);
+  assert.doesNotMatch(panel, /fallCheckActive\(/);
+  assert.doesNotMatch(manager, /fallCheckActive/);
   // 직접 움직이기 is not gated by the fall check.
   const pad = panel.slice(panel.indexOf("<MapDrivePad"), panel.indexOf("/>", panel.indexOf("<MapDrivePad")));
   assert.doesNotMatch(pad, /fallCheck/);

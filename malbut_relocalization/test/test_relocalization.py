@@ -17,6 +17,7 @@ from malbut_relocalization.relocalization_node import (
 )
 import pytest
 from rclpy.time import Time
+from rcl_interfaces.msg import ParameterType, ParameterValue
 from std_msgs.msg import String
 from malbut_relocalization import relocalization_node
 
@@ -95,11 +96,11 @@ class _Spin:
 def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node = object.__new__(Relocalization)
     node._context = None
-    node.settings = {'base_frame': 'base_footprint', 'match_distance_m': 0.15,
-                     'match_ratio_min': 0.5, 'max_scan_range_m': 8.0,
-                     'search_attempts': 2}
+    node.settings = {'base_frame': 'base_footprint', 'match_distance_m': 0.10,
+                     'match_ratio_min': 0.95, 'max_scan_range_m': 8.0,
+                     'min_particles': 2000, 'max_particles': 8000}
     node.path = room.map_file.parent / 'last_pose.yaml'
-    node.period, node.timeout = 5.0, 3.0
+    node.period, node.timeout = 5.0, 10.0
     node.lock = threading.Lock()
     node.map_file = node.identity = node.expected_map = None
     node.saving = False
@@ -127,6 +128,24 @@ def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     monkeypatch.setattr('malbut_relocalization.relocalization_node.rclpy.ok',
                         lambda context=None: True)
     node.amcl = _Amcl(node, found)
+    node.particle_limits, node.parameter_calls = (500, 3000), []
+
+    def read_parameters(_request):
+        return _done(SimpleNamespace(values=[ParameterValue(
+            type=ParameterType.PARAMETER_INTEGER, integer_value=value)
+            for value in node.particle_limits]))
+
+    def set_parameters(request):
+        node.particle_limits = tuple(item.value.integer_value for item in request.parameters)
+        node.parameter_calls.append(node.particle_limits)
+        # Humble reinitializes the filter at its startup pose on a limit change.
+        node.amcl.estimate(0.0, 0.0, 0.0)
+        return _done(SimpleNamespace(result=SimpleNamespace(successful=True, reason='')))
+
+    node._particle_reader = SimpleNamespace(
+        wait_for_service=lambda timeout_sec: True, call_async=read_parameters)
+    node._particle_writer = SimpleNamespace(
+        wait_for_service=lambda timeout_sec: True, call_async=set_parameters)
     node.publisher = Mock()
     node.publisher.publish.side_effect = node.amcl.initial_pose
     node.client = Mock()
@@ -174,7 +193,8 @@ def test_matching_saved_pose_is_kept_without_searching(monkeypatch, room):
     handle.succeed.assert_called_once()
     assert result.success and 'saved pose confirmed' in result.message
     assert result.match_ratio > 0.9
-    assert node.amcl.calls == ['initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    assert node.parameter_calls == [(2000, 8000), (500, 3000)]
     assert not node.busy
 
 
@@ -192,33 +212,33 @@ def test_moved_robot_is_found_by_global_search(monkeypatch, room):
     assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0])
 
 
-def test_a_nearly_right_saved_pose_is_fitted_to_the_map(monkeypatch, room):
-    """A pose a few centimetres and degrees off is moved onto the walls, not searched."""
+def test_a_nearly_right_saved_pose_is_not_fitted_by_custom_code(monkeypatch, room):
+    """Only AMCL may improve an imprecise starting pose."""
     node = _node(monkeypatch, room)
     _ready(node, room)
     _save(node, room, TRUE_POSE[0] + 0.12, TRUE_POSE[1] - 0.1, TRUE_POSE[2] + 0.07)
     result = node._execute(_handle())
-    assert result.success and 'saved pose confirmed' in result.message
+    assert result.success and 'found by global search' in result.message
     assert result.match_ratio > 0.95
-    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    assert node.amcl.calls[0] == 'initialpose' and node.spin.goals
     position = result.pose.pose.pose.position
     assert math.hypot(position.x - TRUE_POSE[0], position.y - TRUE_POSE[1]) < 0.02
-    fitted = node.publisher.publish.call_args.args[0].pose.covariance
-    assert fitted[0] == pytest.approx(0.0025) and fitted[35] == pytest.approx(0.0027)
+    covariance = node.publisher.publish.call_args.args[0].pose.covariance
+    assert list(covariance) == _pose()['covariance']
 
 
-def test_a_search_that_ends_worse_returns_to_the_previous_pose(monkeypatch, room):
-    """A retry never trades a fitting pose for a worse search result."""
+def test_an_explicit_search_does_not_fit_or_rewind_to_the_previous_pose(monkeypatch, room):
+    """Remove SWM25-239's custom fit and previous-pose score comparison."""
     node = _node(monkeypatch, room, found=WRONG_POSE)
     _ready(node, room)
     node.amcl.estimate(*TRUE_POSE)
     result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
-    assert result.success and result.match_ratio > 0.95
+    assert not result.success and result.match_ratio < 0.95
     assert 'global search matched only' in result.message
-    assert result.message.endswith('returned to the previous pose, '
-                                   f'{result.match_ratio:.0%} of the scan matches the map')
-    assert node.amcl.calls.count('global') == 2 and node.amcl.calls[-1] == 'initialpose'
-    assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0])
+    assert 'returned to the previous pose' not in result.message
+    assert node.amcl.calls.count('global') == 1
+    assert result.pose.pose.pose.position.x == pytest.approx(WRONG_POSE[0])
+    assert node.estimate[1]['x'] == pytest.approx(WRONG_POSE[0])
 
 
 def test_a_pose_on_the_previous_map_is_not_returned_to(monkeypatch, room):
@@ -234,7 +254,7 @@ def test_map_without_saved_pose_is_searched(monkeypatch, room):
     _ready(node, room)
     result = node._execute(_handle())
     assert result.success and result.message.startswith('no saved pose for this map')
-    assert 'initialpose' not in node.amcl.calls and node.amcl.calls[0] == 'global'
+    assert node.amcl.calls[0] == 'global' and node.amcl.calls[-1] == 'initialpose'
 
 
 def test_global_search_skips_the_saved_pose(monkeypatch, room):
@@ -243,7 +263,7 @@ def test_global_search_skips_the_saved_pose(monkeypatch, room):
     _ready(node, room)
     _save(node, room, *TRUE_POSE)
     result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
-    assert result.success and node.amcl.calls[0] == 'global'
+    assert result.success and 'global' in node.amcl.calls
 
 
 @pytest.mark.parametrize('cell', [-1, 100])
@@ -258,7 +278,7 @@ def test_global_search_rejects_a_map_without_known_free_cells(monkeypatch, room,
     result = node._execute(handle)
     assert not result.success and 'no known free cells' in result.message
     handle.abort.assert_called_once()
-    assert node.amcl.calls == [] and not node.spin.goals
+    assert 'global' not in node.amcl.calls and not node.spin.goals
 
 
 def test_given_pose_remains_available_on_the_unknown_default_map(monkeypatch, room):
@@ -270,10 +290,10 @@ def test_given_pose_remains_available_on_the_unknown_default_map(monkeypatch, ro
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
     assert result.success and result.match_ratio == 0.
-    assert node.amcl.calls == ['initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
 
 
-def test_search_that_never_matches_fails_after_the_attempts(monkeypatch, room):
+def test_search_that_never_matches_stops_at_ten_seconds(monkeypatch, room):
     """An ambiguous or unmapped place is reported, not accepted."""
     node = _node(monkeypatch, room, found=WRONG_POSE)
     _ready(node, room)
@@ -281,8 +301,10 @@ def test_search_that_never_matches_fails_after_the_attempts(monkeypatch, room):
     result = node._execute(handle)
     handle.abort.assert_called_once()
     assert not result.success and 'global search matched only' in result.message
-    assert node.amcl.calls.count('global') == 2 and len(node.spin.goals) == 2
+    assert node.amcl.calls.count('global') == 1 and len(node.spin.goals) == 1
     assert result.match_ratio < 0.5
+    assert 10.0 <= node.clock.now - 100.0 < 10.1
+    assert node.particle_limits == (500, 3000)
 
 
 def test_search_continues_without_spin_when_it_is_unavailable(monkeypatch, room):
@@ -305,7 +327,7 @@ def test_given_pose_is_applied_and_its_match_is_reported(monkeypatch, room):
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
     assert result.success and result.match_ratio > 0.9
-    assert node.amcl.calls == ['initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
 
 
 @pytest.mark.parametrize('prepare, reason', [
@@ -457,3 +479,139 @@ def test_search_waits_for_a_spin_server_that_comes_up_late(monkeypatch, room):
     assert node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH)).success
     assert node.spin.waits == 21 and len(node.spin.goals) == 1
     node.get_logger().warning.assert_not_called()
+
+
+def test_restore_uses_original_limits_and_amcls_actual_covariance(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    node.particle_limits = (750, 3500)
+    _ready(node, room)
+    saved = _pose(*TRUE_POSE)
+    saved['covariance'][0], saved['covariance'][7], saved['covariance'][35] = 0.07, 0.12, 0.04
+    write_pose(node.path, map_identity(room.map_file), saved)
+    original = node.amcl.initial_pose
+
+    def keep_uncertainty(message):
+        original(message)
+        node.estimate[1]['covariance'] = list(message.pose.covariance)
+
+    node.publisher.publish.side_effect = keep_uncertainty
+    assert node._execute(_handle()).success
+    assert node.parameter_calls == [(2000, 8000), (750, 3500)]
+    assert node.particle_limits == (750, 3500)
+    assert list(node.publisher.publish.call_args.args[0].pose.covariance) == saved['covariance']
+    assert node.estimate[1]['x'] == pytest.approx(TRUE_POSE[0])
+
+
+def test_parameter_failure_does_not_leave_boosted_limits(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+    normal = node._particle_writer.call_async
+
+    def reject_boost(request):
+        if request.parameters[0].value.integer_value == 2000:
+            return _done(SimpleNamespace(result=SimpleNamespace(successful=False, reason='no')))
+        return normal(request)
+
+    node._particle_writer.call_async = reject_boost
+    result = node._execute(_handle())
+    assert not result.success and 'rejected particle limits' in result.message
+    assert node.particle_limits == (500, 3000)
+    assert node.estimate[1]['x'] == pytest.approx(TRUE_POSE[0])
+    assert not node.spin.goals
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_live_spin_stops_on_threshold_or_cancellation_before_parameter_restore(
+        monkeypatch, room, cancel):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    handle = _handle(Relocalize.Goal.GLOBAL_SEARCH)
+    result_future = Future()
+    child = SimpleNamespace(accepted=True, get_result_async=lambda: result_future)
+    events = []
+
+    def stop():
+        events.append('spin stopped')
+        result_future.set_result(SimpleNamespace())
+        return _done(SimpleNamespace())
+
+    child.cancel_goal_async = stop
+    node.spin.send_goal_async = lambda goal: _done(child)
+    original_sleep = relocalization_node.time.sleep
+
+    def advance(seconds):
+        original_sleep(seconds)
+        if not result_future.done():
+            if cancel:
+                handle.is_cancel_requested = True
+            else:
+                node.amcl.estimate(*TRUE_POSE)
+
+    monkeypatch.setattr(relocalization_node.time, 'sleep', advance)
+    original_set = node._particle_writer.call_async
+
+    def set_limits(request):
+        if request.parameters[0].value.integer_value == 500:
+            events.append('limits restored')
+            assert result_future.done()
+        return original_set(request)
+
+    node._particle_writer.call_async = set_limits
+    result = node._execute(handle)
+    assert events == ['spin stopped', 'limits restored']
+    assert node.particle_limits == (500, 3000)
+    assert node.clock.now - 100.0 < 1.0
+    if cancel:
+        handle.canceled.assert_called_once()
+    else:
+        assert result.success and result.match_ratio >= 0.95
+
+
+def test_missing_parameter_response_is_bounded(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    node._particle_reader.call_async = lambda _: Future()
+    result = node._execute(_handle())
+    assert not result.success and 'read particle limits' in result.message
+    assert not node.parameter_calls and not node.spin.goals
+    assert 10 <= node.clock.now - 100 < 10.1
+
+
+def test_late_spin_acceptance_is_canceled_and_settled_before_restore(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    handle = _handle(Relocalize.Goal.GLOBAL_SEARCH)
+    accepted, stopped = Future(), Future()
+    child = SimpleNamespace(accepted=True, get_result_async=lambda: stopped)
+    events = []
+
+    def stop():
+        events.append('spin stopped')
+        stopped.set_result(SimpleNamespace())
+        return _done(SimpleNamespace())
+
+    child.cancel_goal_async = stop
+    node.spin.send_goal_async = lambda _: accepted
+    normal_sleep = relocalization_node.time.sleep
+
+    def advance(seconds):
+        normal_sleep(seconds)
+        handle.is_cancel_requested = True
+        if node.clock.now >= 100.15 and not accepted.done():
+            accepted.set_result(child)
+
+    monkeypatch.setattr(relocalization_node.time, 'sleep', advance)
+    normal_set = node._particle_writer.call_async
+
+    def set_limits(request):
+        if request.parameters[0].value.integer_value == 500:
+            assert stopped.done()
+            events.append('limits restored')
+        return normal_set(request)
+
+    node._particle_writer.call_async = set_limits
+    node._execute(handle)
+    handle.canceled.assert_called_once()
+    assert events == ['spin stopped', 'limits restored']
+    assert node.particle_limits == (500, 3000)

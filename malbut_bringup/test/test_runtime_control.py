@@ -40,6 +40,7 @@ def test_shutdown_joins_callbacks_before_destroying_ros_entities(monkeypatch):
     (['speech', 'fall_confirmation'], set()),
     (['manual_drive'], {'motion'}),
     (['relocalize'], {'motion'}),
+    (['fall_approach'], {'motion', 'planning'}),
     (['follow_person'], {'motion', 'planning', 'person_perception'}),
     (['compute_path_to_pose'], {'planning'}),
     (['patrol'], {'motion', 'planning', 'patrol_inputs'}),
@@ -48,6 +49,13 @@ def test_shutdown_joins_callbacks_before_destroying_ros_entities(monkeypatch):
 ])
 def test_fixed_dependencies(capabilities, expected):
     assert required_groups(capabilities) == expected
+
+
+def test_fall_rules_do_not_keep_motion_awake_between_actual_missions():
+    assert required_groups(['fall_confirmation']) == set()
+    assert required_groups(['fall_approach', 'manual_drive']) == {'motion', 'planning'}
+    assert required_groups(['manual_drive']) == {'motion'}
+    assert required_groups([]) == set()
 
 
 def _runtime():

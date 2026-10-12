@@ -31,9 +31,9 @@ execution:
 
 | 우선순위 | 기능 | 자원 |
 |---|---|---|
-| `URGENT` | Bringup 복구 (`recovery`) | `BASE`, `SPEAKER` |
-| `HIGH` | 수동 조작 (`manual_drive`) | `BASE` |
-| `NORMAL` | 사람 추적, 목적지 이동, 자동 지도 만들기, 위치 보정, 낙상 확인 이동·질문 (`fall_approach`, `fall_confirmation`, 질문은 `BASE`·`SPEAKER`) | `BASE` |
+| `URGENT` | 수동 조작 (`manual_drive`), Bringup 복구 (`recovery`) | `BASE`, 복구는 `SPEAKER`도 |
+| `HIGH` | 낙상 확인 이동·질문 (`fall_approach`, `fall_confirmation`) | `BASE`, 질문은 `SPEAKER`도 |
+| `NORMAL` | 사람 추적, 목적지 이동, 자동 지도 만들기, 위치 보정 | `BASE` |
 | `LOW` | 순찰 (`patrol`) | `BASE` |
 
 순찰 중 추적·이동 요청은 순찰의 종료를 확인한 뒤 실행합니다. 추적·이동 중 순찰

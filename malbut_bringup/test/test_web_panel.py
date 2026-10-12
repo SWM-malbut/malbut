@@ -1049,7 +1049,7 @@ def test_zone_api_is_authenticated_and_never_dispatches_a_command(http_server, z
     submit.assert_not_called()
 
 
-# 2026-10-12 (목업 27번): during a fall check only 직접 움직이기 moves the robot.
+# Fall status is informational; the Manager alone arbitrates mission priority.
 FALL_CHECK = {'active': True, 'phase': 'wait', 'waiting_for': 'manual_drive', 'alerted': False,
               'target': None}
 
@@ -1059,23 +1059,25 @@ FALL_CHECK = {'active': True, 'phase': 'wait', 'waiting_for': 'manual_drive', 'a
     ('follow_person', {'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 0.6}),
     ('relocalize', {'method': 2}), ('autoslam', {'map_name': 'home2'}),
 ])
-def test_moves_are_refused_while_a_fall_check_runs(capability, arguments):
+def test_moves_reach_the_manager_while_a_fall_check_runs(capability, arguments):
     bridge, _ = _bridge(manager_ready=True)
+    bridge.data.map_snapshot = Mock(return_value={'active': True, 'frame_id': 'map'})
+    bridge._robot_pose = Mock(return_value={'x': 0, 'y': 0, 'yaw': 0})
     bridge.data.fall_check = (FALL_CHECK, time.monotonic())
     request_id = bridge.submit(_command(capability, arguments))
     bridge._drain()
     request = bridge.data.requests[request_id]
-    assert request['state'] == 'ERROR'
-    assert request['message'] == 'fall check is in progress; only manual driving is available'
-    bridge.clients['manager'].send_goal_async.assert_not_called()
+    assert request['state'] != 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_called_once()
 
 
-def test_a_fall_mission_in_the_manager_also_refuses_moves():
+def test_a_fall_mission_does_not_add_a_second_admission_gate():
     bridge, _ = _bridge(manager_ready=True)
     bridge.data.system = {'active_foreground_missions': [{'capability_id': 'fall_approach'}]}
     request_id = bridge.submit(_command('patrol', {'thoroughness': 1}))
     bridge._drain()
-    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    assert bridge.data.requests[request_id]['state'] != 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_called_once()
 
 
 def test_recovery_and_the_developer_screen_stay_open_during_a_fall_check():
@@ -1096,10 +1098,9 @@ def test_a_silent_fall_rules_status_unlocks_moves_after_three_seconds():
     assert data.fall_check_status(now=103.0) == FALL_CHECK
     assert data.fall_check_status(now=103.1) is None
     data.fall_check = (FALL_CHECK, time.monotonic())
-    assert data.fall_check_active() is True
     assert data.snapshot()['fall_check'] == FALL_CHECK
     data.fall_check = (dict(FALL_CHECK, active=False), time.monotonic())
-    assert data.fall_check_active() is False
+    assert data.snapshot()['fall_check']['active'] is False
 
 
 def test_closed_incidents_reach_the_fall_runtime():

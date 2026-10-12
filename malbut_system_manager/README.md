@@ -133,9 +133,9 @@ Topic을 구독하기 위해 미션으로 등록하지 않습니다.
 | `autoslam` | `/autoslam` | NORMAL | BASE |
 | `relocalize` | `/relocalize` | NORMAL | BASE |
 | `patrol` | `/patrol` | LOW | BASE |
-| `manual_drive` | `/assisted_teleop` | HIGH | BASE |
-| `fall_confirmation` | `/malbut/agent/confirm_situation` | NORMAL | BASE·SPEAKER |
-| `fall_approach` | `/malbut/falls/approach` | NORMAL | BASE |
+| `manual_drive` | `/assisted_teleop` | URGENT | BASE |
+| `fall_confirmation` | `/malbut/agent/confirm_situation` | HIGH | BASE·SPEAKER |
+| `fall_approach` | `/malbut/falls/approach` | HIGH | BASE |
 | `get_weather` | `/malbut/weather/get` | NORMAL | 없음 |
 | `set_weather_location` | `/malbut/weather/location/set` | NORMAL | 없음 |
 | `recovery` | `/malbut/bringup/recover` | URGENT | BASE·SPEAKER |
@@ -162,7 +162,7 @@ Topic을 구독하기 위해 미션으로 등록하지 않습니다.
 우선순위는 `LOW < NORMAL < HIGH < URGENT`입니다.
 즉 순찰 중 사람 추적은 순찰을 교체하지만, 추적 중 순찰은 거부됩니다.
 추적과 목적지 이동은 같은 등급이므로 새 요청으로 교체됩니다.
-수동 조작은 NORMAL·LOW 이동을 교체하고, 낙상 확인은 BASE·SPEAKER를 함께 확보합니다.
+수동 조작은 HIGH·NORMAL·LOW 이동을 교체하고, 낙상 확인은 BASE·SPEAKER를 함께 확보합니다.
 
 ### 교체는 “취소 요청”이 아니라 “종료 확인”까지
 

@@ -146,6 +146,25 @@ def test_registered_autoslam_can_start_with_the_default_or_saved_map(manifest_di
     assert scheduler.submit(mission).start == ['autoslam']
 
 
+def test_registered_manual_fall_and_navigation_use_priority_only(manifest_directory):
+    _, scheduler = _ready_scheduler()
+    drive = _registered_mission(manifest_directory, 'navigate_to_pose')
+    fall = _registered_mission(manifest_directory, 'fall_approach')
+    manual = _registered_mission(manifest_directory, 'manual_drive')
+    assert (manual.capability.priority, fall.capability.priority) == (
+        MissionPriority.URGENT, MissionPriority.HIGH)
+    assert scheduler.submit(drive).start == ['navigate_to_pose']
+    assert scheduler.submit(fall).cancel == ['navigate_to_pose']
+    assert scheduler.handle_terminal('navigate_to_pose', TerminalOutcome.CANCELED).start == [
+        'fall_approach']
+    assert scheduler.submit(manual).cancel == ['fall_approach']
+    assert scheduler.handle_terminal('fall_approach', TerminalOutcome.CANCELED).start == [
+        'manual_drive']
+    rejected = scheduler.submit(_registered_mission(manifest_directory, 'follow_person'))
+    assert 'higher priority URGENT' in _completion(rejected, 'follow_person').message
+    assert scheduler.handle_terminal('manual_drive', TerminalOutcome.CANCELED).start == []
+
+
 @pytest.mark.parametrize('active_id', ['follow_person', 'navigate_to_pose'])
 def test_registered_patrol_cannot_interrupt_user_motion(
     manifest_directory,

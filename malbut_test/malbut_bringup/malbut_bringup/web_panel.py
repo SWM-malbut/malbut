@@ -21,7 +21,7 @@ import uuid
 
 import yaml
 
-from .drive_mode import fall_check_active, FALL_CHECK_REFUSAL, PatrolFallStops
+from .drive_mode import PatrolFallStops
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zone_override import ZoneOverride
@@ -60,7 +60,6 @@ FALL_APPROACH_STATUS_TOPIC = '/malbut/falls/approach/status'
 # (the Agent stopped). Meanwhile only 직접 움직이기 moves the robot (목업 27번).
 FALL_CHECK_STATUS_TOPIC = '/malbut/falls/check/status'
 FALL_CHECK_STATUS_TIMEOUT_S = 3.0
-FALL_CHECK_BLOCKED = ('navigate_to_pose', 'patrol', 'follow_person', 'relocalize', 'autoslam')
 # 처리 완료 in the app, from each state upload's reply (cloud_sync): the fall
 # runtime stops checking those incidents.
 GUARDIAN_CLOSED_TOPIC = '/malbut/falls/incidents/closed'
@@ -419,11 +418,6 @@ class PanelData:
             if (time.monotonic() if now is None else now) - received > FALL_CHECK_STATUS_TIMEOUT_S:
                 return None
             return copy.deepcopy(status)
-
-    def fall_check_active(self):
-        """Tell whether a fall check runs or waits (Manager fall missions or the rules)."""
-        with self.lock:
-            return fall_check_active(self.system, self.fall_check_status())
 
     def snapshot(self):
         """Return a thread-safe status copy without exposing tokens or images."""
@@ -1086,11 +1080,6 @@ class RosBridge:
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
-        if (payload['command'] == 'start' and capability in FALL_CHECK_BLOCKED
-                and self.data.fall_check_active()):
-            # The app and this panel both start here; 직접 움직이기, recovery and the
-            # developer screen's debug_start stay open.
-            raise ValueError(FALL_CHECK_REFUSAL)
         if capability == 'navigate_to_pose':
             info = self.data.map_snapshot()
             if (not info.get('active') or info.get('frame_id') != 'map'

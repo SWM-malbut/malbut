@@ -12,8 +12,8 @@
 - 홈캠의 서버 설정 → VLM `ApplyFallSettings` → 실제 적용 결과를 홈캠으로 회신.
 - VLM 사건 이벤트의 실행 ID·근거 버전·중복을 검사하고 확인 대화 필요 여부를 처리.
 - 확인이 필요하면 `/malbut/mission/execute`에 `fall_confirmation`을 요청.
-- 관리자는 Manifest의 `NORMAL`, `[BASE, SPEAKER]`로 충돌 미션 종료를 확인한 뒤
-  기존 Agent의 `/malbut/agent/confirm_situation` Action을 실행. 직접 움직이기(HIGH) 중이면
+- 관리자는 Manifest의 `HIGH`, `[BASE, SPEAKER]`로 충돌 미션 종료를 확인한 뒤
+  기존 Agent의 `/malbut/agent/confirm_situation` Action을 실행. 직접 움직이기(URGENT) 중이면
   받지 않고, 낙상 규칙이 기다렸다가 다시 신청한다(아래 "직접 움직이기를 끊지 않기").
 - 낙상 규칙이 최종 결과를 검증하여 해당 VLM 사건에 돌려줌. 실패·취소는 사용자
   무응답이나 도움 요청으로 바꾸지 않음. 일반 활동 종결도 기존 규칙을 유지.
@@ -65,8 +65,8 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
   `standoff_route`. tracking 패키지에 의존하지 않아 Agent CI에 감지기 빌드가 끌려오지 않음) →
   FollowPath → Spin으로 바라봄. 이동 60초 상한. 시작 위치를 질문 ID별로 저장해 return에서 돌아간다.
   결과는 `/malbut/falls/approach/status`(래치 JSON)에도 낸다(웹 순찰 카드의 "낙상 확인으로 멈춤").
-- 능력 `fall_approach.yaml`: NORMAL, `[BASE]`, `map_requirement: SELECTED`. 지도가 없으면 Manager가
-  거부하고 낙상 규칙은 그 자리에서 묻는다. 위치 전환 중·직접 움직이기 중이면 기다렸다가 다시 신청한다.
+- 능력 `fall_approach.yaml`: HIGH, `[BASE]`. 지도·위치·경로를 실제로 사용할 수 없으면
+  하위 이동 기능이 실패하고 낙상 규칙은 그 자리에서 묻는다. 직접 움직이기 중이면 기다렸다가 다시 신청한다.
 - 멈춘 순찰·따라가기는 자동으로 다시 시작하지 않는다(기존 규칙). 웹 순찰 카드가 멈춘 이유와 결과를 보여 준다.
 - 결정(낙상 규칙 → 런타임): `approach_result`, `view_result`, `return_result` = `boot_id, incident_id,
   question_id, evidence_revision, outcome`.
@@ -97,8 +97,8 @@ person_check_completed
 
 ## 직접 움직이기를 끊지 않기 · 확인 못 하면 알리기 (2026-10-12)
 
-낙상 확인 이동·질문(`fall_approach`, `fall_confirmation`)은 NORMAL이다. 순찰(LOW)과 목적지 이동·따라가기·
-위치 찾기·지도 만들기(NORMAL, 나중에 온 쪽이 이김)는 끊고 확인하러 가지만, 직접 움직이기(`manual_drive`, HIGH)는
+낙상 확인 이동·질문(`fall_approach`, `fall_confirmation`)은 HIGH이다. 순찰(LOW)과 목적지 이동·따라가기·
+위치 찾기·지도 만들기(NORMAL)는 끊고 확인하러 가지만, 직접 움직이기(`manual_drive`, URGENT)는
 끊지 않는다. 기획 `fall-check-normal-alerts`(목업 27·28번).
 
 Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 상수이며, Manager 원문과 같은지
@@ -107,9 +107,9 @@ Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 
 | Manager 결과 | 처리 |
 |---|---|
 | 목표를 받지 않음, 5초 응답 없음, Manager 없음 | 기다림(바쁨): 1초 뒤 같은 단계를 다시 신청 |
-| `conflicting mission … higher priority HIGH` | 기다림(직접 움직이기) |
+| `conflicting mission … higher priority URGENT` | 기다림(실제 수동 조작 중이면 직접 움직이기, 아니면 바쁨) |
 | `mission preempted …`, `superseded before execution …` | 기다림(그때 직접 움직이기가 있으면 직접 움직이기, 아니면 바쁨) |
-| 켜지는 중·위치 전환 중·위치 오류·비상 정지·충전 중·복구 중, 질문의 `Downstream Action server rejected the goal` | 기다림(바쁨) |
+| 켜지는 중·비상 정지·충전 중·복구 중, 질문의 `Downstream Action server rejected the goal` | 기다림(바쁨) |
 | 질문: `Action server /malbut/agent/confirm_situation is unavailable` | 바로 실패 `speech_unavailable` → 긴급 알림 |
 | 질문: 그 밖의 실패, 610초 초과, 질문 중 Agent가 5초 넘게 사라짐 | 바로 실패 `question_error` → 긴급 알림 |
 | 이동: `select a saved map first …` | 갈 수 없음(`no_map`): 그 자리에서 물음 |
