@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WorkflowTests(unittest.TestCase):
-    def run_homecam(self, fail_build=False):
+    def run_homecam(self, fail_build=False, fall_job=False):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / 'fixture repo'
             scripts = root / '.github/scripts'
@@ -49,7 +49,8 @@ class WorkflowTests(unittest.TestCase):
             workspace.mkdir()
             env = dict(os.environ, HOMECAM_CI_WORKSPACE=str(workspace), CALL_LOG=str(log),
                        PATH=f'{binary}:{os.defpath}', FAIL_BUILD='1' if fail_build else '0')
-            result = subprocess.run(['bash', str(script)], env=env, capture_output=True,
+            result = subprocess.run(['bash', str(script), '--fall-job', str(fall_job).lower()],
+                                    env=env, capture_output=True,
                                     text=True, timeout=10)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             return result, calls
@@ -72,7 +73,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any(part.endswith('/malbut_interfaces') for part in builds[0]))
         self.assertIn('--return-code-on-test-failure', tests[0])
         self.assertEqual(calls[-1], ['colcon', 'test-result', '--verbose'])
-        self.assertTrue(any(call[:3] == ['python3', '-m', 'pytest'] for call in calls))
+        runner = next(call for call in calls if call[0] == 'python3')
+        self.assertTrue(runner[1].endswith('/.github/scripts/run-python-tests.py'))
+        self.assertEqual(runner[2:], ['homecam', '--fall-job', 'false'])
+
+    def test_homecam_passes_fall_delegation_to_the_shared_runner(self):
+        result, calls = self.run_homecam(fall_job=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runner = next(call for call in calls if call[0] == 'python3')
+        self.assertEqual(runner[2:], ['homecam', '--fall-job', 'true'])
 
     def test_homecam_build_failure_stops_before_tests(self):
         result, calls = self.run_homecam(fail_build=True)
@@ -95,7 +104,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_workflow_keeps_required_ros_tests_and_offline_dependencies(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertIn('test/test_fall_runtime.py', workflow)
+        runner = (ROOT / '.github/scripts/run-python-tests.py').read_text()
+        self.assertIn('test_fall_runtime.py', runner)
         self.assertIn('--from-paths src/malbut/homecam_agent', workflow)
         self.assertNotIn('--from-paths src \\', workflow)
         self.assertNotIn('./homecam_agent/scripts/setup_portable_sim.sh', workflow)
@@ -106,20 +116,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('Pillow', agent_requirements)
         self.assertIn('aiohttp', agent_requirements)
         offline = (ROOT / '.github/scripts/test-fall-python.sh').read_text()
-        self.assertIn('homecam_agent/test', offline)
-        self.assertIn('--ignore=homecam_agent/test/test_robot_launch.py', offline)
+        self.assertIn('run-python-tests.py" fall', offline)
         self.assertNotIn('--execute', offline)
 
     def test_agent_ros_step_runs_voice_queries_and_manager_boundary_contracts(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         body = workflow.split('- name: Run Agent ROS communication tests', 1)[1].split(
             '\n      - ', 1)[0]
-        self.assertIn('python3 -m pytest -q -rs', body)
-        for name in ('test_ros_speech_missions.py', 'test_homecam_query.py',
-                     'test_manager_boundary_ros.py'):
-            with self.subTest(name=name):
-                self.assertEqual(body.count('test/' + name), 1)
-                self.assertTrue((ROOT / 'malbut_agent_server/test' / name).is_file())
+        self.assertIn('python3 .github/scripts/run-python-tests.py agent-ros', body)
+        self.assertNotIn('test/test_', body)
+
+    def test_workflow_delegates_only_when_the_fall_job_is_scheduled(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for step in ('Run Agent tests without ROS', 'Build and test homecam'):
+            with self.subTest(step=step):
+                body = workflow.split('- name: ' + step, 1)[1].split('\n      - ', 1)[0]
+                self.assertIn("--fall-job '${{ needs.changes.outputs.fall_python }}'", body)
 
 
 if __name__ == '__main__':
