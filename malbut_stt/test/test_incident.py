@@ -369,6 +369,21 @@ def test_mutually_exclusive_modes_fail_before_creating_a_recorder(tmp_path):
                           'MALBUT_STT_DIAGNOSTIC_DIR': str(tmp_path)})
 
 
+def test_automatic_capture_defaults_to_logs_and_continuous_mode_can_replace_it():
+    assert from_environment({'MALBUT_STT_DIAGNOSTIC_DIR': '/unused'}) is None
+    assert from_environment({'MALBUT_STT_INCIDENT_CONFIG': '{"enabled":false}'}) is None
+    for enabled in ('false', 0, None):
+        with pytest.raises(ValueError, match='enabled'):
+            from_environment({'MALBUT_STT_INCIDENT_CONFIG': json.dumps({'enabled': enabled})})
+    recorder = from_environment({})
+    try:
+        assert recorder.save_audio is False
+        assert str(recorder.directory).endswith('/.ros/malbut/resource_logs/stt_incidents')
+        assert recorder.max_bytes == 512 * 1024 * 1024
+    finally:
+        recorder.close()
+
+
 @pytest.mark.parametrize('options', [
     {'pre_seconds': -1}, {'post_seconds': float('inf')}, {'max_buffer_bytes': 0},
     {'contains': ['']}, {'contains': [], 'exact': []}, {'max_entries': True},

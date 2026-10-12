@@ -1,4 +1,4 @@
-"""Bounded, opt-in flight recorder for suspicious final STT utterances.
+"""Bounded flight recorder for suspicious final STT utterances.
 
 Matching only requests an evidence snapshot; it never rejects or rewrites speech.
 The existing diagnostic model wrapper observes the actual lazy decoder results.
@@ -24,6 +24,7 @@ from malbut_stt.incident_trace import AGENT_EVENTS, ROSOUT_LOGGERS, transactions
 
 DEFAULT_CONTAINS = ('구독', '시청해주셔서', '자막제공')
 DEFAULT_EXACT = ('감사합니다', '고신을주셔서감사합니다', '다음편에참아')
+DEFAULT_DIRECTORY = '~/.ros/malbut/resource_logs/stt_incidents'
 
 
 def normalize(text):
@@ -409,13 +410,25 @@ class IncidentRecorder(TranscriptionDiagnostics):
 
 
 def from_environment(environ, *, metadata=None, on_saved=None, on_error=None):
-    """Return an incident recorder only for an explicitly selected test run."""
+    """Capture execution logs by default; explicit configuration can opt out.
+
+    Continuous diagnostics replaces the automatic recorder. Explicitly selecting
+    both recording modes remains an error, rather than silently ignoring one.
+    """
     raw = environ.get('MALBUT_STT_INCIDENT_CONFIG', '').strip()
-    if not raw:
+    continuous = environ.get('MALBUT_STT_DIAGNOSTIC_DIR', '').strip()
+    if not raw and continuous:
         return None
-    if environ.get('MALBUT_STT_DIAGNOSTIC_DIR', '').strip():
-        raise ValueError('select either continuous diagnostics or incident capture')
-    options = json.loads(raw)
+    options = json.loads(raw) if raw else {}
     if not isinstance(options, dict):
         raise ValueError('incident configuration must be a JSON object')
+    enabled = options.pop('enabled', True)
+    if type(enabled) is not bool:
+        raise ValueError('incident enabled must be a boolean')
+    if not enabled:
+        return None
+    if continuous:
+        raise ValueError('select either continuous diagnostics or incident capture')
+    options.setdefault('directory', DEFAULT_DIRECTORY)
+    options.setdefault('save_audio', False)
     return IncidentRecorder(**options, metadata=metadata, on_saved=on_saved, on_error=on_error)

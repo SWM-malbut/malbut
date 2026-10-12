@@ -16,18 +16,23 @@ def reject_nonfinite(value):
 
 
 class IncidentStore:
-    def __init__(self, root):
+    def __init__(self, root, *, legacy_roots=()):
         self.root = Path(root).expanduser().resolve()
+        self.roots = tuple(dict.fromkeys(
+            [self.root, *(Path(p).expanduser().resolve() for p in legacy_roots)]))
         self._cache = OrderedDict()
         self._lock = Lock()
 
     def directory(self, name):
         if not isinstance(name, str) or not re.fullmatch(r'incident-[A-Za-z0-9_-]+', name):
             raise ValueError('Invalid incident')
-        path = self.root / name
-        if path.is_symlink() or path.resolve().parent != self.root or not path.is_dir():
-            raise ValueError('Incident outside evidence root or missing')
-        return path
+        for root in self.roots:
+            path = root / name
+            if path.is_symlink() or path.resolve().parent != root:
+                raise ValueError('Incident outside evidence root')
+            if path.is_dir():
+                return path
+        raise ValueError('Incident missing')
 
     def file(self, name, filename):
         if filename not in DOWNLOADS:
@@ -50,8 +55,12 @@ class IncidentStore:
         return value
 
     def paths(self):
-        return sorted((p for p in self.root.glob('incident-*')
-                       if p.is_dir() and not p.is_symlink()), reverse=True)
+        paths = {}
+        for root in self.roots:
+            for path in root.glob('incident-*'):
+                if path.is_dir() and not path.is_symlink():
+                    paths.setdefault(path.name, path)
+        return [paths[name] for name in sorted(paths, reverse=True)]
 
     def summary(self, name):
         paths = [self.file(name, f) for f in ('incident.json', 'transactions.json')]
@@ -109,7 +118,8 @@ class IncidentStore:
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 unreadable += 1
         return dict(items=items, total=total, truncated=total > len(items),
-                    unreadable=unreadable, root=str(self.root))
+                    unreadable=unreadable, root=str(self.root),
+                    legacy_roots=[str(p) for p in self.roots[1:] if p.is_dir()])
 
     def detail(self, name):
         self.summary(name)  # Validate both documents before serving.
