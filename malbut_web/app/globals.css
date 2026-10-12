@@ -607,6 +607,18 @@ a:focus-visible {
   box-shadow: 0 0 0 3px rgb(237 113 56 / 0.2);
 }
 
+/* 목업 27번: 낙상 확인 중인 의심 장소. */
+.robot-map-fall-spot {
+  position: absolute;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--ui-danger, #b42318);
+  border-radius: 50%;
+  background: var(--ui-danger-soft, #fde8e6);
+  transform: translate(-50%, -50%);
+}
+
 .robot-map-marker {
   position: absolute;
   z-index: 2;
@@ -2689,6 +2701,7 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-legend span { display: inline-flex; align-items: center; gap: 7px; }
 .homecam-dashboard-shell .robot-map-legend i { width: 11px; height: 11px; border-radius: 50%; background: #3979d6; }
 .homecam-dashboard-shell .robot-map-legend i.is-goal { background: #e07a28; }
+.homecam-dashboard-shell .robot-map-legend i.is-fall-spot { border: 2px solid #b42318; background: #fde8e6; }
 .homecam-dashboard-shell .robot-map-legend i.is-route { width: 20px; height: 0; border-top: 2px dashed #e07a28; border-radius: 0; background: transparent; }
 .homecam-dashboard-shell .robot-map-legend i.is-room { border: 1px solid #0b3c45; border-radius: 3px; background: #dcebec; }
 .homecam-dashboard-shell .robot-map-legend i.is-zone { border: 1px solid #c0402f; border-radius: 3px; background: #f5cfc8; }
@@ -4113,6 +4126,16 @@ a:focus-visible {
   font-size: 13px; color: var(--ui-accent); background: var(--ui-accent-soft);
 }
 .fall-notice { margin: 12px 16px 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: var(--ui-accent-soft); color: var(--ui-text); }
+/* 목업 28번: 말벗이 직접 확인하지 못한 이유, 다시 가서 본 결과. */
+.fall-robot-check {
+  margin: 12px 16px 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface);
+}
+.fall-robot-check span { font-size: 12px; color: var(--ui-text-muted); }
+.fall-robot-check strong { font-size: 15px; color: var(--ui-text); }
+.fall-robot-check p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ui-text-muted); }
+.fall-robot-check.is-alert { border-color: transparent; background: var(--ui-danger-soft); }
+.fall-robot-check.is-alert span, .fall-robot-check.is-alert strong { color: var(--ui-danger); }
 .fall-scene-section { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-segments { display: flex; gap: 8px; flex-wrap: wrap; }
 .fall-segments button {
@@ -4657,6 +4680,9 @@ a:focus-visible {
 }
 .homecam-dashboard-shell.ui-app .ui-map-legend span { gap: 0.3125rem; }
 .homecam-dashboard-shell.ui-app .ui-map-legend i.is-robot { width: 8px; height: 8px; background: var(--ui-accent); }
+.homecam-dashboard-shell.ui-app .ui-map-legend i.is-fall-spot {
+  width: 8px; height: 8px; border: 2px solid var(--ui-danger); background: transparent; box-sizing: border-box;
+}
 .homecam-dashboard-shell.ui-app .ui-map-legend i.is-goal {
   width: 8px; height: 8px; border-radius: 2px; background: var(--ui-warn); transform: rotate(45deg);
 }
@@ -4695,6 +4721,8 @@ a:focus-visible {
 .ui-map-notice { padding: 0.75rem; border-radius: 10px; font-size: 0.875rem; line-height: 1.55; }
 .ui-map-notice.is-info { color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
 .ui-map-notice.is-warn { color: #7a4100; background: #fdf1e4; }
+.ui-map-notice.is-danger { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.ui-map-status-detail { font-size: 0.8125rem; line-height: 1.6; color: var(--ui-text-muted); }
 /* 실로봇 방 순찰 꼼꼼함 (목업 17번) */
 .ui-patrol-levels { display: flex; flex-direction: column; gap: 0.375rem; }
 .ui-patrol-levels > span { font-size: 0.8125rem; font-weight: 500; }

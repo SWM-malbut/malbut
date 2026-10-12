@@ -1,3 +1,4 @@
+import { listClosedFallIncidentsForRobot } from "../../../../../../db/fall-review";
 import { storeRobotState } from "../../../../../../db/robot-map";
 import { parseRobotState, readRobotJson } from "../../../../../robot-contract";
 import { noStore, unauthorized } from "../../../../../api-response";
@@ -12,10 +13,16 @@ export async function POST(request: Request) {
     const state = parseRobotState(await readRobotJson(request, "state"));
     if (!state) return noStore({ error: "로봇 상태 형식을 확인해 주세요." }, 400);
     await storeRobotState(device.deviceId, state);
-    return noStore({ accepted: true }, 202);
+    return noStore({ accepted: true, closedFallIncidents: await closedFallIncidents(device.deviceId) }, 202);
   } catch (error) {
     return robotUploadError(error);
   }
+}
+
+/** Incidents a member closed (처리 완료): the robot stops trying to check them. */
+async function closedFallIncidents(deviceId: string) {
+  // The state itself is saved; a fall-store failure must not fail the upload.
+  try { return await listClosedFallIncidentsForRobot(deviceId); } catch { return []; }
 }
 
 function robotUploadError(error: unknown) {

@@ -13,27 +13,39 @@ const kinds = [
   "approach_started", "approach_completed", "person_check_completed", "approach_returned",
   // Only part of the body seen: it moves to see the whole body, then checks the posture.
   "view_completed", "posture_check_completed",
+  // Could not ask yet (직접 움직이기 or another job), a minute of that, going back to the
+  // spot before asking, and comparing the person with the first scene (목업 28번).
+  "check_waiting", "check_not_confirmed", "revisit_started", "same_person_compared",
 ];
 // Allowed reasons per approach event; null is never a reason for these except a start
 // that interrupted nothing.
 const approachReasons: Record<string, Array<string | null>> = {
   approach_started: ["patrol_stopped", "follow_stopped", null],
   approach_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
-  person_check_completed: ["person", "not_a_person", "partial_body", "whole_body"],
+  // nobody_there: went back after waiting and found no one. Not a closure.
+  person_check_completed: ["person", "not_a_person", "partial_body", "whole_body", "nobody_there"],
   approach_returned: ["returned", "return_failed"],
   view_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
   // Off the floor only when the robot's measurement and Cloud agree; anything else asks.
   posture_check_completed: ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
     "posture_unconfirmed"],
+  check_waiting: ["manual_drive", "busy"],
+  check_not_confirmed: ["waited_manual_drive", "waited_busy"],
+  revisit_started: ["manual_drive", "busy"],
+  // Clothing only, for reference; it never changes what the robot does.
+  same_person_compared: ["same", "different", "unclear"],
 };
 // A robot-side closure after its own check. Never a normal-activity judgment.
 const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person",
-  "off_floor_verified"];
+  "off_floor_verified",
+  // A member pressed 처리 완료 and the robot stopped trying (state response closedFallIncidents).
+  "guardian_closed"];
 // The Cloud explanation each event may carry.
 const analysisPurposes: Record<string, string[]> = {
   analysis_completed: ["incident", "crosscheck"],
   person_check_completed: ["person_check"],
   posture_check_completed: ["posture_check"],
+  same_person_compared: ["same_person_check"],
 };
 
 export type FallEventInput = {
@@ -54,7 +66,7 @@ export type FallEventInput = {
   mergedIntoIncidentIds?: string[];
   analysis?: {
     requestId: string;
-    purpose: "incident" | "crosscheck" | "person_check" | "posture_check";
+    purpose: "incident" | "crosscheck" | "person_check" | "posture_check" | "same_person_check";
     assessment: string;
     explanation: string;
   };
