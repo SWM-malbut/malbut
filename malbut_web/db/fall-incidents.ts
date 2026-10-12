@@ -120,7 +120,7 @@ export type ClaimedFallPush = {
   level: "info" | "check" | "urgent";
   reason: "fall_observed_person_okay" | "person_no_response" | "check_required_not_confirmed_fall" |
     "help_requested" | "confirmation_help_required" | "robot_could_not_confirm" | "revisit_same_person_off_floor" |
-    "revisit_person_unclear_off_floor" | "revisit_nobody_there";
+    "revisit_person_unclear_off_floor" | "revisit_nobody_there" | "scene_answer_unconfirmed";
   occurredAt: string; leaseId: string; subscriptionResults: Record<string, number>;
 };
 
