@@ -22,6 +22,8 @@ class IncidentView {
       shadow_vad:'VAD 관찰 비교', shadow_vad_started:'VAD 관찰 시작',
       shadow_vad_gap:'VAD 관찰 누락', shadow_vad_error:'VAD 관찰 오류',
       shadow_vad_stopped:'VAD 관찰 종료',
+      silero_gate:'Whisper 전 Silero 검사', silero_gate_error:'Silero 검사 오류',
+      silero_gate_cancelled:'Silero 검사 취소',
     };
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(this.key)) || {}; } catch {}
@@ -189,6 +191,16 @@ class IncidentView {
       `누적 누락 ${event.dropped_chunks_total ?? 0}청크\n`+
       '차단 전 입력 비교 · Silero 32ms / WebRTC 20ms (프레임 범위는 원본 필드 참고)';
   }
+  gateSummary(event) {
+    if (event.event !== 'silero_gate') return '';
+    const peak = typeof event.peak_probability === 'number'
+      ? event.peak_probability.toFixed(4) : '—';
+    const speech = typeof event.longest_speech_s === 'number'
+      ? (event.longest_speech_s * 1000).toFixed(0)+'ms' : '—';
+    return (event.allowed ? 'Silero 통과 · Whisper 호출 허용' : '비음성 차단 · Whisper 호출 안 함')+
+      `\n검사한 구간 최고 음성 점수 ${peak} · 최장 연속 음성 ${speech}\n`+
+      '기준: 점수 0.5 이상 · 연속 80ms 이상 (통과하면 검사 조기 종료)';
+  }
   renderLogs(data) {
     this.$('traceLogs').replaceChildren();
     const first = data.rows.length ? data.offset+1 : 0;
@@ -199,7 +211,7 @@ class IncidentView {
       const event = item.record, row = document.createElement('tr');
       this.cell(row,'#'+item.line+'\n'+this.date(event.wall_ns));
       this.cell(row,event.logger || this.labels[event.event] || event.event);
-      const cell = this.cell(row,this.shadowSummary(event) ||
+      const cell = this.cell(row,this.gateSummary(event) || this.shadowSummary(event) ||
         event.message || event.text || event.reason || event.error || event.event);
       const details = document.createElement('details'), summary = document.createElement('summary');
       summary.textContent = '원본 필드 보기';

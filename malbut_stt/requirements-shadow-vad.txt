@@ -1,2 +1,2 @@
-# Optional observation worker; ordinary STT has no ONNX runtime dependency.
+# Optional Silero observation or admission gate; disabled STT needs no ONNX runtime.
 onnxruntime==1.23.2

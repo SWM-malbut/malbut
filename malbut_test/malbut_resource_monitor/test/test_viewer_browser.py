@@ -258,6 +258,23 @@ def test_shadow_vad_scores_show_observation_scope_and_missing_frames(viewer):
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
+def test_silero_gate_is_distinct_from_observation_and_explains_blocking(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    write_incident(store.path.parent / 'incidents', shadow_trace=[
+        dict(event='silero_gate', allowed=False, peak_probability=.0123, longest_speech_s=0.),
+        dict(event='silero_gate', allowed=True, peak_probability=.91, longest_speech_s=.096),
+    ])
+    page.get_by_role('link', name='STT 실행 추적', exact=True).click()
+    page.locator('#traceSource').select_option('vad')
+    logs = page.locator('#traceLogs')
+    playwright.expect(logs).to_contain_text('비음성 차단 · Whisper 호출 안 함')
+    playwright.expect(logs).to_contain_text('Silero 통과 · Whisper 호출 허용')
+    playwright.expect(logs).to_contain_text('최고 음성 점수 0.0123 · 최장 연속 음성 0ms')
+    playwright.expect(logs).to_contain_text('통과하면 검사 조기 종료')
+
+
 def test_native_decode_scores_and_missing_measurements_are_distinct(viewer):
     from test_viewer_incidents import write_incident
 
