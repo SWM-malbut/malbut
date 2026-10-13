@@ -1275,12 +1275,13 @@ private:
     session_failure_count_ = 0;
     next_session_attempt_ = std::chrono::steady_clock::time_point::min();
     if (outcome.connected_peer_preserved) {
-      // The backend lease was renewed, but the currently connected P2P
-      // transport deliberately keeps its original credential deadline. That
-      // deadline remains the bounded safety trigger for a later replacement.
+      // Advance only after the transport accepted the new credentials. RTP,
+      // PTT and the peer stay intact; failed requests keep the old deadline.
+      active_session_expires_at_ms_ = outcome.session.lease.credentials.expires_at_unix_ms;
       RCLCPP_INFO(
         get_logger(),
-        "Backend session renewed without replacing the connected P2P peer");
+        "P2P credentials renewed without reconnecting viewer (expires at %ld)",
+        static_cast<long>(active_session_expires_at_ms_));
       clear_session_credentials(&outcome.session.lease.credentials);
       return;
     }
@@ -1328,6 +1329,7 @@ private:
           preserve_connected_p2p_peer
         ]() {
           SessionOutcome outcome;
+          bool retain_existing_backend_session = false;
           outcome.operation = SessionOperation::kStartOrRefresh;
           outcome.request_generation = request_generation;
           try {
@@ -1389,12 +1391,13 @@ private:
                 desired_matches_request &&
                 transport->peer_connected();
                 if (keep_connected_peer) {
-                  // A viewer connected while the renewal request was in
-                  // flight. Keep that peer and retain the original transport
-                  // deadline; the main loop will refresh after disconnect or
-                  // at the bounded pre-expiry safety boundary.
-                  outcome.success = true;
-                  outcome.connected_peer_preserved = true;
+                  // Updating credentials must not destroy the peer. A failed
+                  // update can retry under its original bounded lease; do not
+                  // DELETE the backend session still serving that viewer.
+                  retain_existing_backend_session = true;
+                  outcome.success = transport->renew_credentials(
+                    outcome.session.lease, &outcome.error);
+                  outcome.connected_peer_preserved = outcome.success;
                 } else {
                   // The POST response can tighten microphone/camera privacy.
                   // Close both directions before replacing the transport;
@@ -1429,7 +1432,9 @@ private:
             std::string("device session worker exception: ") +
             exception.what();
           }
-          if (outcome.backend_session_open && !outcome.success) {
+          if (outcome.backend_session_open && !outcome.success &&
+            !retain_existing_backend_session)
+          {
             try {
               const SessionCloseResult close_result =
               client->close(outcome.session.session_id);
@@ -1942,7 +1947,6 @@ private:
 
     const std::string wanted_mode = "p2p";
     constexpr std::int64_t refresh_margin_ms = 300'000;
-    constexpr std::int64_t connected_peer_safety_margin_ms = 60'000;
     const bool no_session = active_stream_mode_ == "idle";
     const bool mode_changed =
       !no_session && active_stream_mode_ != wanted_mode;
@@ -1970,8 +1974,7 @@ private:
       peer_connected,
       now,
       active_session_expires_at_ms_,
-      refresh_margin_ms,
-      connected_peer_safety_margin_ms);
+      refresh_margin_ms);
     if (refresh_decision == SessionRefreshDecision::kFailClosed) {
       fail_closed_active_session("temporary device session lease expired");
       return;
@@ -1979,29 +1982,9 @@ private:
     if (refresh_decision == SessionRefreshDecision::kNotDue) {
       return;
     }
-    if (
-      refresh_decision ==
-      SessionRefreshDecision::kDeferForConnectedPeer)
-    {
-      RCLCPP_DEBUG_THROTTLE(
-        get_logger(), *get_clock(), 30000,
-        "Deferring P2P credential refresh while a viewer is connected");
-      return;
-    }
-    if (
-      refresh_decision ==
-      SessionRefreshDecision::kForceBeforeExpiry)
-    {
-      RCLCPP_WARN(
-        get_logger(),
-        "Refreshing connected P2P session inside the 60 s credential "
-        "safety window");
-      launch_session_start_or_refresh();
-      return;
-    }
+    // Also preserve a peer that connects during the HTTP renewal request.
     const bool preserve_peer_if_it_connects_during_request =
       session_mode == SessionMode::kPeerToPeer &&
-      !peer_connected &&
       active_session_expires_at_ms_ > now;
     launch_session_start_or_refresh(
       preserve_peer_if_it_connects_during_request);

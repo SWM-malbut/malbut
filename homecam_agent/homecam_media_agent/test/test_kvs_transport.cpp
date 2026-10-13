@@ -38,36 +38,35 @@ TEST(SessionLease, RefreshesBeforeShortLivedCredentialsExpire)
   EXPECT_FALSE(lease.valid_at(1'000'000));
 }
 
-TEST(SessionRefreshPolicy, PreservesConnectedP2pUntilSafetyBoundary)
+TEST(SessionRefreshPolicy, RenewsConnectedP2pCredentialsBeforeExpiryWithoutReconnect)
 {
   constexpr std::int64_t now = 1'000'000;
   constexpr std::int64_t routine_margin = 300'000;
-  constexpr std::int64_t safety_margin = 60'000;
 
   EXPECT_EQ(
     decide_session_refresh(
       SessionMode::kPeerToPeer, true, now, now + routine_margin + 1,
-      routine_margin, safety_margin),
+      routine_margin),
     SessionRefreshDecision::kNotDue);
   EXPECT_EQ(
     decide_session_refresh(
       SessionMode::kPeerToPeer, true, now, now + routine_margin,
-      routine_margin, safety_margin),
-    SessionRefreshDecision::kDeferForConnectedPeer);
+      routine_margin),
+    SessionRefreshDecision::kRefreshCredentials);
   EXPECT_EQ(
     decide_session_refresh(
       SessionMode::kPeerToPeer, false, now, now + routine_margin,
-      routine_margin, safety_margin),
+      routine_margin),
     SessionRefreshDecision::kRefreshNow);
   EXPECT_EQ(
     decide_session_refresh(
-      SessionMode::kPeerToPeer, true, now, now + safety_margin,
-      routine_margin, safety_margin),
-    SessionRefreshDecision::kForceBeforeExpiry);
+      SessionMode::kPeerToPeer, true, now, now + 60'000,
+      routine_margin),
+    SessionRefreshDecision::kRefreshCredentials);
   EXPECT_EQ(
     decide_session_refresh(
       SessionMode::kPeerToPeer, true, now, now,
-      routine_margin, safety_margin),
+      routine_margin),
     SessionRefreshDecision::kFailClosed);
 }
 
@@ -81,8 +80,39 @@ TEST(SessionRefreshPolicy, FailsClosedWhenLeaseReachesExpiry)
   EXPECT_TRUE(session_lease_expired(now, now - 1));
   EXPECT_EQ(
     decide_session_refresh(
-      SessionMode::kStorage, false, now, now, 300'000, 60'000),
+      SessionMode::kStorage, false, now, now, 300'000),
     SessionRefreshDecision::kFailClosed);
+}
+
+TEST(SessionRefreshPolicy, RenewalCannotChangeScopeReviveExpiredLeaseOrShortenDeadline)
+{
+  SessionLease current;
+  current.channel_arn = "arn:aws:kinesisvideo:ap-northeast-2:123456789012:channel/device/1";
+  current.region = "ap-northeast-2";
+  current.credentials = {"test-id", "test-secret", "test-token", 900'000};
+  auto renewed = current;
+  renewed.credentials.expires_at_unix_ms = 1'500'000;
+  const auto allowed = [&](const SessionLease & candidate, std::int64_t now = 600'000) {
+      return homecam_media_agent::can_renew_session_credentials(current, candidate, now);
+    };
+  EXPECT_TRUE(allowed(renewed));
+  EXPECT_FALSE(allowed(current));
+  EXPECT_FALSE(allowed(renewed, 900'000));
+  auto wrong = renewed;
+  wrong.channel_arn += "-other-device";
+  EXPECT_FALSE(allowed(wrong));
+  wrong = renewed;
+  wrong.region = "us-east-1";
+  EXPECT_FALSE(allowed(wrong));
+  wrong = renewed;
+  wrong.mode = SessionMode::kStorage;
+  EXPECT_FALSE(allowed(wrong));
+  wrong = renewed;
+  wrong.credentials.session_token.clear();
+  EXPECT_FALSE(allowed(wrong));
+  wrong = renewed;
+  wrong.credentials.expires_at_unix_ms = 800'000;
+  EXPECT_FALSE(allowed(wrong));
 }
 
 TEST(SessionRefreshPolicy, StorageRenewalIsNeverDeferredForP2p)
@@ -90,7 +120,7 @@ TEST(SessionRefreshPolicy, StorageRenewalIsNeverDeferredForP2p)
   constexpr std::int64_t now = 1'000'000;
   EXPECT_EQ(
     decide_session_refresh(
-      SessionMode::kStorage, true, now, now + 300'000, 300'000, 60'000),
+      SessionMode::kStorage, true, now, now + 300'000, 300'000),
     SessionRefreshDecision::kRefreshNow);
 }
 
@@ -114,6 +144,9 @@ TEST(KvsTransport, StorageSessionLetsSdkDiscoverMediaStorageConfiguration)
 TEST(KvsTransport, FailsClosedWithoutAReviewedAdapter)
 {
   auto transport = make_kvs_transport();
+  std::string renewal_error;
+  EXPECT_FALSE(transport->renew_credentials(SessionLease{}, &renewal_error));
+  EXPECT_FALSE(renewal_error.empty());
   EXPECT_FALSE(transport->peer_connected());
   EXPECT_FALSE(transport->media_flowing());
   EXPECT_FALSE(transport->restart_required());
