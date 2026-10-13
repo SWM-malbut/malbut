@@ -18,6 +18,7 @@ def runtime(monkeypatch, tmp_path):
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
     monkeypatch.delenv('MALBUT_STT_SHADOW_VAD_MODEL', raising=False)
     monkeypatch.delenv('MALBUT_STT_SILERO_GATE_MODEL', raising=False)
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'cache'))
     monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
                         str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
@@ -383,15 +384,22 @@ def test_explicit_missing_silero_gate_fails_before_whisper_or_microphone(runtime
     monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', '/missing-silero-gate.onnx')
     assert main([]) == 1
     assert 'local_stt' not in runtime.calls and 'recorder' not in runtime.calls
-    assert ('error', 'STT stopped during initializing_silero_gate: FileNotFoundError') in runtime.logs
+    assert ('error', 'STT stopped during initializing_silero_gate: FileNotFoundError') in (
+        runtime.logs)
 
 
 @pytest.mark.parametrize('shared', [False, True])
+@pytest.mark.parametrize('activation', ['explicit', 'installed'])
 def test_silero_gate_wraps_only_command_outside_diagnostics(
-        runtime, monkeypatch, tmp_path, shared):
+        runtime, monkeypatch, tmp_path, shared, activation):
     from malbut_stt.silero_gate import _GatedModel
 
-    monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', 'local.onnx')
+    if activation == 'explicit':
+        monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', 'local.onnx')
+    else:
+        model = tmp_path / 'cache/malbut_speech/models/silero-v6.2.3.onnx'
+        model.parent.mkdir(parents=True)
+        model.touch()
     monkeypatch.setattr('malbut_stt.silero_gate.load_pinned_model', lambda _: object())
     if not shared:
         path = tmp_path / 'separate-stt-model'

@@ -1,6 +1,6 @@
 # Silero admission, VAD observation and offline comparison
 
-## Block non-speech before Whisper (optional)
+## Block non-speech before Whisper with an installed model
 
 The admission gate checks the actual PCM window immediately before command
 Whisper model calls: incremental previews, endpoint checks, final decoding and
@@ -12,7 +12,13 @@ consecutive positive input. At the 32ms frame grid this normally needs three
 positive frames (96ms). Padding never counts toward the required duration.
 
 Install `requirements-shadow-vad.txt` into the STT Python environment and
-provision the verified ONNX model. Add this before the existing launch command:
+provision the verified ONNX model at
+`~/.cache/malbut_speech/models/silero-v6.2.3.onnx` (or below `XDG_CACHE_HOME`
+when set). The existing launch command then enables the gate automatically;
+no extra `source` or `export` is needed. Startup reports
+`stt_silero_gate_enabled:threshold=0.5,min_speech_ms=80`.
+
+To override the installed model's location, add this before the launch command:
 
 ```bash
 export MALBUT_STT_SILERO_GATE_MODEL='/absolute/path/to/silero-v6.2.3.onnx'
@@ -21,9 +27,12 @@ exec ros2 launch malbut_bringup cloud.launch.py
 
 This is separate from `MALBUT_STT_SHADOW_VAD_MODEL`: that variable still enables
 observation only. The gate works without the observer or incident recorder.
-Enabling both loads two Silero sessions. Unset `MALBUT_STT_SILERO_GATE_MODEL`
-to restore the existing behavior on the next run. With neither variable set,
-ONNX Runtime and model weights are not loaded.
+Enabling both loads two Silero sessions. To disable admission on the next run,
+use `export MALBUT_STT_SILERO_GATE_MODEL=''`. Unsetting the variable restores
+automatic lookup of the installed model. Without an installed model or an
+explicit path, admission stays disabled and never downloads weights. An
+installed model requires the runtime dependency; loading failures stop startup
+instead of silently bypassing admission.
 
 The gate does not remove individual frames, join separated speech, change
 WebRTC capture/endpoint rules, extend the chime tail, or filter particular words.

@@ -171,9 +171,49 @@ def test_gate_outside_diagnostics_has_no_false_decode_record(gate, tmp_path):
     assert 'silero_gate' in (tmp_path / 'events.jsonl').read_text()
 
 
-def test_environment_disabled_does_not_load_model(monkeypatch):
+def test_uninstalled_model_does_not_load_runtime(monkeypatch, tmp_path):
     monkeypatch.setattr('malbut_stt.silero_gate.SileroGate', lambda _: pytest.fail('loaded'))
-    assert from_environment({}) is None
+    assert from_environment({'XDG_CACHE_HOME': str(tmp_path)}) is None
+
+
+@pytest.mark.parametrize('custom_cache', [False, True])
+def test_installed_model_loads_without_shell_configuration(monkeypatch, tmp_path, custom_cache):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    cache = tmp_path / ('custom cache' if custom_cache else '.cache')
+    model = cache / 'malbut_speech/models/silero-v6.2.3.onnx'
+    model.parent.mkdir(parents=True)
+    model.touch()
+    loaded = []
+    sentinel = object()
+    monkeypatch.setattr('malbut_stt.silero_gate.SileroGate',
+                        lambda path: loaded.append(path) or sentinel)
+    environ = {'XDG_CACHE_HOME': str(cache)} if custom_cache else {}
+    assert from_environment(environ) is sentinel
+    assert loaded == [str(model)]
+
+
+@pytest.mark.parametrize('override', ['', '  ', '/explicit/silero.onnx'])
+def test_explicit_override_takes_precedence_over_installed_model(
+        monkeypatch, tmp_path, override):
+    model = tmp_path / 'malbut_speech/models/silero-v6.2.3.onnx'
+    model.parent.mkdir(parents=True)
+    model.touch()
+    loaded = []
+    sentinel = object()
+    monkeypatch.setattr('malbut_stt.silero_gate.SileroGate',
+                        lambda path: loaded.append(path) or sentinel)
+    result = from_environment({
+        'XDG_CACHE_HOME': str(tmp_path), 'MALBUT_STT_SILERO_GATE_MODEL': override})
+    assert result is (sentinel if override.strip() else None)
+    assert loaded == ([override] if override.strip() else [])
+
+
+def test_corrupt_installed_model_does_not_silently_disable_gate(tmp_path):
+    model = tmp_path / 'malbut_speech/models/silero-v6.2.3.onnx'
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b'corrupt model')
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        from_environment({'XDG_CACHE_HOME': str(tmp_path)})
 
 
 @pytest.fixture

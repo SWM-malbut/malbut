@@ -199,8 +199,12 @@ whisper.cpp ABI 4 연결부는 `decode_result.native_decode.windows`에 실제 �
 `unavailable/bridge_abi_3`로 표시합니다. 새 관측 기능에는 [네이티브 재빌드](native/README.md)가
 필요합니다. 기존 사건의 미수집 점수는 복원하지 않습니다.
 
-선택적으로 `MALBUT_STT_SILERO_GATE_MODEL=/absolute/path/to/silero-v6.2.3.onnx`를
-설정하면 실제 Whisper 호출 직전에 Silero 검사를 수행합니다. 점수 0.5 이상의 음성이
+Silero 모델을 `~/.cache/malbut_speech/models/silero-v6.2.3.onnx`에 설치하면
+기존 실행 명령만으로 실제 Whisper 호출 직전에 Silero 검사를 수행합니다.
+`XDG_CACHE_HOME`이 있으면 그 아래의 `malbut_speech/models`를 사용합니다.
+별도 경로는 `MALBUT_STT_SILERO_GATE_MODEL`로 지정하며, 빈 문자열로 설정하면
+검사를 끕니다. 환경변수를 지우면 설치된 모델을 자동으로 찾는 기본값으로 돌아갑니다.
+점수 0.5 이상의 음성이
 연속 80ms 미만이면 일반 발화의 중간·최종 인식 입력을 Whisper에 보내지 않습니다.
 호출어 인식은 Silero 차단에서 제외하고 기존 WebRTC·Whisper 경로를 유지합니다.
 통과한 오디오는 원본 그대로 전달하며, `MALBUT_STT_SHADOW_VAD_MODEL` 관찰 모드와는
