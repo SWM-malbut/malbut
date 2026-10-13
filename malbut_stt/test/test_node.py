@@ -17,6 +17,7 @@ def runtime(monkeypatch, tmp_path):
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
     monkeypatch.delenv('MALBUT_STT_SHADOW_VAD_MODEL', raising=False)
+    monkeypatch.delenv('MALBUT_STT_SILERO_GATE_MODEL', raising=False)
     monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
                         str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
@@ -376,6 +377,38 @@ def test_shadow_model_failure_keeps_stt_publication_and_cleanup(runtime, monkeyp
                if topic == '/malbut/speech/transcript')
     assert ('warning', 'stt_shadow_vad_stopped:FileNotFoundError') in runtime.logs
     assert not runtime.pipeline_args['diagnostics'].diagnostics._worker.is_alive()
+
+
+def test_explicit_missing_silero_gate_fails_before_whisper_or_microphone(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', '/missing-silero-gate.onnx')
+    assert main([]) == 1
+    assert 'local_stt' not in runtime.calls and 'recorder' not in runtime.calls
+    assert ('error', 'STT stopped during initializing_silero_gate: FileNotFoundError') in runtime.logs
+
+
+@pytest.mark.parametrize('shared', [False, True])
+def test_silero_gate_wraps_both_wake_and_command_outside_diagnostics(
+        runtime, monkeypatch, tmp_path, shared):
+    from malbut_stt.silero_gate import _GatedModel
+
+    monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', 'local.onnx')
+    monkeypatch.setattr('malbut_stt.silero_gate.load_pinned_model', lambda _: object())
+    if not shared:
+        path = tmp_path / 'separate-stt-model'
+        path.mkdir()
+        runtime.parameters['stt_model_path'] = str(path)
+
+    def spin():
+        command = runtime.pipeline_args['transcriber'].model
+        wake = runtime.pipeline_args['wake'].model
+        assert isinstance(command, _GatedModel) and isinstance(wake, _GatedModel)
+        assert (wake is command) is shared
+        assert command._gate is wake._gate
+        assert command._model.__class__.__name__ == '_DiagnosticModel'
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main([]) == 0
 
 
 def test_incident_mode_observes_final_publish_and_correlated_tts(runtime, monkeypatch, tmp_path):

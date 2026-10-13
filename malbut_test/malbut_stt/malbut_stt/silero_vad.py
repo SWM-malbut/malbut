@@ -1,6 +1,23 @@
 """Optional CPU runner for Silero v6 raw frame probabilities (no segment gate)."""
 
 import math
+import hashlib
+from pathlib import Path
+
+
+MODEL_SHA256 = '1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3'
+
+
+def load_pinned_model(path):
+    """Load only the locally provisioned model used by observation/evaluation."""
+    path = Path(path).expanduser()
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    if digest.hexdigest() != MODEL_SHA256:
+        raise ValueError('Silero model checksum mismatch')
+    return SileroVad(path)
 
 
 class SileroVad:

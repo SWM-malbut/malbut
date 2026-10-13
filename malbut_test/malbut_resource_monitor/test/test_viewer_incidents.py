@@ -84,6 +84,16 @@ def test_shadow_frames_and_failures_are_available_in_vad_filter(viewer):
         r['event'] for r in records]
 
 
+def test_silero_admission_and_failures_are_available_in_vad_filter(viewer):
+    root, get, _ = viewer
+    records = [dict(event=name, allowed=False)
+               for name in ('silero_gate', 'silero_gate_error', 'silero_gate_cancelled')]
+    evidence = write_incident(root, shadow_trace=records)
+    with get('/api/incident/events', incident=evidence.name, source='vad') as response:
+        data = json.load(response)
+    assert [r['record']['event'] for r in data['rows']] == [r['event'] for r in records]
+
+
 def test_evidence_is_available_without_resource_sessions_and_preserves_raw_bytes(viewer):
     root, get, _ = viewer
     path = write_incident(root)

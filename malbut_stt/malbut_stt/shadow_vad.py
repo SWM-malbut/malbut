@@ -12,10 +12,9 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 
-from malbut_stt.silero_vad import SileroVad
+from malbut_stt.silero_vad import MODEL_SHA256, load_pinned_model
 
 
-MODEL_SHA256 = '1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3'
 ENVIRONMENT_KEY = 'MALBUT_STT_SHADOW_VAD_MODEL'
 
 
@@ -45,15 +44,10 @@ class ShadowDiagnostics:
 
     def _load_detectors(self):
         # Pin the protocol and weights; do not download anything at node startup.
-        digest = hashlib.sha256()
-        with self.model_path.open('rb') as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b''):
-                digest.update(block)
-        if digest.hexdigest() != MODEL_SHA256:
-            raise ValueError('shadow Silero model checksum mismatch')
+        silero = load_pinned_model(self.model_path)
         import webrtcvad
 
-        return SileroVad(self.model_path), lambda: webrtcvad.Vad(self.vad_mode)
+        return silero, lambda: webrtcvad.Vad(self.vad_mode)
 
     def _emit(self, name, **fields):
         if not self._stop.is_set():

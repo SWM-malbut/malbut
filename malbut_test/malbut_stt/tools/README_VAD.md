@@ -1,4 +1,57 @@
-# VAD observation, offline comparison and native decision audit
+# Silero admission, VAD observation and offline comparison
+
+## Block non-speech before Whisper (optional)
+
+The admission gate checks the actual PCM window immediately before every
+Whisper model call: wake recognition, incremental previews, endpoint checks,
+final decoding and incremental recovery. It uses the pinned Silero model below,
+CPU execution with one inference thread, probability >=0.5 and at least 80ms of
+consecutive positive input. At the 32ms frame grid this normally needs three
+positive frames (96ms). Padding never counts toward the required duration.
+
+Install `requirements-shadow-vad.txt` into the STT Python environment and
+provision the verified ONNX model. Add this before the existing launch command:
+
+```bash
+export MALBUT_STT_SILERO_GATE_MODEL='/absolute/path/to/silero-v6.2.3.onnx'
+exec ros2 launch malbut_bringup cloud.launch.py
+```
+
+This is separate from `MALBUT_STT_SHADOW_VAD_MODEL`: that variable still enables
+observation only. The gate works without the observer or incident recorder.
+Enabling both loads two Silero sessions. Unset `MALBUT_STT_SILERO_GATE_MODEL`
+to restore the existing behavior on the next run. With neither variable set,
+ONNX Runtime and model weights are not loaded.
+
+The gate does not remove individual frames, join separated speech, change
+WebRTC capture/endpoint rules, extend the chime tail, or filter particular words.
+Accepted input is sent to Whisper unchanged. Each model input resets Silero's
+state, so earlier speech cannot admit a later silent cropped input. Once the
+consecutive-speech condition is met, analysis stops; the logged peak covers
+only `scanned_samples`, not necessarily the whole input. Whisper can still
+hallucinate on accepted inputs, including noise falsely accepted as speech.
+
+An explicit missing/wrong model or missing runtime fails STT startup before
+Whisper/microphone initialization. Runtime gate failures and cancellation do
+not bypass the gate. Rejection raises `SileroNonSpeech` through the existing
+empty/failed-result path: no final transcript or preview is published, normal
+failed turns end with the existing failure cue, and Agent-owned sessions retain
+their existing failed-input policy. Preview/final retries are each gated again.
+
+`silero_gate` logs include the decision, threshold, examined duration, longest
+speech run, peak score and exact PCM hash. `silero_gate_error` and
+`silero_gate_cancelled` explain unavailable/cancelled decisions. Rejected inputs
+have no Whisper `decode_input` or `decode_result`. Saved incident windows show
+these under **STT 실행 추적 → VAD**, distinguished from observation-only rows.
+Incident text triggers are unchanged: a blocked input creates no text to trigger
+an incident. These events are saved only when another configured trigger retains
+their window; no bundle does not mean no rejection. The console reports final
+rejections as `transcription_failed:SileroNonSpeech`.
+
+The gate is an experiment, not a verified replacement for real microphone
+testing. Quiet speech and short `네`/`아니요` may be rejected. Keep the raw input
+and labelled expected text when evaluating false rejections, and do not interpret
+mocked short-reply tests as measured human speech recall.
 
 ## Observe the existing microphone without changing STT
 

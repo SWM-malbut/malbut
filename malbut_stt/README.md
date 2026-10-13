@@ -199,6 +199,13 @@ whisper.cpp ABI 4 연결부는 `decode_result.native_decode.windows`에 실제 �
 `unavailable/bridge_abi_3`로 표시합니다. 새 관측 기능에는 [네이티브 재빌드](native/README.md)가
 필요합니다. 기존 사건의 미수집 점수는 복원하지 않습니다.
 
+선택적으로 `MALBUT_STT_SILERO_GATE_MODEL=/absolute/path/to/silero-v6.2.3.onnx`를
+설정하면 실제 Whisper 호출 직전에 Silero 검사를 수행합니다. 점수 0.5 이상의 음성이
+연속 80ms 미만이면 호출어·중간·최종 인식 모두 Whisper에 보내지 않습니다.
+통과한 오디오는 원본 그대로 전달하며, `MALBUT_STT_SHADOW_VAD_MODEL` 관찰 모드와는
+별개입니다. 짧거나 작은 목소리가 거절될 수 있으므로 실제 마이크 시험이 필요합니다.
+설치·활성화·로그·오류 동작은 [Silero 적용 안내](tools/README_VAD.md)를 확인하세요.
+
 저장한 점수의 무음 제외 조건을 일괄 확인하거나 동일 WAV에 WebRTC/Silero VAD를
 비교하려면 [오프라인 비교 도구](tools/README_VAD.md)를 사용합니다. 원음 없는 사건은
 판정 로그만 분석할 수 있습니다. VAD 비교는 별도 환경에서 실행하며 운영 설정을 바꾸지 않습니다.
