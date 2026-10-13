@@ -1,4 +1,5 @@
-"""Verify idle retry policy using unchanged callback bodies from both copies.
+"""
+Verify idle retry policy using unchanged callback bodies from both copies.
 
 These offline tests replace ROS transports, not lifecycle/reconciliation logic.
 The ROS-backed RuntimeControl tests cover generated messages and callbacks.

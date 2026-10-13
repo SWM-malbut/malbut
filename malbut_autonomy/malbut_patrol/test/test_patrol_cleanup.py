@@ -1,4 +1,5 @@
-"""Exercise real patrol methods in both source layouts without a ROS executor.
+"""
+Exercise real patrol methods in both source layouts without a ROS executor.
 
 ROS and sensor boundaries are stubbed. Geometry uses the actual CoveragePlanner,
 and the execution/cleanup callback bodies are compiled unchanged from each copy.
