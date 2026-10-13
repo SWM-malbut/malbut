@@ -199,6 +199,15 @@ whisper.cpp ABI 4 연결부는 `decode_result.native_decode.windows`에 실제 �
 `unavailable/bridge_abi_3`로 표시합니다. 새 관측 기능에는 [네이티브 재빌드](native/README.md)가
 필요합니다. 기존 사건의 미수집 점수는 복원하지 않습니다.
 
+저장한 점수의 무음 제외 조건을 일괄 확인하거나 동일 WAV에 WebRTC/Silero VAD를
+비교하려면 [오프라인 비교 도구](tools/README_VAD.md)를 사용합니다. 원음 없는 사건은
+판정 로그만 분석할 수 있습니다. VAD 비교는 별도 환경에서 실행하며 운영 설정을 바꾸지 않습니다.
+
+같은 안내의 **Observe the existing microphone** 절은 실제 마이크 입력의 관찰 모드입니다.
+`MALBUT_STT_SHADOW_VAD_MODEL`로 켜면 Silero와 관찰용 WebRTC 점수를 기존 사건 로그에
+추가하고 뷰어의 **STT 실행 추적 → VAD**에 표시합니다. 실제 인식·입력 차단 판정은
+기존 WebRTC가 계속 담당하며, 관찰 모드 자체는 WAV 저장을 켜지 않습니다.
+
 평소에는 RAM에만 보관하고 파일 쓰기는 전용 스레드에서 수행합니다. 기본 버퍼는
 페이로드 32MiB/12,000개 항목으로 제한하며, 저장 중/저장 대기 스냅샷이 각각 한 개씩
 추가 메모리를 보유할 수 있습니다. Python 객체와 직렬화 작업 메모리는 별도입니다.

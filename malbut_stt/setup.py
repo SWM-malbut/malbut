@@ -13,6 +13,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, [
             'package.xml', 'README.md', 'requirements.txt', 'requirements-whisper-cpp.txt',
+            'requirements-shadow-vad.txt',
         ]),
         ('share/' + package_name + '/config', ['config/jetson.yaml']),
         ('share/' + package_name + '/native', [
