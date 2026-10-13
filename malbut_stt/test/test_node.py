@@ -16,6 +16,7 @@ def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
+    monkeypatch.delenv('MALBUT_STT_SHADOW_VAD_MODEL', raising=False)
     monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
                         str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
@@ -354,6 +355,27 @@ def test_diagnostics_opt_in_wraps_models_without_loading_another(
     assert args['diagnostics'].directory == directory
     assert (args['wake'].model is args['transcriber'].model) is shared
     assert not list(directory.glob('*.wav')), 'no audio is saved without an inference'
+
+
+def test_shadow_model_failure_keeps_stt_publication_and_cleanup(runtime, monkeypatch, tmp_path):
+    from malbut_stt.shadow_vad import ShadowDiagnostics
+
+    monkeypatch.setenv('MALBUT_STT_SHADOW_VAD_MODEL', str(tmp_path / 'missing.onnx'))
+
+    def spin():
+        shadow = runtime.pipeline_args['diagnostics']
+        assert isinstance(shadow, ShadowDiagnostics)
+        shadow._thread.join(timeout=3)
+        assert not shadow._thread.is_alive()
+        runtime.pipeline_args['publish_transcript']('normal', '네')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main([]) == 0
+    assert any(msg.text == '네' for topic, msg in runtime.published
+               if topic == '/malbut/speech/transcript')
+    assert ('warning', 'stt_shadow_vad_stopped:FileNotFoundError') in runtime.logs
+    assert not runtime.pipeline_args['diagnostics'].diagnostics._worker.is_alive()
 
 
 def test_incident_mode_observes_final_publish_and_correlated_tts(runtime, monkeypatch, tmp_path):

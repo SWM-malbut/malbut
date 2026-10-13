@@ -19,6 +19,9 @@ class IncidentView {
       program_log:'프로그램 로그', speech_transcript:'Agent 수신 처리',
       dialogue_response_published:'Agent 답변 발행', tts_request:'TTS 요청', tts_playback:'TTS 상태',
       wake_detected:'호출어 감지', vad_frame:'VAD 판정', microphone_chunk:'마이크 프레임',
+      shadow_vad:'VAD 관찰 비교', shadow_vad_started:'VAD 관찰 시작',
+      shadow_vad_gap:'VAD 관찰 누락', shadow_vad_error:'VAD 관찰 오류',
+      shadow_vad_stopped:'VAD 관찰 종료',
     };
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(this.key)) || {}; } catch {}
@@ -172,6 +175,20 @@ class IncidentView {
       this.cell(row,'events.jsonl #'+stage.event_line); this.$('traceStages').append(row);
     }
   }
+  shadowSummary(event) {
+    if (event.event !== 'shadow_vad') return '';
+    const frames = Array.isArray(event.webrtc_frames) ? event.webrtc_frames : [];
+    const probability = typeof event.silero_probability === 'number'
+      ? event.silero_probability.toFixed(4) : '—';
+    const wait = typeof event.queue_wait_s === 'number'
+      ? (event.queue_wait_s * 1000).toFixed(1)+'ms' : '—';
+    return `관찰용 · 기존 STT 판정 유지\nSilero 음성 확률 ${probability} · `+
+      (event.silero_speech ? '음성' : '비음성')+
+      ` / 관찰용 WebRTC 음성 ${frames.filter(f=>f.speech).length}/${frames.length}프레임\n`+
+      `입력 차단 ${event.source?.blocked ? '중' : '아님'} · 대기 ${wait} · `+
+      `누적 누락 ${event.dropped_chunks_total ?? 0}청크\n`+
+      '차단 전 입력 비교 · Silero 32ms / WebRTC 20ms (프레임 범위는 원본 필드 참고)';
+  }
   renderLogs(data) {
     this.$('traceLogs').replaceChildren();
     const first = data.rows.length ? data.offset+1 : 0;
@@ -182,7 +199,8 @@ class IncidentView {
       const event = item.record, row = document.createElement('tr');
       this.cell(row,'#'+item.line+'\n'+this.date(event.wall_ns));
       this.cell(row,event.logger || this.labels[event.event] || event.event);
-      const cell = this.cell(row,event.message || event.text || event.reason || event.event);
+      const cell = this.cell(row,this.shadowSummary(event) ||
+        event.message || event.text || event.reason || event.error || event.event);
       const details = document.createElement('details'), summary = document.createElement('summary');
       summary.textContent = '원본 필드 보기';
       // Keep integer nanoseconds exact; JSON.parse/JSON.stringify would round them.
