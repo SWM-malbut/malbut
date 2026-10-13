@@ -4,7 +4,6 @@
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-
 export type FallCheckView = { title: string; detail: string; target: { x: number; y: number } | null };
 
 /** 목업 27번 "지금 말벗은": 낙상 확인의 단계와 기다리는 이유. Null when no fall check is running. */
@@ -51,5 +50,3 @@ export function fallCheckView(detail: Record<string, unknown> | null | undefined
   }
   return view("낙상 의심을 확인하고 있어요", "확인이 끝나면 다시 이동할 수 있어요.");
 }
-
-export const FALL_CHECK_LOCK_NOTE = "낙상 확인 중이라 잠시 이동할 수 없어요. 직접 움직이기는 할 수 있어요.";

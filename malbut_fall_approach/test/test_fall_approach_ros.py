@@ -37,14 +37,19 @@ class FakeNav2:
     def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None):
         self.plan, self.driven, self.turns, self.backups = plan, [], [], []
         self.backup, self.follow, self.detour = backup, list(follow), detour
+        self.planned, self.navigated = [], []
+        self.navigate_succeeds = True
         group = ReentrantCallbackGroup()
         ActionServer(node, nav2.ComputePathToPose, 'compute_path_to_pose', self._plan,
                      callback_group=group)
         ActionServer(node, nav2.FollowPath, 'follow_path', self._follow, callback_group=group)
         ActionServer(node, nav2.Spin, 'spin', self._spin, callback_group=group)
+        ActionServer(node, nav2.NavigateToPose, 'navigate_to_pose', self._navigate,
+                     callback_group=group)
         ActionServer(node, nav2.BackUp, 'backup', self._back_up, callback_group=group)
 
     def _plan(self, handle):
+        self.planned.append(handle.request)
         goal = handle.request.goal.pose.position
         result = nav2.ComputePathToPose.Result()
         if not self.plan:
@@ -78,6 +83,14 @@ class FakeNav2:
         self.turns.append(handle.request.target_yaw)
         handle.succeed()
         return nav2.Spin.Result()
+
+    def _navigate(self, handle):
+        self.navigated.append(handle.request.pose)
+        if self.navigate_succeeds:
+            handle.succeed()
+        else:
+            handle.abort()
+        return nav2.NavigateToPose.Result()
 
     def _back_up(self, handle):
         self.backups.append((handle.request.target.x, handle.request.speed))
@@ -167,10 +180,36 @@ def test_drives_to_one_metre_before_the_spot_faces_it_and_goes_back(ros):
     assert math.hypot(3.0 - end.x, 1.0 - end.y) == pytest.approx(1.0, abs=0.05)
     # The fake robot did not move: it still has to turn toward (3, 1).
     assert nav.turns and nav.turns[-1] == pytest.approx(math.atan2(1.0, 3.0), abs=1e-3)
+    planned, driven = len(nav.planned), len(nav.driven)
     result = send(request_id='q1', phase='return', x=0.0, y=0.0, standoff_m=1.0)
     assert result.outcome == 'returned'
+    assert len(nav.planned) == planned and len(nav.driven) == driven
+    assert len(nav.navigated) == 1
+    assert nav.navigated[0].header.frame_id == 'map'
+    assert nav.navigated[0].pose.position.x == pytest.approx(0.0)
+    assert nav.navigated[0].pose.position.y == pytest.approx(0.0)
     time.sleep(0.2)
     assert statuses[-1]['phase'] == 'return' and statuses[-1]['outcome'] == 'returned'
+
+
+def test_return_uses_the_saved_pose_and_keeps_it_when_navigation_fails(ros):
+    from malbut_fall_approach.fall_approach import Pose2D
+    node, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    node.starts.remember('saved', Pose2D(1.2, -0.4, 0.7))
+    nav.navigate_succeeds = False
+    result = send(request_id='saved', phase='return', x=99.0, y=99.0, standoff_m=1.0)
+    assert result.outcome == 'failed'
+    assert node.starts.get('saved') is not None
+    assert nav.navigated[-1].pose.position.x == pytest.approx(1.2)
+    assert nav.navigated[-1].pose.position.y == pytest.approx(-0.4)
+    assert nav.navigated[-1].pose.orientation.z == pytest.approx(math.sin(0.7 / 2))
+    assert not nav.planned and not nav.driven
+    nav.navigate_succeeds = True
+    result = send(request_id='saved', phase='return', x=99.0, y=99.0, standoff_m=1.0)
+    assert result.outcome == 'returned'
+    assert node.starts.get('saved') is None
+    assert nav.turns[-1] == pytest.approx(0.7)
 
 
 def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):

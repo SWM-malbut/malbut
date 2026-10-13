@@ -21,6 +21,7 @@ const STEP_COPY: Record<string, string> = {
   EXPLORING: "집을 둘러보고 있어요",
   NAVIGATING: "새로운 곳으로 이동하고 있어요",
   SAVING: "지도를 저장하고 있어요",
+  ALIGNING_VIEW: "지도의 표시 방향을 정렬하고 있어요",
   CANCELING: "멈추는 중이에요",
 };
 
@@ -85,7 +86,7 @@ export function useMapLabels(deviceId: string, enabled = true, refresh = "") {
 }
 
 export function RealRobotMapManager({
-  deviceId, snapshot, isOwner, busy, commandActive, driveActive, fallCheckActive = false, roomCount, sendCommand,
+  deviceId, snapshot, isOwner, busy, commandActive, driveActive, roomCount, sendCommand,
 }: {
   deviceId: string;
   snapshot: RobotSnapshot | null;
@@ -95,8 +96,6 @@ export function RealRobotMapManager({
   commandActive: boolean;
   /** A destination drive, patrol or following is running. */
   driveActive: boolean;
-  /** 낙상 확인 중(목업 27번): 말벗이 지도 만들기를 받지 않는다. */
-  fallCheckActive?: boolean;
   roomCount: number;
   sendCommand: SendCommand;
 }) {
@@ -152,7 +151,7 @@ export function RealRobotMapManager({
   const stopped = autoslam?.state === "CANCELED" && !current;
   const progress = yamlFields(record(autoslam?.feedback).feedback_yaml);
 
-  const canStart = isOwner && online && running && !switching && !mapping && !driveActive && !fallCheckActive &&
+  const canStart = isOwner && online && running && !switching && !mapping && !driveActive &&
     servers.autoslam === true && !commandActive && !busy;
   const startMapping = async () => {
     const { stem } = newMapNames(new Date(), new Set([...maps.map((item) => item.id), ...Object.keys(labels)]));
@@ -239,10 +238,7 @@ export function RealRobotMapManager({
             <input value={draftName} maxLength={40} onChange={(event) => setDraftName(event.target.value)} />
           </label>
           <small className="ui-caption">만든 날짜·시간으로 채워져 있어요. 나중에 목록에서도 바꿀 수 있어요.</small>
-          {running && fallCheckActive && (
-            <p className="ui-note">낙상 확인 중이라 잠시 이동할 수 없어요. 직접 움직이기는 할 수 있어요.</p>
-          )}
-          {running && driveActive && !fallCheckActive && <p className="ui-note">다른 주행을 멈춘 뒤 지도를 만들 수 있어요.</p>}
+          {running && driveActive && <p className="ui-note">다른 주행을 멈춘 뒤 지도를 만들 수 있어요.</p>}
           {running && servers.autoslam !== true && <p className="ui-note">말벗이 아직 지도 만들기를 준비하고 있어요.</p>}
           <button type="button" className="ui-button is-strong" onClick={() => void startMapping()}
             disabled={!canStart || !draftName.trim()}>지도 만들기 시작</button>

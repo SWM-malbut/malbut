@@ -19,7 +19,7 @@ from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FallApproach
-from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, Spin
+from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import Path
 import rclpy
@@ -78,7 +78,8 @@ class FallApproachNode(Node):
             'planner_id': 'GridBased', 'controller_id': 'FollowPath',
             'goal_checker_id': 'general_goal_checker',
             'compute_path_action': 'compute_path_to_pose', 'follow_path_action': 'follow_path',
-            'spin_action': 'spin', 'backup_action': 'backup',
+            'spin_action': 'spin', 'navigate_action': 'navigate_to_pose',
+            'backup_action': 'backup',
             # Where the whole body can be seen from (walls, furniture, free floor).
             'costmap_topic': '/global_costmap/costmap_raw',
         }
@@ -93,6 +94,8 @@ class FallApproachNode(Node):
                                      callback_group=self.group)
         self.spinner = ActionClient(self, Spin, self.settings['spin_action'],
                                     callback_group=self.group)
+        self.navigator = ActionClient(self, NavigateToPose, self.settings['navigate_action'],
+                                      callback_group=self.group)
         self.backer = ActionClient(self, BackUp, self.settings['backup_action'],
                                    callback_group=self.group)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -239,11 +242,13 @@ class FallApproachNode(Node):
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
-        path = self._plan(handle, robot, (start.x, start.y), deadline, yaw=start.yaw)
-        if path is None:
-            return 'no_path', 'no path back'
+        # Return to a fixed pose through Nav2's normal replanning/recovery tree.
+        # Only approach/view need to calculate and trim a path themselves.
+        goal = NavigateToPose.Goal()
+        goal.pose = self._pose_stamped((start.x, start.y), start.yaw)
         self._feedback(handle, 'DRIVING')
-        if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
+        result = self._call(self.navigator, goal, handle, deadline)
+        if result is None or result.status != GoalStatus.STATUS_SUCCEEDED:
             return 'failed', 'Nav2 did not finish the path back'
         robot = self._pose() or robot
         turn = returning_turn(robot, start)
@@ -301,9 +306,12 @@ class FallApproachNode(Node):
         try:
             goal_handle = self._wait(sent, handle, deadline)
         except (Timeout, Canceled):
-            # A late acceptance must not leave Nav2 driving on its own.
-            sent.add_done_callback(lambda done: done.result() and done.result().accepted
-                                   and done.result().cancel_goal_async())
+            # An acceptance after cancellation still owns motion until the
+            # accepted Nav2 goal actually ends, not merely its cancel ACK.
+            goal_handle = self._wait_motion(sent, 'late Nav2 acceptance')
+            if goal_handle is not None and goal_handle.accepted:
+                self.child = goal_handle
+                self._settle_child()
             raise
         if goal_handle is None or not goal_handle.accepted:
             return None
@@ -323,13 +331,22 @@ class FallApproachNode(Node):
 
     def _settle_child(self):
         """Never leave Nav2 driving after this mission ended."""
-        child, self.child = self.child, None
+        child = self.child
         if child is None:
             return
-        future = child.cancel_goal_async()
-        end = time.monotonic() + CANCEL_SETTLE_S
-        while not future.done() and time.monotonic() < end and rclpy.ok():
+        child.cancel_goal_async()
+        self._wait_motion(child.get_result_async(), 'Nav2 cancellation')
+        self.child = None
+
+    def _wait_motion(self, future, label):
+        warn_at = time.monotonic() + CANCEL_SETTLE_S
+        warned = False
+        while not future.done() and rclpy.ok():
+            if not warned and time.monotonic() >= warn_at:
+                self.get_logger().warning(f'{label} is unconfirmed; retaining motion ownership')
+                warned = True
             time.sleep(0.02)
+        return future.result() if future.done() else None
 
     # ------------------------------------------------------------ helpers
 

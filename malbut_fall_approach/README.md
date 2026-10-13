@@ -10,6 +10,8 @@
   `view`(요청한 거리로 물러남), `return`(질문 ID별로 기억한 시작 위치로).
 - ComputePathToPose(GridBased, 금지 구역 반영) → 1 m 원에서 경로를 자름(`standoff_route`) →
   FollowPath → Spin으로 바라봄. 이동마다 60초 상한.
+- 복귀는 저장한 출발 위치를 NavigateToPose에 전달해 Nav2의 재계획·복구를 사용하고,
+  도착 후 Spin으로 출발 방향을 복원한다. 이동마다 60초 상한.
 - `view`: 의심 장소를 바라보고 있으면 Nav2 BackUp으로 그대로 후진한다(0.1 m/s, 지역 costmap으로
   뒤쪽 충돌 확인). 2026-10-12 침대 옆에서 등 뒤 자리로 가려고 돌아서다
   Nav2 진행 확인(10초에 0.5 m)에 걸려 첫 자리에서 포기했던 것을 고쳤다.

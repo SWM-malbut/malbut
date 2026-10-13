@@ -388,11 +388,12 @@ def _feedback_at(x, y):
     ({'state': 'ABORTED', 'feedback': _feedback_at(1.5, 0.5)}, None, 'blocked_way'),
     ({'state': 'ABORTED', 'feedback': {}}, None, 'blocked_start'),
     ({'state': 'ABORTED', 'result': {
-        'message': 'conflicting mission abc has higher priority HIGH'}}, None, 'manual_drive'),
+        'message': 'conflicting mission abc has higher priority HIGH'}}, None, 'fall_check'),
     ({'state': 'ABORTED', 'result': {
         'message': 'conflicting mission abc has higher priority URGENT'}}, None, 'unknown'),
-    ({'state': 'ERROR', 'message': 'fall check is in progress; only manual driving is available'},
-     None, 'fall_check'),
+    ({'state': 'ABORTED', 'result': {
+        'message': 'conflicting mission abc has higher priority URGENT'}},
+     {'active_foreground_missions': [{'capability_id': 'manual_drive'}]}, 'manual_drive'),
     ({'state': 'ABORTED', 'result': {'message': 'mission preempted by a replacement request'}},
      {'active_foreground_missions': [{'capability_id': 'fall_confirmation'}]},
      'fall_check_started'),

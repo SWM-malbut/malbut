@@ -1,0 +1,742 @@
+"""
+Bringup-owned map sources and fixed, mission-based Nav2 usage.
+
+No subscriber counting, process respawn, or mission arbitration lives here.
+The system manager reports active missions and waits for a generic preparation
+service; each lifecycle group keeps its existing Nav2 implementation.
+"""
+
+import json
+from functools import partial
+import math
+from pathlib import Path
+import signal
+import threading
+import time
+
+from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
+from lifecycle_msgs.msg import State, Transition
+from lifecycle_msgs.srv import ChangeState, GetState
+from malbut_interfaces.action import Relocalize
+from malbut_interfaces.msg import SystemState
+from nav2_msgs.srv import LoadMap, ManageLifecycleNodes, SetInitialPose
+import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.signals import SignalHandlerOptions
+from rclpy.task import Future
+from std_msgs.msg import String
+from std_srvs.srv import SetBool, Trigger
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformListener
+from .nav2_stack import MOTION_NODES, PLANNING_NODES
+from .map_selection import remember_map
+
+
+LOAD_MAP_SERVICE = '/malbut/localization/load_map'
+START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
+STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
+READY_MAPPING_SERVICE = '/malbut/localization/mapping_ready'
+STATE_TOPIC = '/malbut/localization/state'
+PREPARE_PREFIX = '/malbut/runtime/prepare/'
+
+# Depend on the function, not its BASE arbitration lock. In particular,
+# fall_confirmation and speech do not require a running navigation stack.
+PROFILES = {
+    'manual_drive': ('motion',),
+    'follow_person': ('motion', 'planning', 'person_perception'),
+    'fall_approach': ('motion', 'planning'),
+    'navigate_to_pose': ('motion', 'planning'),
+    'compute_path_to_pose': ('planning',),
+    'patrol': ('motion', 'planning', 'patrol_inputs'),
+    'relocalize': ('motion',),
+    'autoslam': (),  # No costmap consumers before SLAM supplies map/TF.
+    'recovery': (),  # Yield transitions to the existing manual recovery Action.
+}
+GROUPS = {
+    'motion': '/lifecycle_manager_navigation/manage_nodes',
+    'planning': '/lifecycle_manager_global_navigation/manage_nodes',
+}
+PROCESSING_GROUPS = {
+    # Wake receivers first, detector last; stop in reverse order.
+    'person_perception': (
+        '/person_localizer/set_processing', '/person_reidentifier/set_processing',
+        '/lidar_foreground_preprocessor/set_processing', '/yolo/yolo_node/set_processing'),
+    'patrol_inputs': ('/patrol_manager/set_processing',),
+}
+
+
+def required_groups(capabilities, mapping_ready=False):
+    """Return the union of fixed dependencies, including canceling missions."""
+    needed = {group for capability in capabilities for group in PROFILES.get(capability, ())}
+    # start/ready/stop also own an explicitly requested /autoslam Action.
+    # Retain its dependencies through cleanup, even if manager demand ended.
+    if mapping_ready:
+        needed.update(('motion', 'planning'))
+    return needed
+
+
+class RuntimeControl(Node):
+    """Prepare dependencies before dispatch; pause them after confirmed completion."""
+
+    def __init__(self, **kwargs):
+        super().__init__('runtime_control', **kwargs)
+        self.group = ReentrantCallbackGroup()
+        # Serialize operator RPCs without parking many executor threads on the
+        # same lock. State/TF/client replies and the initialization tick stay
+        # independent, so they can complete a preparation request.
+        self.control_group = MutuallyExclusiveCallbackGroup()
+        self.timeout = float(self.declare_parameter('transition_timeout_s', 30.0).value)
+        if not math.isfinite(self.timeout) or self.timeout <= 0:
+            raise ValueError('transition_timeout_s must be positive and finite')
+        self.default_map = self.declare_parameter('default_map', '').value
+        self.map_path = self.declare_parameter('initial_map', self.default_map).value
+        self.map_selection_file = self.declare_parameter('map_selection_file', '').value
+        relocalize = self.declare_parameter('relocalize_action', '').value
+        self._relocalize = (ActionClient(self, Relocalize, relocalize,
+                                         callback_group=self.group) if relocalize else None)
+        self._lock = threading.Lock()
+        self._data_lock = threading.Lock()
+        self._capabilities = set()
+        self._have_state = False
+        self._synced_demand = None
+        self._preparations = []
+        self._closing = False
+        self._initialized = False
+        self._mapping = False
+        self._mapping_ready = False
+        self._localization_started = False
+        self._localization_active = False
+        self._recovery_pending = False
+        self._configured = set()
+        self._map_initialized = False
+        self._uncertain = False
+        self._active = {name: False for name in GROUPS}
+        self._processing_active = {
+            service: False for services in PROCESSING_GROUPS.values() for service in services}
+        self._processing_clients = {
+            service: self.create_client(SetBool, service, callback_group=self.group)
+            for service in self._processing_active}
+        self._pose = None
+        self._pose_sequence = 0
+        self._cached_map_odom = None
+        self._cached_pose_sequence = -1
+        qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._status = self.create_publisher(String, STATE_TOPIC, qos)
+        self._usage = self.create_publisher(String, '/malbut/runtime/state', qos)
+        self._demand_changed = self.create_guard_condition(
+            self._on_demand_changed, callback_group=self.control_group)
+        self.create_subscription(SystemState, '/malbut/state', self._state, qos,
+                                 callback_group=self.group)
+        self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._receive_pose,
+                                 qos, callback_group=self.group)
+        self.tf = Buffer()
+        self.listener = TransformListener(self.tf, self)
+        self._managers = {
+            name: self.create_client(ManageLifecycleNodes, service, callback_group=self.group)
+            for name, service in GROUPS.items()
+        }
+        self._localization = self.create_client(
+            ManageLifecycleNodes, '/lifecycle_manager_localization/manage_nodes',
+            callback_group=self.group)
+        self._manager_states = {
+            name: self.create_client(Trigger, service.replace('/manage_nodes', '/is_active'),
+                                     callback_group=self.group)
+            for name, service in {
+                **GROUPS, 'localization': '/lifecycle_manager_localization/manage_nodes'
+            }.items()
+        }
+        self._map_server = self.create_client(
+            LoadMap, '/map_server/load_map', callback_group=self.group)
+        self._initial_pose = self.create_client(
+            SetInitialPose, '/set_initial_pose', callback_group=self.group)
+        self._node_states = {
+            name: (self.create_client(GetState, f'/{name}/get_state', callback_group=self.group),
+                   self.create_client(ChangeState, f'/{name}/change_state',
+                                      callback_group=self.group))
+            for name in (*MOTION_NODES, *PLANNING_NODES)
+        }
+        for capability in PROFILES:
+            self.create_service(
+                Trigger, PREPARE_PREFIX + capability,
+                partial(self._prepare, capability), callback_group=self.group)
+        self.create_service(LoadMap, LOAD_MAP_SERVICE, self._load_map,
+                            callback_group=self.control_group)
+        self.create_service(Trigger, START_MAPPING_SERVICE, self._start_mapping,
+                            callback_group=self.control_group)
+        self.create_service(Trigger, READY_MAPPING_SERVICE, self._ready_mapping,
+                            callback_group=self.control_group)
+        self.create_service(Trigger, STOP_MAPPING_SERVICE, self._stop_mapping,
+                            callback_group=self.control_group)
+        self._publish_map(False, 'starting map provider')
+        self._report_usage('initializing dependencies')
+        self.create_timer(0.5, self._tick, callback_group=self.group)
+
+    def _state(self, message):
+        capabilities = {
+            mission.capability_id for mission in (
+                *message.active_foreground_missions, *message.active_background_missions)
+        }
+        with self._data_lock:
+            if self._have_state and capabilities == self._capabilities:
+                return
+            self._capabilities = capabilities
+            self._have_state = True
+            if 'recovery' in self._capabilities:
+                self._recovery_pending = True
+        self._demand_changed.trigger()
+
+    def _on_demand_changed(self):
+        # State reception stays non-blocking. Serialize lifecycle work with
+        # map RPCs, and reconcile the latest (possibly coalesced) list.
+        with self._lock:
+            if self._closing or not self._initialized:
+                return
+            try:
+                self._sync()
+            except Exception as error:
+                self.get_logger().error(str(error))
+                self._report_usage(str(error))
+                self._resolve_preparations(str(error))
+            else:
+                self._resolve_preparations()
+
+    def _receive_pose(self, message):
+        with self._data_lock:
+            self._pose = message
+            self._pose_sequence += 1
+        self._refresh_map_odom()
+
+    def _refresh_map_odom(self):
+        with self._data_lock:
+            pose, sequence = self._pose, self._pose_sequence
+        if pose is None or sequence == self._cached_pose_sequence:
+            return
+        try:
+            transform = self._map_odom_from_pose(pose)
+        except Exception:
+            # Odom TF can arrive just after the pose; the next tick retries.
+            return
+        with self._data_lock:
+            if sequence == self._pose_sequence:
+                self._cached_map_odom = transform
+                self._cached_pose_sequence = sequence
+
+    def _capabilities_now(self):
+        with self._data_lock:
+            return self._capabilities.copy()
+
+    def _call(self, client, request, label):
+        deadline = time.monotonic() + self.timeout
+        while not client.service_is_ready():
+            if self._closing or time.monotonic() >= deadline:
+                raise RuntimeError(f'{label}: service unavailable')
+            time.sleep(0.02)
+        future = client.call_async(request)
+        try:
+            return self._wait(future, label, self.timeout)
+        except RuntimeError:
+            client.remove_pending_request(future)
+            self._uncertain = True
+            self._report_usage(f'{label}: response unconfirmed')
+            raise
+
+    def _wait(self, future, label, timeout):
+        deadline = time.monotonic() + timeout
+        while not future.done():
+            if self._closing or time.monotonic() >= deadline:
+                raise RuntimeError(f'{label}: response unconfirmed')
+            time.sleep(0.02)
+        return future.result()
+
+    def _manage(self, client, command):
+        request = ManageLifecycleNodes.Request(command=command)
+        if not self._call(client, request, 'Nav2 lifecycle').success:
+            self._uncertain = True
+            self._report_usage(f'Nav2 lifecycle rejected command {command}')
+            raise RuntimeError(f'Nav2 lifecycle rejected command {command}')
+
+    def _map_provider(self, path, pose=None):
+        self._map_initialized = False
+        self._synced_demand = None
+        self._publish_map(False, 'preparing map provider')
+        request = LoadMap.Request(map_url=path)
+        # The configured map_server is activated together with AMCL, as before.
+        if not self._localization_started:
+            self._manage(self._localization, ManageLifecycleNodes.Request.STARTUP)
+            self._localization_started = True
+            self._localization_active = True
+        elif not self._localization_active:
+            self._manage(self._localization, ManageLifecycleNodes.Request.RESUME)
+            self._localization_active = True
+        reply = self._call(self._map_server, request, 'load map')
+        if reply.result != LoadMap.Response.RESULT_SUCCESS:
+            raise RuntimeError(f'map_server rejected {path}: {reply.result}')
+        self.map_path = path
+        self._publish_map(False, 'map loaded; preparing robot pose')
+        if pose is not None or path == self.default_map:
+            before = self._pose_sequence
+            request = SetInitialPose.Request()
+            if pose is not None:
+                request.pose = pose
+            else:
+                request.pose.header.frame_id = 'map'
+                request.pose.pose.pose.orientation.w = 1.0
+            request.pose.header.stamp = self.get_clock().now().to_msg()
+            self._call(self._initial_pose, request, 'AMCL initial pose')
+            # Map-source replacement needs a real estimate, not just the
+            # service acknowledgement. Normal idle never pauses AMCL.
+            self._wait_amcl_pose(before)
+        elif self._relocalize is not None:
+            deadline = time.monotonic() + self.timeout
+            while not self._relocalize.server_is_ready():
+                if self._closing or time.monotonic() >= deadline:
+                    raise RuntimeError('pose restore: Action server unavailable')
+                time.sleep(0.02)
+            # Preserve the existing optional saved-pose restore, but keep it
+            # out of the manager. Only its local Spin dependencies wake.
+            if not self._active['motion']:
+                self._manage(self._managers['motion'], ManageLifecycleNodes.Request.RESUME)
+                self._active['motion'] = True
+            goal = Relocalize.Goal(method=Relocalize.Goal.AUTO)
+            handle = self._wait(
+                self._relocalize.send_goal_async(goal), 'pose restore', self.timeout)
+            if handle.accepted:
+                finished = handle.get_result_async()
+                try:
+                    result = self._wait(finished, 'pose restore', 90.0).result
+                    if not result.success:
+                        self.get_logger().warning(result.message)
+                except RuntimeError:
+                    handle.cancel_goal_async()
+                    # Do not sleep Spin's dependencies while it can still move.
+                    try:
+                        self._wait(finished, 'pose restore cancellation', self.timeout)
+                    except RuntimeError:
+                        self._uncertain = True
+                        raise
+        self._map_initialized = True
+        # Pose restore can temporarily wake motion without a mission owner.
+        self._synced_demand = None
+        self._publish_map(True, 'map provider ready')
+        if path != self.default_map:
+            try:
+                remember_map(self.map_selection_file, path)
+            except OSError as error:
+                # Persistence failure must not undo a working map provider.
+                self.get_logger().warning(f'Could not remember selected map: {error}')
+
+    def _sync(self):
+        capabilities = self._capabilities_now()
+        if 'recovery' in capabilities:
+            self._report_usage('manual recovery in progress')
+            return
+        if self._recovery_pending:
+            # One readback after the existing recovery Action, not a new
+            # recovery loop. It may have activated or replaced our servers.
+            self._recovery_pending = False
+            self._synced_demand = None
+            try:
+                self._adopt_recovered_groups()
+            except Exception:
+                self._uncertain = True
+                raise
+            capabilities = self._capabilities_now()
+            if 'recovery' in capabilities:
+                self._report_usage('manual recovery in progress')
+                return
+        if self._uncertain:
+            raise RuntimeError('previous lifecycle transition is unconfirmed')
+        demand = (frozenset(capabilities), self._mapping_ready)
+        if demand == self._synced_demand:
+            return
+        # A partial transition must not leave the previous successful demand
+        # cached: that previous list can return while cleanup is still needed.
+        self._synced_demand = None
+        needed = required_groups(capabilities, self._mapping_ready)
+        if self._mapping and (capabilities - {'autoslam'}) & set(PROFILES):
+            raise RuntimeError('mapping source handoff has not finished')
+        if 'planning' in needed and not (self._map_initialized or self._mapping_ready):
+            raise RuntimeError('map provider unavailable; select a valid map')
+        # Navigation and feature input processing sleep. map_server/AMCL stay
+        # active: particles, location, TF and fall geometry need no wake logic.
+        for group in PROCESSING_GROUPS:
+            if group not in needed:
+                self._process_group(group, False)
+        for group in ('planning', 'motion'):
+            if self._active[group] and group not in needed:
+                self._manage(self._managers[group], ManageLifecycleNodes.Request.PAUSE)
+                self._active[group] = False
+        for group in ('motion', 'planning'):
+            if group in needed and not self._active[group]:
+                if group == 'planning':
+                    self._wait_map_tf()
+                self._manage(self._managers[group], ManageLifecycleNodes.Request.RESUME)
+                self._active[group] = True
+        for group in PROCESSING_GROUPS:
+            if group in needed:
+                self._process_group(group, True)
+        self._synced_demand = demand
+        self._report_usage()
+
+    def _process_group(self, group, enabled):
+        services = PROCESSING_GROUPS[group]
+        for service in (services if enabled else reversed(services)):
+            if self._processing_active[service] == enabled:
+                continue
+            reply = self._call(
+                self._processing_clients[service], SetBool.Request(data=enabled), service)
+            if not reply.success:
+                raise RuntimeError(reply.message or f'{service}: processing change rejected')
+            self._processing_active[service] = enabled
+
+    def _adopt_recovered_groups(self):
+        """Read native lifecycle state once after manual recovery finishes."""
+        active = {}
+        for group, names in (('motion', MOTION_NODES), ('planning', PLANNING_NODES)):
+            active[group] = self._call(
+                self._manager_states[group], Trigger.Request(), group + ' state').success
+            expected = (State.PRIMARY_STATE_ACTIVE if active[group]
+                        else State.PRIMARY_STATE_INACTIVE)
+            for name in names:
+                state = self._call(
+                    self._node_states[name][0], GetState.Request(), name).current_state.id
+                if state != expected:
+                    raise RuntimeError(f'{group}: lifecycle state remains inconsistent')
+        localization_active = self._call(
+            self._manager_states['localization'], Trigger.Request(), 'map provider state').success
+        if not self._mapping and not localization_active:
+            raise RuntimeError('manual recovery did not restore the map provider')
+        self._active = active
+        self._localization_active = localization_active
+        self._localization_started = localization_active
+        self._uncertain = False
+
+    def _report_usage(self, error=''):
+        if self._closing:
+            return
+        self._usage.publish(String(data=json.dumps({
+            'ready': (self._initialized and not self._uncertain and not error
+                      and (self._map_initialized or self._mapping_ready)),
+            'error': error, 'active_groups': sorted(
+                [name for name, active in self._active.items() if active]
+                + [group for group, services in PROCESSING_GROUPS.items()
+                   if any(self._processing_active[service] for service in services)]),
+            'capabilities': sorted(self._capabilities_now()),
+            'localization_active': self._localization_active,
+        })))
+
+    def _tick(self):
+        self._resolve_preparations()
+        if self._closing:
+            return
+        self._refresh_map_odom()
+        if self._uncertain and not self._recovery_pending:
+            return
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if not self._initialized:
+                # Configure without activate: the Action endpoints exist while
+                # costmap update threads remain asleep. RESUME is Nav2's
+                # standard activation command for these configured groups.
+                for name, (state_client, change_client) in self._node_states.items():
+                    if name in self._configured:
+                        continue
+                    state = self._call(state_client, GetState.Request(), name).current_state.id
+                    if state == State.PRIMARY_STATE_UNCONFIGURED:
+                        request = ChangeState.Request()
+                        request.transition.id = Transition.TRANSITION_CONFIGURE
+                        if not self._call(change_client, request, f'configure {name}').success:
+                            raise RuntimeError(f'could not configure {name}')
+                    elif state != State.PRIMARY_STATE_INACTIVE:
+                        raise RuntimeError(f'{name}: unexpected startup state {state}')
+                    self._configured.add(name)
+                if not self._map_initialized:
+                    self._map_provider(self.map_path)
+                    self._map_initialized = True
+                self._initialized = True
+                # The first state event may precede initialization. After this
+                # one reconciliation, only demand/map events perform _sync.
+                if self._have_state:
+                    self._sync()
+        except Exception as error:
+            if not self._closing:
+                self.get_logger().error(str(error))
+                self._report_usage(str(error))
+        finally:
+            self._lock.release()
+            self._resolve_preparations()
+
+    async def _prepare(self, capability, request, response):
+        # A canceled Trigger RPC cannot be recalled. Await readiness without
+        # holding the transition callback group or parking an executor worker.
+        # Only the existing state-change handler performs dependency changes.
+        future = Future()
+        with self._data_lock:
+            self._preparations.append(
+                (capability, response, time.monotonic() + self.timeout, future))
+        self._demand_changed.trigger()
+        self._resolve_preparations()
+        try:
+            return await future
+        finally:
+            with self._data_lock:
+                self._preparations = [item for item in self._preparations if item[3] is not future]
+
+    def _resolve_preparations(self, error=''):
+        with self._data_lock:
+            current = (frozenset(self._capabilities), self._mapping_ready)
+            for capability, response, deadline, future in self._preparations:
+                # Keep resolved RPCs until their coroutine actually returned.
+                if future.done():
+                    continue
+                ready = (self._initialized and capability in self._capabilities
+                         and (capability == 'recovery'
+                              or (not self._uncertain and current == self._synced_demand)))
+                failed = error or self._closing or self._uncertain or time.monotonic() >= deadline
+                if ready or failed:
+                    response.success = bool(ready and not error and not self._closing)
+                    response.message = ('dependencies ready' if response.success else
+                                        error or 'mission demand/preparation unavailable')
+                    # This private Future schedules the waiting ROS callback;
+                    # finish it atomically with its response, including shutdown.
+                    future.set_result(response)
+
+    def _wait_map_tf(self):
+        deadline = time.monotonic() + self.timeout
+        requested_at = self.get_clock().now().nanoseconds
+        while not self._closing:
+            if self.tf.can_transform('map', 'base_footprint', Time()):
+                transform = self.tf.lookup_transform('map', 'base_footprint', Time())
+                stamp = Time.from_msg(transform.header.stamp).nanoseconds
+                if stamp >= requested_at:
+                    return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('fresh map->base TF unavailable; set or restore the robot pose')
+            time.sleep(0.02)
+        raise RuntimeError('runtime is shutting down')
+
+    def _wait_amcl_pose(self, before):
+        deadline = time.monotonic() + self.timeout
+        while (self._pose_sequence <= before
+               or self._cached_pose_sequence != self._pose_sequence):
+            self._refresh_map_odom()
+            if self._closing or time.monotonic() >= deadline:
+                raise RuntimeError('AMCL did not publish its restored pose')
+            time.sleep(0.02)
+
+    def _start_mapping(self, request, response):
+        del request
+        with self._lock:
+            try:
+                if not self._initialized or self._uncertain:
+                    raise RuntimeError('runtime preparation is not confirmed')
+                if self._mapping:
+                    raise RuntimeError('SLAM source is already reserved')
+                if (self._capabilities_now() - {'autoslam'}) & set(PROFILES):
+                    raise RuntimeError('finish motion before changing the map provider')
+                if not self._map_initialized:
+                    raise RuntimeError('map provider unavailable; select a valid map')
+                if self._active['planning']:
+                    self._manage(self._managers['planning'], ManageLifecycleNodes.Request.PAUSE)
+                    self._active['planning'] = False
+                if not self._localization_active:
+                    raise RuntimeError('AMCL map provider is not active')
+                self._restore_pose = self._pose
+                self._refresh_map_odom()
+                if self._cached_map_odom is None:
+                    raise RuntimeError('AMCL map/odom estimate is unavailable')
+                self._map_odom = self._cached_map_odom
+                # Cleanup removes the old transient-local /map publisher too.
+                self._reset_localization()
+                self._mapping, self._mapping_ready = True, False
+                self._publish_map(False, 'SLAM source reserved')
+                response.success = True
+            except Exception as error:
+                response.success, response.message = False, str(error)
+                self._report_usage(str(error))
+        return response
+
+    def _ready_mapping(self, request, response):
+        del request
+        with self._lock:
+            try:
+                if self._uncertain:
+                    raise RuntimeError('runtime transition is unconfirmed')
+                if not self._mapping:
+                    raise RuntimeError('SLAM source is not reserved')
+                self._mapping_ready = True
+                self._sync()
+                self._publish_map(True, 'SLAM source ready')
+                response.success = True
+            except Exception as error:
+                # A failed preparation must not let a demand event reactivate
+                # consumers while AutoSLAM is already stopping its provider.
+                if self._mapping:
+                    self._mapping_ready = False
+                    self._publish_map(False, str(error))
+                response.success, response.message = False, str(error)
+                self._report_usage(str(error))
+        return response
+
+    def _stop_mapping(self, request, response):
+        del request
+        with self._lock:
+            try:
+                if self._uncertain:
+                    raise RuntimeError('runtime transition is unconfirmed')
+                if self._mapping:
+                    self._mapping_ready = False
+                    if self._active['planning']:
+                        self._manage(self._managers['planning'],
+                                     ManageLifecycleNodes.Request.PAUSE)
+                        self._active['planning'] = False
+                    self._map_provider(self.map_path, self._pose_after_mapping())
+                    self._mapping = False
+                    self._publish_map(True, 'map provider restored')
+                    self._sync()
+                response.success = True
+            except Exception as error:
+                response.success, response.message = False, str(error)
+                self._publish_map(False, str(error))
+                self._report_usage(str(error))
+        return response
+
+    def _load_map(self, request, response):
+        path = Path(request.map_url).expanduser()
+        response.result = LoadMap.Response.RESULT_UNDEFINED_FAILURE
+        changing_provider = False
+        with self._lock:
+            try:
+                if not self._initialized or self._uncertain:
+                    raise RuntimeError('runtime preparation is not confirmed')
+                if self._mapping or self._capabilities_now() & set(PROFILES):
+                    raise RuntimeError('finish motion/mapping before selecting a map')
+                if path.suffix not in ('.yaml', '.yml') or not path.is_file():
+                    response.result = LoadMap.Response.RESULT_MAP_DOES_NOT_EXIST
+                    return response
+                changing_provider = True
+                self._reset_localization()
+                self._map_provider(str(path.resolve()))
+                self._sync()
+                response.result = LoadMap.Response.RESULT_SUCCESS
+            except Exception as error:
+                self.get_logger().error(str(error))
+                if changing_provider:
+                    self._publish_map(False, str(error))
+                    self._report_usage(str(error))
+        return response
+
+    def _reset_localization(self):
+        self._map_initialized = False
+        # Nav2 RESET expects active nodes. PAUSE retained configuration; resume
+        # before RESET rather than asking it to deactivate an inactive node.
+        if self._localization_started:
+            if not self._localization_active:
+                self._manage(self._localization, ManageLifecycleNodes.Request.RESUME)
+                self._localization_active = True
+            self._manage(self._localization, ManageLifecycleNodes.Request.RESET)
+            self._localization_started = self._localization_active = False
+        with self._data_lock:
+            self._pose = None
+            self._pose_sequence += 1
+            self._cached_map_odom = None
+            self._cached_pose_sequence = -1
+            # Invalidate TF work that began with an estimate from the old map.
+            # Mapping already saved its own restore pose/transform separately.
+
+    def _pose_after_mapping(self):
+        # Preserve the old map's coordinate system using continuous odometry;
+        # SLAM may have chosen a different origin. No extra TF publisher.
+        from copy import deepcopy
+        pose = deepcopy(self._restore_pose) or PoseWithCovarianceStamped()
+        pose.header.frame_id = 'map'
+        old = self._map_odom.transform
+        current = self.tf.lookup_transform('odom', 'base_footprint', Time()).transform
+        q = old.rotation
+        yaw = math.atan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
+        x, y = current.translation.x, current.translation.y
+        pose.pose.pose.position.x = old.translation.x + math.cos(yaw)*x - math.sin(yaw)*y
+        pose.pose.pose.position.y = old.translation.y + math.sin(yaw)*x + math.cos(yaw)*y
+        q = current.rotation
+        yaw += math.atan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
+        pose.pose.pose.orientation.z = math.sin(yaw / 2)
+        pose.pose.pose.orientation.w = math.cos(yaw / 2)
+        return pose
+
+    def _map_odom_from_pose(self, message=None):
+        # After SLAM exits, a TF buffer may still contain its last map->odom.
+        # Derive the old map transform from the AMCL-only pose topic instead,
+        # using odometry at exactly that estimate's acquisition timestamp.
+        message = self._pose if message is None else message
+        if message is None:
+            raise RuntimeError('AMCL pose has not been observed')
+        pose = message.pose.pose
+        odom = self.tf.lookup_transform(
+            'odom', 'base_footprint', Time.from_msg(message.header.stamp)).transform
+
+        def yaw(q):
+            return math.atan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
+
+        angle = yaw(pose.orientation) - yaw(odom.rotation)
+        result = TransformStamped()
+        result.header.frame_id, result.child_frame_id = 'map', 'odom'
+        x, y = odom.translation.x, odom.translation.y
+        result.transform.translation.x = pose.position.x - math.cos(angle)*x + math.sin(angle)*y
+        result.transform.translation.y = pose.position.y - math.sin(angle)*x - math.cos(angle)*y
+        result.transform.rotation.z = math.sin(angle / 2)
+        result.transform.rotation.w = math.cos(angle / 2)
+        return result
+
+    def _publish_map(self, ready, message):
+        # Legacy field is a view of the actual provider, never a manager gate.
+        self._status.publish(String(data=json.dumps({
+            'source': 'slam' if self._mapping else 'amcl', 'ready': ready,
+            'mode': ('MAPPING' if self._mapping else 'LOCALIZATION') if ready else 'SWITCHING',
+            'map': None if self._mapping else self.map_path, 'message': message,
+        })))
+
+
+def main(args=None):
+    """Run the common dependency owner independently of optional modules."""
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    node = RuntimeControl()
+    executor = MultiThreadedExecutor(num_threads=8)
+    executor.add_node(node)
+    signaled = False
+
+    def stop(_signum, _frame):
+        # Finish callbacks before invalidating their ROS clients/publishers.
+        nonlocal signaled
+        signaled = True
+        node._closing = True
+
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        while rclpy.ok() and not node._closing:
+            executor.spin_once(timeout_sec=0.2)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node._closing = True
+        node._resolve_preparations()
+        # Let awaited service callbacks send their final response before the
+        # executor stops. Joining workers alone cannot resume a suspended RPC.
+        while rclpy.ok() and node._preparations:
+            executor.spin_once(timeout_sec=0.02)
+        executor.shutdown()
+        # Humble does not join MultiThreadedExecutor's worker pool (#893).
+        # Drain queued callbacks before destroying their ROS entities.
+        executor._executor.shutdown(wait=True)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+        # Launch can forward SIGINT after the process group already got it.
+        # Keep the idempotent handler until exit on an interrupted CLI run.
+        if not signaled:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)

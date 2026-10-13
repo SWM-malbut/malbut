@@ -3,6 +3,7 @@
 import math
 import operator
 import threading
+from functools import lru_cache
 
 
 def world_to_grid(x, y, resolution, origin):
@@ -19,6 +20,80 @@ def grid_to_world(column, row, resolution, origin):
     cosine, sine = math.cos(origin['yaw']), math.sin(origin['yaw'])
     return (origin['x'] + cosine * x - sine * y,
             origin['y'] + sine * x + cosine * y)
+
+
+@lru_cache(maxsize=2)
+def _aligned_png(png, width, height, rotation):
+    import cv2
+    import numpy as np
+
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None or image.shape[:2] != (height, width):
+        return None
+    cosine, sine = math.cos(rotation), math.sin(rotation)
+    matrix = np.array([[cosine, -sine], [sine, cosine]])
+    # Rotate pixel BOUNDARIES, not centers, so no wall/corner is clipped.
+    corners = np.array([[0, 0], [width, 0], [0, height], [width, height]]) @ matrix.T
+    minimum, maximum = corners.min(axis=0), corners.max(axis=0)
+    new_width, new_height = np.ceil(maximum - minimum).astype(int)
+    if new_width > 8192 or new_height > 8192:
+        return None
+    # OpenCV samples at pixel centers; geometry is measured at cell boundaries.
+    translation = matrix @ np.array([0.5, 0.5]) - minimum - 0.5
+    affine = np.column_stack((matrix, translation))
+    rotated = cv2.warpAffine(image, affine, (int(new_width), int(new_height)),
+                             flags=cv2.INTER_NEAREST, borderValue=(247, 242, 247))
+    # Remove only the outside unknown margin introduced by rotation. Otherwise
+    # "fit map" makes the useful floor plan much smaller than before alignment.
+    known = np.any(rotated != (247, 242, 247), axis=2)
+    rows, columns = np.nonzero(known)
+    left = top = 0
+    if len(rows):
+        left, top = int(columns.min()), int(rows.min())
+        right, bottom = int(columns.max()) + 1, int(rows.max()) + 1
+        rotated = rotated[top:bottom, left:right]
+        new_height, new_width = rotated.shape[:2]
+    success, encoded = cv2.imencode('.png', rotated)
+    if not success:
+        return None
+    # Where the new lower-left boundary lies in the original image.
+    lower_left = matrix.T @ (np.array([left, top + new_height]) + minimum)
+    return int(new_width), int(new_height), tuple(lower_left), encoded.tobytes()
+
+
+def aligned_preview(metadata, png, view):
+    """
+    Rotate only a web preview, preserving the world coordinates of every point.
+
+    The PNG and its pixel-to-map transform change together. Native /map, map
+    files, TF, robot poses and room/zone coordinates remain completely untouched.
+    """
+    if not isinstance(view, dict) or not isinstance(view.get('source'), dict):
+        return metadata, png
+    rotation, source = view.get('rotation_rad'), view['source']
+    if (type(rotation) not in (float, int) or not math.isfinite(rotation)
+            or not 0 < abs(rotation) <= math.pi / 4):
+        return metadata, png
+    origin = metadata['origin']
+    try:
+        matches = (source['width'] == metadata['width']
+                   and source['height'] == metadata['height']
+                   and math.isclose(source['resolution'], metadata['resolution'], abs_tol=1e-7)
+                   and len(source['origin']) == 3
+                   and all(math.isclose(value, origin[axis], abs_tol=1e-6)
+                           for value, axis in zip(source['origin'], ('x', 'y', 'yaw'))))
+    except (KeyError, TypeError, ValueError):
+        return metadata, png
+    if not matches:
+        return metadata, png
+    result = _aligned_png(png, metadata['width'], metadata['height'], float(rotation))
+    if result is None:
+        return metadata, png
+    width, height, lower_left, encoded = result
+    x, y = grid_to_world(lower_left[0], metadata['height'] - lower_left[1],
+                         metadata['resolution'], origin)
+    return ({**metadata, 'width': width, 'height': height,
+             'origin': {'x': x, 'y': y, 'yaw': origin['yaw'] + rotation}}, encoded)
 
 
 def _metadata(message):

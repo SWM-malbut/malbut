@@ -11,6 +11,12 @@ RGB-D에서 확인한 사람을 선택하고, LiDAR 관측을 보조로 연결�
 [운영 가이드](README_OPERATIONS.md) · [FollowPerson 계약](../malbut_interfaces/action/FollowPerson.action) ·
 [Bringup 설계](../malbut_bringup/README.md)
 
+Bringup에서는 추적 미션이 없을 때 YOLO·ID 연결·RGB-D 위치 추정·LiDAR 전처리의
+입력 구독을 멈춥니다. 프로세스·모델·ID 갤러리는 유지하며, 다음 추적 요청 전에
+수신 노드부터 재연결하고 YOLO를 마지막에 켭니다. 재개 시 영상 매칭 큐는 비웁니다.
+공용 센서와 낙상 감시·일반 웹 영상은 계속 실행됩니다.
+개별 인식 launch의 기본 `start_enabled=true`는 기존 독립 실행 동작을 유지합니다.
+
 ## 전체 데이터 흐름
 
 ```mermaid
@@ -63,6 +69,9 @@ flowchart TB
 인식 노드는 FollowPerson 요청과 무관하게 실행되며 다른 기능도 관측 Topic을 사용할 수 있습니다.
 추적 취소는 해당 추적과 소유한 Nav2 동작을 끝내지만,
 YOLO·Re-ID 노드를 종료하거나 ID를 초기화하지는 않습니다.
+Follower 자체의 TF·전역 costmap 구독은 추적 시작 때 연결하고,
+취소한 주행의 종료를 확인한 뒤 해제합니다. 다시 시작하면 새 TF와
+costmap을 받으며, 공용 Nav2·AMCL이나 다른 기능의 구독은 건드리지 않습니다.
 
 ## RGB-D로 사람 위치 관측
 

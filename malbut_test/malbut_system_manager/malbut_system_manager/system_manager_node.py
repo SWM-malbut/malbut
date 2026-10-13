@@ -7,7 +7,6 @@ import signal
 from threading import RLock
 import time
 
-from ament_index_python.packages import get_package_prefix
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -21,7 +20,6 @@ from malbut_interfaces.action import ExecuteMission
 from malbut_interfaces.msg import MissionStatus, SystemState as SystemStateMsg
 from std_msgs.msg import String
 
-from .localization import LocalizationController, SlamProcess
 from .manifest_registry import (
     ManifestError,
     ManifestRegistry,
@@ -33,7 +31,6 @@ from .models import (
     ControlMode,
     ExecutionMode,
     ExecutionResource,
-    LocalizationMode,
     MissionCompletion,
     MissionPriority,
     MissionRecord,
@@ -113,9 +110,6 @@ class SystemManagerNode(Node):
         # Bringup gates admission on its readiness report; standalone use
         # (simulation experiments, tests) stays ready immediately.
         ready_topic = self.declare_parameter('ready_topic', '').value
-        localization_control = bool(
-            self.declare_parameter('localization_control', False).value
-        )
         state_qos = QoSProfile(depth=1)
         state_qos.reliability = ReliabilityPolicy.RELIABLE
         state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -136,6 +130,10 @@ class SystemManagerNode(Node):
             on_dispatch_timeout=self._on_dispatch_timeout,
             goal_response_timeout_s=goal_response_timeout_s,
             cancel_completion_timeout_s=cancel_completion_timeout_s,
+            prepare_service_prefix=self.declare_parameter(
+                'prepare_service_prefix', '').value,
+            prepared_capabilities=self.declare_parameter(
+                'prepared_capabilities', ['']).value,
         )
         self._speech = SpeechCoordinator(
             self, lock=self._effects_lock, state=self._state,
@@ -154,9 +152,6 @@ class SystemManagerNode(Node):
             callback_group=self._server_group,
         )
 
-        self._localization = None
-        if localization_control:
-            self._localization = self._create_localization()
         self._ready_subscription = None
         if ready_topic:
             ready_qos = QoSProfile(depth=1)
@@ -181,89 +176,6 @@ class SystemManagerNode(Node):
             f'System manager ready with capabilities: {capabilities}'
         )
 
-    def _create_localization(self) -> LocalizationController:
-        """Own SLAM and saved-map AMCL so only one map->odom source runs."""
-        params_file = self.declare_parameter('slam_params_file', '').value
-        if not params_file:
-            raise ValueError('localization_control requires slam_params_file')
-        scan_topic = self.declare_parameter('scan_topic', '/scan_raw').value
-        stop_timeout_s = float(
-            self.declare_parameter('slam_stop_timeout_s', 10.0).value
-        )
-        service_timeout_s = float(
-            self.declare_parameter('localization_timeout_s', 30.0).value
-        )
-        relocalize_timeout_s = float(
-            self.declare_parameter('relocalize_timeout_s', 90.0).value
-        )
-        _require_positive_finite('slam_stop_timeout_s', stop_timeout_s)
-        _require_positive_finite('localization_timeout_s', service_timeout_s)
-        _require_positive_finite('relocalize_timeout_s', relocalize_timeout_s)
-        executable = (
-            f'{get_package_prefix("slam_toolbox")}'
-            '/lib/slam_toolbox/sync_slam_toolbox_node'
-        )
-        use_sim_time = bool(self.get_parameter('use_sim_time').value)
-        slam = SlamProcess([
-            executable, '--ros-args', '-r', '__node:=slam_toolbox',
-            '--params-file', params_file,
-            '-p', f'use_sim_time:={str(use_sim_time).lower()}',
-            '-p', f'scan_topic:={scan_topic}',
-        ], stop_timeout_s)
-        group = ReentrantCallbackGroup()
-        controller = LocalizationController(
-            self, group, slam=slam,
-            on_mode=self._on_localization_mode,
-            can_switch=self._base_is_free,
-            lifecycle_service=self.declare_parameter(
-                'localization_lifecycle_service',
-                '/lifecycle_manager_localization/manage_nodes',
-            ).value,
-            map_server_load_service=self.declare_parameter(
-                'map_server_load_service', '/map_server/load_map'
-            ).value,
-            service_timeout_s=service_timeout_s,
-            # Bringup sets /relocalize to find the robot on each loaded map.
-            relocalize_action=self.declare_parameter(
-                'relocalize_action', ''
-            ).value,
-            relocalize_timeout_s=relocalize_timeout_s,
-            default_map=self.declare_parameter('default_map', '').value,
-            can_mapping=self._mapping_can_switch,
-        )
-        initial_map = self.declare_parameter('initial_map', '').value
-
-        def start_once() -> None:
-            timer.cancel()
-            controller.start(initial_map)
-
-        timer = self.create_timer(0.1, start_once, callback_group=group)
-        return controller
-
-    def _on_localization_mode(self, mode: LocalizationMode) -> None:
-        with self._effects_lock:
-            with self._lock:
-                effects = self._scheduler.set_localization(mode)
-            self._apply_effects(effects)
-            self._publish_state()
-
-    def _base_is_free(self) -> bool:
-        with self._lock:
-            return not self._scheduler.base_busy()
-
-    def _mapping_can_switch(self) -> bool:
-        """Allow AutoSLAM to start/stop its backend while it owns BASE."""
-        with self._lock:
-            active = list(self._state.active())
-            if not any(ExecutionResource.BASE in mission.resources
-                       and mission.capability.capability_id == 'autoslam'
-                       for mission in active):
-                return not self._scheduler.base_busy()
-            # A queued replacement must wait for AutoSLAM's backend cleanup.
-            return all(ExecutionResource.BASE not in mission.resources
-                       or mission.capability.capability_id == 'autoslam'
-                       for mission in active)
-
     def _on_readiness(self, message: String) -> None:
         try:
             ready = json.loads(message.data).get('state') == 'READY'
@@ -283,8 +195,6 @@ class SystemManagerNode(Node):
         self._accepting_goals = False
         if hasattr(self, '_speech'):
             self._speech.close()
-        if getattr(self, '_localization', None) is not None:
-            self._localization.close()
         if hasattr(self, '_action_server'):
             self._action_server.destroy()
         if hasattr(self, '_executor_bridge'):
@@ -569,6 +479,8 @@ class SystemManagerNode(Node):
                         self._deferred_downstream_cancellations.add(
                             mission_id
                         )
+            # Publish demand before dispatch/preparation; Bringup owns dependencies.
+            self._publish_state()
             for mission_id in effects.start:
                 with self._lock:
                     mission = self._state.get(mission_id)

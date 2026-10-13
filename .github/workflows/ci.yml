@@ -196,10 +196,9 @@ jobs:
         run: python -m pip install -r .github/requirements/agent-tests.txt
 
       - name: Run Agent tests without ROS
-        working-directory: malbut_agent_server
-        env:
-          PYTHONPATH: .
-        run: python -m pytest -q -rs test
+        run: >-
+          python .github/scripts/run-python-tests.py agent
+          --fall-job '${{ needs.changes.outputs.fall_python }}'
 
   fall-python:
     name: Fall Python tests (no ROS or Cloud)
@@ -376,15 +375,8 @@ jobs:
         run: |
           source /opt/ros/humble/setup.bash
           source install/setup.bash
-          cd malbut_agent_server
           # Core tests run in agent-python, without launch changing Python loggers.
-          PYTHONPATH=".:${PYTHONPATH}" python3 -m pytest -q -rs \
-            test/test_node_communication_ros.py test/test_ros_memory_communication.py \
-            test/test_ros_weather_communication.py test/test_weather_action.py \
-            test/test_speech_addressee_service_ros.py test/test_fall_runtime.py \
-            test/test_situation_action_ros.py test/test_situation_recovery_ros.py \
-            test/test_ros_speech_missions.py test/test_homecam_query.py \
-            test/test_manager_boundary_ros.py
+          python3 .github/scripts/run-python-tests.py agent-ros
 
       - name: Validate robot Xacro
         if: needs.changes.outputs.ros_full == 'true'
@@ -503,4 +495,5 @@ jobs:
         working-directory: src/malbut
         run: |
           export PATH=/usr/bin:/bin
-          HOMECAM_CI_WORKSPACE="$GITHUB_WORKSPACE" bash .github/scripts/test-homecam.sh
+          HOMECAM_CI_WORKSPACE="$GITHUB_WORKSPACE" bash .github/scripts/test-homecam.sh \
+            --fall-job '${{ needs.changes.outputs.fall_python }}'

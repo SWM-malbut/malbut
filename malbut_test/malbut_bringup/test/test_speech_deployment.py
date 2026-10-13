@@ -1,0 +1,291 @@
+"""Check that the robot copy can install its complete speech runtime."""
+
+import ast
+from pathlib import Path
+import runpy
+import sys
+from types import SimpleNamespace
+from xml.etree import ElementTree
+
+import pytest
+
+
+SOURCE = Path(__file__).parents[2]
+if not (SOURCE / 'malbut_test').is_dir():
+    SOURCE = SOURCE.parent
+if not (SOURCE / 'malbut_test').is_dir():
+    pytest.skip('Deployment parity requires the original checkout', allow_module_level=True)
+ROBOT = SOURCE / 'malbut_test'
+SPEECH_PACKAGES = ('malbut_agent_server', 'malbut_stt', 'malbut_tts')
+
+
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
+def test_robot_speech_runtime_matches_source(package):
+    """Preserve executable modules and bundled Agent data without stale copies."""
+    source = SOURCE / package / package
+    deployed = ROBOT / package / package
+    suffixes = {'.py', '.json', '.jsonl'}
+    files = {path.relative_to(source) for path in source.rglob('*')
+             if path.is_file() and path.suffix in suffixes}
+    copied = {path.relative_to(deployed) for path in deployed.rglob('*')
+              if path.is_file() and path.suffix in suffixes}
+    assert files == copied
+    for path in files:
+        if package == 'malbut_stt' and path == Path('node.py'):
+            # The test deployment temporarily disables barge-in, even with AEC.
+            expected = (source / path).read_bytes()
+            original = b'            input_has_aec=input_has_aec,\n'
+            override = (b'            # Temporarily disable barge-in '
+                        b'in the robot test deployment.\n'
+                        b'            input_has_aec=False,\n')
+            assert expected.count(original) == 1
+            assert expected.replace(original, override, 1) == (deployed / path).read_bytes()
+        else:
+            assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
+
+
+def test_robot_speech_launch_and_native_assets_match_source():
+    """Ship the launch gate, preflight modules and Jetson model bridge together."""
+    for path in (
+        'malbut_bringup/launch/robot.launch.py',
+        'malbut_bringup/launch/bringup.launch.py',
+        'malbut_bringup/launch/tracking.launch.py',
+        'malbut_bringup/launch/patrol.launch.py',
+        'malbut_bringup/launch/autoslam.launch.py',
+        'malbut_bringup/launch/manual.launch.py',
+        'malbut_bringup/launch/relocalization.launch.py',
+        'malbut_bringup/launch/homecam.launch.py',
+        'malbut_bringup/launch/fall.launch.py',
+        'malbut_bringup/malbut_bringup/launch_support.py',
+        'malbut_bringup/malbut_bringup/readiness.py',
+        'malbut_bringup/malbut_bringup/web_panel.py',
+        'malbut_bringup/malbut_bringup/web_panel.html',
+        'malbut_autoslam/launch/autoslam.launch.py',
+        'malbut_autoslam/malbut_autoslam/autoslam_node.py',
+        'malbut_bringup/malbut_bringup/runtime_control.py',
+        'malbut_bringup/malbut_bringup/map_selection.py',
+        'malbut_bringup/scripts/runtime_control',
+        'malbut_bringup/src/component_container_isolated.cpp',
+        'malbut_bringup/src/sync_slam_toolbox.cpp',
+        'malbut_autoslam/malbut_autoslam/slam_process.py',
+        'malbut_system_manager/malbut_system_manager/mission_executor.py',
+        'malbut_system_manager/malbut_system_manager/system_manager_node.py',
+        'malbut_relocalization/malbut_relocalization/relocalization_node.py',
+        'malbut_interfaces/capabilities/autoslam.yaml',
+        'malbut_bringup/launch/speech.launch.py',
+        'malbut_bringup/malbut_bringup/speech_preflight.py',
+        'malbut_bringup/malbut_bringup/speech_process.py',
+        'malbut_bringup/malbut_bringup/speech_audio.py',
+        'malbut_stt/malbut_stt/preflight.py',
+        'malbut_stt/config/jetson.yaml',
+        'malbut_stt/native/CMakeLists.txt',
+        'malbut_stt/native/whisper_cpp_bridge.cpp',
+        'malbut_stt/requirements-whisper-cpp.txt',
+        'malbut_tts/requirements-api.txt',
+        'malbut_agent_server/requirements-openai.txt',
+    ):
+        original = (SOURCE / path).read_text()
+        deployed = (ROBOT / path).read_text()
+        if path == 'malbut_bringup/launch/bringup.launch.py':
+            deployed = _without_resource_monitor(deployed)
+        if path == 'malbut_bringup/malbut_bringup/launch_support.py':
+            hook = "        SetEnvironmentVariable('MALBUT_MEASUREMENT_LAUNCH', name),\n"
+            assert deployed.count(hook) == 1
+            deployed = deployed.replace(hook, '', 1)
+        assert original == deployed, path
+
+
+def test_autoslam_backend_services_ship_with_runtime_dependencies():
+    """Test-only dependencies may differ; standard backend service types must ship."""
+    dependencies = []
+    for root in (SOURCE, ROBOT):
+        manifest = ElementTree.parse(root / 'malbut_autoslam/package.xml').getroot()
+        dependencies.append({item.text for item in manifest.findall('exec_depend')})
+    assert dependencies[0] == dependencies[1]
+    assert 'std_srvs' in dependencies[0]
+
+
+def test_robot_feature_idle_hooks_match_source():
+    """Ship input pause/resume and its launch wiring together on the robot."""
+    for path in (
+        'malbut_yolo/malbut_yolo/yolo_node.py', 'malbut_yolo/launch/yolo.launch.py',
+        'malbut_reid/malbut_reid/person_reidentifier_node.py',
+        'malbut_reid/launch/person_reidentification.launch.py',
+        'malbut_tracking/malbut_tracking/person_localizer_node.py',
+        'malbut_tracking/src/lidar_foreground_preprocessor.cpp',
+        'malbut_tracking/launch/person_detection.launch.py',
+        'malbut_tracking/launch/person_following.launch.py',
+        'malbut_tracking/launch/lidar_foreground.launch.py',
+    ):
+        assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
+    for path in ('malbut_patrol/patrol_manager.py', 'launch/patrol.launch.py'):
+        assert ((SOURCE / 'malbut_autonomy/malbut_patrol' / path).read_bytes() ==
+                (ROBOT / 'malbut_patrol' / path).read_bytes()), path
+    # The deployment intentionally omits benchmarks and test dependencies.
+    for base in (SOURCE, ROBOT):
+        cmake = (base / 'malbut_tracking/CMakeLists.txt').read_text()
+        assert 'find_package(std_srvs REQUIRED)' in cmake
+        for package in ('malbut_tracking', 'malbut_reid', 'malbut_yolo'):
+            manifest = ElementTree.parse(base / package / 'package.xml').getroot()
+            assert any(node.text == 'std_srvs' for node in manifest
+                       if node.tag in ('depend', 'exec_depend'))
+
+
+def _without_resource_monitor(deployed):
+    """Allow only the reviewed test-only observer hooks, not application drift."""
+    replacements = (
+        ('from malbut_resource_monitor.launch_support import record_first\n', ''),
+        ('from launch.actions import DeclareLaunchArgument, LogInfo,',
+         'from launch.actions import LogInfo,'),
+        ("    startup = actions\n"
+         "    if value('resource_monitor') == 'true':\n"
+         "        return record_first(startup, value('resource_log_root'))\n"
+         "    return startup\n", '    return actions\n'),
+        ("        DeclareLaunchArgument('resource_monitor', default_value='true', "
+         "choices=['true', 'false']),\n"
+         "        DeclareLaunchArgument('resource_log_root',\n"
+         "                              default_value=str(Path.home() / "
+         "'.ros/malbut/resource_logs')),\n", ''),
+    )
+    for hook, original in replacements:
+        assert deployed.count(hook) == 1, hook
+        deployed = deployed.replace(hook, original, 1)
+    return deployed
+
+
+def test_robot_measurement_launch_marker_is_scoped():
+    """Tag nested processes without leaking the module marker to siblings."""
+    from launch import LaunchContext
+    from launch.utilities import visit_all_entities_and_collect_futures
+
+    support = runpy.run_path(str(ROBOT / 'malbut_bringup/malbut_bringup/launch_support.py'))
+    context = LaunchContext()
+    context.environment['MALBUT_MEASUREMENT_LAUNCH'] = 'outer'
+    observed = []
+
+    def capture(ctx):
+        observed.append(ctx.environment['MALBUT_MEASUREMENT_LAUNCH'])
+        return []
+
+    for name in ('tracking', 'fall', 'robot'):
+        action = support['module_actions'](name, capture)
+        visit_all_entities_and_collect_futures(action, context)
+        assert context.environment['MALBUT_MEASUREMENT_LAUNCH'] == 'outer'
+    assert observed == ['tracking', 'fall', 'robot']
+
+
+def test_robot_fall_startup_helper_matches_source():
+    """Include the VLM config validator imported by the robot launch file."""
+    path = 'malbut_bringup/malbut_bringup/fall_setup.py'
+    assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes()
+
+
+def test_robot_build_installs_context_tokenizer():
+    """The dedicated Agent interpreter receives its local tokenizer."""
+    build = (ROBOT / 'build.sh').read_text()
+    assert '-r "$robot_source_dir/malbut_agent_server/requirements-openai.txt"' in build
+    assert 'tiktoken' in (ROBOT / 'malbut_agent_server/requirements-openai.txt').read_text()
+
+
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
+def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
+    """Resolve installed assets and console targets using only the robot folder."""
+    metadata = {}
+    setuptools = SimpleNamespace(
+        find_packages=lambda **kwargs: [],
+        setup=lambda **kwargs: metadata.update(kwargs),
+    )
+    monkeypatch.setitem(sys.modules, 'setuptools', setuptools)
+    root = ROBOT / package
+    monkeypatch.chdir(root)
+    runpy.run_path(str(root / 'setup.py'))
+    for _, paths in metadata['data_files']:
+        assert paths
+        for path in paths:
+            assert (root / path).is_file(), path
+    for name, patterns in metadata.get('package_data', {}).items():
+        for pattern in patterns:
+            assert list((root / name).glob(pattern)), pattern
+    entries = metadata['entry_points']['console_scripts']
+    for entry in entries:
+        _, target = entry.split('=', 1)
+        module, function = target.strip().split(':', 1)
+        path = root / (module.replace('.', '/') + '.py')
+        tree = ast.parse(path.read_text())
+        assert any(isinstance(node, ast.FunctionDef) and node.name == function
+                   for node in tree.body), target
+    source_metadata = {}
+    monkeypatch.setattr(setuptools, 'setup', lambda **kwargs: source_metadata.update(kwargs))
+    monkeypatch.chdir(SOURCE / package)
+    runpy.run_path(str(SOURCE / package / 'setup.py'))
+    assert entries == source_metadata['entry_points']['console_scripts']
+    for field in ('package_data', 'data_files', 'install_requires', 'extras_require'):
+        assert metadata.get(field) == source_metadata.get(field), field
+
+
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
+def test_robot_speech_runtime_dependencies_match_source(package):
+    """Include the ROS and Python dependencies required by mirrored runtime code."""
+    def runtime_dependencies(base):
+        manifest = ElementTree.parse(base / package / 'package.xml').getroot()
+        tags = {'depend', 'exec_depend', 'buildtool_depend'}
+        return {(node.tag, node.text, tuple(sorted(node.attrib.items())))
+                for node in manifest if node.tag in tags}
+
+    assert runtime_dependencies(ROBOT) == runtime_dependencies(SOURCE)
+
+
+def test_robot_bringup_installs_speech_with_cmake():
+    """The native Bringup package installs its Python speech entrypoint too."""
+    for base in (SOURCE, ROBOT):
+        root = base / 'malbut_bringup'
+        cmake = (root / 'CMakeLists.txt').read_text()
+        assert 'ament_python_install_package(${PROJECT_NAME})' in cmake
+        assert 'scripts/speech_preflight' in cmake
+        assert 'README_SPEECH.md' in cmake
+        assert 'install(DIRECTORY launch config' in cmake
+        script = root / 'scripts/speech_preflight'
+        assert script.stat().st_mode & 0o111
+        tree = ast.parse(script.read_text())
+        entry = next(node for node in tree.body if isinstance(node, ast.ImportFrom)
+                     and node.module == 'malbut_bringup.speech_preflight')
+        assert any(name.name == 'main' for name in entry.names)
+        assert (root / 'launch/speech.launch.py').is_file()
+        assert (root / 'README_SPEECH.md').is_file()
+        assert not (root / 'setup.py').exists()
+    for path in ('CMakeLists.txt', 'scripts/speech_preflight'):
+        assert ((SOURCE / 'malbut_bringup' / path).read_bytes() ==
+                (ROBOT / 'malbut_bringup' / path).read_bytes())
+
+
+def test_robot_speech_interfaces_are_generated_from_current_definitions():
+    """Generate every imported speech and weather type from this deployment copy."""
+    interfaces = ROBOT / 'malbut_interfaces'
+    cmake = (interfaces / 'CMakeLists.txt').read_text()
+    required = set()
+    for package in SPEECH_PACKAGES:
+        for path in (ROBOT / package / package).rglob('*.py'):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if (isinstance(node, ast.ImportFrom) and node.module in
+                        {'malbut_interfaces.msg', 'malbut_interfaces.srv',
+                         'malbut_interfaces.action'}):
+                    kind = node.module.rsplit('.', 1)[1]
+                    required.update(f'{kind}/{name.name}.{kind}' for name in node.names)
+    assert required
+    for path in required:
+        assert f'"{path}"' in cmake, path
+        assert ((interfaces / path).read_bytes() ==
+                (SOURCE / 'malbut_interfaces' / path).read_bytes()), path
+    manifest = ElementTree.parse(ROBOT / 'malbut_bringup/package.xml')
+    dependencies = {node.text for node in manifest.findall('exec_depend')}
+    assert set(SPEECH_PACKAGES) <= dependencies
+
+
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
+def test_robot_speech_copy_excludes_tests_secrets_and_caches(package):
+    """Keep developer tests, local credentials and generated caches off the robot."""
+    forbidden = {'test', 'tests', '__pycache__', '.pytest_cache', '.env'}
+    for path in (ROBOT / package).rglob('*'):
+        assert path.name not in forbidden, path
+        assert not (path.name.startswith('.env.') and path.name != '.env.example'), path
+        assert path.suffix != '.pyc', path

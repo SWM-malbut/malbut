@@ -131,7 +131,7 @@ class PersonFollowerNode(Node):
         self._tf_buffer = Buffer()
         # One executor owns this node. All TF lookups are non-blocking so its
         # subscriptions can fill the buffer before the pending-frame retry.
-        self._tf_listener = TransformListener(self._tf_buffer, self)
+        self._tf_listener = None
         self._line_fallback_pending = False
         self._planning_shutdown = False
 
@@ -212,12 +212,7 @@ class PersonFollowerNode(Node):
             self._on_lidar_clusters,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
         )
-        self._costmap_subscription = self.create_subscription(
-            Costmap,
-            str(self.get_parameter('global_costmap_topic').value),
-            self._on_global_costmap,
-            1,
-        )
+        self._costmap_subscription = None
         self._action_server = ActionServer(
             self,
             FollowPerson,
@@ -603,7 +598,31 @@ class PersonFollowerNode(Node):
         elif self._active_goal is None:
             self._complete_follow_cancel()
 
+    def _set_follow_inputs(self, enabled: bool) -> None:
+        """Only this action owns its TF/costmap subscriptions, not Nav2 itself."""
+        if enabled:
+            if self._tf_listener is None:
+                self._tf_buffer.clear()
+                self._tf_listener = TransformListener(self._tf_buffer, self)
+            if self._costmap_subscription is None:
+                self._costmap_subscription = self.create_subscription(
+                    Costmap,
+                    str(self.get_parameter('global_costmap_topic').value),
+                    self._on_global_costmap,
+                    1,
+                )
+        else:
+            if self._tf_listener is not None:
+                self._tf_listener.unregister()
+                self._tf_listener = None
+                self._tf_buffer.clear()
+            if self._costmap_subscription is not None:
+                self.destroy_subscription(self._costmap_subscription)
+                self._costmap_subscription = None
+            self._latest_global_costmap = None
+
     def _handle_accepted(self, goal_handle) -> None:
+        self._set_follow_inputs(True)
         self._active_goal = goal_handle
         self._line_fallback_pending = False
         self._result_future = Future()
@@ -3004,6 +3023,7 @@ class PersonFollowerNode(Node):
         result_future = self._result_future
         if goal_handle is None or result_future is None or self._nav2.busy:
             return
+        self._set_follow_inputs(False)
         result = self._canceled_follow_result()
         goal_handle.canceled()
         self._cancel_requested_goal = None
@@ -3026,6 +3046,7 @@ class PersonFollowerNode(Node):
         self._nav2.destroy()
         self._path_planner.destroy()
         self._action_server.destroy()
+        self._set_follow_inputs(False)
         return super().destroy_node()
 
 

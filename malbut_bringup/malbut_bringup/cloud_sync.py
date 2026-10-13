@@ -343,7 +343,8 @@ def space_documents(runtime, catalog):
         return None, None, None
     map_id = cloud_map_id(runtime)
     key = (map_id, *(_stamp(item) for item in (
-        path, zones_path(path), path.with_suffix('.user-map.geojson'))))
+        path, zones_path(path), path.with_suffix('.user-map.geojson'),
+        path.with_suffix('.view.json'))))
     cached = _SPACE_CACHE.get(str(path))
     if cached is not None and cached[0] == key:
         return cached[1]
@@ -519,11 +520,14 @@ def _without_path(state):
 
 def map_payload(metadata, png, runtime, zones=None, user_map=None, map_revision=None):
     """
-    Preserve /map geometry and its native-size, neutral occupancy PNG.
+    Upload a display PNG with a reversible map-frame pixel transform.
 
     ``revision`` changes with any upload content (so edits upload again);
     ``mapRevision`` names only the map itself (the web map editor's drafts keep it).
     """
+    if runtime.get('mode') == 'navigation' and user_map is not None:
+        from .web_map import aligned_preview
+        metadata, png = aligned_preview(metadata, png, user_map.get('view'))
     if (not 1 <= metadata['width'] <= 8192 or not 1 <= metadata['height'] <= 8192
             or not 0.001 <= metadata['resolution'] <= 1.0):
         raise ValueError('Robot map geometry exceeds the cloud contract')

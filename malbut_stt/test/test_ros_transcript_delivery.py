@@ -34,6 +34,8 @@ def test_installed_receiver_delivery_and_restart(tmp_path, monkeypatch):
 
     # Keep the test away from the existing Manager and physical robot domains.
     monkeypatch.setenv('ROS_DOMAIN_ID', '191')
+    # Parse captured JSON independently of the developer's terminal color setting.
+    monkeypatch.setenv('RCUTILS_COLORIZED_OUTPUT', '0')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     from malbut_agent_server.speech_receipts import SpeechReceiptStore
     from malbut_agent_server.speech_receiver import create_receiver_node

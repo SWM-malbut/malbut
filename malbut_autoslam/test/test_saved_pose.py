@@ -20,7 +20,7 @@ from malbut_autoslam.saved_pose import write_mapping_pose
 def saved_map(tmp_path):
     """Create the two files returned by a successful map saver."""
     path = tmp_path / 'home.yaml'
-    path.write_text('image: home.pgm\nresolution: 0.05\n')
+    path.write_text('image: home.pgm\nresolution: 0.05\norigin: [0, 0, 0]\n')
     path.with_suffix('.pgm').write_bytes(b'P5\n1 1\n255\n\xfe')
     return path
 
@@ -104,6 +104,7 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
     monkeypatch.setattr(module + 'map_statistics', lambda _grid: {
         'known_area_m2': 6.0, 'free_area_m2': 6.0})
     node = Mock()
+    node.slam = None
     node.lock = RLock()
     node.frontier_count = 0
     node._save.return_value = str(saved_map)
@@ -126,6 +127,7 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
     handle.succeed.assert_called_once_with()
     node._settle_child.assert_called_once_with(handle)
     node._save_pose.assert_called_once_with(str(saved_map))
+    assert saved_map.with_suffix('.view.json').is_file()
     if pose_error is None:
         assert saved_map.with_suffix('.pose.yaml').is_file()
         assert 'initial robot pose saved' in result.message

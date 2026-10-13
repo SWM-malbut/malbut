@@ -83,7 +83,6 @@ def speech(tmp_path, request):
     peer = Node('managed_speech_test')
     manifests = Path(__file__).resolve().parents[2] / 'malbut_interfaces/capabilities'
     manifest = yaml.safe_load((manifests / 'follow_person.yaml').read_text())
-    manifest['execution'].pop('map_requirement')
     for name, resources in (('base', ['BASE']), ('speaker', ['SPEAKER'])):
         manifest['capability']['id'] = name
         manifest['command']['name'] = '/managed_speech_test/' + name
