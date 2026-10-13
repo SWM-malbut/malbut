@@ -64,6 +64,19 @@ PERSON_POSE_WAIT_S = 3.0
 # had just been sent to look at as a person lying down and opened a second
 # incident. A check normally ends with its result or return; this bounds it.
 SPOT_CHECK_MAX_S = 240.0
+# 2026-10-12 21:15 one fall became two cases: the Pose case, and 28 s later a
+# Cloud finding whose box filled the frame so no track matched it. A finding
+# at an open person case's map place within two minutes is that fall (the
+# user, 2026-10-12); a fall seen happening still opens its own case.
+SAME_PLACE_CASE_S = 120.0
+# 2026-10-12 21:13 the robot saw someone sitting off the floor, closed the case
+# and drove back; from there Pose read them as lying and a new case began. A
+# place the robot checked is now checked by Cloud only: a case opens there
+# only for a fall seen happening (the user, 2026-10-12). Standing up there ends
+# it, and this bounds it.
+CLEARED_PLACE_MAX_S = 1800.0
+CLEARED_REASONS = frozenset({'off_floor_verified', 'normal_verified', 'not_a_person',
+                             'risk_cleared', 'response_completed'})
 # A body resting higher than this is on a bed or sofa, not on the floor: the
 # 30 cm the Pose detector already applies to the torso (maximum_floor_height_m).
 # 2026-10-09: a person lying on the bed became a Cloud scene case every minute.
@@ -220,6 +233,10 @@ class CloudFallMonitor:
         self._person_checks = {}
         # incident_id -> (map point, since): spots the robot is checking now.
         self._spot_checks = {}
+        # incident_id -> (map point, since): places the robot found no fall at.
+        self._cleared_places = {}
+        # incident_id -> the Pose case's map point when its person was last a candidate.
+        self._case_places = {}
         # Notifications (2026-10-12): the older reasons send only a higher level
         # than they sent before; the new ones (could not check, revisit results)
         # go once each, so a later 도움 요청 is never swallowed.
@@ -519,6 +536,7 @@ class CloudFallMonitor:
         self._subject_evidence.append(frame)
         self._camera_motion.observe(frame.observed_at, moving=frame.camera_moving)
         self._refresh_settled_subjects()
+        self._refresh_cleared_places(frame)
         self._people_call(self._people.observe, frame.observed_at, tuple(
             (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
         for incident in self._incidents.values():
@@ -614,6 +632,7 @@ class CloudFallMonitor:
         if candidate.kind is CandidateKind.MOTION_SEEN:
             # A newly measured fall must not inherit an earlier resting answer.
             self._settled_subjects.pop(candidate.subject_key, None)
+            self._forget_cleared_places(self._subject_places(candidate.subject_key))
         current = next((i for i in self._incidents.values()
                         if i.subject_key == candidate.subject_key
                         and i.state is not IncidentState.RESOLVED), None)
@@ -630,6 +649,7 @@ class CloudFallMonitor:
             current.last_candidate_id = candidate.candidate_id
             current.last_observed_at = candidate.observed_at
             current.sensors = candidate.sensors
+            self._remember_case_place(current)
             self._record_candidate_clip(current, candidate)
             # Any fresh suspicion invalidates earlier clearance, even if it
             # does not warrant a new question/evidence revision.
@@ -653,6 +673,11 @@ class CloudFallMonitor:
             # so a person still there after the check opens an incident then.
             self._emit('candidate_rejected', reason='spot_under_check')
             return None
+        if (candidate.kind is not CandidateKind.MOTION_SEEN
+                and self._cleared_place(self._subject_places(candidate.subject_key))):
+            # Cloud's periodic look decides there; only a seen fall opens a case.
+            self._emit('candidate_rejected', reason='cleared_place')
+            return None
         if not self._make_room():
             self._emit('candidate_rejected', reason='incident_capacity')
             return None
@@ -668,6 +693,7 @@ class CloudFallMonitor:
         self._incidents[current.incident_id] = current
         self._emit('incident_opened', current, reason=display_reason)
         self._log_pose_place(current)
+        self._remember_case_place(current)
         self._record_candidate_clip(current, candidate)
         if self._runtime_cloud_block is not None:
             current.pending = False
@@ -991,6 +1017,93 @@ class CloudFallMonitor:
                     return iid
             elif 0.25 <= (pose.box[0] + pose.box[2]) / 2 <= 0.75:
                 return iid  # Same fallback as the close look: the robot faces the spot.
+        return None
+
+    def _subject_places(self, subject_key):
+        """The Pose subject's latest map point, as a tuple of at most one."""
+        latest = self._subject_evidence.latest(subject_key)
+        if self._place is None or latest is None or latest[2].box is None:
+            return ()
+        try:
+            point = self._place.locate_near(latest[0], latest[2].box)
+        except Exception:
+            return ()  # Auxiliary: never stops fall handling.
+        return () if point is None else (point,)
+
+    def _remember_case_place(self, incident):
+        places = self._subject_places(incident.subject_key)
+        if places:
+            self._case_places[incident.incident_id] = places[0]
+
+    def _incident_place(self, incident):
+        """Where the case is on the map: the spot it was checked at, else measured."""
+        for point in (incident.revisit_target, incident.approach_target):
+            if point is not None:
+                return point
+        if incident.subject_key is None:
+            return incident.scene_points[-1] if incident.scene_points else None
+        places = self._subject_places(incident.subject_key)
+        return places[0] if places else self._case_places.get(incident.incident_id)
+
+    def _remember_cleared_place(self, incident):
+        if incident.close_reason in CLEARED_REASONS:
+            place = self._incident_place(incident)
+            if place is not None:
+                self._cleared_places[incident.incident_id] = (place, self._now())
+
+    def _cleared_place(self, points):
+        """The closed case whose cleared place one of these map points is at, or None."""
+        now = self._now()
+        for iid, (_, since) in tuple(self._cleared_places.items()):
+            if now - since > CLEARED_PLACE_MAX_S:
+                del self._cleared_places[iid]
+        return next((iid for iid, (place, _) in self._cleared_places.items()
+                     if any(math.dist(place, p) <= SAME_PLACE_M for p in points)), None)
+
+    def _forget_cleared_places(self, points):
+        for iid, (place, _) in tuple(self._cleared_places.items()):
+            if any(math.dist(place, p) <= SAME_PLACE_M for p in points):
+                del self._cleared_places[iid]
+
+    def _refresh_cleared_places(self, frame):
+        """Someone standing at a cleared place: the usual rules apply there again."""
+        if not self._cleared_places or self._place is None:
+            return
+        for pose in frame.subjects:
+            if pose.state is not SubjectCheckState.CLEAR or pose.box is None:
+                continue
+            try:
+                point = self._place.locate_near(frame.observed_at, pose.box)
+            except Exception:
+                point = None
+            if point is not None:
+                self._forget_cleared_places((point,))
+
+    def _held_by_place(self, times, finding):
+        """Why a Cloud finding opens no case of its own, or None (2026-10-12).
+
+        At an open person case's place within two minutes it is that fall: its
+        window joins the case's clips. At a place the robot found no fall at,
+        Cloud's look decides and only a fall seen happening opens a case.
+        """
+        if finding.assessment is VideoAssessment.OBSERVED_FALL:
+            self._forget_cleared_places(self._map_points(times, finding))
+            return None
+        points = self._map_points(times, finding)
+        if not points:
+            return None
+        for incident in self._incidents.values():
+            if (incident.subject_key is None or incident.state is IncidentState.RESOLVED
+                    or times[0] - incident.last_observed_at > SAME_PLACE_CASE_S):
+                continue
+            place = self._incident_place(incident)
+            if place is not None and any(math.dist(place, p) <= SAME_PLACE_M for p in points):
+                self._record_clip(incident, times[0], times[-1], anchor_kind='cloud_window',
+                                  found_down=finding.kind is CandidateKind.ALREADY_DOWN)
+                self._record_cloud_boxes(incident, times, finding)
+                return 'same_place_open_incident'
+        if self._cleared_place(points) is not None:
+            return 'cleared_place'
         return None
 
     def _same_person_incident(self, candidate):
@@ -1398,6 +1511,7 @@ class CloudFallMonitor:
             # This is an explicit user-informed decision, not automatic video
             # clearance. A later video result may not overturn it.
             self._emit('incident_resolved', incident, reason=incident.close_reason)
+            self._remember_cleared_place(incident)
             self._remember_settled_subject(incident)
         return True
 
@@ -1625,6 +1739,7 @@ class CloudFallMonitor:
         incident.close_reason = reason
         self._emit('incident_resolved', incident, reason=reason)
         self._remember_settled_subject(incident)
+        self._remember_cleared_place(incident)
 
     def _cloud_block(self, now: float) -> Optional[str]:
         if not self._enabled or not self._camera:
@@ -1709,6 +1824,13 @@ class CloudFallMonitor:
                     else:
                         if current and current.subject_association_token != match.token:
                             reason = 'incident_target_continuity_unverified'
+                        elif (current is None and finding.assessment
+                              is not VideoAssessment.OBSERVED_FALL
+                              and self._settled_subject(
+                                  match.subject_key, match.token, finding) is None
+                              and self._cleared_place(self._map_points(times, finding))):
+                            # The direct path below records why; no new person case.
+                            reason = 'cleared_place'
                         else:
                             iid = self._merge_cloud_person(
                                 request, finding, match.subject_key, match.token,
@@ -1732,9 +1854,13 @@ class CloudFallMonitor:
                 if self._on_furniture(times, finding):
                     reason = 'on_furniture'
                 else:
-                    iid = self._record_unidentified_scene(request, finding, analysis=analysis)
-                    if iid is None:
-                        reason = 'incident_capacity'
+                    held = self._held_by_place(times, finding)
+                    if held is not None:
+                        reason = held
+                    else:
+                        iid = self._record_unidentified_scene(request, finding, analysis=analysis)
+                        if iid is None:
+                            reason = 'incident_capacity'
             proof = None
             if subject_key and (measured != pose_snapshot
                                 or any(len(group) == 2 for group in measured)):
@@ -1850,6 +1976,10 @@ class CloudFallMonitor:
             d = pending.discovery
             if self._on_furniture(d.sample_times, d.finding):
                 self._finish_pending_association(pending, 'cancelled', 'on_furniture')
+                continue
+            held = self._held_by_place(d.sample_times, d.finding)
+            if held is not None:
+                self._finish_pending_association(pending, 'cancelled', held)
                 continue
             entry = self._discoveries.get(d.discovery_id)
             iid = self._record_unidentified_observation(
@@ -2214,6 +2344,7 @@ class CloudFallMonitor:
                     and not incident.merged_into_incident_ids):
                 del self._incidents[iid]
                 self._questions.pop(iid, None)
+                self._case_places.pop(iid, None)
                 self._association_wait.anchors.pop(iid, None)
                 for key in [k for k in self._clip_offsets
                             if k == iid or (isinstance(k, tuple) and k[0] == iid)]:

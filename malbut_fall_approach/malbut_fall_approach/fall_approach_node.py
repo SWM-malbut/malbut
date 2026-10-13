@@ -20,6 +20,7 @@ from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FallApproach
 from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin
+from nav2_msgs.msg import Costmap
 from nav_msgs.msg import Path
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -32,9 +33,9 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_fall_approach.fall_approach import (
-    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, RETURN_LIMIT_S, VIEW_LIMIT_S, Pose2D, StartPoses,
-    backup_distance, facing_turn, goal_error, plan_targets, returning_turn, route_length,
-    standoff_route, view_points,
+    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid, Pose2D,
+    StartPoses, backup_distance, can_stand, facing_turn, goal_error, plan_targets,
+    returning_turn, route_length, sight_clear, standoff_route, view_rings, within_detour,
 )
 
 STATUS_TOPIC = '/malbut/falls/approach/status'
@@ -79,6 +80,8 @@ class FallApproachNode(Node):
             'compute_path_action': 'compute_path_to_pose', 'follow_path_action': 'follow_path',
             'spin_action': 'spin', 'navigate_action': 'navigate_to_pose',
             'backup_action': 'backup',
+            # Where the whole body can be seen from (walls, furniture, free floor).
+            'costmap_topic': '/global_costmap/costmap_raw',
         }
         self.settings = {name: self.declare_parameter(name, value).value
                          for name, value in settings.items()}
@@ -98,6 +101,9 @@ class FallApproachNode(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
         self.status = self.create_publisher(String, STATUS_TOPIC, latched)
+        self.grid = None
+        self.create_subscription(Costmap, self.settings['costmap_topic'], self._on_costmap,
+                                 latched, callback_group=self.group)
         self.starts = StartPoses()
         self.busy = threading.Lock()
         self.child = None
@@ -167,7 +173,7 @@ class FallApproachNode(Node):
         return 'arrived', ''
 
     def _view(self, handle, request, deadline):
-        """Back away (or go around) to where the whole body is visible, facing the spot."""
+        """Back away, or go to the nearest place the spot can be seen from, facing it."""
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
@@ -179,22 +185,46 @@ class FallApproachNode(Node):
             if self._back_up(handle, back, deadline):
                 return self._face(handle, robot, target, deadline)
             robot = self._pose() or robot
+        grid = self.grid
+        if grid is None:
+            return 'no_path', 'no costmap to tell where the spot can be seen from'
         failed = False
-        for goal in view_points((robot.x, robot.y), target, request.standoff_m):
-            path = self._plan(handle, robot, goal, deadline,
-                              yaw=math.atan2(target[1] - goal[1], target[0] - goal[0]))
-            if path is None:
-                continue
-            self._feedback(handle, 'DRIVING')
-            if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
-                # Another side of the spot may still be reachable within the minute.
-                failed = True
-                robot = self._pose() or robot
-                continue
-            return self._face(handle, robot, target, deadline)
+        for ring in view_rings((robot.x, robot.y), target, request.standoff_m):
+            options = []
+            for order, goal in enumerate(ring):
+                if not (can_stand(grid, goal) and sight_clear(grid, goal, target)):
+                    continue
+                planned = self._view_path(handle, robot, goal, target, deadline)
+                if planned is not None:
+                    options.append((planned[0], order, goal, planned[1]))
+            # Nearest by path; within a centimetre, the ring's order decides.
+            options.sort(key=lambda option: (round(option[0], 2), option[1]))
+            for _, _, goal, path in options:
+                if failed:
+                    # The robot moved on the failed drive: plan again from here.
+                    planned = self._view_path(handle, robot, goal, target, deadline)
+                    if planned is None:
+                        continue
+                    path = planned[1]
+                self._feedback(handle, 'DRIVING')
+                if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
+                    # Another place may still be reachable within the minute.
+                    failed = True
+                    robot = self._pose() or robot
+                    continue
+                return self._face(handle, robot, target, deadline)
         if failed:
             return 'failed', 'Nav2 did not finish a path to see the whole body'
-        return 'no_path', 'no place to see the whole body'
+        return 'no_path', 'no near place the spot can be seen from'
+
+    def _view_path(self, handle, robot, goal, target, deadline):
+        """(length, path) to a view place facing the spot, or None if no near path."""
+        path = self._plan(handle, robot, goal, deadline,
+                          yaw=math.atan2(target[1] - goal[1], target[0] - goal[0]))
+        if path is None:
+            return None
+        length = route_length([(p.pose.position.x, p.pose.position.y) for p in path.poses])
+        return (length, path) if within_detour((robot.x, robot.y), goal, length) else None
 
     def _face(self, handle, robot, target, deadline):
         robot = self._pose() or robot
@@ -319,6 +349,18 @@ class FallApproachNode(Node):
         return future.result() if future.done() else None
 
     # ------------------------------------------------------------ helpers
+
+    def _on_costmap(self, message):
+        if message.header.frame_id != self.settings['global_frame']:
+            return  # Positions here are on the map; another frame cannot be compared.
+        meta = message.metadata
+        q = meta.origin.orientation
+        width, height = int(meta.size_x), int(meta.size_y)
+        if meta.resolution <= 0.0 or len(message.data) != width * height:
+            return
+        self.grid = CostGrid(float(meta.resolution), float(meta.origin.position.x),
+                             float(meta.origin.position.y), _yaw(q), width, height,
+                             bytes(message.data))
 
     def _pose(self):
         try:

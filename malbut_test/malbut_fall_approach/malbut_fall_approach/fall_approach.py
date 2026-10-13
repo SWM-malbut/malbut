@@ -12,10 +12,22 @@ STANDOFF_M = 1.0
 APPROACH_LIMIT_S = 60.0
 RETURN_LIMIT_S = 60.0
 # Only part of the body was seen from 1 m (2026-10-11): move back to the
-# distance the fall rules ask for, within the user's one minute. Straight back
-# first; furniture in the way: around the spot.
+# distance the fall rules ask for, within the user's one minute.
 VIEW_LIMIT_S = 60.0
-VIEW_TURNS_DEG = (0.0, 45.0, -45.0, 90.0, -90.0)
+# 2026-10-12 21:16 the view drive went to a fixed point the spot could not be
+# seen from, the long way round. A view spot now has to see the spot on the
+# costmap and be near by path (the user's rules, 2026-10-12): the asked
+# distance first, then 0.5 m nearer or farther; at most twice the straight line.
+VIEW_RING_OFFSETS_M = (0.0, -0.5, 0.5)
+VIEW_TURN_STEP_DEG = 30.0
+VIEW_DETOUR_FACTOR = 2.0
+VIEW_DETOUR_SLACK_M = 0.05
+# The person lies around the spot and is an obstacle on the costmap: sight is
+# checked up to this far from it.
+BODY_CLEAR_M = 1.0
+# Nav2 raw costmap values (nav2_msgs/Costmap).
+INSCRIBED_COST = 253
+LETHAL_COST = 254
 # Turning away to drive to the spot behind the robot failed beside a bed
 # (2026-10-12 16:32): the half turn alone used most of Nav2's 10 s / 0.5 m
 # progress check. Facing the spot, the robot backs up instead, camera on the
@@ -60,12 +72,80 @@ def goal_error(phase, x, y, standoff_m, reason=''):
     return None
 
 
-def view_points(robot, target, distance):
-    """Where the whole body may be seen: straight back from the spot, then around it."""
+@dataclass(frozen=True)
+class CostGrid:
+    """Nav2's raw costmap: row-major costs, 0 free .. 254 lethal, 255 unknown."""
+
+    resolution: float
+    origin_x: float
+    origin_y: float
+    origin_yaw: float
+    width: int
+    height: int
+    data: bytes
+
+    def cost(self, x, y):
+        """Return the cost under a map point, or None off the grid."""
+        dx, dy = x - self.origin_x, y - self.origin_y
+        cos, sin = math.cos(self.origin_yaw), math.sin(self.origin_yaw)
+        col = math.floor((cos * dx + sin * dy) / self.resolution)
+        row = math.floor((-sin * dx + cos * dy) / self.resolution)
+        if 0 <= col < self.width and 0 <= row < self.height:
+            return self.data[row * self.width + col]
+        return None
+
+
+def can_stand(grid, point):
+    """Known and outside the robot's inscribed footprint of any obstacle."""
+    cost = grid.cost(*point)
+    return cost is not None and cost < INSCRIBED_COST
+
+
+def sight_clear(grid, point, target):
+    """No wall or furniture between the point and the spot, short of the body.
+
+    Only lethal cells block: unknown cells and cells off the grid do not, so a
+    spot beyond the map can still be seen. Inflation is clearance, not an object.
+    """
+    length = math.dist(point, target)
+    reach = length - BODY_CLEAR_M
+    if reach <= 0.0:
+        return True
+    step = grid.resolution / 2.0
+    for i in range(int(reach / step) + 2):
+        t = min(i * step, reach) / length
+        if grid.cost(point[0] + (target[0] - point[0]) * t,
+                     point[1] + (target[1] - point[1]) * t) == LETHAL_COST:
+            return False
+    return True
+
+
+def view_rings(robot, target, distance):
+    """Where the whole body may be seen, by distance from the spot.
+
+    Each ring starts straight back from the spot (seen from the robot's side)
+    and goes around it both ways.
+    """
     base = math.atan2(robot[1] - target[1], robot[0] - target[0])
-    return [(target[0] + distance * math.cos(base + math.radians(turn)),
-             target[1] + distance * math.sin(base + math.radians(turn)))
-            for turn in VIEW_TURNS_DEG]
+    steps = int(round(180.0 / VIEW_TURN_STEP_DEG))
+    turns = [0.0]
+    for k in range(1, steps):
+        turns += [k * VIEW_TURN_STEP_DEG, -k * VIEW_TURN_STEP_DEG]
+    turns.append(180.0)
+    rings = []
+    for offset in VIEW_RING_OFFSETS_M:
+        radius = distance + offset
+        if radius <= BODY_CLEAR_M:
+            continue
+        rings.append([(target[0] + radius * math.cos(base + math.radians(turn)),
+                       target[1] + radius * math.sin(base + math.radians(turn)))
+                      for turn in turns])
+    return rings
+
+
+def within_detour(robot, goal, length):
+    """Check the path is at most twice the straight line (the user, 2026-10-12)."""
+    return length <= VIEW_DETOUR_FACTOR * math.dist(robot, goal) + VIEW_DETOUR_SLACK_M
 
 
 def backup_distance(robot, target, distance):
