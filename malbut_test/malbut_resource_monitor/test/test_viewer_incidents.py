@@ -13,7 +13,7 @@ from malbut_resource_monitor.viewer import LogServer
 
 
 def write_incident(root, name='incident-100-example', *, uid='u1', text='구독과 좋아요 부탁드려요!',
-                   extra_events=0, native_trace=None):
+                   extra_events=0, native_trace=None, shadow_trace=None):
     path = root / name
     path.mkdir(parents=True)
     stamp = 1791728505899334199
@@ -27,6 +27,7 @@ def write_incident(root, name='incident-100-example', *, uid='u1', text='구독�
         *([dict(event='decode_result', utterance_id=uid, native_decode=native_trace)]
           if native_trace is not None else []),
         *[dict(event='vad_frame', speech=False, rms=0.0) for _ in range(extra_events)],
+        *(shadow_trace or []),
     ]
     rows = [dict(monotonic_s=10 + i / 10, wall_ns=stamp+i, **r) for i, r in enumerate(rows)]
     manifest = dict(
@@ -68,6 +69,19 @@ def viewer(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_shadow_frames_and_failures_are_available_in_vad_filter(viewer):
+    root, get, _ = viewer
+    records = [dict(event=name, observation_only=True)
+               for name in ('shadow_vad_started', 'shadow_vad', 'shadow_vad_gap',
+                            'shadow_vad_error', 'shadow_vad_stopped')]
+    evidence = write_incident(root, extra_events=1, shadow_trace=records)
+    with get('/api/incident/events', incident=evidence.name, source='vad') as response:
+        data = json.load(response)
+    assert data['matching'] == 6
+    assert [r['record']['event'] for r in data['rows']] == ['vad_frame'] + [
+        r['event'] for r in records]
 
 
 def test_evidence_is_available_without_resource_sessions_and_preserves_raw_bytes(viewer):

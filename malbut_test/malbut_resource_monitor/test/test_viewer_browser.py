@@ -232,6 +232,32 @@ def test_incident_trace_logs_pagination_download_and_selection_restore(viewer):
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
+def test_shadow_vad_scores_show_observation_scope_and_missing_frames(viewer):
+    from test_viewer_incidents import write_incident
+
+    page, store, _ = viewer
+    write_incident(store.path.parent / 'incidents', shadow_trace=[
+        dict(event='shadow_vad', observation_only=True, silero_probability=.0123,
+             silero_speech=False, webrtc_frames=[dict(speech=True), dict(speech=False)],
+             source=dict(blocked=True, captured_at=100.), queue_wait_s=.001,
+             sample_index=512, dropped_chunks_total=2),
+        dict(event='shadow_vad_gap', reason='queue_gap', missing_samples=1024),
+    ])
+    page.get_by_role('link', name='STT 실행 추적', exact=True).click()
+    page.locator('#traceSource').select_option('vad')
+    logs = page.locator('#traceLogs')
+    playwright.expect(logs).to_contain_text('기존 STT 판정 유지')
+    playwright.expect(logs).to_contain_text('Silero 음성 확률 0.0123 · 비음성')
+    playwright.expect(logs).to_contain_text('관찰용 WebRTC 음성 1/2프레임')
+    playwright.expect(logs).to_contain_text('입력 차단 중 · 대기 1.0ms · 누적 누락 2청크')
+    playwright.expect(logs).to_contain_text('VAD 관찰 누락')
+    playwright.expect(logs).to_contain_text('queue_gap')
+    logs.locator('summary').first.click()
+    assert 'captured_at' in logs.locator('pre').first.text_content()
+    page.set_viewport_size({'width': 390, 'height': 844})
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
 def test_native_decode_scores_and_missing_measurements_are_distinct(viewer):
     from test_viewer_incidents import write_incident
 

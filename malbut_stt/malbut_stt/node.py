@@ -182,6 +182,12 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
             diagnostics = TranscriptionDiagnostics(diagnostic_directory)
             node.get_logger().info('stt_diagnostics_enabled:local_audio_limit_64MiB')
+        from malbut_stt.shadow_vad import from_environment as observe_vad
+
+        diagnostics = observe_vad(
+            os.environ, diagnostics, vad_mode=vad_mode,
+            on_error=lambda error: node.get_logger().warning('stt_shadow_vad_stopped:' + error),
+        )
         if diagnostics is not None:
             shared = wake.model is transcriber.model
             transcriber.model = diagnostics.wrap_model(transcriber.model)
