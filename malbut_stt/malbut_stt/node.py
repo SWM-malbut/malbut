@@ -203,10 +203,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         if silero_gate is not None:
             # Keep the gate outside decoder diagnostics: a rejected input must
             # never appear as an actual Whisper decode_input/decode_result.
-            shared = wake.model is transcriber.model
+            # Wake recognition keeps the original diagnostic model, even when
+            # both recognizers share one underlying Whisper instance.
             transcriber.model = silero_gate.wrap_model(transcriber.model, diagnostics)
-            wake.model = (transcriber.model if shared else
-                          silero_gate.wrap_model(wake.model, diagnostics))
         phase = 'initializing_vad'
         vad = webrtcvad.Vad(vad_mode)
         phase = 'creating_publisher'

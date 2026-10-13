@@ -1,8 +1,9 @@
 """Opt-in Silero admission immediately before each actual Whisper model call.
 
-One ASR worker serializes wake, incremental and final decodes. Each input is
-checked independently, including cropped suffixes and recovery decodes. The
-observer queue is never consulted and accepted audio is passed on unchanged.
+Only the command transcriber's model is wrapped; wake recognition keeps its
+original model. Each command input is checked independently, including cropped
+suffixes and recovery decodes. The observer queue is never consulted and
+accepted audio is passed on unchanged.
 """
 
 import hashlib
