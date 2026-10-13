@@ -33,7 +33,8 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_fall_approach.fall_approach import (
-    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid, Pose2D,
+    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S,
+    VIEW_LIMIT_S, CostGrid, Pose2D,
     StartPoses, backup_distance, can_stand, facing_turn, goal_error, plan_targets,
     returning_turn, route_length, sight_clear, standoff_route, view_rings, within_detour,
 )
@@ -106,6 +107,7 @@ class FallApproachNode(Node):
                                  latched, callback_group=self.group)
         self.starts = StartPoses()
         self.busy = threading.Lock()
+        self.closing = threading.Event()  # Shutdown ends a hold at once.
         self.child = None
         self.server = ActionServer(
             self, FallApproach, '/malbut/falls/approach', execute_callback=self._execute,
@@ -126,8 +128,8 @@ class FallApproachNode(Node):
                 request.phase, RETURN_LIMIT_S)
             deadline = time.monotonic() + limit
             canceled = False
-            phase = {'approach': self._approach, 'view': self._view}.get(
-                request.phase, self._return)
+            phase = {'approach': self._approach, 'view': self._view,
+                     'hold': lambda *_: ('arrived', 'holding')}.get(request.phase, self._return)
             try:
                 outcome, detail = phase(handle, request, deadline)
             except Timeout:
@@ -135,13 +137,29 @@ class FallApproachNode(Node):
             except Canceled:
                 outcome, detail, canceled = 'failed', 'canceled', True
             self._settle_child()
-            self._publish(request, outcome)
+            if request.phase != 'hold':
+                self._publish(request, outcome)
+            if not canceled and request.phase in HOLDING_PHASES:
+                # The step is done but the check is not: report it and keep the
+                # wheels until the next step replaces this goal or it is canceled.
+                handle.publish_feedback(FallApproach.Feedback(
+                    phase='HOLDING', outcome=outcome, detail=detail))
+                canceled = self._hold(handle)
             result = FallApproach.Result(outcome=outcome, detail=detail)
             if canceled:
                 handle.canceled()
             else:
                 handle.succeed()
             return result
+
+    def _hold(self, handle):
+        """Stand still until canceled; True when canceled, False at the bound."""
+        end = time.monotonic() + HOLD_LIMIT_S
+        while rclpy.ok() and not self.closing.is_set() and time.monotonic() < end:
+            if handle.is_cancel_requested:
+                return True
+            time.sleep(0.05)
+        return handle.is_cancel_requested
 
     # ------------------------------------------------------------ phases
 
@@ -405,6 +423,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.closing.set()
         node._settle_child()
         executor.shutdown()
         node.server.destroy()

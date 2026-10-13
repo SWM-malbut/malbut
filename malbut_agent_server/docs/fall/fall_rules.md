@@ -101,6 +101,24 @@ person_check_completed
 위치 찾기·지도 만들기(NORMAL)는 끊고 확인하러 가지만, 직접 움직이기(`manual_drive`, URGENT)는
 끊지 않는다. 기획 `fall-check-normal-alerts`(목업 27·28번).
 
+멈춰서 보는 사이에도 HIGH를 쥔다(2026-10-13 사용자 "낙상 확인하는 동안에는 HIGH가 무조건 있어야지").
+앱·음성 이동(NORMAL)이 가까이 보기·자세 확인·기다림 틈에 들어오지 않게 하려는 것이다.
+- 다가가기·몸 전체 보기 이동은 도착하면 결과를 feedback(`outcome`·`detail`)으로 먼저 내고, 미션을 끝내지 않고
+  `HOLDING`으로 남는다. 낙상 규칙은 그 feedback을 결과로 받아 다음 단계를 진행한다.
+- 다음 단계(질문·돌아오기·다음 이동)는 같은 HIGH라 Manager에서 쥐고 있던 미션을 대신한다. 대신된 미션의 늦은
+  결과는 지금 단계의 결과로 쓰지 않는다(Goal handle로 가림).
+- 질문이 `Downstream Action server rejected the goal`로 잠깐 거절되면 기다리는 동안 `fall_approach(phase=hold)`를
+  보낸다. 직접 조작(URGENT)이 쥔 것을 끊으면, 직접 조작이 끝나는 것을 `/malbut/state`로 보고 바로 다시 신청한다.
+- 요청이 다 끝나면(사건 닫힘·처리 완료·"그만") 쥔 미션을 취소한다. 쥐기 상한은 660초.
+- 남은 틈: Agent 거절 응답과 hold 신청 사이 수 ms, 직접 조작이 끝난 뒤 다시 신청이 받아들여질 때까지.
+
+확인 중 들은 말(2026-10-13, `MANAGER_VOICE_COMMANDS.md` "낙상 확인 중 말과 이동 명령"): Agent가
+`/malbut/falls/check/voice`(`std_msgs/String` JSON `{"kind": "help"|"stop", "utterance_id": …}`)로 알린다.
+지금 진행 중인 요청(없으면 줄 맨 앞)에 적용한다.
+- `help`: 도움 필요로 끝낸다(`confirmation_result`, `situation_assessment=unknown`, `help_needed=true` → 긴급 알림).
+- `stop`: "그만/멈춰"는 직접 조작과 같다. 진행 중 미션을 취소하고, 묻지 않고, `check_stopped`(`reason=user_stop`)를
+  보낸다(→ 확인 필요 알림 `check_stopped_by_user`). 돌아오기도 하지 않는다.
+
 Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 상수이며, Manager 원문과 같은지
 `test_fall_rules_waiting.py`가 확인한다.
 
@@ -109,7 +127,8 @@ Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 
 | 목표를 받지 않음, 5초 응답 없음, Manager 없음 | 기다림(바쁨): 1초 뒤 같은 단계를 다시 신청 |
 | `conflicting mission … higher priority URGENT` | 기다림(실제 수동 조작 중이면 직접 움직이기, 아니면 바쁨) |
 | `mission preempted …`, `superseded before execution …` | 기다림(그때 직접 움직이기가 있으면 직접 움직이기, 아니면 바쁨) |
-| 켜지는 중·비상 정지·충전 중·복구 중, 질문의 `Downstream Action server rejected the goal` | 기다림(바쁨) |
+| 켜지는 중·비상 정지·충전 중·복구 중 | 기다림(바쁨) |
+| 질문의 `Downstream Action server rejected the goal` | 기다림(바쁨), 그동안 `hold`로 HIGH를 쥠 |
 | 질문: `Action server /malbut/agent/confirm_situation is unavailable` | 바로 실패 `speech_unavailable` → 긴급 알림 |
 | 질문: 그 밖의 실패, 610초 초과, 질문 중 Agent가 5초 넘게 사라짐 | 바로 실패 `question_error` → 긴급 알림 |
 | 이동: `select a saved map first …` | 갈 수 없음(`no_map`): 그 자리에서 물음 |
@@ -130,8 +149,8 @@ Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 
 - 막힌 시간 합계 **10분** → 진행 중 단계는 끊지 않고, 다음 신청 대신 `confirmation_failed(time_limit)`로 멈춘다.
 - 보호자가 앱에서 처리 완료하면 런타임이 `incident_resolved(guardian_closed)`를 내고, 낙상 규칙은 기존처럼
   그 사건 요청을 지우고 진행 중 미션을 취소한다.
-- 결정(낙상 규칙 → 런타임): `check_waiting`, `check_not_confirmed`, `revisit_started` = `boot_id, incident_id,
-  question_id, evidence_revision, reason`. `revisit_result`는 `approach_result`와 같은 필드.
+- 결정(낙상 규칙 → 런타임): `check_waiting`, `check_not_confirmed`, `revisit_started`, `check_stopped` =
+  `boot_id, incident_id, question_id, evidence_revision, reason`. `revisit_result`는 `approach_result`와 같은 필드.
   `confirmation_failed`에 `reason`(`speech_unavailable`|`question_error`|`time_limit`)이 붙는다.
 
 ### "낙상 확인 중" 상태
@@ -146,6 +165,7 @@ Manager 결과는 셋으로 나눈다. 문구는 `fall_confirmation_link.py`의 
 `active`는 첫 이동부터 돌아오기 끝까지 참이다(멈춰서 보는 사이 틈 포함). `phase`: 이동 → `approach`,
 가까이 보기·몸 전체 보러 옮기기·자세 → `look`, 질문 → `ask`, 돌아가기 → `return`, 막힘 → `wait`.
 `alerted`는 맨 앞 사건이 1분 알림을 보냈는지, `target`은 의심 지점. Bringup 웹 패널은 3초 넘게 안 오면 끝난
-것으로 보고(Agent가 멈춰도 이동이 영영 막히지 않게), 그동안 목적지 이동·순찰·따라가기·위치 찾기·지도 만들기
-시작을 거절한다(`fall check is in progress; only manual driving is available`). 지도 화면 카드에도 같은 값이 간다.
-Agent의 음성 명령도 같은 규칙으로 이 이동들을 받지 않는다(2026-10-12, `MANAGER_VOICE_COMMANDS.md` "낙상 확인 중 이동 명령").
+것으로 보고(Agent가 멈춰도 표시가 남지 않게) 상태 표시와 지도 화면 카드에만 쓴다. 이동 버튼은 웹 패널에서 막지
+않고 Manager가 HIGH 미션으로 거절한다(2026-10-12 `89f6407`, 위 "멈춰서 보는 사이에도 HIGH를 쥔다").
+`approach`·`look`·`ask`·`wait`는 낙상 우선 구간이다(2026-10-13): Agent는 대화를 받지 않고, STT는 보호자 홈캠 말하기
+허가를 거절하고, 웹은 말하기 시작을 `409 fall_check`로 거절한다(`MANAGER_VOICE_COMMANDS.md` "낙상 확인 중 말과 이동 명령").

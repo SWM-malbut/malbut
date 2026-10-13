@@ -435,6 +435,9 @@ runtime working directory에 비밀·상태 파일을 만들지 않는다.
 `/malbut/speech/web_talk_control`이 STT 입력 차단을 접수한 뒤에만 재생한다.
 웹도 같은 lease의 `talkReport.ready`가 확인될 때까지 마이크 송신을 기다린다.
 영상 시청이나 마이크 권한 허용만으로는 STT를 차단하지 않는다.
+낙상 확인 중(의심부터 질문 끝까지, 2026-10-13 사용자 "확인 내내 막아야지")에는 보호자 말하기보다 낙상
+확인이 먼저다. 웹은 말하기 시작을 `409`(`code: "fall_check"`, "낙상 확인 중이라 잠시 후에 말할 수 있어요.")로
+거절하고, STT도 `/malbut/falls/check/status`의 `approach`·`look`·`ask`·`wait` 동안 새 차단 허가를 받지 않는다.
 미디어 노드는 차단을 1초마다 최대 3초로 갱신하고, 허가 만료보다 600ms 먼저
 PTT 재생을 닫는다. 종료 시 재생 버퍼를 비운 뒤 같은 lease의 차단을 해제하며,
 비정상 종료 시 STT가 자체 기한과 300ms 잔향 차단 후 복구한다.

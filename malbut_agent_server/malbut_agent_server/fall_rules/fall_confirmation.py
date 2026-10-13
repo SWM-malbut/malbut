@@ -502,6 +502,19 @@ class FallConfirmationCoordinator:
         self._forget(request.request_id)
         return True
 
+    def stop(self, request):
+        """Someone said "그만": stop here, ask nothing, the runtime tells the guardian."""
+        if self.requests.get(request.request_id) != request or self.closed:
+            return False
+        decision = request.decision('check_stopped')
+        decision['reason'] = 'user_stop'
+        self.commands.append(decision)
+        del self.requests[request.request_id]
+        self.stages.pop(request.request_id, None)
+        self._remember(request.request_id, decision)
+        self._forget(request.request_id)
+        return True
+
     def drain_commands(self):
         commands, self.commands = tuple(self.commands), []
         return commands

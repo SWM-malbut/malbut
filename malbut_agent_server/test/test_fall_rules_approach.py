@@ -226,3 +226,80 @@ def test_link_waits_while_a_fall_mission_still_runs_in_the_manager(link):
     link.manager_state.active_foreground_missions = running
     link.on_event(SimpleNamespace(data=scene()))
     assert not link.goals
+
+
+# ------------------------------------------------- a HIGH mission the whole check
+
+GOAL_ID = bytes(range(16))
+
+
+def hold(link, outcome):
+    """The drive reports its outcome as feedback and keeps holding (2026-10-13)."""
+    _, future = link.goals[-1]
+    result = Future()
+    handle = Mock(accepted=True)
+    handle.goal_id = SimpleNamespace(uuid=GOAL_ID)
+    handle.get_result_async.return_value = result
+    future.set_result(handle)
+    link.feedback(SimpleNamespace(feedback=SimpleNamespace(
+        state='RUNNING', feedback_yaml=json.dumps(dict(phase='HOLDING', outcome=outcome)))))
+    return handle, result
+
+
+def holding_in_manager(link):
+    # The Manager lists the holding drive: ours, not another fall mission.
+    link.manager_state.active_foreground_missions = [
+        SimpleNamespace(capability_id='fall_approach', mission_id=GOAL_ID.hex())]
+
+
+def test_the_drive_holds_through_the_look_and_the_question_takes_over(link):
+    """2026-10-13: no gap for an app move between the drive, the look and the question."""
+    link.on_event(SimpleNamespace(data=scene()))
+    held, result = hold(link, 'arrived')
+    assert [d['action'] for d in sent(link)] == ['approach_result']
+    assert link.held[1] is held and link.request is None
+    holding_in_manager(link)
+    link.tick()
+    assert len(link.goals) == 1  # Looking: the drive keeps the wheels, nothing new.
+    link.on_event(SimpleNamespace(data=looked('person')))
+    assert link.goals[-1][0]['capability'] == 'fall_confirmation'
+    held.cancel_goal_async.assert_not_called()  # Replaced in the Manager, not let go.
+    assert link.held is None and link.mode == 'confirm'
+    # The replaced drive ending late is not the question's result.
+    result.set_result(SimpleNamespace(status=6, result=SimpleNamespace(
+        message='mission preempted by a replacement request', result_yaml='')))
+    assert link.request is not None and link.mode == 'confirm'
+    assert [d['action'] for d in sent(link)] == ['approach_result']
+
+
+def test_the_way_back_takes_over_the_hold(link):
+    link.on_event(SimpleNamespace(data=scene()))
+    held, _ = hold(link, 'arrived')
+    holding_in_manager(link)
+    link.on_event(SimpleNamespace(data=looked('not_a_person')))
+    assert link.goals[-1][0]['phase'] == 'return'
+    held.cancel_goal_async.assert_not_called()
+    assert link.held is None
+
+
+def test_the_hold_is_let_go_when_the_check_ends_with_nothing_next(link):
+    link.on_event(SimpleNamespace(data=scene()))
+    held, _ = hold(link, 'arrived')
+    link.on_voice(SimpleNamespace(data=json.dumps({'kind': 'stop'})))
+    assert sent(link)[-1]['action'] == 'check_stopped'
+    held.cancel_goal_async.assert_called_once()
+    assert link.held is None and len(link.goals) == 1  # Stopped: no question.
+
+
+def test_a_hold_ended_by_manual_driving_is_forgotten(link):
+    link.on_event(SimpleNamespace(data=scene()))
+    held, result = hold(link, 'arrived')
+    result.set_result(SimpleNamespace(status=6, result=SimpleNamespace(
+        message='mission preempted by a replacement request', result_yaml='')))
+    assert link.held is None
+    link.manager_state.active_foreground_missions = [SimpleNamespace(capability_id='manual_drive')]
+    link.on_event(SimpleNamespace(data=looked('person')))
+    assert len(link.goals) == 1 and link.coordinator.waiting_for == 'manual_drive'
+    link.manager_state.active_foreground_missions = []
+    link.on_state(link.manager_state)  # 직접 움직이기 ended: at once, not a second later.
+    assert link.goals[-1][0]['capability'] == 'fall_confirmation'

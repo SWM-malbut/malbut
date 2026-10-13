@@ -484,6 +484,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     ]
     assert set(runtime.calls['subscriptions']) == {
         '/malbut/speech/playback_status', '/malbut/speech/response', '/rosout',
+        '/malbut/falls/check/status',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
@@ -543,6 +544,32 @@ def test_web_talk_service_acknowledges_gate_and_clears_stale_classification(runt
         assert response.accepted is accepted
         assert runtime.calls['web_talk'] == ('web-1', True, 10.0)
         assert future.cancelled is accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+
+
+@pytest.mark.parametrize('phase, refused', [
+    ('approach', True), ('look', True), ('ask', True), ('wait', True), ('return', False),
+])
+def test_web_talk_waits_for_a_fall_check_until_its_question_ends(runtime, phase, refused):
+    """2026-10-13: the fall check comes before the guardian's talk."""
+    runtime.accepted = True
+
+    def on_spin():
+        runtime.callbacks['/malbut/falls/check/status'](SimpleNamespace(
+            data=json.dumps({'active': True, 'phase': phase})))
+        talk = runtime.callbacks['/malbut/speech/web_talk_control']
+        response = talk(SimpleNamespace(lease_id='web-1', active=True, ttl_s=3.0),
+                        SimpleNamespace())
+        assert response.accepted is not refused
+        # Refused, a talk already going is let go at its renewal.
+        assert runtime.calls['web_talk'] == (('web-1', False, 0.0) if refused
+                                             else ('web-1', True, 3.0))
+        # Ending a talk is never refused.
+        assert talk(SimpleNamespace(lease_id='web-1', active=False, ttl_s=0.0),
+                    SimpleNamespace()).accepted
         raise KeyboardInterrupt
 
     runtime.on_spin = on_spin

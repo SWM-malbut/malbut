@@ -7,6 +7,7 @@ import time
 
 import yaml
 
+from ..fall_check_watch import VOICE_KINDS, VOICE_TOPIC
 from .fall_confirmation import FallConfirmationCoordinator
 
 
@@ -55,6 +56,10 @@ class FallConfirmationLink:
     return_job = return_future = return_handle = None
     return_sent_at = 0.0
     running = False  # The Manager reported the current step RUNNING.
+    # A fall check keeps a HIGH mission in the Manager the whole time (the user,
+    # 2026-10-13): a drive whose outcome came as feedback, or a hold, stays here
+    # holding the wheels until the next step replaces it or the check ends.
+    held = None  # (request, goal handle)
     status_publisher = None
     last_status = None
     status_at = -math.inf
@@ -96,6 +101,9 @@ class FallConfirmationLink:
         self.events = node.create_subscription(
             String, '/malbut/falls/runtime/events', self.on_event, 50,
             callback_group=self.group)
+        # "도와줘" or "그만" before the question (Agent conversation, 2026-10-13).
+        self.voice = node.create_subscription(
+            String, VOICE_TOPIC, self.on_voice, 10, callback_group=self.group)
         self.request = None
         self.goal_future = None
         self.handle = None
@@ -116,6 +124,31 @@ class FallConfirmationLink:
     def _publish(self):
         for command in self.coordinator.drain_commands():
             self.decisions.publish(self.message_type(data=json.dumps(command, allow_nan=False)))
+
+    def on_voice(self, message):
+        """Said during the check: help alerts at once; a stop ends it without a question.
+
+        Either way the check ends here; the drive or hold in flight is cancelled
+        on the next step, like any check that ended meanwhile.
+        """
+        try:
+            kind = json.loads(message.data).get('kind')
+        except (AttributeError, TypeError, ValueError):
+            return
+        if kind not in VOICE_KINDS:
+            return
+        with self.lock:
+            request = self.request
+            if (request is None
+                    or self.coordinator.requests.get(request.request_id) != request):
+                request = next(iter(self.coordinator.requests.values()), None)
+            if request is None:
+                return
+            done = (self.coordinator.complete(
+                request, situation_assessment='unknown', help_needed=True)
+                if kind == 'help' else self.coordinator.stop(request))
+            if done:
+                self._drive()
 
     def _publish_status(self, *, force=False):
         if self.status_publisher is None:
@@ -158,16 +191,33 @@ class FallConfirmationLink:
 
     def _feedback(self, request, message):
         with self.lock:
-            if (self.request != request or self.running or self.coordinator.closed
+            if (self.request != request or self.coordinator.closed
                     or getattr(message.feedback, 'state', '') != 'RUNNING'):
                 return
-            # The Manager started this step: it is no longer waiting.
-            self.running = True
-            self.coordinator.resume(self.clock())
-            if self.mode == 'revisit':
-                self.coordinator.revisit_started(request)
-            self._publish()
-            self._publish_status(force=True)
+            if not self.running:
+                # The Manager started this step: it is no longer waiting.
+                self.running = True
+                self.coordinator.resume(self.clock())
+                if self.mode == 'revisit':
+                    self.coordinator.revisit_started(request)
+                self._publish()
+                self._publish_status(force=True)
+            if self.mode not in DRIVES or self.handle is None:
+                return
+            try:
+                feedback = yaml.safe_load(message.feedback.feedback_yaml or '') or {}
+            except (AttributeError, yaml.YAMLError):
+                return
+            outcome = feedback.get('outcome') if isinstance(feedback, dict) else None
+            if not isinstance(outcome, str) or not outcome:
+                return
+            # The drive ended and holds the wheels: take its outcome now and keep
+            # the mission until the next step replaces it.
+            self.held = (request, self.handle)
+            self._drive_done(request, outcome)
+            self.request = self.handle = self.goal_future = None
+            self.accepted_at = self.server_missing_since = None
+            self._drive()
 
     def on_event(self, message):
         with self.lock:
@@ -183,6 +233,10 @@ class FallConfirmationLink:
             if self.manager_state is None:
                 self.next_attempt = 0.0  # The Manager is up: send now, not a second later.
             self.manager_state = message
+            if (self.coordinator.waiting_for == MANUAL_DRIVE
+                    and not self._manual_driving()):
+                # 직접 움직이기 ended: take the wheels back now, not a second later.
+                self.next_attempt = 0.0
             self._drive()
 
     def _cancel_current(self, *, wait_for_result=False):
@@ -279,6 +333,10 @@ class FallConfirmationLink:
                 self.coordinator.terminal_revisions.get(self.request.incident_id, 0)
                 >= self.request.revision)
             self._cancel_current(wait_for_result=terminal_scene)
+        if (self.held is not None and not self.coordinator.requests
+                and not self.coordinator.returns):
+            # The check is over with nothing to replace the hold: let the wheels go.
+            self._release_held()
         if self.request is not None:
             self._expire_current()
             return
@@ -294,7 +352,9 @@ class FallConfirmationLink:
             if self.coordinator.requests:
                 self._wait('busy')  # No Manager yet (starting) or gone.
             return
+        held = self._held_mission_id()
         if any(mission.capability_id in FALL_MISSIONS
+               and (held is None or getattr(mission, 'mission_id', None) != held)
                for mission in (*state.active_foreground_missions,
                                *state.active_background_missions,
                                *state.pending_missions, *state.suspended_missions)):
@@ -307,6 +367,7 @@ class FallConfirmationLink:
             return
         kind, request = work
         if kind == 'return':
+            self.held = None  # The way back replaces the hold in the Manager.
             self._send_return(request)
             return
         if self._manual_driving():
@@ -314,6 +375,7 @@ class FallConfirmationLink:
             self._wait(MANUAL_DRIVE)
             return
         self.request, self.mode, self.running = request, kind, False
+        self.held = None  # This step replaces the hold in the Manager (same priority).
         self.sent_at = now
         if kind in DRIVES:
             x, y = request.revisit_target if kind == 'revisit' else request.approach_target
@@ -385,16 +447,23 @@ class FallConfirmationLink:
             self.server_missing_since = None
             try:
                 handle.get_result_async().add_done_callback(
-                    lambda done: self._done(request, done))
+                    lambda done: self._done(request, done, handle))
             except Exception:
                 self._give_up(request)
 
-    def _done(self, request, future):
+    def _done(self, request, future, handle=None):
         from action_msgs.msg import GoalStatus
 
         with self.lock:
+            if self.held is not None and handle is not None and self.held[1] is handle:
+                # The held mission ended by itself (직접 움직이기 took the wheels).
+                self.held = None
+                self._drive()
+                return
             if self.request != request or self.coordinator.closed:
                 return
+            if handle is not None and self.handle is not handle:
+                return  # An earlier step of this request, replaced while holding.
             if self._expire_current():
                 return
             try:
@@ -406,6 +475,13 @@ class FallConfirmationLink:
                     # Refused or interrupted by 직접 움직이기 or another job: the
                     # same step goes again. Not the user's silence, not a failure.
                     self._wait(why)
+                    if message == DOWNSTREAM_REJECTED and self.mode not in DRIVES:
+                        # The Agent cannot ask yet: nothing holds the wheels now.
+                        self.request = self.handle = self.goal_future = None
+                        self.accepted_at = self.server_missing_since = None
+                        self._send_hold(request)
+                        self._publish_status()
+                        return
                 else:
                     self.coordinator.resume(self.clock())
                     if self.mode in DRIVES:
@@ -432,6 +508,53 @@ class FallConfirmationLink:
             self.request = self.handle = self.goal_future = None
             self.accepted_at = self.server_missing_since = None
             self._drive()
+
+    # ------------------------------------------------------------ holding
+
+    def _held_mission_id(self):
+        """Return the hold's Manager mission ID, to tell it from another fall mission."""
+        if self.held is None:
+            return None
+        try:
+            # The Manager's mission ID is the goal UUID in hex (system_manager_node).
+            return bytes(self.held[1].goal_id.uuid).hex()
+        except Exception:
+            return None
+
+    def _release_held(self):
+        held, self.held = self.held, None
+        if held is not None:
+            self._cancel_handle(held[1])
+
+    def _send_hold(self, request):
+        """Keep a HIGH mission while waiting to ask (the Agent refused the question)."""
+        try:
+            future = self.client.send_goal_async(self.action_type.Goal(
+                capability_id='fall_approach', arguments_yaml=json.dumps(dict(
+                    request_id=request.request_id, phase='hold', x=0.0, y=0.0,
+                    standoff_m=1.0))))
+        except Exception:
+            return
+        future.add_done_callback(lambda done: self._hold_accepted(request, done))
+
+    def _hold_accepted(self, request, future):
+        with self.lock:
+            try:
+                handle = future.result()
+            except Exception:
+                return
+            if not handle.accepted:
+                return  # Something above the fall check holds the wheels anyway.
+            if (self.coordinator.closed or self.request is not None
+                    or self.coordinator.requests.get(request.request_id) != request):
+                self._cancel_handle(handle)  # The next step went out meanwhile.
+                return
+            self.held = (request, handle)
+            try:
+                handle.get_result_async().add_done_callback(
+                    lambda done: self._done(request, done, handle))
+            except Exception:
+                pass
 
     # ------------------------------------------------------------ return trip
 
@@ -503,6 +626,7 @@ class FallConfirmationLink:
                 self._publish_status(force=True)  # Not checking any more: unlock moves now.
             except Exception:
                 pass
+            self._release_held()
             return self._cancel_current()
 
     def destroy(self):

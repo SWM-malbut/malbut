@@ -42,7 +42,12 @@ RETURN_REASONS = ('not_a_person', 'off_floor', 'revisit')
 PULLBACK_STEP_M = 0.5
 PULLBACK_TRIES = 2
 FACE_TOLERANCE_RAD = 0.10
-PHASES = ('approach', 'view', 'return')
+PHASES = ('approach', 'view', 'return', 'hold')
+# A fall check keeps a HIGH mission the whole time (the user, 2026-10-13): approach
+# and view hold the wheels after their drive, and hold only holds them, until the
+# next step replaces the goal or it is canceled. Bounded like the fall rules' wait.
+HOLDING_PHASES = ('approach', 'view', 'hold')
+HOLD_LIMIT_S = 660.0
 OUTCOMES = ('arrived', 'returned', 'no_map', 'no_path', 'timeout', 'failed')
 
 
@@ -60,7 +65,7 @@ def normalize_angle(angle):
 def goal_error(phase, x, y, standoff_m, reason=''):
     """Why a goal cannot be accepted, or None."""
     if phase not in PHASES:
-        return 'phase must be approach, view or return'
+        return 'phase must be approach, view, return or hold'
     values = (x, y, standoff_m)
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
            for v in values):

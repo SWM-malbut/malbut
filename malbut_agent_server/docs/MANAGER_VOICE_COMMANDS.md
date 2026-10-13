@@ -97,19 +97,35 @@ wildcard나 별도 중지 인터페이스는 만들지 않는다. 취소 요청 
 소비한다. 전송 오류·시간 초과·TTS 발행 실패에도 자동 재전송하지 않는다.
 결과 불명 Goal은 같은 프로세스에서 늦은 결과 관측과 취소를 위해 유지한다.
 
-## 낙상 확인 중 이동 명령 (2026-10-12)
+## 낙상 확인 중 말과 이동 명령 (2026-10-12, 2026-10-13)
 
-낙상 확인 이동·질문은 NORMAL이라, 같은 등급의 음성 이동이 오면 낙상 확인을 끊는다. 그래서 낙상 확인 중에는
-앱 이동 버튼처럼 음성 이동도 받지 않는다(`fall_check_watch.py`).
+우선순위(2026-10-13 사용자): 직접 조작·복구·음성 "그만/멈춰" > 낙상 확인 > 그 밖의 모든 것(대화·음성 이동·
+앱 이동·보호자 홈캠 말하기). Bringup 끄기·설정 바꾸기·처리 완료·개발자 화면은 사용자가 일부러 하는 조작이라
+이 순서에 넣지 않는다. Manager 우선순위 표는 그대로다. 낙상 확인 이동·질문은 HIGH이고, 멈춰서 보는 동안에도
+`fall_approach`의 `hold` 단계로 HIGH 미션을 쥐어 NORMAL 이하(목적지 이동·따라가기·순찰·지도 만들기·위치 확인)는
+Manager가 거절한다. 대화·홈캠 말하기는 Manager 미션이 아니어서 Agent·STT·웹이 막는다.
 
-- 막는 것: 목적지 이동·따라가기·순찰·지도 만들기·위치 확인(`request_navigation`·`request_follow_person`·
-  `request_patrol`·`request_mapping`·`request_relocalization`). 직접 조작·복구는 앱처럼 그대로 받는다.
-- 낙상 확인 중: 낙상 규칙 상태 `/malbut/falls/check/status`의 `active`가 3초 안에 참이었거나, Manager
-  `/malbut/state`에 `fall_confirmation`·`fall_approach`가 실행·대기·중단 중일 때. 웹 패널과 같은 규칙이다.
-- 대답: "네, …시작하겠습니다" 대신 "낙상 확인 중이라 잠시 이동할 수 없어요."(앱 안내와 같은 문장).
-  모델이 명령을 고른 직후(준비)와 Manager에 보내기 직전에 두 번 확인한다. 확인을 못 하면 보내지 않는다.
-- 음성으로 시킨 이동 중에 낙상이 의심되면 낙상 확인이 그 이동을 끊는다(같은 등급, 새 작업이 이김). 직접 조작은 끊지
-  않고 끝날 때까지 기다린다. 끊긴 이동은 다시 시작하지 않는다.
+- 낙상 우선 구간: `/malbut/falls/check/status`가 3초 안에 `active`이고 `phase`가 `approach`·`look`·`ask`·`wait`일
+  때(의심부터 질문 끝까지). 돌아오기(`return`)는 확인이 끝난 뒤라 빠진다. `ask` 중 답은 지금처럼 낙상 질문이 듣는다.
+- 구간에 들어가면 Agent가 대화를 멈추고(`DialogueWorker.suspend`), 말하던 대답을 끊고(`/malbut/speech/playback_control`
+  STOP_ALL), 끊긴 뒤 "낙상이 의심돼서 먼저 확인할게요."라고 말한다. 대답을 기다리던 말이 있으면 그 `request_id`로
+  말해 STT가 다시 듣게 한다. 구간이 끝나면(진행 중 상황 질문이 없으면) 대화를 다시 받는다.
+- 구간 안에서 들은 말은 대화·모델·Manager로 보내지 않는다(`fall_check_watch.py`).
+  - "그만·멈춰·정지·취소…"(`asks_to_stop`): `/malbut/falls/check/voice`에 `{"kind": "stop"}`을 보내고 "알겠어요. 확인을
+    멈추고 보호자에게 알릴게요." 낙상 규칙이 직접 조작처럼 확인을 멈추고, 묻지 않고, 확인 필요 알림
+    `check_stopped_by_user`를 보낸다. 사건은 열린 채로 둔다.
+  - "도와줘·살려줘·아파·119…"(`asks_for_help`): `{"kind": "help"}`, "보호자에게 바로 알릴게요." 낙상 규칙이 도움
+    필요로 끝내 긴급 알림을 보낸다.
+  - 그 밖의 말: "지금 확인 중이에요. 잠시만요."
+- 돌아오기 중이나 Manager에 낙상 미션만 남은 때는 대화를 받되 음성 이동은 받지 않는다.
+  - 막는 것: `request_navigation`·`request_follow_person`·`request_patrol`·`request_mapping`·`request_relocalization`.
+    직접 조작·복구는 그대로 받는다.
+  - 낙상 확인 중: 상태의 `active`가 3초 안에 참이었거나, Manager `/malbut/state`에 `fall_confirmation`·`fall_approach`가
+    실행·대기·중단 중일 때.
+  - 대답: "네, …시작하겠습니다" 대신 "낙상 확인 중이라 잠시 이동할 수 없어요." 모델이 명령을 고른 직후(준비)와
+    Manager에 보내기 직전에 두 번 확인한다. 확인을 못 하면 보내지 않는다.
+- 음성으로 시킨 이동 중에 낙상이 의심되면 낙상 확인(HIGH)이 그 이동(NORMAL)을 끊는다. 직접 조작은 끊지 않고
+  끝날 때까지 기다린다. 끊긴 이동은 다시 시작하지 않는다(이어서 하기는 추후 구현).
 
 ## 홈캠 정보 조회
 

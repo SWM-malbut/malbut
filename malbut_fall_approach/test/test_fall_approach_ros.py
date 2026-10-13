@@ -4,6 +4,7 @@ import json
 import math
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -124,9 +125,12 @@ def ros():
     client = ActionClient(fake, interfaces.FallApproach, '/malbut/falls/approach')
     assert client.wait_for_server(timeout_sec=5)
 
-    def send(**fields):
+    def send(*, hold_s=0.0, **fields):
+        """Send a goal; once it holds after its drive, wait hold_s and cancel it."""
         goal = interfaces.FallApproach.Goal(**fields)
-        handle = client.send_goal_async(goal)
+        feedback = []
+        handle = client.send_goal_async(
+            goal, feedback_callback=lambda message: feedback.append(message.feedback))
         end = time.monotonic() + 10
         while not handle.done() and time.monotonic() < end:
             time.sleep(0.02)
@@ -134,9 +138,26 @@ def ros():
         if not accepted.accepted:
             return None
         result = accepted.get_result_async()
+        held, still_running = None, None
         while not result.done() and time.monotonic() < end:
+            if held is None:
+                held = next((f for f in feedback if f.phase == 'HOLDING'), None)
+                if held is not None:
+                    time.sleep(hold_s)
+                    still_running = not result.done()
+                    accepted.cancel_goal_async()
             time.sleep(0.02)
-        return result.result().result
+        if not result.done():
+            accepted.cancel_goal_async()  # Never leave a hold behind a failed test.
+            stop = time.monotonic() + 5
+            while not result.done() and time.monotonic() < stop:
+                time.sleep(0.02)
+        response = result.result()
+        return SimpleNamespace(
+            outcome=response.result.outcome, detail=response.result.detail,
+            status=response.status, held=held is not None,
+            held_outcome=held.outcome if held is not None else None,
+            still_running=still_running)
 
     latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
@@ -165,6 +186,7 @@ def ros():
     while node._pose() is None and time.monotonic() < deadline:
         time.sleep(0.05)
     yield node, fake, send, statuses, costmap
+    node.closing.set()
     executor.shutdown()
     node.destroy_node()
     fake.destroy_node()
@@ -298,3 +320,27 @@ def test_view_fails_only_after_every_place_failed(ros):
     result = send(request_id='v3', phase='view', x=1.0, y=0.0, standoff_m=2.5)
     assert result.outcome == 'failed'
     assert len(nav.driven) == 36  # Three rings of twelve places.
+
+
+def test_a_drive_reports_its_outcome_then_holds_the_wheels_until_replaced(ros):
+    """2026-10-13: a fall check keeps a HIGH mission between its steps."""
+    from action_msgs.msg import GoalStatus
+    _, fake, send, statuses, _ = ros
+    FakeNav2(fake)
+    result = send(request_id='h1', phase='approach', x=3.0, y=1.0, standoff_m=1.0, hold_s=0.3)
+    assert result.held and result.held_outcome == 'arrived'
+    assert result.still_running, 'the goal must keep holding after its drive'
+    assert result.outcome == 'arrived' and result.status == GoalStatus.STATUS_CANCELED
+    time.sleep(0.2)
+    assert statuses[-1]['outcome'] == 'arrived'  # Reported when the drive ended.
+    back = send(request_id='h1', phase='return', x=0.0, y=0.0, standoff_m=1.0)
+    assert not back.held and back.outcome == 'returned'  # The way back ends the check.
+
+
+def test_hold_only_holds_the_wheels_until_canceled(ros):
+    from action_msgs.msg import GoalStatus
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    result = send(request_id='h2', phase='hold', hold_s=0.3)
+    assert result.held and result.still_running and result.status == GoalStatus.STATUS_CANCELED
+    assert nav.driven == [] and nav.turns == [] and nav.backups == []

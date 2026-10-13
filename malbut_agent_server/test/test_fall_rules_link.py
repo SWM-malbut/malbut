@@ -200,10 +200,14 @@ def test_downstream_rejection_retries_through_manager(rig):
     )))
     assert rig.link.request is None
     assert commands(rig.link) == []  # A passing refusal leaves no note.
+    # Nothing would hold the wheels while waiting: a HIGH hold goes in (2026-10-13).
+    hold = rig.link.client.send_goal_async.call_args_list[1].args[0]
+    assert hold.capability_id == 'fall_approach'
+    assert json.loads(hold.arguments_yaml)['phase'] == 'hold'
     rig.now.value = 1.0
     rig.link.tick()
     assert rig.link.request == request
-    assert rig.link.client.send_goal_async.call_count == 2
+    assert rig.link.client.send_goal_async.call_count == 3
     rig.link.agent_presence.send_goal_async.assert_not_called()
 
 
@@ -223,3 +227,24 @@ def test_close_returns_transport_future_and_cancels_late_goal(rig, accepted):
     rig.result.set_result(success())
     assert commands(rig.link) == []
     rig.link.agent_presence.cancel_goal_async.assert_not_called()
+
+
+@pytest.mark.parametrize('kind,action', [('help', 'confirmation_result'),
+                                         ('stop', 'check_stopped')])
+def test_voice_during_the_check_ends_it_help_or_stop(rig, kind, action):
+    """2026-10-13: "도와줘" alerts at once; "그만" stops without a question (check alert)."""
+    link = rig.link
+    link.goal_future.set_result(rig.handle)
+    link.on_voice(SimpleNamespace(data=json.dumps({'kind': kind, 'utterance_id': 'u1'})))
+    sent = commands(link)
+    assert [item['action'] for item in sent] == [action]
+    if kind == 'help':
+        assert sent[0]['help_needed'] is True and sent[0]['situation_assessment'] == 'unknown'
+    else:
+        assert sent[0]['reason'] == 'user_stop'
+    assert not link.coordinator.requests and link.request is None
+    rig.handle.cancel_goal_async.assert_called_once()  # The step in flight stops.
+    link.on_voice(SimpleNamespace(data=json.dumps({'kind': kind})))  # Nothing left.
+    link.on_voice(SimpleNamespace(data='not json'))
+    link.on_voice(SimpleNamespace(data=json.dumps({'kind': 'dance'})))
+    assert len(commands(link)) == 1

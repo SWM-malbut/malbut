@@ -102,6 +102,9 @@ OFF_FLOOR_REASONS = frozenset({'sitting_off_floor', 'standing'})
 WAITING_REASONS = frozenset({'manual_drive', 'busy'})
 NOT_CONFIRMED_REASONS = frozenset({'waited_manual_drive', 'waited_busy'})
 CHECK_FAILURE_REASONS = frozenset({'speech_unavailable', 'question_error', 'time_limit'})
+# "그만/멈춰" during the check stops it like 직접 움직이기 would (the user, 2026-10-13):
+# no question; the guardian is told to check (check level, once).
+STOP_REASONS = frozenset({'user_stop'})
 # A comparison not done by then (Cloud off meanwhile) is recorded as unclear.
 COMPARE_WAIT_S = 60.0
 FIRST_SCENES_MAX = 16
@@ -862,6 +865,24 @@ class CloudFallMonitor:
             incident.state = IncidentState.RECHECK_REQUIRED
         self._emit('check_not_confirmed', incident, question_id=question_id, reason=reason)
         self._notify_once(incident, NotificationLevel.URGENT, 'robot_could_not_confirm')
+        return True
+
+    def check_stopped(self, *, incident_id, question_id, evidence_revision, reason):
+        """Someone said "그만" during the check: no question, the guardian checks instead."""
+        if reason not in STOP_REASONS:
+            raise ValueError('invalid stop reason')
+        self._spot_checks.pop(incident_id, None)
+        incident = self._unasked(incident_id, question_id)
+        if incident is None:
+            return False
+        # Not an answer: nobody said how they are. FAILED keeps the question from
+        # being handed over again, as for a check the robot could not finish.
+        incident.answer = VoiceAnswer.FAILED
+        if incident.state is not IncidentState.HELP_REQUIRED:
+            incident.state = IncidentState.RECHECK_REQUIRED
+        self._emit('check_stopped', incident, question_id=question_id, reason=reason)
+        self._notify_once(incident, NotificationLevel.CHECK, 'check_stopped_by_user')
+        self._questions[incident_id] = replace(incident)
         return True
 
     def revisit_started(self, *, incident_id, question_id, evidence_revision, reason):

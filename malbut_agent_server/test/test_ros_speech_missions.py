@@ -337,7 +337,8 @@ def test_voice_follow_is_refused_while_the_fall_rules_report_a_check(speech_grap
     run = speech_graph
     run.start()
     status = run.agent.create_publisher(String, '/malbut/falls/check/status', 10)
-    status.publish(String(data=json.dumps({'active': True, 'phase': 'approach'})))
+    # On the way back the conversation runs again (2026-10-13), moves stay locked.
+    status.publish(String(data=json.dumps({'active': True, 'phase': 'return'})))
     run.spin_until(run.agent._fall_check.active)
     _, reply = run.say('따라와')
     assert reply == FALL_CHECK_RESPONSE
@@ -348,6 +349,64 @@ def test_voice_follow_is_refused_while_the_fall_rules_report_a_check(speech_grap
     run.say('따라와')
     run.spin_until(lambda: len(run.actuators.goals['follow_person']) == 1)
     assert [goal[0] for goal in run.manager_goals] == ['follow_person']
+
+
+def test_a_fall_check_stops_the_conversation_and_says_so(speech_graph):
+    """2026-10-13: nobody at home could tell the robot had left a conversation."""
+    from malbut_agent_server.fall_check_watch import (
+        FALL_CHECK_BUSY, FALL_CHECK_HELP, FALL_CHECK_START, VOICE_TOPIC,
+    )
+    run = speech_graph
+    run.start()
+    helps, requests = [], []
+    run.agent.create_subscription(
+        String, VOICE_TOPIC, lambda message: helps.append(json.loads(message.data)), 10)
+    run.agent.create_subscription(
+        SpeechRequest, '/malbut/speech/response',
+        lambda message: requests.append((message.text, message.request_id)), 10)
+    status = run.agent.create_publisher(String, '/malbut/falls/check/status', 10)
+
+    def report(phase):
+        status.publish(String(data=json.dumps({'active': True, 'phase': phase})))
+
+    # STT still waits on the reply to this utterance: the notice answers it.
+    run.agent._awaiting_reply = 'utterance-before-the-fall'
+    report('approach')
+    run.spin_until(lambda: (FALL_CHECK_START, 'utterance-before-the-fall') in requests)
+    assert not run.agent.dialogue.has_capacity()
+    calls = len(run.provider.calls)
+    report('look')
+    talk = run.send('오늘 날씨 어때')
+    run.spin_until(lambda: (FALL_CHECK_BUSY, talk) in requests)
+    report('look')
+    help_id = run.send('살려 줘')
+    run.spin_until(lambda: (FALL_CHECK_HELP, help_id) in requests and helps)
+    assert helps == [{'kind': 'help', 'utterance_id': help_id}]
+    assert run.manager_goals == [] and not run.responses
+    assert len(run.provider.calls) == calls, 'no model turn during the check'
+    assert [text for text, _ in requests].count(FALL_CHECK_START) == 1
+    # The question is over and the robot drives back: conversation again.
+    report('return')
+    run.spin_until(run.agent.dialogue.has_capacity)
+    run.say('안녕')
+
+
+def test_a_spoken_stop_ends_the_fall_check_like_manual_driving(speech_graph):
+    """2026-10-13: "멈춰" ranks above the check; the fall rules stop it, no question."""
+    from malbut_agent_server.fall_check_watch import FALL_CHECK_STOPPED, VOICE_TOPIC
+    run = speech_graph
+    run.start()
+    voice = []
+    run.agent.create_subscription(
+        String, VOICE_TOPIC, lambda message: voice.append(json.loads(message.data)), 10)
+    status = run.agent.create_publisher(String, '/malbut/falls/check/status', 10)
+    status.publish(String(data=json.dumps({'active': True, 'phase': 'approach'})))
+    run.spin_until(run.agent._fall_check.in_window)
+    calls = len(run.provider.calls)
+    uid = run.send('멈춰')
+    run.spin_until(lambda: FALL_CHECK_STOPPED in run.replies and voice)
+    assert voice == [{'kind': 'stop', 'utterance_id': uid}]
+    assert len(run.provider.calls) == calls and run.manager_goals == []
 
 
 def _registered_navigation(tmp_path):
