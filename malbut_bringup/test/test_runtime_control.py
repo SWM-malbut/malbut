@@ -66,6 +66,7 @@ def _runtime():
     node._capabilities = set()
     node._have_state = True
     node._synced_demand = None
+    node._sync_retry_at = None
     node._preparations = []
     node._demand_changed = Mock()
     node._closing = False
