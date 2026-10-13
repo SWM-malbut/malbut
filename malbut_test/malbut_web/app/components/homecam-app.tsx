@@ -1004,6 +1004,7 @@ function Viewer({
           const payload = (await response.json().catch(() => null)) as {
             lease?: { leaseId?: string; expiresAt?: string; ready?: boolean; readyForMs?: number };
             error?: string;
+            code?: string;
             holder?: TalkHolder | null;
           } | null;
           const leaseId = payload?.lease?.leaseId;
@@ -1014,7 +1015,7 @@ function Viewer({
               throw new Error("");
             }
             throw new Error(
-              response.status === 409
+              response.status === 409 && payload?.code !== "fall_check"
                 ? "다른 보호자가 말하는 중이에요. 잠시 뒤 다시 켜 주세요."
                 : payload?.error ?? "말하기 권한을 받지 못했어요.",
             );

@@ -16,6 +16,8 @@ const kinds = [
   // Could not ask yet (직접 움직이기 or another job), a minute of that, going back to the
   // spot before asking, and comparing the person with the first scene (목업 28번).
   "check_waiting", "check_not_confirmed", "revisit_started", "same_person_compared",
+  // "그만/멈춰" during the check: stopped without a question (2026-10-13).
+  "check_stopped",
 ];
 // Allowed reasons per approach event; null is never a reason for these except a start
 // that interrupted nothing.
@@ -32,6 +34,7 @@ const approachReasons: Record<string, Array<string | null>> = {
   check_waiting: ["manual_drive", "busy"],
   check_not_confirmed: ["waited_manual_drive", "waited_busy"],
   revisit_started: ["manual_drive", "busy"],
+  check_stopped: ["user_stop"],
   // Clothing only, for reference; it never changes what the robot does.
   same_person_compared: ["same", "different", "unclear"],
 };

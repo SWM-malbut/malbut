@@ -154,7 +154,7 @@ const SUMMARY_COLUMNS = `
   (SELECT jsonb_agg(jsonb_build_object('eventKind', e.payload_json::jsonb->>'eventKind',
       'reason', e.payload_json::jsonb->>'reason', 'analysis', e.payload_json::jsonb->'analysis') ORDER BY e.sequence)
     FROM fall_incident_events e WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
-      AND e.payload_json::jsonb->>'eventKind' IN ('check_not_confirmed','agent_check_failed','revisit_started',
+      AND e.payload_json::jsonb->>'eventKind' IN ('check_not_confirmed','check_stopped','agent_check_failed','revisit_started',
         'approach_completed','person_check_completed','posture_check_completed','same_person_compared')) AS check_events,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id

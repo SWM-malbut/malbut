@@ -90,6 +90,7 @@ const NOTICE: Record<string, [string, string]> = {
   confirmation_help_required: ["urgent", "상황 확인 결과 도움 필요"],
   robot_could_not_confirm: ["urgent", "말벗이 직접 확인하지 못함"],
   scene_answer_unconfirmed: ["check", "괜찮다는 답, 쓰러진 분인지 모름"],
+  check_stopped_by_user: ["check", "'그만'을 듣고 확인을 멈춤"],
 };
 const SAME_PERSON: Record<string, string> = {
   same: "같은 분으로 보임", different: "다른 분으로 보임", unclear: "같은 분인지 알 수 없음",
@@ -121,6 +122,7 @@ function approachLabel(event: FallHistoryEvent): string | null {
   const reason = event.reason ?? "";
   if (event.eventKind === "check_waiting") return CHECK_WAITING[reason] ?? "확인하러 가려 했지만 아직 갈 수 없음";
   if (event.eventKind === "check_not_confirmed") return "1분째 확인하지 못함";
+  if (event.eventKind === "check_stopped") return "'그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)";
   if (event.eventKind === "revisit_started") return REVISIT_START[reason] ?? "묻기 전에 의심 장소로 다시 감";
   if (event.eventKind === "same_person_compared") {
     const ai = event.analysis?.explanation ? ` (AI: ${nounEnding(event.analysis.explanation)})` : "";
@@ -312,6 +314,8 @@ export function fallRobotCheck(events: FallHistoryEvent[]): FallRobotCheck | nul
     if (e.eventKind === "check_not_confirmed") {
       waited = true;
       reason ??= WAITED_REASON[r] ?? WAITED_REASON.waited_busy;
+    } else if (e.eventKind === "check_stopped") {
+      reason ??= "'그만'이라는 말을 듣고 확인을 멈춤";
     } else if (e.eventKind === "agent_check_failed" && r === "time_limit") stopped = true;
     else if (e.eventKind === "agent_check_failed" && Object.hasOwn(FAILED_REASON, r)) {
       reason ??= FAILED_REASON[r][0];
