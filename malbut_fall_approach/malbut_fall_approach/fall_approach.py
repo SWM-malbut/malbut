@@ -14,11 +14,14 @@ RETURN_LIMIT_S = 60.0
 # Only part of the body was seen from 1 m (2026-10-11): move back to the
 # distance the fall rules ask for, within the user's one minute.
 VIEW_LIMIT_S = 60.0
-# 2026-10-12 21:16 the view drive went to a fixed point the spot could not be
-# seen from, the long way round. A view spot now has to see the spot on the
-# costmap and be near by path (the user's rules, 2026-10-12): the asked
-# distance first, then 0.5 m nearer or farther; at most twice the straight line.
-VIEW_RING_OFFSETS_M = (0.0, -0.5, 0.5)
+# 2026-10-13 16:51 the view backed toward a fixed 2.5 m, was blocked at 1.6 m and
+# drove off to a far place, losing the person; the camera showed the whole body
+# from 1.23 m on the way back. The view now watches the detector and stops once
+# the person's torso is in view (the user, 2026-10-13), at most the asked distance
+# from the spot. When the robot cannot back away, places around the spot are
+# tried nearest first: they have to see the spot on the costmap and be near by
+# path (at most twice the straight line, judged once, from where the view began).
+VIEW_RADII_M = (1.5, 2.0, 2.5, 3.0)
 VIEW_TURN_STEP_DEG = 30.0
 VIEW_DETOUR_FACTOR = 2.0
 VIEW_DETOUR_SLACK_M = 0.05
@@ -125,8 +128,8 @@ def sight_clear(grid, point, target):
     return True
 
 
-def view_rings(robot, target, distance):
-    """Where the whole body may be seen, by distance from the spot.
+def view_places(robot, target, distance):
+    """Where the body may be seen from, nearest ring first, at most ``distance`` away.
 
     Each ring starts straight back from the spot (seen from the robot's side)
     and goes around it both ways.
@@ -137,15 +140,10 @@ def view_rings(robot, target, distance):
     for k in range(1, steps):
         turns += [k * VIEW_TURN_STEP_DEG, -k * VIEW_TURN_STEP_DEG]
     turns.append(180.0)
-    rings = []
-    for offset in VIEW_RING_OFFSETS_M:
-        radius = distance + offset
-        if radius <= BODY_CLEAR_M:
-            continue
-        rings.append([(target[0] + radius * math.cos(base + math.radians(turn)),
-                       target[1] + radius * math.sin(base + math.radians(turn)))
-                      for turn in turns])
-    return rings
+    return [(target[0] + radius * math.cos(base + math.radians(turn)),
+             target[1] + radius * math.sin(base + math.radians(turn)))
+            for radius in VIEW_RADII_M if BODY_CLEAR_M < radius <= distance + 1e-9
+            for turn in turns]
 
 
 def within_detour(robot, goal, length):
@@ -247,3 +245,121 @@ class StartPoses:
 
     def forget(self, request_id):
         self._poses.pop(request_id, None)
+
+
+# ------------------------------------------------------------ torso in view
+# The pose detector (/homecam/person_poses, about five frames a second, also
+# while the robot moves) gives each person's box and COCO keypoints in image
+# fractions. The torso is in view with a shoulder and a hip or knee: from 12 cm
+# a seated person's thighs may hide the hips, and the head may be cut off at the
+# top, which the judgement after the move (Cloud, twice) does not need.
+PERSON_MIN_CONFIDENCE = 0.45  # The detector's strong person.
+KEYPOINT_MIN_CONFIDENCE = 0.5  # The detector's visible keypoint.
+# YOLO places a made-up shoulder or head on the top edge of a cut-off body (a
+# cross-legged person, 2026-10-07): such a point does not count, and the torso
+# has to stay in view this long.
+TOP_EDGE = 0.03
+TORSO_STABLE_S = 0.5
+POSE_MAX_AGE_S = 1.0
+# The camera's 74 degrees (person_following.yaml); only the person whose box
+# spans the spot's direction, give or take this much of the image, is watched.
+CAMERA_HFOV_RAD = 1.291543646
+TARGET_MARGIN = 0.2
+# The detector never picked the person out (dark, covered, only feet, or no
+# detector frames at all): the view backs straight away, camera on the spot, to
+# where a seated person's head shows (the 2026-10-11 reason for 2.5 m) or until
+# blocked, and Cloud judges there. It goes nowhere else: blind, a place off to
+# the side only loses the person (2026-10-13 16:51; the user, 2026-10-13).
+UNSEEN_VIEW_M = 2.5
+SHOULDERS = ('left_shoulder', 'right_shoulder')
+LOWER_TORSO = ('left_hip', 'right_hip', 'left_knee', 'right_knee')
+
+
+def spot_image_x(robot, target, hfov=CAMERA_HFOV_RAD):
+    """Where the spot falls across the image (0 left, 1 right), or None out of view."""
+    bearing = normalize_angle(math.atan2(target[1] - robot.y, target[0] - robot.x) - robot.yaw)
+    half = hfov / 2.0
+    if abs(bearing) >= half:
+        return None
+    return 0.5 - math.tan(bearing) / (2.0 * math.tan(half))
+
+
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _keypoint(pose, names):
+    """(confidence, y) of the most confident keypoint of ``names``, or (0, None)."""
+    best = (0.0, None)
+    for point in pose.get('keypoints') or ():
+        if (isinstance(point, dict) and point.get('name') in names
+                and _number(point.get('confidence')) and _number(point.get('y'))
+                and point['confidence'] > best[0]):
+            best = (float(point['confidence']), float(point['y']))
+    return best
+
+
+def target_pose(persons, robot, target, hfov=CAMERA_HFOV_RAD):
+    """Return the detected pose of the person at the spot: their box spans its direction."""
+    x = spot_image_x(robot, target, hfov)
+    if x is None or not isinstance(persons, list):
+        return None
+    best = None
+    for person in persons:
+        pose = person.get('pose') if isinstance(person, dict) else None
+        box = pose.get('box') if isinstance(pose, dict) else None
+        if (not isinstance(box, dict) or not _number(pose.get('boxConfidence'))
+                or not all(_number(box.get(side)) for side in ('left', 'right'))):
+            continue
+        if pose['boxConfidence'] < PERSON_MIN_CONFIDENCE:
+            continue
+        if not box['left'] - TARGET_MARGIN <= x <= box['right'] + TARGET_MARGIN:
+            continue  # Someone else in the room.
+        if best is None or pose['boxConfidence'] > best['boxConfidence']:
+            best = pose
+    return best
+
+
+def torso_in_view(pose):
+    """Tell whether a shoulder clear of the top edge and a hip or knee are visible."""
+    confidence, y = _keypoint(pose, SHOULDERS)
+    return (confidence >= KEYPOINT_MIN_CONFIDENCE and y is not None and y >= TOP_EDGE
+            and _keypoint(pose, LOWER_TORSO)[0] >= KEYPOINT_MIN_CONFIDENCE)
+
+
+def view_score(pose):
+    """How much of the body is in view: the visible keypoints."""
+    return sum(1 for point in pose.get('keypoints') or ()
+               if isinstance(point, dict) and _number(point.get('confidence'))
+               and point['confidence'] >= KEYPOINT_MIN_CONFIDENCE)
+
+
+class TorsoWatch:
+    """Whether the torso has stayed in view, and where the body was seen best."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.since = None
+        self.last = None
+        self.best = None  # (score, Pose2D of the robot)
+
+    def observe(self, stamp, robot, pose):
+        """One detector frame; ``pose`` is the person at the spot, or None."""
+        if self.last is not None and stamp < self.last:
+            return  # An older frame arriving late.
+        if pose is not None and torso_in_view(pose):
+            if self.since is None:
+                self.since = stamp
+        else:
+            self.since = None
+        self.last = stamp
+        if pose is not None:
+            score = view_score(pose)
+            if score and (self.best is None or score > self.best[0]):
+                self.best = (score, robot)
+
+    def seen(self, now):
+        return (self.since is not None and self.last - self.since >= TORSO_STABLE_S
+                and now - self.last <= POSE_MAX_AGE_S)

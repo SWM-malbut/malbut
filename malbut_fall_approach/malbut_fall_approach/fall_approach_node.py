@@ -27,22 +27,34 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_fall_approach.fall_approach import (
-    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S,
-    VIEW_LIMIT_S, CostGrid, Pose2D,
-    StartPoses, backup_distance, can_stand, facing_turn, goal_error, plan_targets,
-    returning_turn, route_length, sight_clear, standoff_route, view_rings, within_detour,
+    APPROACH_LIMIT_S, BACKUP_SPEED_MPS, CAMERA_HFOV_RAD,
+    HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid,
+    Pose2D, StartPoses, TorsoWatch, backup_distance, can_stand, facing_turn, goal_error,
+    plan_targets, returning_turn, route_length, sight_clear, standoff_route, target_pose,
+    UNSEEN_VIEW_M, view_places, within_detour,
 )
 
 STATUS_TOPIC = '/malbut/falls/approach/status'
 SPIN_ALLOWANCE_S = 10
 BACKUP_SLACK_S = 5
 CANCEL_SETTLE_S = 5.0
+# Watching at a stop: long enough for the torso to stay in view half a second
+# at the detector's five frames a second.
+VIEW_LOOK_S = 1.5
+# The search stops this long before the minute, to go back to where the body
+# was seen best; nearer than this counts as there.
+BEST_RESERVE_S = 15.0
+BEST_NEAR_M = 0.3
+# Places planned at most, nearest by straight line first (each is one planner call).
+VIEW_PLANS = 12
+MAX_POSES_BYTES = 262144
+SEEN = object()  # A drive or turn stopped because the torso came into view.
 
 
 class Timeout(Exception):
@@ -50,6 +62,10 @@ class Timeout(Exception):
 
 
 class Canceled(Exception):
+    pass
+
+
+class Seen(Exception):
     pass
 
 
@@ -83,6 +99,9 @@ class FallApproachNode(Node):
             'backup_action': 'backup',
             # Where the whole body can be seen from (walls, furniture, free floor).
             'costmap_topic': '/global_costmap/costmap_raw',
+            # The pose detector, watched while the view moves (2026-10-13).
+            'poses_topic': '/homecam/person_poses',
+            'camera_horizontal_fov_rad': CAMERA_HFOV_RAD,
         }
         self.settings = {name: self.declare_parameter(name, value).value
                          for name, value in settings.items()}
@@ -105,6 +124,11 @@ class FallApproachNode(Node):
         self.grid = None
         self.create_subscription(Costmap, self.settings['costmap_topic'], self._on_costmap,
                                  latched, callback_group=self.group)
+        self.watch = TorsoWatch()
+        self.watch_lock = threading.Lock()
+        self.watch_target = None
+        self.create_subscription(String, self.settings['poses_topic'], self._on_poses,
+                                 qos_profile_sensor_data, callback_group=self.group)
         self.starts = StartPoses()
         self.busy = threading.Lock()
         self.closing = threading.Event()  # Shutdown ends a hold at once.
@@ -191,49 +215,97 @@ class FallApproachNode(Node):
         return 'arrived', ''
 
     def _view(self, handle, request, deadline):
-        """Back away, or go to the nearest place the spot can be seen from, facing it."""
+        """Move until the person's torso is in view, at most standoff_m from the spot.
+
+        Watching the pose detector (2026-10-13): stay if it is already in view,
+        else back away facing the spot and stop once it is, else try places
+        around the spot nearest first. Never in view: go back to where the body
+        was seen best. Never picked out at all: only back away, to 2.5 m or until
+        blocked. The judgement there is Cloud's, as before.
+        """
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
         self.starts.remember(request.request_id, robot)  # Normally kept from the approach.
         target = (request.x, request.y)
+        with self.watch_lock:
+            self.watch.reset()
+            self.watch_target = target
+        try:
+            if self._look(handle, deadline):
+                return 'arrived', 'torso in view'
+            return self._view_watching(handle, request, robot, target, deadline)
+        finally:
+            with self.watch_lock:
+                self.watch_target = None
+
+    def _view_watching(self, handle, request, robot, target, deadline):
+        seen = self._torso_seen
         back = backup_distance(robot, target, request.standoff_m)
         if back:
             self._feedback(handle, 'DRIVING')
-            if self._back_up(handle, back, deadline):
-                return self._face(handle, robot, target, deadline)
+            done = self._back_up(handle, back, deadline,
+                                 stop=lambda: seen() or self._unseen_far_enough(target))
+            if seen() or (done is True and self._look(handle, deadline)):
+                return 'arrived', 'torso in view'
             robot = self._pose() or robot
+        with self.watch_lock:
+            picked_out = self.watch.best is not None
+        if not picked_out:
+            self._turn_to(handle, target, deadline)
+            return 'arrived', 'the person was not picked out: backed away only'
+        explore_until = deadline - BEST_RESERVE_S
+        for goal, path in self._view_options(handle, robot, target, request.standoff_m,
+                                             deadline):
+            if time.monotonic() > explore_until:
+                break
+            done = self._go_and_face(handle, goal, path, target, deadline, stop=seen)
+            if done is SEEN or (done and self._look(handle, deadline)):
+                return 'arrived', 'torso in view'
+        with self.watch_lock:
+            best = self.watch.best
+        here = self._pose()
+        place = best[1]
+        if here is not None and math.dist((here.x, here.y), (place.x, place.y)) > BEST_NEAR_M:
+            path = self._plan(handle, here, (place.x, place.y), deadline,
+                              yaw=math.atan2(target[1] - place.y, target[0] - place.x))
+            self._go_and_face(handle, (place.x, place.y), path, target, deadline)
+        else:
+            self._turn_to(handle, target, deadline)
+        return 'arrived', 'where the body was best in view'
+
+    def _view_options(self, handle, robot, target, distance, deadline):
+        """Yield (place, path) nearest by path; after a drive, paths are planned again.
+
+        A place has to stand clear, see the spot on the costmap and, judged once
+        from where the view began, be at most twice the straight line away. A
+        failed drive does not drop the others (the user, 2026-10-13).
+        """
         grid = self.grid
         if grid is None:
-            return 'no_path', 'no costmap to tell where the spot can be seen from'
-        failed = False
-        for ring in view_rings((robot.x, robot.y), target, request.standoff_m):
-            options = []
-            for order, goal in enumerate(ring):
-                if not (can_stand(grid, goal) and sight_clear(grid, goal, target)):
+            return
+        places = [p for p in view_places((robot.x, robot.y), target, distance)
+                  if can_stand(grid, p) and sight_clear(grid, p, target)]
+        places.sort(key=lambda p: math.dist(p, (robot.x, robot.y)))
+        options = []
+        for order, place in enumerate(places):
+            if len(options) >= VIEW_PLANS:
+                break
+            planned = self._view_path(handle, robot, place, target, deadline)
+            if planned is not None:
+                options.append((planned[0], order, place, planned[1]))
+        # Nearest by path; within a centimetre, nearer by straight line.
+        options.sort(key=lambda option: (round(option[0], 2), option[1]))
+        start = (robot.x, robot.y)
+        for _, _, place, path in options:
+            here = self._pose()
+            if here is not None and math.dist((here.x, here.y), start) > BEST_NEAR_M:
+                # The robot moved on an earlier drive: plan again from here.
+                path = self._plan(handle, here, place, deadline,
+                                  yaw=math.atan2(target[1] - place[1], target[0] - place[0]))
+                if path is None:
                     continue
-                planned = self._view_path(handle, robot, goal, target, deadline)
-                if planned is not None:
-                    options.append((planned[0], order, goal, planned[1]))
-            # Nearest by path; within a centimetre, the ring's order decides.
-            options.sort(key=lambda option: (round(option[0], 2), option[1]))
-            for _, _, goal, path in options:
-                if failed:
-                    # The robot moved on the failed drive: plan again from here.
-                    planned = self._view_path(handle, robot, goal, target, deadline)
-                    if planned is None:
-                        continue
-                    path = planned[1]
-                self._feedback(handle, 'DRIVING')
-                if len(path.poses) >= 2 and not self._drive(handle, path, deadline):
-                    # Another place may still be reachable within the minute.
-                    failed = True
-                    robot = self._pose() or robot
-                    continue
-                return self._face(handle, robot, target, deadline)
-        if failed:
-            return 'failed', 'Nav2 did not finish a path to see the whole body'
-        return 'no_path', 'no near place the spot can be seen from'
+            yield place, path
 
     def _view_path(self, handle, robot, goal, target, deadline):
         """(length, path) to a view place facing the spot, or None if no near path."""
@@ -244,14 +316,50 @@ class FallApproachNode(Node):
         length = route_length([(p.pose.position.x, p.pose.position.y) for p in path.poses])
         return (length, path) if within_detour((robot.x, robot.y), goal, length) else None
 
-    def _face(self, handle, robot, target, deadline):
-        robot = self._pose() or robot
-        turn = facing_turn(robot, target)
-        if turn:
-            self._feedback(handle, 'TURNING')
-            if not self._spin(handle, turn, deadline):
-                return 'arrived', 'could not turn to face the spot'
-        return 'arrived', ''
+    def _go_and_face(self, handle, goal, path, target, deadline, stop=None):
+        """Drive the path and turn to the spot: True, False, or SEEN when ``stop`` held."""
+        if path is None:
+            return False
+        if len(path.poses) >= 2:
+            self._feedback(handle, 'DRIVING')
+            done = self._drive(handle, path, deadline, stop=stop)
+            if done is SEEN or not done:
+                return done
+        turned = self._turn_to(handle, target, deadline, stop=stop)
+        return SEEN if turned is SEEN else True
+
+    def _turn_to(self, handle, target, deadline, stop=None):
+        robot = self._pose()
+        turn = facing_turn(robot, target) if robot is not None else 0.0
+        if not turn:
+            return True
+        self._feedback(handle, 'TURNING')
+        return self._spin(handle, turn, deadline, stop=stop)
+
+    def _look(self, handle, deadline):
+        """Stand still a moment watching for the torso."""
+        self._feedback(handle, 'LOOKING')
+        end = min(deadline, time.monotonic() + VIEW_LOOK_S)
+        while time.monotonic() < end:
+            if handle.is_cancel_requested or not rclpy.ok():
+                raise Canceled()
+            if self._torso_seen():
+                return True
+            time.sleep(0.05)
+        return self._torso_seen()
+
+    def _unseen_far_enough(self, target):
+        """Never picked out yet and already as far as a blind view goes."""
+        with self.watch_lock:
+            if self.watch.best is not None:
+                return False
+        robot = self._pose()
+        return robot is not None and math.dist((robot.x, robot.y), target) >= UNSEEN_VIEW_M
+
+    def _torso_seen(self):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        with self.watch_lock:
+            return self.watch.seen(now)
 
     def _return(self, handle, request, deadline):
         start = self.starts.get(request.request_id)
@@ -291,32 +399,35 @@ class FallApproachNode(Node):
         path = result.result.path
         return path if path.poses else None
 
-    def _drive(self, handle, path, deadline):
+    def _drive(self, handle, path, deadline, stop=None):
         goal = FollowPath.Goal()
         goal.path = path
         goal.controller_id = self.settings['controller_id']
         goal.goal_checker_id = self.settings['goal_checker_id']
-        result = self._call(self.follower, goal, handle, deadline)
-        return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+        return self._succeeded(self._call(self.follower, goal, handle, deadline, stop))
 
-    def _spin(self, handle, turn, deadline):
+    def _spin(self, handle, turn, deadline, stop=None):
         goal = Spin.Goal()
         goal.target_yaw = float(turn)
         goal.time_allowance = DurationMsg(sec=SPIN_ALLOWANCE_S)
-        result = self._call(self.spinner, goal, handle, deadline)
-        return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+        return self._succeeded(self._call(self.spinner, goal, handle, deadline, stop))
 
-    def _back_up(self, handle, distance, deadline):
+    def _back_up(self, handle, distance, deadline, stop=None):
         """Nav2 BackUp checks the local costmap behind the robot as it goes."""
         goal = BackUp.Goal()
         goal.target.x = float(distance)
         goal.speed = BACKUP_SPEED_MPS
         goal.time_allowance = DurationMsg(
             sec=int(math.ceil(distance / BACKUP_SPEED_MPS)) + BACKUP_SLACK_S)
-        result = self._call(self.backer, goal, handle, deadline)
+        return self._succeeded(self._call(self.backer, goal, handle, deadline, stop))
+
+    @staticmethod
+    def _succeeded(result):
+        if result is SEEN:
+            return SEEN
         return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
 
-    def _call(self, client, goal, handle, deadline):
+    def _call(self, client, goal, handle, deadline, stop=None):
         if not client.wait_for_server(timeout_sec=min(2.0, max(0.1, deadline - time.monotonic()))):
             return None
         self.child = None
@@ -334,16 +445,22 @@ class FallApproachNode(Node):
         if goal_handle is None or not goal_handle.accepted:
             return None
         self.child = goal_handle
-        result = self._wait(goal_handle.get_result_async(), handle, deadline)
+        try:
+            result = self._wait(goal_handle.get_result_async(), handle, deadline, stop)
+        except Seen:
+            self._settle_child()  # Stop here: the torso is in view.
+            return SEEN
         self.child = None
         return result
 
-    def _wait(self, future, handle, deadline):
+    def _wait(self, future, handle, deadline, stop=None):
         while not future.done():
             if handle.is_cancel_requested or not rclpy.ok():
                 raise Canceled()
             if time.monotonic() > deadline:
                 raise Timeout()
+            if stop is not None and stop():
+                raise Seen()
             time.sleep(0.02)
         return future.result()
 
@@ -379,6 +496,31 @@ class FallApproachNode(Node):
         self.grid = CostGrid(float(meta.resolution), float(meta.origin.position.x),
                              float(meta.origin.position.y), _yaw(q), width, height,
                              bytes(message.data))
+
+    def _on_poses(self, message):
+        """A pose detector frame: note the person at the spot while a view watches."""
+        with self.watch_lock:
+            target = self.watch_target
+        if target is None or len(message.data) > MAX_POSES_BYTES:
+            return
+        try:
+            frame = json.loads(message.data)
+        except ValueError:
+            return
+        if not isinstance(frame, dict) or frame.get('status') != 'ok':
+            return
+        robot = self._pose()
+        if robot is None:
+            return
+        pose = target_pose(frame.get('persons'), robot, target,
+                           float(self.settings['camera_horizontal_fov_rad']))
+        # Timed on arrival: the camera's clock need not be this node's, and the
+        # robot pose paired with the frame is the one now.
+        now = self.get_clock().now().nanoseconds * 1e-9
+        with self.watch_lock:
+            if self.watch_target != target:
+                return
+            self.watch.observe(now, robot, pose)
 
     def _pose(self):
         try:

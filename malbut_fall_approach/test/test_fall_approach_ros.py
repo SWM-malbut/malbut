@@ -18,13 +18,16 @@ if not hasattr(interfaces, 'FallApproach'):
 from geometry_msgs.msg import PoseStamped, TransformStamped  # noqa: E402
 from nav2_msgs.msg import Costmap  # noqa: E402
 from nav_msgs.msg import Path  # noqa: E402
-from rclpy.action import ActionClient, ActionServer  # noqa: E402
+from rclpy.action import ActionClient, ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E402
+from rclpy.qos import (  # noqa: E402
+    DurabilityPolicy, QoSProfile, qos_profile_sensor_data, ReliabilityPolicy,
+)
 from std_msgs.msg import String  # noqa: E402
 
+from malbut_fall_approach import fall_approach_node  # noqa: E402
 from malbut_fall_approach.fall_approach_node import FallApproachNode  # noqa: E402
 
 
@@ -32,12 +35,14 @@ class FakeNav2:
     """Straight-line planner; driving, backing and turning are recorded.
 
     ``follow`` lists the outcomes of successive drives (then they succeed);
-    ``detour(x, y)`` makes the path to that goal go 3 m out of the way first.
+    ``detour(x, y)`` makes the path to that goal go 3 m out of the way first;
+    a backup takes ``backup_s`` unless canceled, like the robot backing slowly.
     """
 
-    def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None):
+    def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None, backup_s=0.0):
         self.plan, self.driven, self.turns, self.backups = plan, [], [], []
         self.backup, self.follow, self.detour = backup, list(follow), detour
+        self.backup_s, self.backup_canceled = backup_s, False
         self.planned, self.navigated = [], []
         self.navigate_succeeds = True
         group = ReentrantCallbackGroup()
@@ -47,7 +52,8 @@ class FakeNav2:
         ActionServer(node, nav2.Spin, 'spin', self._spin, callback_group=group)
         ActionServer(node, nav2.NavigateToPose, 'navigate_to_pose', self._navigate,
                      callback_group=group)
-        ActionServer(node, nav2.BackUp, 'backup', self._back_up, callback_group=group)
+        ActionServer(node, nav2.BackUp, 'backup', self._back_up, callback_group=group,
+                     cancel_callback=lambda _goal: CancelResponse.ACCEPT)
 
     def _plan(self, handle):
         self.planned.append(handle.request)
@@ -95,10 +101,17 @@ class FakeNav2:
 
     def _back_up(self, handle):
         self.backups.append((handle.request.target.x, handle.request.speed))
-        if self.backup:
-            handle.succeed()
-        else:
+        if not self.backup:
             handle.abort()  # Something behind the robot in the local costmap.
+            return nav2.BackUp.Result()
+        end = time.monotonic() + self.backup_s
+        while time.monotonic() < end:
+            if handle.is_cancel_requested:
+                self.backup_canceled = True
+                handle.canceled()
+                return nav2.BackUp.Result()
+            time.sleep(0.02)
+        handle.succeed()
         return nav2.BackUp.Result()
 
 
@@ -108,10 +121,17 @@ def ros():
     node = FallApproachNode()
     fake = Node('fake_nav2_and_tf')
     broadcaster = tf2_ros.StaticTransformBroadcaster(fake)
-    pose = TransformStamped()
-    pose.header.frame_id, pose.child_frame_id = 'map', 'base_footprint'
-    pose.transform.rotation.w = 1.0
-    broadcaster.sendTransform(pose)
+
+    def place(x=0.0, y=0.0):
+        """Put the fake robot at (x, y) on the map, facing +x."""
+        pose = TransformStamped()
+        pose.header.frame_id, pose.child_frame_id = 'map', 'base_footprint'
+        pose.transform.translation.x, pose.transform.translation.y = x, y
+        pose.transform.rotation.w = 1.0
+        broadcaster.sendTransform(pose)
+
+    place()
+    fake.place = place
     statuses = []
     fake.create_subscription(String, '/malbut/falls/approach/status',
                              lambda m: statuses.append(json.loads(m.data)),
@@ -244,16 +264,44 @@ def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):
     assert send(request_id='q3', phase='drive', x=3.0, y=0.0, standoff_m=1.0) is None
 
 
-def test_view_backs_up_facing_the_spot_without_turning_away(ros):
-    _, fake, send, statuses, _ = ros
-    nav = FakeNav2(fake)
-    # The fake robot stands at the origin facing +x, 1 m short of the spot.
-    result = send(request_id='v1', phase='view', x=1.0, y=0.0, standoff_m=2.5)
-    assert result.outcome == 'arrived'
-    assert nav.backups == [pytest.approx((1.5, 0.1))]
-    assert nav.driven == [] and nav.turns == []
-    time.sleep(0.2)
-    assert statuses[-1]['phase'] == 'view' and statuses[-1]['outcome'] == 'arrived'
+NAMES = ('nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_shoulder',
+         'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist', 'left_hip',
+         'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle')
+TORSO = NAMES
+LEGS = ('left_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle')
+
+
+def person(seen, box=(0.3, 0.2, 0.75, 0.9)):
+    """A detected person ahead (the spot is straight ahead) with ``seen`` keypoints."""
+    return {'pose': {'boxConfidence': 0.8,
+                     'box': dict(zip(('left', 'top', 'right', 'bottom'), box)),
+                     'keypoints': [{'name': n, 'x': 0.5, 'y': 0.5,
+                                    'confidence': 0.9 if n in seen else 0.05} for n in NAMES]}}
+
+
+@pytest.fixture
+def camera(ros, monkeypatch):
+    """The pose detector: ``camera['show']()`` gives the persons of each frame (10 a second)."""
+    monkeypatch.setattr(fall_approach_node, 'VIEW_LOOK_S', 0.8)
+    _, fake, *_ = ros
+    publisher = fake.create_publisher(String, '/homecam/person_poses', qos_profile_sensor_data)
+    state, stop = {'show': lambda: []}, threading.Event()
+
+    def frames():
+        while not stop.is_set():
+            people = state['show']()
+            if people is not None:
+                now = fake.get_clock().now().nanoseconds
+                publisher.publish(String(data=json.dumps({
+                    'status': 'ok', 'persons': people,
+                    'captureStamp': {'sec': now // 10**9, 'nanosec': now % 10**9}})))
+            time.sleep(0.1)
+
+    thread = threading.Thread(target=frames, daemon=True)
+    thread.start()
+    yield state
+    stop.set()
+    thread.join(timeout=2)
 
 
 def _end(nav, index=-1):
@@ -261,65 +309,152 @@ def _end(nav, index=-1):
     return end.x, end.y
 
 
-def _around(turn_deg, radius=2.5):
+def _around(turn_deg, radius=1.5):
     """A view place around the spot (1, 0), the robot at the origin on its 180-degree side."""
     side = math.pi + math.radians(turn_deg)
     return 1.0 + radius * math.cos(side), radius * math.sin(side)
 
 
-def test_view_tries_the_next_nearest_place_after_a_failed_drive(ros):
+def view(send, request_id='v1', standoff_m=3.0):
+    # The spot is 1 m straight ahead of the fake robot, as after an approach.
+    return send(request_id=request_id, phase='view', x=1.0, y=0.0, standoff_m=standoff_m)
+
+
+def test_a_torso_already_in_view_needs_no_move(ros, camera):
+    _, fake, send, statuses, _ = ros
+    nav = FakeNav2(fake)
+    camera['show'] = lambda: [person(TORSO)]
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', 'torso in view')
+    assert nav.backups == [] and nav.driven == [] and nav.turns == []
+    time.sleep(0.2)
+    assert statuses[-1]['phase'] == 'view' and statuses[-1]['outcome'] == 'arrived'
+
+
+def test_backing_away_stops_once_the_torso_is_in_view(ros, camera):
+    """2026-10-13 16:51: the whole body showed from 1.23 m while backing toward 2.5 m."""
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake, backup_s=10.0)
+    started = []
+
+    def show():
+        if nav.backups and not started:
+            started.append(time.monotonic())
+        return [person(TORSO if started and time.monotonic() - started[0] > 1.0 else LEGS)]
+
+    camera['show'] = show
+    began = time.monotonic()
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', 'torso in view')
+    assert nav.backups == [pytest.approx((2.0, 0.1))]  # Up to 3 m from the spot ...
+    assert nav.backup_canceled and time.monotonic() - began < 6.0  # ... but stopped early.
+    assert nav.driven == []
+
+
+def test_a_blocked_backup_tries_places_nearest_first_and_a_failed_drive_moves_on(ros, camera):
     _, fake, send, _, costmap = ros
     costmap({})
     nav = FakeNav2(fake, backup=False, follow=[False])
-    result = send(request_id='v2', phase='view', x=1.0, y=0.0, standoff_m=2.5)
-    assert result.outcome == 'arrived'
+    camera['show'] = lambda: [person(TORSO if len(nav.driven) >= 2 else LEGS)]
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', 'torso in view')
     assert len(nav.backups) == 1 and len(nav.driven) == 2
-    assert _end(nav, 0) == pytest.approx(_around(0.0), abs=1e-6)  # Straight back: nearest.
-    # Then 30 degrees round, the first side when both are as near.
+    assert _end(nav, 0) == pytest.approx(_around(0.0), abs=1e-6)  # Straight back, 1.5 m.
+    # The drive failed; the next nearest is 30 degrees round, the first side.
     assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
 
 
-def test_view_skips_places_a_wall_hides_the_spot_from(ros):
+def test_places_a_wall_hides_the_spot_from_are_skipped(ros, camera):
     _, fake, send, _, costmap = ros
-    # A cupboard between the straight-back place (-1.5, 0) and the spot (1, 0).
-    costmap({(-0.6, y / 10): 254 for y in range(-3, 4)})
+    # A cupboard between the places straight back and the spot.
+    costmap({(-0.2, y / 10): 254 for y in range(-3, 4)})
     nav = FakeNav2(fake, backup=False)
-    result = send(request_id='v4', phase='view', x=1.0, y=0.0, standoff_m=2.5)
-    assert result.outcome == 'arrived'
+    camera['show'] = lambda: [person(TORSO if nav.driven else LEGS)]
+    assert view(send).outcome == 'arrived'
     assert len(nav.driven) == 1
     assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
 
 
-def test_view_skips_places_more_than_twice_the_straight_line_away(ros):
+def test_places_more_than_twice_the_straight_line_away_are_skipped(ros, camera):
     _, fake, send, _, costmap = ros
-    costmap({(-0.6, y / 10): 254 for y in range(-3, 4)})
-    # The way to every place on the y < 0 side goes 3 m round: the other side.
+    costmap({(-0.2, y / 10): 254 for y in range(-3, 4)})
+    # The way to every place on the first side (y < 0) goes 3 m round: the other side.
     nav = FakeNav2(fake, backup=False, detour=lambda x, y: y < 0.0)
-    result = send(request_id='v5', phase='view', x=1.0, y=0.0, standoff_m=2.5)
-    assert result.outcome == 'arrived'
+    camera['show'] = lambda: [person(TORSO if nav.driven else LEGS)]
+    assert view(send).outcome == 'arrived'
     assert len(nav.driven) == 1
     assert _end(nav) == pytest.approx(_around(-30.0), abs=1e-6)
 
 
-def test_view_has_no_place_without_a_costmap_or_a_visible_spot(ros):
-    node, fake, send, _, costmap = ros
-    nav = FakeNav2(fake, backup=False)
-    node.grid = None
-    assert send(request_id='v6', phase='view', x=1.0, y=0.0, standoff_m=2.5).outcome == 'no_path'
-    # Walled in on every side, past the metre the body itself takes.
-    costmap({(x / 10, y / 10): 254 for x in range(-49, 50) for y in range(-49, 50)
-             if 1.2 < math.dist((x / 10, y / 10), (1.0, 0.0)) < 1.4})
-    assert send(request_id='v7', phase='view', x=1.0, y=0.0, standoff_m=2.5).outcome == 'no_path'
-    assert nav.driven == []
-
-
-def test_view_fails_only_after_every_place_failed(ros):
+def test_never_in_view_goes_back_to_where_the_body_was_seen_best(ros, camera, monkeypatch):
+    monkeypatch.setattr(fall_approach_node, 'VIEW_PLANS', 2)
     _, fake, send, _, costmap = ros
     costmap({})
-    nav = FakeNav2(fake, backup=False, follow=[False] * 36)
-    result = send(request_id='v3', phase='view', x=1.0, y=0.0, standoff_m=2.5)
-    assert result.outcome == 'failed'
-    assert len(nav.driven) == 36  # Three rings of twelve places.
+    nav = FakeNav2(fake, backup=False)
+
+    placed = {}
+
+    def show():
+        drives = len(nav.driven)
+        if drives in (1, 2) and drives not in placed:
+            fake.place(*((-0.5, 0.0) if drives == 1 else (-0.3, 0.75)))
+            placed[drives] = time.monotonic()
+        if drives == 1 and time.monotonic() - placed[1] > 0.3:
+            return [person(LEGS)]  # At the first place the legs were seen best.
+        return [person(('left_ankle',))]
+
+    camera['show'] = show
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', 'where the body was best in view')
+    assert len(nav.driven) == 3
+    assert _end(nav) == pytest.approx((-0.5, 0.0), abs=1e-6)
+
+
+UNSEEN = 'the person was not picked out: backed away only'
+
+
+def test_a_person_never_picked_out_only_backs_away(ros, camera):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)  # The detector runs but sees no one.
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', UNSEEN)  # Cloud judges there.
+    assert nav.backups == [pytest.approx((2.0, 0.1))] and nav.driven == []
+
+
+def test_backing_away_unseen_stops_at_2_5_m_from_the_spot(ros, camera):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake, backup_s=10.0)
+
+    def move():
+        while not nav.backups:
+            time.sleep(0.02)
+        time.sleep(0.5)
+        fake.place(-1.5, 0.0)  # 2.5 m from the spot (1, 0).
+
+    threading.Thread(target=move, daemon=True).start()
+    began = time.monotonic()
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', UNSEEN)
+    assert nav.backup_canceled and time.monotonic() - began < 6.0
+
+
+def test_a_person_never_picked_out_sends_the_robot_nowhere_else(ros, camera):
+    """2026-10-13 16:51: blind, a place off to the side only lost the person."""
+    _, fake, send, _, costmap = ros
+    costmap({})
+    nav = FakeNav2(fake, backup=False)  # Blocked right behind.
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', UNSEEN)
+    assert nav.driven == [] and nav.planned == []
+
+
+def test_without_detector_frames_the_view_only_backs_away(ros):
+    _, fake, send, _, costmap = ros
+    costmap({})
+    nav = FakeNav2(fake)
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', UNSEEN)
+    assert nav.backups == [pytest.approx((2.0, 0.1))] and nav.driven == []
 
 
 def test_a_drive_reports_its_outcome_then_holds_the_wheels_until_replaced(ros):

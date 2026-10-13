@@ -106,9 +106,9 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
 
 2026-10-11 몸 전체 보고 판단하기(런치 `fall_full_view`, 기본 켜짐, `fall_approach` 필요):
 - 침대에 걸터앉은 사람이 12 cm 카메라에 다리만 보여, 근접 확인이 "사람"이라 답하고 질문까지 갔다(10월 10일 20:43, 11일 03:39).
-- 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 2.5 m 자리로 옮기고
-  `view_result`를 주면 `view_completed(reason=outcome)`. 자리는 의심 장소가 보이는 가장 가까운 곳이다
-  (2026-10-12, `malbut_fall_approach` README).
+- 근접 확인이 사람(Pose 3초 또는 Cloud)이면 `person_check_completed(partial_body)`. 코디네이터가 몸통이 보일 때까지
+  옮기고(최대 3 m, 2026-10-13, `malbut_fall_approach` README) `view_result`를 주면 `view_completed(reason=outcome)`.
+  1 m에서 이미 몸통이 보이면 움직이지 않고 `arrived`다.
 - 자세 판단: 도착 1초 뒤 Cloud "자세 확인"(`check_posture`, `furniture`/`standing`/`floor`/`unclear`)을 묻고,
   `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 `sitting_off_floor`(둘 다
   `standing`이면 `standing`)로 `incident_resolved(off_floor_verified)`. `floor`는 `on_floor`, 애매·실패·차단은

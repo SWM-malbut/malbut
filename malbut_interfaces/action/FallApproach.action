@@ -1,5 +1,6 @@
-# Drive near an uncertain fall suspicion to look closely, to where the whole body
-# is visible (view), or back afterwards; or only hold the wheels (hold).
+# Drive near an uncertain fall suspicion to look closely, until the person's torso
+# is in view (view, watching the pose detector), or back afterwards; or only hold
+# the wheels (hold).
 # The fall coordinator owns the sequence; no question or alert happens here.
 # A fall check keeps a HIGH mission the whole time (the user, 2026-10-13): after
 # approach and view the goal reports its outcome as feedback and holds the
@@ -13,7 +14,7 @@ string phase
 # Map frame point of the suspicion (approach and view).
 float64 x
 float64 y
-# Stop this far from the point, facing it (approach and view).
+# Stop this far from the point, facing it (approach); at most this far (view).
 float64 standoff_m 1.0
 # Why it goes back (return only): not_a_person or off_floor; shown on the patrol card.
 string reason
@@ -27,7 +28,7 @@ string FAILED=failed
 string outcome
 string detail
 ---
-# PLANNING, DRIVING, TURNING, HOLDING
+# PLANNING, DRIVING, TURNING, LOOKING, HOLDING
 string phase
 # Set once the drive ended (as in the result), while the goal keeps holding.
 string outcome
