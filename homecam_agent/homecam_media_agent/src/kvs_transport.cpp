@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "homecam_media_agent/build_features.hpp"
+#include "homecam_media_agent/rotating_credentials.hpp"
 
 #if HOMECAM_HAVE_KVS
 extern "C"
@@ -238,8 +239,7 @@ SessionRefreshDecision decide_session_refresh(
   const bool peer_connected,
   const std::int64_t now_unix_ms,
   const std::int64_t expires_at_unix_ms,
-  const std::int64_t refresh_margin_ms,
-  const std::int64_t connected_peer_safety_margin_ms)
+  const std::int64_t refresh_margin_ms)
 {
   if (session_lease_expired(now_unix_ms, expires_at_unix_ms)) {
     return SessionRefreshDecision::kFailClosed;
@@ -253,12 +253,16 @@ SessionRefreshDecision decide_session_refresh(
   if (mode != SessionMode::kPeerToPeer || !peer_connected) {
     return SessionRefreshDecision::kRefreshNow;
   }
-  const std::int64_t safety_margin_ms = std::clamp<std::int64_t>(
-    connected_peer_safety_margin_ms, 0, routine_margin_ms);
-  if (remaining_ms <= safety_margin_ms) {
-    return SessionRefreshDecision::kForceBeforeExpiry;
-  }
-  return SessionRefreshDecision::kDeferForConnectedPeer;
+  return SessionRefreshDecision::kRefreshCredentials;
+}
+
+bool can_renew_session_credentials(
+  const SessionLease & current, const SessionLease & renewed, const std::int64_t now_unix_ms)
+{
+  return current.valid_at(now_unix_ms) && renewed.valid_at(now_unix_ms) &&
+         current.mode == SessionMode::kPeerToPeer && renewed.mode == current.mode &&
+         renewed.channel_arn == current.channel_arn && renewed.region == current.region &&
+         renewed.credentials.expires_at_unix_ms > current.credentials.expires_at_unix_ms;
 }
 
 namespace
@@ -519,17 +523,14 @@ public:
 
     status = freeStaticCredentialProvider(&configuration_->pCredentialProvider);
     if (STATUS_SUCCEEDED(status)) {
-      const UINT64 expiration =
-        static_cast<UINT64>(lease.credentials.expires_at_unix_ms) *
-        HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-      status = createStaticCredentialProvider(
-        const_cast<char *>(lease.credentials.access_key_id.c_str()), 0,
-        const_cast<char *>(lease.credentials.secret_access_key.c_str()), 0,
-        const_cast<char *>(lease.credentials.session_token.c_str()), 0,
-        expiration, &configuration_->pCredentialProvider);
+      credentials_ = std::make_unique<RotatingCredentials>();
+      status = credentials_->stage(lease.credentials, now);
+      if (STATUS_SUCCEEDED(status)) {
+        configuration_->pCredentialProvider = credentials_->provider();
+      }
     }
     if (STATUS_FAILED(status)) {
-      const std::string detail = sdk_error("createStaticCredentialProvider", status);
+      const std::string detail = sdk_error("stage session credentials", status);
       quiesce_configuration_locked();
       cleanup_locked();
       status_ = detail;
@@ -597,6 +598,29 @@ public:
     status_ = lease.mode == SessionMode::kStorage ?
       "KVS signaling connected; waiting for storage-session offer" :
       "KVS signaling connected; waiting for viewer offer";
+    return true;
+  }
+
+  bool renew_credentials(const SessionLease & lease, std::string * const error) override
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    const auto now = unix_now_ms();
+    if (configuration_ == nullptr || cleanup_thread_exited_.load() || !credentials_ ||
+      !can_renew_session_credentials(lease_, lease, now))
+    {
+      return set_error(error, "credential renewal does not extend the same live P2P session");
+    }
+    const STATUS result = credentials_->stage(lease.credentials, now);
+    if (STATUS_FAILED(result)) {
+      return set_error(error, sdk_error("stage renewed session credentials", result));
+    }
+    // The SDK's next credential callback adopts the staged value. Do not
+    // mutate its borrowed credential object or reset peers/RTP/PTT timelines.
+    secure_clear(&lease_.credentials.access_key_id);
+    secure_clear(&lease_.credentials.secret_access_key);
+    secure_clear(&lease_.credentials.session_token);
+    // valid_at also checks the credential strings; retain the renewed lease.
+    lease_.credentials = lease.credentials;
     return true;
   }
 
@@ -814,9 +838,15 @@ private:
       {
         freeSignalingClient(&configuration_->signalingClientHandle);
       }
+      // Common.c owns only a static provider. Ours outlives all SDK users and
+      // is released separately after sample cleanup, never through that cast.
+      if (credentials_ && configuration_->pCredentialProvider == credentials_->provider()) {
+        configuration_->pCredentialProvider = nullptr;
+      }
       freeSampleConfiguration(&configuration_);
       configuration_ = nullptr;
     }
+    credentials_.reset();
     if (runtime_acquired_) {
       runtime_acquired_ = false;
       release_process_kvs_runtime();
@@ -888,6 +918,7 @@ private:
   std::size_t callbacks_in_flight_{0};
   bool callbacks_enabled_{false};
   PSampleConfiguration configuration_{nullptr};
+  std::unique_ptr<RotatingCredentials> credentials_;
   std::thread cleanup_thread_;
   std::atomic<bool> cleanup_thread_exited_{false};
   std::atomic<STATUS> cleanup_thread_status_{STATUS_SUCCESS};
@@ -940,6 +971,11 @@ public:
   }
 
   bool start(const SessionLease &, std::string * const error) override
+  {
+    return fail(error);
+  }
+
+  bool renew_credentials(const SessionLease &, std::string * const error) override
   {
     return fail(error);
   }

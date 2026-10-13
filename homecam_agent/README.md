@@ -408,13 +408,21 @@ region, channel ARN, session/credential 만료 시각을 엄격히 검증하고
   lock을 독립 관리하며 H.264/Opus encoder 출력만 공유
 - AWS sample configuration은 두 개지만 process-wide WebRTC runtime은 참조
   계수로 공유해 한쪽 재연결이 다른 쪽 runtime을 deinit하지 않음
-- 각 lease 만료 5분 전: 해당 모드의 단기 session credential만 교체
+- 각 lease 만료 5분 전: 해당 모드의 단기 session credential 갱신 요청
   - Storage Session은 AWS 1시간 상한과 backend 만료 시각이 어긋나도
     50분에 선제 갱신하고 55분에는 fail-closed로 교체한다.
-  - P2P viewer가 연결되어 있으면 routine 교체를 유예하고, peer 종료 직후
-    갱신한다.
-  - viewer가 계속 연결된 경우에도 현재 lease 만료 60초 전에는 fail-closed
-    안전 경계로 교체를 강제한다. mode·privacy 변경과 종료는 유예하지 않는다.
+  - P2P viewer가 연결되어 있고 session ID·channel·region·privacy가 같으면
+    SDK credential provider에 새 인증을 넘기고 기존 peer/RTP/PTT를 유지한다.
+    기존의 만료 60초 전 강제 재연결은 하지 않는다.
+  - 갱신 성공 후에만 새 만료 시각을 반영한다. network/5xx·인증 교체 실패는
+    기존 유효 기간 안에서 재시도하며, 끝내 갱신하지 못하면 기존 만료 시각에
+    fail-closed로 정지한다. 권한 거부·mode·privacy 변경과 종료는 유예하지 않는다.
+  - SDK가 빌려 쓰는 인증 메모리는 갱신 worker가 직접 바꾸지 않는다. SDK의
+    credential callback에서만 교체하고 current/pending 두 개만 유지한다.
+    인증값은 파일·로그에 쓰지 않는다.
+  - 로봇 로그 `P2P credentials renewed without reconnecting viewer`는 연결을
+    보존한 갱신, `Device media session stopped fail-closed`는 차단을 뜻한다.
+    장시간 시청 검증 시 웹 재연결 시각과 함께 비교한다.
 - 카메라 OFF, 토픽/pipeline 중단, 종료: transport 정지 후
   `DELETE /api/device/v1/session`에
   `{"sessionId":"<POST 응답 UUIDv4>"}` 전송
@@ -422,6 +430,21 @@ region, channel ARN, session/credential 만료 시각을 엄격히 검증하고
   동일 session ID만 1~30초 지수 backoff로 재시도하고, 400/401과 계약 위반은
   fail-closed 상태에서 재시도하지 않는다.
 - 생성·삭제 상태가 불확실하면 새 session 생성보다 해당 ID 삭제를 우선한다.
+
+2026-10-13 로컬 검증(실기기 시청 결과 아님):
+
+- ROS 2 Humble에서 고정 KVS SDK v1.19.1을 켠 원본·로봇 적용본 빌드와
+  SDK를 끈 원본 빌드 통과. SDK ON의 C++ 테스트 64개, 배포 경계·PTT·갱신
+  Python 테스트 12개 통과(최신 main 반영 후 재검증).
+- 실제 갱신 스케줄·worker·결과 처리 코드를 사용하고 HTTP/KVS 연결 경계만
+  대역으로 바꿔 45분의 가상 시간을 진행했다. 인증 갱신 4회, peer 재시작 0회.
+  network/5xx·provider 실패, 권한 거부, 설정 변경, 만료 중 재시도 대기 및
+  늦게 도착한 응답이 만료된 연결을 되살리지 않는 경우를 확인했다.
+- SDK 인증 메모리 교체 테스트 5개는 AddressSanitizer/UndefinedBehaviorSanitizer로도
+  통과했다. 실제 AWS 호출·Jetson 장시간 시청·패킷 손실 상황은 검증하지 않았다.
+- 로봇 반영 후 30~45분 이상 시청하면서 갱신 로그와 영상 연속성을 대조해야 한다.
+  이 변경은 인증 갱신에 따른 강제 재연결을 대상으로 하며, 다른 네트워크·음성
+  끊김까지 해결됐다는 뜻은 아니다. 웹 변경 없이 로봇 영상 노드 재빌드가 필요하다.
 
 H.264와 Opus는 서로 독립된 GStreamer pipeline에서 생성되므로 각 pipeline의
 PTS를 직접 신뢰하지 않고 공통 steady-clock timeline으로 다시 stamp한다.

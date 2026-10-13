@@ -41,8 +41,7 @@ enum class SessionRefreshDecision
 {
   kNotDue,
   kRefreshNow,
-  kDeferForConnectedPeer,
-  kForceBeforeExpiry,
+  kRefreshCredentials,
   kFailClosed
 };
 
@@ -63,16 +62,17 @@ bool storage_session_hard_expired(
 // signaling channel by name so the SDK can discover that storage is enabled.
 bool use_explicit_signaling_channel_arn(SessionMode mode);
 
-// Routine P2P credential renewal must not tear down a healthy peer. Defer it
-// until that peer disconnects, but retain a bounded safety window for a final
-// fail-closed replacement before the current lease expires.
+// Renew credentials before expiry without replacing a connected P2P peer.
+// Failed renewals do not extend the old deadline: expiry still fails closed.
 SessionRefreshDecision decide_session_refresh(
   SessionMode mode,
   bool peer_connected,
   std::int64_t now_unix_ms,
   std::int64_t expires_at_unix_ms,
-  std::int64_t refresh_margin_ms,
-  std::int64_t connected_peer_safety_margin_ms);
+  std::int64_t refresh_margin_ms);
+
+bool can_renew_session_credentials(
+  const SessionLease & current, const SessionLease & renewed, std::int64_t now_unix_ms);
 
 struct EncodedFrame
 {
@@ -168,6 +168,8 @@ public:
   virtual bool restart_required() const = 0;
   virtual std::string status() const = 0;
   virtual bool start(const SessionLease & lease, std::string * error) = 0;
+  // Same-channel P2P renewal only; failure leaves the old deadline unchanged.
+  virtual bool renew_credentials(const SessionLease & lease, std::string * error) = 0;
   // stop() must not return while a registered PTT callback is still running.
   virtual void stop() = 0;
   virtual bool push_h264(const EncodedFrame & frame, std::string * error) = 0;
