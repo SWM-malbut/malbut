@@ -131,6 +131,12 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         import webrtcvad
         from malbut_stt.wake import LocalWakeRecognizer
+        from malbut_stt.silero_gate import from_environment as create_silero_gate
+
+        phase = 'initializing_silero_gate'
+        silero_gate = create_silero_gate(os.environ)
+        if silero_gate is not None:
+            node.get_logger().info('stt_silero_gate_enabled:threshold=0.5,min_speech_ms=80')
 
         if backend == 'whisper_cpp':
             from malbut_stt.cpp_transcription import CppWhisperTranscriber
@@ -164,6 +170,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                           vad_mode=vad_mode, input_has_aec=input_has_aec,
                           chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
                           capture_settings=asdict(settings),
+                          silero_gate=silero_gate.metadata if silero_gate is not None else None,
                           model=getattr(transcriber, 'metadata', {})),
             on_saved=lambda path: node.get_logger().info('stt_incident_saved:' + str(path)),
             on_error=lambda error: node.get_logger().warning('stt_incident_stopped:' + error),
@@ -193,6 +200,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             shared = wake.model is transcriber.model
             transcriber.model = diagnostics.wrap_model(transcriber.model)
             wake.model = transcriber.model if shared else diagnostics.wrap_model(wake.model)
+        if silero_gate is not None:
+            # Keep the gate outside decoder diagnostics: a rejected input must
+            # never appear as an actual Whisper decode_input/decode_result.
+            shared = wake.model is transcriber.model
+            transcriber.model = silero_gate.wrap_model(transcriber.model, diagnostics)
+            wake.model = (transcriber.model if shared else
+                          silero_gate.wrap_model(wake.model, diagnostics))
         phase = 'initializing_vad'
         vad = webrtcvad.Vad(vad_mode)
         phase = 'creating_publisher'

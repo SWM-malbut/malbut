@@ -159,7 +159,8 @@ class IncidentStore:
                     continue
                 event = record['event']
                 category = ('program' if event == 'program_log'
-                            else 'vad' if event == 'vad_frame' or event.startswith('shadow_vad')
+                            else 'vad' if event == 'vad_frame'
+                            or event.startswith(('shadow_vad', 'silero_gate'))
                             else 'audio' if event == 'microphone_chunk' else 'pipeline')
                 if source != 'all' and source != category:
                     continue
