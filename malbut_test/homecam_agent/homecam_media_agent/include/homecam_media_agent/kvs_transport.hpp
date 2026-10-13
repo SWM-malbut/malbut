@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -190,6 +192,51 @@ private:
   std::int64_t running_anchor_ns_{0};
   std::int64_t last_ns_{-1};
   int late_run_{0};
+};
+
+// The guardian's voice through an adaptive jitter buffer, the way voice apps
+// (WebRTC NetEQ) do it (2026-10-13). The delay follows the measured arrival
+// jitter: the 95th percentile over the last 3 s plus a margin, 60-600 ms. It
+// changes only where no one hears it: in a pause (no frames for a while) or on
+// a quiet frame, 20 ms at a time, by adding or skipping silence. A late frame is
+// dropped; frames lost in transit are reported as a gap so the decoder can
+// conceal them (PLC, FEC) before their slot comes.
+class AdaptivePlayout
+{
+public:
+  struct Plan
+  {
+    std::int64_t playout_ns{-1};    // Running time to hear it; -1 when not played.
+    bool dropped{false};            // Too late for its slot.
+    bool skipped{false};            // A quiet frame skipped to shorten the delay.
+    bool reanchored{false};         // The timeline moved because frames were late.
+    std::int64_t gap_start_ns{-1};  // Frames lost before this one: conceal from here.
+    std::int64_t late_ns{0};
+    std::int64_t delay_ns{0};       // The delay now, beyond the fastest arrival.
+    std::int64_t target_ns{0};      // The delay the jitter asks for.
+  };
+
+  AdaptivePlayout(
+    std::int64_t min_delay_ns = 60'000'000,
+    std::int64_t max_delay_ns = 600'000'000);
+  Plan schedule(std::int64_t frame_ns, std::int64_t running_now_ns, std::size_t payload_bytes);
+  void reset();
+
+private:
+  std::int64_t target_delay_ns(std::int64_t base_ns) const;
+  bool quiet(std::size_t payload_bytes) const;
+
+  std::int64_t min_delay_ns_;
+  std::int64_t max_delay_ns_;
+  std::deque<std::int64_t> offsets_;  // Arrival minus frame time, last 10 s.
+  std::deque<std::size_t> sizes_;
+  bool started_{false};
+  bool anchored_{false};
+  std::int64_t shift_ns_{0};          // Playout = frame time + shift.
+  std::int64_t last_frame_ns_{0};
+  std::int64_t last_end_ns_{-1};      // Where the last played frame ends.
+  int late_run_{0};
+  int frames_since_skip_{0};
 };
 
 using PttAudioCallback = std::function<void (const EncodedFrame &)>;

@@ -148,7 +148,7 @@ private:
 };
 
 // How the guardian's voice is played (2026-10-13, compared by ear on the robot).
-enum class PttPlayout { kScheduled, kArrival, kBuffered };
+enum class PttPlayout { kScheduled, kArrival, kBuffered, kAdaptive };
 
 bool parse_ptt_playout(const std::string & name, PttPlayout * mode)
 {
@@ -158,6 +158,8 @@ bool parse_ptt_playout(const std::string & name, PttPlayout * mode)
     *mode = PttPlayout::kArrival;
   } else if (name == "buffered") {
     *mode = PttPlayout::kBuffered;
+  } else if (name == "adaptive") {
+    *mode = PttPlayout::kAdaptive;
   } else {
     return false;
   }
@@ -167,8 +169,21 @@ bool parse_ptt_playout(const std::string & name, PttPlayout * mode)
 const char * ptt_playout_name(const PttPlayout mode)
 {
   return mode == PttPlayout::kScheduled ? "scheduled" :
-         mode == PttPlayout::kArrival ? "arrival" : "buffered";
+         mode == PttPlayout::kArrival ? "arrival" :
+         mode == PttPlayout::kBuffered ? "buffered" : "adaptive";
 }
+
+// What one voice frame went through, for the 5 s diagnostic line.
+struct PttFrameNote
+{
+  bool dropped{false};
+  bool skipped{false};
+  bool reanchored{false};
+  bool concealed{false};
+  std::int64_t late_ns{0};
+  std::int64_t delay_ns{-1};
+  std::int64_t target_ns{-1};
+};
 
 }  // namespace
 
@@ -196,9 +211,12 @@ public:
     // ros2 param set; the next voice frame uses them.
     PttPlayout initial_mode = PttPlayout::kArrival;
     if (!parse_ptt_playout(get_parameter("ptt_playout_mode").as_string(), &initial_mode)) {
-      throw std::invalid_argument("ptt_playout_mode must be arrival, scheduled or buffered");
+      throw std::invalid_argument(
+              "ptt_playout_mode must be arrival, scheduled, buffered or adaptive");
     }
     ptt_mode_.store(initial_mode);
+    ptt_plc_.store(get_parameter("ptt_plc").as_bool());
+    ptt_fec_.store(get_parameter("ptt_fec").as_bool());
     const auto initial_delay_ms = get_parameter("ptt_playout_delay_ms").as_int();
     if (initial_delay_ms < 100 || initial_delay_ms > 1000) {
       throw std::invalid_argument("ptt_playout_delay_ms must be within 100-1000");
@@ -213,7 +231,8 @@ public:
             PttPlayout mode = PttPlayout::kArrival;
             if (!parse_ptt_playout(parameter.as_string(), &mode)) {
               result.successful = false;
-              result.reason = "ptt_playout_mode must be arrival, scheduled or buffered";
+              result.reason =
+                "ptt_playout_mode must be arrival, scheduled, buffered or adaptive";
               return result;
             }
             ptt_mode_.store(mode);
@@ -227,6 +246,13 @@ public:
             }
             ptt_delay_ns_.store(delay_ms * 1'000'000);
             RCLCPP_INFO(get_logger(), "PTT playout delay: %ld ms", static_cast<long>(delay_ms));
+          } else if (parameter.get_name() == "ptt_plc") {
+            ptt_plc_.store(parameter.as_bool());
+            RCLCPP_INFO(get_logger(), "PTT concealment (PLC): %s",
+              parameter.as_bool() ? "on" : "off");
+          } else if (parameter.get_name() == "ptt_fec") {
+            ptt_fec_.store(parameter.as_bool());
+            RCLCPP_INFO(get_logger(), "PTT Opus FEC: %s", parameter.as_bool() ? "on" : "off");
           }
         }
         return result;
@@ -472,6 +498,8 @@ private:
     declare_parameter<bool>("microphone_enabled", true);
     declare_parameter<std::string>("ptt_playout_mode", "arrival");
     declare_parameter<int>("ptt_playout_delay_ms", 300);
+    declare_parameter<bool>("ptt_plc", true);
+    declare_parameter<bool>("ptt_fec", false);
   }
 
   MediaConfig read_config() const
@@ -861,8 +889,11 @@ private:
       stop_ptt_playback_locked();
       next_ptt_retry_ = std::chrono::steady_clock::now() + 3s;
     }
-    if (ptt_source_ != nullptr && ptt_pipeline_mode_ != ptt_mode_.load()) {
-      stop_ptt_playback_locked();  // The playout mode changed: rebuild for it now.
+    if (ptt_source_ != nullptr &&
+      (ptt_pipeline_mode_ != ptt_mode_.load() || ptt_pipeline_plc_ != ptt_plc_.load() ||
+      ptt_pipeline_fec_ != ptt_fec_.load()))
+    {
+      stop_ptt_playback_locked();  // A playout setting changed: rebuild for it now.
     }
     if (ptt_source_ == nullptr &&
       std::chrono::steady_clock::now() < next_ptt_retry_)
@@ -875,19 +906,37 @@ private:
     const std::int64_t frame_ns = std::max<std::int64_t>(frame.presentation_time_ns, 0);
     // Arrival plays frames as they come (sync=false); the PTS only orders them.
     std::int64_t playout_ns = frame_ns;
+    std::int64_t conceal_from_ns = -1;
+    PttFrameNote note;
     if (ptt_pipeline_mode_ == PttPlayout::kScheduled) {
       playout_ns = ptt_schedule_.schedule(frame_ns, ptt_running_time_locked());
-      note_ptt_frame_locked(nullptr);
     } else if (ptt_pipeline_mode_ == PttPlayout::kBuffered) {
       ptt_buffer_.set_delay(ptt_delay_ns_.load());
       const auto plan = ptt_buffer_.schedule(frame_ns, ptt_running_time_locked());
-      note_ptt_frame_locked(&plan);
-      if (plan.dropped) {
-        return;  // Too late for its slot: a 20 ms hole rather than moving everything.
-      }
+      // Too late for its slot: a 20 ms hole rather than moving everything.
       playout_ns = plan.playout_ns;
-    } else {
-      note_ptt_frame_locked(nullptr);
+      note.dropped = plan.dropped;
+      note.reanchored = plan.reanchored;
+      note.late_ns = plan.late_ns;
+      note.delay_ns = ptt_buffer_.delay_ns();
+    } else if (ptt_pipeline_mode_ == PttPlayout::kAdaptive) {
+      const auto plan = ptt_adaptive_.schedule(
+        frame_ns, ptt_running_time_locked(), frame.payload.size());
+      playout_ns = plan.playout_ns;
+      note.dropped = plan.dropped;
+      note.skipped = plan.skipped;
+      note.reanchored = plan.reanchored;
+      note.late_ns = plan.late_ns;
+      note.delay_ns = plan.delay_ns;
+      note.target_ns = plan.target_ns;
+      if (ptt_pipeline_plc_ && plan.gap_start_ns >= 0 && playout_ns > plan.gap_start_ns) {
+        conceal_from_ns = plan.gap_start_ns;  // Frames lost on the way: let opusdec fill in.
+        note.concealed = true;
+      }
+    }
+    note_ptt_frame_locked(note);
+    if (playout_ns < 0) {
+      return;
     }
     GstBuffer * buffer =
       gst_buffer_new_allocate(nullptr, frame.payload.size(), nullptr);
@@ -902,6 +951,9 @@ private:
       stop_ptt_playback_locked();
       return;
     }
+    if (conceal_from_ns >= 0) {
+      send_ptt_gap_locked(conceal_from_ns, playout_ns - conceal_from_ns);
+    }
     const auto flow = gst_app_src_push_buffer(GST_APP_SRC(ptt_source_), buffer);
     if (flow != GST_FLOW_OK) {
       RCLCPP_WARN_THROTTLE(
@@ -912,7 +964,7 @@ private:
 
   // Every 5 s of talk, one line on how the voice arrived and was played
   // (2026-10-13): if it breaks up again, this tells why.
-  void note_ptt_frame_locked(const BufferedPlayout::Plan * plan)
+  void note_ptt_frame_locked(const PttFrameNote & note)
   {
     const std::int64_t now = steady_now_ns();
     PttStats & stats = ptt_stats_;
@@ -924,24 +976,39 @@ private:
     }
     stats.last_arrival_ns = now;
     ++stats.frames;
-    if (plan != nullptr) {
-      stats.dropped_late += plan->dropped ? 1 : 0;
-      stats.reanchored += plan->reanchored ? 1 : 0;
-      stats.max_late_ns = std::max(stats.max_late_ns, plan->late_ns);
+    stats.dropped_late += note.dropped ? 1 : 0;
+    stats.skipped += note.skipped ? 1 : 0;
+    stats.reanchored += note.reanchored ? 1 : 0;
+    stats.concealed += note.concealed ? 1 : 0;
+    stats.max_late_ns = std::max(stats.max_late_ns, note.late_ns);
+    if (note.delay_ns >= 0) {
+      stats.delay_ns = note.delay_ns;
+    }
+    if (note.target_ns >= 0) {
+      stats.target_ns = note.target_ns;
     }
     if (now - stats.window_start_ns >= 5'000'000'000) {
       RCLCPP_INFO(
         get_logger(),
-        "PTT 5s: mode=%s delay=%ldms frames=%d dropped_late=%d reanchored=%d "
-        "max_late=%ldms max_gap=%ldms",
-        ptt_playout_name(ptt_pipeline_mode_),
-        static_cast<long>(ptt_buffer_.delay_ns() / 1'000'000), stats.frames,
-        stats.dropped_late, stats.reanchored,
+        "PTT 5s: mode=%s plc=%s fec=%s delay=%ldms target=%ldms frames=%d "
+        "dropped_late=%d skipped=%d reanchored=%d concealed=%d max_late=%ldms max_gap=%ldms",
+        ptt_playout_name(ptt_pipeline_mode_), ptt_pipeline_plc_ ? "on" : "off",
+        ptt_pipeline_fec_ ? "on" : "off", static_cast<long>(stats.delay_ns / 1'000'000),
+        static_cast<long>(stats.target_ns / 1'000'000), stats.frames, stats.dropped_late,
+        stats.skipped, stats.reanchored, stats.concealed,
         static_cast<long>(stats.max_late_ns / 1'000'000),
         static_cast<long>(stats.max_gap_ns / 1'000'000));
       stats = PttStats{};
       stats.window_start_ns = stats.last_arrival_ns = now;
     }
+  }
+
+  // Report a hole ahead of the next frame so opusdec conceals it (PLC/FEC).
+  void send_ptt_gap_locked(const std::int64_t start_ns, const std::int64_t duration_ns)
+  {
+    gst_element_send_event(
+      ptt_source_, gst_event_new_gap(
+        static_cast<GstClockTime>(start_ns), static_cast<GstClockTime>(duration_ns)));
   }
 
   // The playback pipeline's running time; zero until its clock starts.
@@ -961,14 +1028,20 @@ private:
   {
     ptt_schedule_.reset();
     ptt_buffer_.reset();
+    ptt_adaptive_.reset();
     ptt_stats_ = PttStats{};
     ptt_pipeline_mode_ = ptt_mode_.load();
-    const std::string description =
-      ptt_pipeline_mode_ == PttPlayout::kArrival ?
-      build_arrival_audio_playback_pipeline(config_) :
-      ptt_pipeline_mode_ == PttPlayout::kBuffered ?
-      build_buffered_audio_playback_pipeline(config_) :
-      build_audio_playback_pipeline(config_);
+    ptt_pipeline_plc_ = ptt_plc_.load();
+    ptt_pipeline_fec_ = ptt_fec_.load();
+    PttPipelineOptions options;
+    options.scheduled = ptt_pipeline_mode_ != PttPlayout::kArrival;
+    // As it arrives keeps the pipeline before 2026-10-09; FEC can still be tried.
+    options.plc = options.scheduled && ptt_pipeline_plc_;
+    options.fec = ptt_pipeline_fec_;
+    options.queue_ns =
+      ptt_pipeline_mode_ == PttPlayout::kArrival ? 200'000'000 :
+      ptt_pipeline_mode_ == PttPlayout::kScheduled ? 500'000'000 : 1'500'000'000;
+    const std::string description = build_ptt_playback_pipeline(config_, options);
     GError * error = nullptr;
     ptt_playback_pipeline_ = gst_parse_launch(description.c_str(), &error);
     if (ptt_playback_pipeline_ == nullptr || error != nullptr) {
@@ -2546,6 +2619,8 @@ private:
   std::atomic<bool> media_permitted_{false};
   std::atomic<PttPlayout> ptt_mode_{PttPlayout::kArrival};  // ptt_playout_mode
   std::atomic<std::int64_t> ptt_delay_ns_{300'000'000};  // ptt_playout_delay_ms
+  std::atomic<bool> ptt_plc_{true};  // ptt_plc
+  std::atomic<bool> ptt_fec_{false};  // ptt_fec
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr ptt_mode_callback_;
   std::atomic<std::uint64_t> session_generation_{1U};
   std::atomic<std::uint64_t> active_transport_generation_{0U};
@@ -2611,16 +2686,23 @@ private:
   // About six 20 ms frames: enough for Wi-Fi bunching, short enough to talk.
   PlayoutSchedule ptt_schedule_{120'000'000};
   PttPlayout ptt_pipeline_mode_{PttPlayout::kArrival};  // What playback was built for.
+  bool ptt_pipeline_plc_{true};
+  bool ptt_pipeline_fec_{false};
   BufferedPlayout ptt_buffer_{300'000'000};
+  AdaptivePlayout ptt_adaptive_;
   struct PttStats
   {
     std::int64_t window_start_ns{0};
     std::int64_t last_arrival_ns{0};
     std::int64_t max_gap_ns{0};
     std::int64_t max_late_ns{0};
+    std::int64_t delay_ns{0};
+    std::int64_t target_ns{0};
     int frames{0};
     int dropped_late{0};
+    int skipped{0};
     int reanchored{0};
+    int concealed{0};
   } ptt_stats_;
   std::mutex ptt_mutex_;
   VideoFormat format_;

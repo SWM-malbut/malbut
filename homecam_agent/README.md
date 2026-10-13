@@ -473,8 +473,20 @@ STT 재시작 시에도 첫 3초를 차단하여 이전 프로세스의 허가�
   통째로 옮겨 0.1초가 넘는 빈칸이 생겼다("툭툭", 10-12~13 실기). 비교용으로만 남긴다.
 - `buffered`: 보낸 쪽 간격대로, `ptt_playout_delay_ms`(기본 300, 100~1000) 뒤에 재생(`BufferedPlayout`).
   늦은 조각 하나는 버리고(20 ms), 5개 연속으로 늦거나 크게 건너뛸 때만 시각표를 다시 잡는다.
-- 말하는 동안 5초마다 `PTT 5s: mode=… delay=… frames=… dropped_late=… reanchored=… max_late=… max_gap=…`
-  로그를 남긴다. 예: `ros2 param set --no-daemon --spin-time 5 /homecam_media_agent ptt_playout_mode buffered`.
+- `adaptive`: 음성 앱의 지터 버퍼처럼 지연을 망 흔들림에 맞춘다(`AdaptivePlayout`, 2026-10-13).
+  목표 지연은 최근 3초 도착 흔들림의 95번째 값 + 30 ms와 최근 10초의 가장 큰 흔들림 중 큰 값(0.06~0.6초).
+  조용한 조각(작은 Opus 조각)에서만 20 ms씩 늘리거나 한 조각을 건너뛰어 줄이고, 말이 멈춘 사이에는 한 번에 맞춘다.
+  늦은 조각 하나는 버리고, 두 번 연속 늦으면 필요한 만큼(최대 0.6초) 시각표를 옮긴다.
+- `ptt_plc`(기본 true): `adaptive`에서 오는 길에 잃은 조각(0.12초 이하)을 GAP 이벤트로 알려 opusdec이 채운다.
+  `scheduled`·`buffered`는 opusdec `plc=true`만 켠다. `arrival`은 켜지 않는다.
+- `ptt_fec`(기본 false): opusdec `use-inband-fec=true`. 보낸 쪽이 FEC를 실어 보낼 때만 효과가 있다.
+- 모드·`ptt_plc`·`ptt_fec`를 바꾸면 다음 조각에서 재생 경로를 다시 만든다.
+- 말하는 동안 5초마다 `PTT 5s: mode=… plc=… fec=… delay=… target=… frames=… dropped_late=… skipped=…
+  reanchored=… concealed=… max_late=… max_gap=…` 로그를 남긴다.
+  예: `ros2 param set --no-daemon --spin-time 5 /homecam_media_agent ptt_playout_mode adaptive`.
+- PC에서 귀로 비교: `ptt_playout_sim`(테스트 빌드에서만 만들어지고 설치되지 않음)이 소리를 Opus로 만들고
+  흔들림·손실을 흉내 내 같은 재생 경로로 들려준다.
+  `ptt_playout_sim --input <wav|tone> --mode adaptive --jitter none|wifi|phone|bad --loss 0.02 --plc on --fec off`.
 웹 DB의 `0022_talk_lease_readiness` 적용과 새 인터페이스·STT·미디어 노드의
 동시 갱신이 필요하다. 준비 상태가 없으면 웹 말하기는 시작되지 않는다.
 현재 C SDK media callback 자체는

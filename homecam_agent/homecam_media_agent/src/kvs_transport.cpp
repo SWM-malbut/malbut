@@ -253,6 +253,169 @@ void BufferedPlayout::reset()
   late_run_ = 0;
 }
 
+namespace
+{
+constexpr std::int64_t kOpusFrameNs = 20'000'000;
+constexpr std::size_t kJitterWindow = 150;            // 3 s of 20 ms frames.
+constexpr std::size_t kPeakWindow = 500;              // 10 s.
+constexpr std::int64_t kJitterMarginNs = 30'000'000;
+constexpr std::int64_t kInitialDelayNs = 150'000'000;  // Before any jitter is known.
+constexpr std::int64_t kAdjustStepNs = kOpusFrameNs;
+constexpr std::int64_t kAdjustSlackNs = 10'000'000;
+constexpr std::int64_t kPauseNs = 100'000'000;         // Sender quiet this long: a pause.
+constexpr std::int64_t kConcealMaxNs = 120'000'000;    // Longer holes are pauses, not loss.
+constexpr std::int64_t kLateSafetyNs = 5'000'000;
+constexpr int kSkipEveryFrames = 10;                   // Shorten at most 20 ms per 200 ms.
+constexpr std::int64_t kMaximumLeadNs = 1'000'000'000;
+}  // namespace
+
+AdaptivePlayout::AdaptivePlayout(const std::int64_t min_delay_ns, const std::int64_t max_delay_ns)
+: min_delay_ns_(std::max<std::int64_t>(min_delay_ns, 0)),
+  max_delay_ns_(std::max(max_delay_ns, min_delay_ns_))
+{
+}
+
+std::int64_t AdaptivePlayout::target_delay_ns(const std::int64_t base_ns) const
+{
+  // The 95th percentile of the last 3 s, but no less than the worst of the last
+  // 10 s: a network that stalled once tends to stall again, and shrinking in
+  // between only to break up at the next stall was worse (2026-10-13 simulator).
+  const std::size_t recent = std::min(offsets_.size(), kJitterWindow);
+  std::vector<std::int64_t> jitter;
+  jitter.reserve(recent);
+  for (auto it = offsets_.end() - static_cast<std::ptrdiff_t>(recent); it != offsets_.end(); ++it) {
+    jitter.push_back(*it - base_ns);
+  }
+  const std::size_t rank = (jitter.size() * 95) / 100;
+  std::nth_element(jitter.begin(), jitter.begin() + rank, jitter.end());
+  const std::int64_t peak = *std::max_element(offsets_.begin(), offsets_.end()) - base_ns;
+  return std::clamp(
+    std::max(jitter[rank] + kJitterMarginNs, peak + kLateSafetyNs), min_delay_ns_, max_delay_ns_);
+}
+
+bool AdaptivePlayout::quiet(const std::size_t payload_bytes) const
+{
+  // Opus spends fewer bytes on quieter sound. Silence (DTX, comfort noise) is a
+  // few bytes; under steady room noise the quietest quarter of recent frames is
+  // the place to add or skip 20 ms (2026-10-13: noisy speech kept 70-94 bytes).
+  if (payload_bytes <= 12) {
+    return true;
+  }
+  std::vector<std::size_t> sizes(sizes_.begin(), sizes_.end());
+  if (sizes.size() < 25) {
+    return false;
+  }
+  const std::size_t rank = sizes.size() / 4;
+  std::nth_element(sizes.begin(), sizes.begin() + rank, sizes.end());
+  return payload_bytes <= sizes[rank];
+}
+
+AdaptivePlayout::Plan AdaptivePlayout::schedule(
+  const std::int64_t frame_ns,
+  const std::int64_t running_now_ns,
+  const std::size_t payload_bytes)
+{
+  Plan plan;
+  ++frames_since_skip_;
+  if (anchored_ && frame_ns < last_frame_ns_) {
+    anchored_ = false;  // A new stream on an unrelated timeline.
+    offsets_.clear();
+    sizes_.clear();
+  }
+  const std::int64_t offset = running_now_ns - frame_ns;
+  offsets_.push_back(offset);
+  sizes_.push_back(payload_bytes);
+  while (offsets_.size() > kPeakWindow) {
+    offsets_.pop_front();
+  }
+  while (sizes_.size() > kJitterWindow) {
+    sizes_.pop_front();
+  }
+  const std::int64_t base = *std::min_element(offsets_.begin(), offsets_.end());
+  plan.target_ns = target_delay_ns(base);
+  const std::int64_t wanted_shift = base + plan.target_ns;
+
+  if (!anchored_) {
+    plan.reanchored = started_;
+    started_ = anchored_ = true;
+    late_run_ = 0;
+    shift_ns_ = offset + std::max(plan.target_ns, kInitialDelayNs);
+  } else {
+    const std::int64_t since_last = frame_ns - last_frame_ns_;
+    if (since_last > kPauseNs) {
+      // The sender paused (or a long loss): settle on the wanted delay in the silence.
+      shift_ns_ = wanted_shift;
+    } else if (quiet(payload_bytes)) {
+      if (wanted_shift > shift_ns_ + kAdjustSlackNs) {
+        shift_ns_ += std::min(wanted_shift - shift_ns_, kAdjustStepNs);
+      } else if (wanted_shift < shift_ns_ - kAdjustSlackNs &&
+        frames_since_skip_ >= kSkipEveryFrames)
+      {
+        // Skip this quiet frame; the next one takes its slot.
+        shift_ns_ -= kAdjustStepNs;
+        last_frame_ns_ = frame_ns;
+        frames_since_skip_ = 0;
+        plan.skipped = true;
+        plan.delay_ns = shift_ns_ - base;
+        return plan;
+      }
+    }
+  }
+
+  std::int64_t playout = frame_ns + shift_ns_;
+  if (playout - running_now_ns > max_delay_ns_ + kMaximumLeadNs) {
+    // The sender's timeline jumped ahead: start over from now.
+    shift_ns_ = offset + plan.target_ns;
+    playout = frame_ns + shift_ns_;
+    plan.reanchored = true;
+  }
+  if (playout < running_now_ns + kLateSafetyNs) {
+    plan.late_ns = running_now_ns + kLateSafetyNs - playout;
+    if (++late_run_ < 2) {
+      last_frame_ns_ = frame_ns;
+      plan.dropped = true;  // One late frame: a 20 ms hole, the timeline stays.
+      plan.delay_ns = shift_ns_ - base;
+      return plan;
+    }
+    // Late again: the jitter outgrew the delay. Move once, sized to the need,
+    // but never past the longest delay (older words are given up instead).
+    shift_ns_ = std::min(offset + plan.target_ns, base + max_delay_ns_);
+    playout = frame_ns + shift_ns_;
+    plan.reanchored = true;
+    if (playout < running_now_ns + kLateSafetyNs) {
+      last_frame_ns_ = frame_ns;
+      plan.dropped = true;
+      plan.delay_ns = shift_ns_ - base;
+      return plan;
+    }
+  }
+  late_run_ = 0;
+  if (last_end_ns_ >= 0 && playout < last_end_ns_) {
+    playout = last_end_ns_;  // Never overlap the frame before.
+  }
+  const std::int64_t hole = last_end_ns_ >= 0 ? playout - last_end_ns_ : 0;
+  if (hole > kAdjustSlackNs / 2 && hole <= kConcealMaxNs &&
+    last_end_ns_ >= running_now_ns)
+  {
+    plan.gap_start_ns = last_end_ns_;  // Still ahead: the decoder can fill it.
+  }
+  last_frame_ns_ = frame_ns;
+  last_end_ns_ = playout + kOpusFrameNs;
+  plan.playout_ns = playout;
+  plan.delay_ns = shift_ns_ - base;
+  return plan;
+}
+
+void AdaptivePlayout::reset()
+{
+  started_ = anchored_ = false;
+  offsets_.clear();
+  sizes_.clear();
+  last_end_ns_ = -1;
+  late_run_ = 0;
+  frames_since_skip_ = 0;
+}
+
 bool SessionLease::valid_at(const std::int64_t now_unix_ms) const
 {
   return !channel_arn.empty() &&
