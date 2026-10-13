@@ -301,6 +301,23 @@ def test_positive_short_input_reaches_whisper_and_publication_without_text_black
     assert state.transcripts[0][1] == text and len(state.calls) == 1
 
 
+@pytest.mark.parametrize('streaming', [False, True])
+def test_followup_nonspeech_is_gated_before_whisper(pipeline, gate, streaming):
+    gate.model.probability = lambda pcm: .9 if any(pcm) else .01
+    state = pipeline(streaming=streaming)
+    state.pipeline.feed(VOICE * 4 + QUIET * 100)
+    pump(state, lambda: bool(state.transcripts))
+    uid = state.transcripts[0][0]
+    state.pipeline.on_playback_status('reply', 'finished', request_id=uid)
+    assert state.pipeline.session.active
+    decoded = len(state.calls)
+    gate.model.probability = lambda pcm: .01
+    state.pipeline.feed(VOICE * 4 + QUIET * 100)
+    pump(state, lambda: 'transcription_failed:SileroNonSpeech' in state.reports)
+    assert len(state.calls) == decoded and len(state.transcripts) == 1
+    assert not state.pipeline.session.active
+
+
 def test_nonspeech_partial_cannot_publish_preview(pipeline):
     state = pipeline()
     state.pipeline.feed(VOICE * 125)

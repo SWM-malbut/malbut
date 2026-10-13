@@ -190,6 +190,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     publish_control=lambda *_: None, publish_interruption=lambda *_: None,
                     report=lambda event: report(
                         'listening' if options.manual and event == 'waiting_for_wake' else event),
+                    # Manual capture stays active after output; wake mode mirrors ROS.
+                    followup_timeout_s=0.0 if options.manual else 10.0,
                 )
                 resources.callback(pipeline.close)
                 if options.manual:

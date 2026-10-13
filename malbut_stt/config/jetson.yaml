@@ -11,4 +11,5 @@ malbut_stt:
     stt_decode_timeout_s: 30.0
     silence_timeout_s: 2.0
     endpoint_predecode_s: 0.8
+    followup_timeout_s: 10.0  # Wait for the next utterance after the final reply finishes.
     input_has_aec: false  # Enable only for an input that already provides AEC.

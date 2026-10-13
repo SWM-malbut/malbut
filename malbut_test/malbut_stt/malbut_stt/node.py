@@ -63,6 +63,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         wake_chime_device_index = parameter('wake_chime_device_index', -1)
         chime_tail_s = parameter('chime_tail_s', 0.3)
         short_speech_guard = parameter('short_speech_guard', False)
+        followup_timeout_s = parameter('followup_timeout_s', 10.0)
         vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
         control_timeout = parameter('playback_control_timeout_s', 5.0)
@@ -79,6 +80,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
         if type(short_speech_guard) is not bool:
             raise ValueError('short_speech_guard must be a boolean')
+        if (type(followup_timeout_s) not in (int, float)
+                or not isfinite(followup_timeout_s) or followup_timeout_s < 0):
+            raise ValueError('followup_timeout_s must be finite and nonnegative')
         if (type(stt_decode_timeout_s) not in (int, float)
                 or not isfinite(stt_decode_timeout_s) or stt_decode_timeout_s <= 0):
             raise ValueError('stt_decode_timeout_s must be finite and positive')
@@ -169,6 +173,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                           wake_model_path=str(wake_path), device_index=device_index,
                           vad_mode=vad_mode, input_has_aec=False,
                           chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
+                          followup_timeout_s=followup_timeout_s,
                           capture_settings=asdict(settings),
                           silero_gate=silero_gate.metadata if silero_gate is not None else None,
                           model=getattr(transcriber, 'metadata', {})),
@@ -418,6 +423,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             input_has_aec=False,
             chime_tail_s=chime_tail_s,
             short_speech_guard=short_speech_guard,
+            followup_timeout_s=followup_timeout_s,
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),

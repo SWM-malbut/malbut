@@ -88,11 +88,8 @@ def test_candidate_is_classified_before_normal_dialogue_and_correlated_back_to_s
         assert pipeline.jobs.empty() and controls == []
         assert len(transcripts) == 1 and requests == []
         pipeline.on_playback_status('first-answer', 'finished', request_id=first_uid)
-        assert not pipeline.session.active
-        pipeline.results.put_nowait(('wake', pipeline._generation, None, '제이크야', None))
-        pipeline.poll()
         assert pipeline.session.active
-        # A fresh wake permits classifying speech over unrelated playback;
+        # The follow-up permits classifying speech over unrelated playback;
         # speech during this turn's own reply is blocked above, even with AEC.
         pipeline.on_playback_status('reply-1', 'playing')
         interrupted_text = '지금 그 이야기는 잠깐 멈춰'
