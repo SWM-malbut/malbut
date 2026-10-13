@@ -117,8 +117,9 @@ class FallConfirmationCoordinator:
         self.finished = OrderedDict()
         self.commands = []
         self.closed = False
-        # question_id -> 'approach' | 'check' | 'view' | 'posture' | 'confirm';
-        # check and posture carry their start time.
+        # question_id -> 'approach' | 'check' | 'view' | 'posture' | 'closer' | 'confirm';
+        # check and posture carry their start time. closer: back to 1 m before
+        # asking, after the view moved away (the user, 2026-10-13).
         self.stages = {}
         self.check_since = {}
         self.returns = deque()
@@ -257,7 +258,7 @@ class FallConfirmationCoordinator:
                 self._close_and_return(boot, iid, qid, request,
                                        'revisit' if qid in self.revisits else 'off_floor')
             else:
-                self.stages[qid] = 'confirm'
+                self.stages[qid] = 'closer'  # Ask from 1 m, where the answer is heard.
             return True
         if kind in {'incident_resolved', 'incident_merged'}:
             self.terminal_revisions[iid] = revision
@@ -416,7 +417,7 @@ class FallConfirmationCoordinator:
                     target=dict(x=target[0], y=target[1]) if target is not None else None)
 
     def next_work(self, now):
-        """('return', job) | ('approach' | 'view' | 'revisit' | 'confirm', request) | None."""
+        """('return', job) | ('approach' | 'view' | 'revisit' | 'closer' | 'confirm', request)."""
         if self.returns:
             return 'return', self.returns[0]
         request = next(iter(self.requests.values()), None)
@@ -428,8 +429,9 @@ class FallConfirmationCoordinator:
             since = self.check_since.setdefault(qid, now)
             if now - since < (CHECK_WAIT_S if stage == 'check' else POSTURE_WAIT_S):
                 return None
-            # The runtime did not answer in time: ask from here rather than wait.
-            self.stages[qid] = stage = 'confirm'
+            # The runtime did not answer in time: ask rather than wait, from 1 m
+            # again when the view moved away.
+            self.stages[qid] = stage = 'closer' if stage == 'posture' else 'confirm'
             self.check_since.pop(qid, None)
         return stage, request
 
@@ -464,6 +466,13 @@ class FallConfirmationCoordinator:
         self.commands.append(decision)
         self.stages[request.question_id] = 'posture'
         self.check_since[request.question_id] = now
+        return True
+
+    def closer_done(self, request, outcome):
+        """Back at 1 m (or as near as it got): ask now. The runtime has nothing to record."""
+        if self.requests.get(request.request_id) != request or self.closed:
+            return False
+        self.stages[request.question_id] = 'confirm'
         return True
 
     def return_done(self, job, outcome):

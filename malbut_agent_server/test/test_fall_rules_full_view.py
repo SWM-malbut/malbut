@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.fall_rules.fall_confirmation import CHECK_WAIT_S, POSTURE_WAIT_S
-from malbut_agent_server.fall_rules.fall_confirmation_link import VIEW_MAX_M
+from malbut_agent_server.fall_rules.fall_confirmation_link import drive_target, VIEW_MAX_M
 from test_fall_rules_approach import (  # noqa: F401
     approaching, finish, link, looked, scene, sent,
 )
@@ -34,7 +34,11 @@ def test_a_partial_body_moves_to_the_whole_body_view_then_waits_for_the_posture(
                             question_id='question', evidence_revision=1, outcome='arrived')
     assert coordinator.next_work(30.0 + POSTURE_WAIT_S - 1) is None
     assert coordinator.receive(posture('on_floor'))
-    assert coordinator.next_work(31.0) == ('confirm', request)
+    # Back to 1 m first: from 2-3 m the answer is not heard well (the user, 2026-10-13).
+    assert coordinator.next_work(31.0) == ('closer', request)
+    assert coordinator.closer_done(request, 'arrived')
+    assert coordinator.next_work(40.0) == ('confirm', request)
+    assert coordinator.drain_commands() == ()  # Nothing for the runtime to record.
 
 
 @pytest.mark.parametrize('reason', ['sitting_off_floor', 'standing'])
@@ -59,16 +63,20 @@ def test_anything_but_off_the_floor_asks(reason):
     coordinator.receive(looked('partial_body'))
     coordinator.view_done(request, 'no_path', 20.0)
     assert coordinator.receive(posture(reason))
-    assert coordinator.next_work(21.0) == ('confirm', request)
+    assert coordinator.next_work(21.0) == ('closer', request)
+    # However far it got, it asks there.
+    assert coordinator.closer_done(request, 'no_path')
+    assert coordinator.next_work(22.0) == ('confirm', request)
 
 
 def test_no_posture_in_time_asks_anyway_and_late_results_are_ignored():
     coordinator, request = looking()
     coordinator.receive(looked('partial_body'))
     coordinator.view_done(request, 'arrived', 30.0)
-    assert coordinator.next_work(30.0 + POSTURE_WAIT_S) == ('confirm', request)
+    assert coordinator.next_work(30.0 + POSTURE_WAIT_S) == ('closer', request)
     assert coordinator.receive(posture('sitting_off_floor'))
     assert coordinator.requests and not coordinator.returns
+    assert coordinator.next_work(31.0 + POSTURE_WAIT_S) == ('closer', request)
 
 
 def test_posture_results_are_strict_and_only_count_after_the_look():
@@ -106,4 +114,32 @@ def test_link_asks_when_the_view_cannot_be_reached(link):  # noqa: F811
                                   outcome='failed')
     link.on_event(SimpleNamespace(data=posture('body_unseen')))
     link.tick()
+    goal = finish(link, 'arrived')
+    assert goal == dict(capability='fall_approach', request_id='question', phase='approach',
+                        x=2.5, y=1.0, standoff_m=1.0)
+    assert sent(link)[-1]['action'] == 'view_result'  # The way back closer is not reported.
+    link.tick()
     assert link.goals[-1][0]['capability'] == 'fall_confirmation'
+
+
+def test_the_link_asks_from_1_m_after_the_view(link):  # noqa: F811
+    link.on_event(SimpleNamespace(data=scene()))
+    finish(link, 'arrived')
+    link.on_event(SimpleNamespace(data=looked('partial_body')))
+    finish(link, 'arrived')
+    link.on_event(SimpleNamespace(data=posture('on_floor')))
+    link.tick()
+    goal = finish(link, 'arrived')
+    assert goal['phase'] == 'approach' and goal['standoff_m'] == 1.0
+    link.tick()
+    assert [g['capability'] for g, _ in link.goals][-1] == 'fall_confirmation'
+    assert link.coordinator.status()['phase'] == 'ask'
+
+
+def test_after_a_revisit_without_a_first_target_the_view_and_the_way_closer_use_its_spot():
+    revisit = SimpleNamespace(approach_target=None, revisit_target=(2.0, 3.0))
+    assert drive_target('revisit', revisit) == (2.0, 3.0)
+    assert drive_target('view', revisit) == (2.0, 3.0)
+    assert drive_target('closer', revisit) == (2.0, 3.0)
+    first = SimpleNamespace(approach_target=(2.5, 1.0), revisit_target=(2.5, 1.0))
+    assert drive_target('approach', first) == (2.5, 1.0)

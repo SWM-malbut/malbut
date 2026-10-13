@@ -14,7 +14,9 @@ from .fall_confirmation import FallConfirmationCoordinator
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
 FALL_MISSIONS = ('fall_confirmation', 'fall_approach')
 # Work kinds that are a fall_approach drive, not a conversation.
-DRIVES = ('approach', 'view', 'revisit')
+# closer: back to 1 m before asking, after the view moved away (the user, 2026-10-13:
+# from 2-3 m the answer is not heard well).
+DRIVES = ('approach', 'view', 'revisit', 'closer')
 MANUAL_DRIVE = 'manual_drive'
 # Display-only "낙상 확인 중": every second and on change; no admission gate.
 CHECK_STATUS_TOPIC = '/malbut/falls/check/status'
@@ -36,6 +38,17 @@ SPEECH_UNAVAILABLE = 'Action server /malbut/agent/confirm_situation is unavailab
 # Only part of the body was seen from 1 m (2026-10-11): the drive moves until the
 # person's torso is in view (2026-10-13), at most this far from the spot.
 VIEW_MAX_M = 3.0
+
+
+def drive_target(kind, request):
+    """Where a drive goes: the first approach to its spot, the rest to the revisit spot.
+
+    A revisit may have no first approach target (the person was clear then), so
+    its view and its way back closer use the spot it went back to.
+    """
+    if kind == 'approach':
+        return request.approach_target
+    return request.revisit_target or request.approach_target
 
 
 class FallConfirmationLink:
@@ -378,7 +391,7 @@ class FallConfirmationLink:
         self.held = None  # This step replaces the hold in the Manager (same priority).
         self.sent_at = now
         if kind in DRIVES:
-            x, y = request.revisit_target if kind == 'revisit' else request.approach_target
+            x, y = drive_target(kind, request)
             # Going back after waiting is the same 1 m look as the first approach.
             capability, arguments = 'fall_approach', dict(
                 request_id=request.request_id, phase='view' if kind == 'view' else 'approach',
@@ -399,6 +412,8 @@ class FallConfirmationLink:
     def _drive_done(self, request, outcome):
         if self.mode == 'view':
             self.coordinator.view_done(request, outcome, self.clock())
+        elif self.mode == 'closer':
+            self.coordinator.closer_done(request, outcome)
         elif self.mode == 'revisit':
             self.coordinator.revisit_done(request, outcome, self.clock())
         else:

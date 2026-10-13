@@ -84,9 +84,15 @@ person_check_completed
   │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
   └ posture_check_completed
        ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
-       ├ on_floor · body_unseen · posture_unconfirmed → fall_confirmation
-       └ 60초 안에 답 없음 → 그 자리에서 fall_confirmation
+       ├ on_floor · body_unseen · posture_unconfirmed → 1 m로 다시 다가감 → fall_confirmation
+       └ 60초 안에 답 없음 → 1 m로 다시 다가감 → fall_confirmation
 ```
+
+- 질문 전 다시 다가가기(2026-10-13 사용자 "말 어떻게 정확하게 듣게?"): 몸 전체 보기로 2~3 m 물러난 채 물으면
+  대답이 마이크에 작게 잡힌다. 그래서 묻기 전에 `fall_approach(phase=approach, standoff 1 m)`로 의심 지점 1 m 앞까지
+  다시 가서 바라본다(단계 `closer`, 상태 `phase=approach`라 대화·홈캠 말하기는 계속 막힌다). 결과가 어떻든(도착·
+  길 없음·실패) 그 자리에서 묻고, 런타임에는 따로 보내지 않는다(다가가기 결과를 보내면 다시 보기가 시작된다).
+  다시 가서 보기(revisit) 뒤에는 그 지점(`revisit_target`)을 쓴다.
 
 - 자세 확인(런타임): 도착 1초 뒤 Cloud `check_posture`(`furniture`/`standing`/`floor`/`unclear`)를 묻고,
   `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 닫는다(둘 다 `standing`이면
