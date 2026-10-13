@@ -17,6 +17,10 @@ from typing import Optional, Sequence
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from malbut_agent_server.config import Settings, load_env_file
+from malbut_agent_server.fall_check_watch import (
+    FALL_CHECK_BUSY, FALL_CHECK_HELP, FALL_CHECK_START, FALL_CHECK_STOPPED, asks_for_help,
+    asks_to_stop,
+)
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.mission_speech import MissionAnnouncer
 from malbut_agent_server.speech_dialogue import (
@@ -86,6 +90,11 @@ def create_communication_node(
             self._addressee_callbacks = 0
             self.weather_query = None
             self.situation = None
+            self._fall_check = None
+            # Between the suspicion and the end of the question (2026-10-13).
+            self._in_fall_window = False
+            # The last utterance STT waits on until its reply has played.
+            self._awaiting_reply = None
             try:
                 qos = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST, depth=10,
@@ -118,6 +127,7 @@ def create_communication_node(
                     from malbut_agent_server.foreground_cancel import ForegroundCancellation
 
                     self._foreground_cancel = ForegroundCancellation(self)
+                    # Without Manager no fall check drives or asks: no window either.
                     self._fall_check = self._watch_fall_check()
                     self.speech_missions = SpeechMissions(
                         self.missions,
@@ -159,10 +169,11 @@ def create_communication_node(
                     self,
                     situation_factory or build_situation_factory(settings),
                     on_begin=self._begin_situation,
-                    on_end=lambda: self.dialogue.resume(),
+                    on_end=self._end_situation,
                     prerecorded_audio=prerecorded_audio,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
+                self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
             except Exception:
                 self.destroy_node()
@@ -176,11 +187,18 @@ def create_communication_node(
             from malbut_interfaces.msg import SystemState
             from std_msgs.msg import String
 
+            from malbut_agent_server.fall_check_watch import VOICE_TOPIC
+            from malbut_interfaces.srv import ControlSpeechPlayback
+
             watch = FallCheckWatch()
             self.create_subscription(
                 String, FALL_CHECK_STATUS_TOPIC,
                 lambda message: watch.observe_status(message.data), 10,
             )
+            self._fall_voice = self.create_publisher(String, VOICE_TOPIC, 10)
+            self._fall_voice_message = String
+            self._speech_stop = self.create_client(
+                ControlSpeechPlayback, '/malbut/speech/playback_control')
             latched = QoSProfile(depth=1)
             latched.reliability = ReliabilityPolicy.RELIABLE
             latched.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -276,6 +294,9 @@ def create_communication_node(
                     self._input_utterance_id = None
                 if utterance_id not in self._seen_input_ids:
                     self._seen_input_ids.append(utterance_id)
+                if self._fall_check is not None and self._fall_check.in_window():
+                    self._answer_during_fall_check(utterance_id, text)
+                    return
                 previous = self._receipts.lookup(utterance_id, text)
             except SpeechInputTooLongError as error:
                 self.get_logger().warning(f'speech_dialogue invalid input: {error}')
@@ -318,6 +339,8 @@ def create_communication_node(
                 self.get_logger().error('speech_dialogue submission failed')
                 self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
                          request_id=utterance_id)
+            elif outcome == 'received':
+                self._awaiting_reply = utterance_id
 
         async def _classify_addressee(self, request, response):
             """Yield to the executor while the dialogue worker classifies."""
@@ -378,6 +401,60 @@ def create_communication_node(
                         future.set_result(ClassifySpeechAddressee.Response.UNKNOWN)
             self._addressee_waiters.clear()
 
+        def _end_situation(self):
+            # A failed question may be asked again: the window still holds the dialogue.
+            if not self._in_fall_window:
+                self.dialogue.resume()
+
+        def _follow_fall_window(self):
+            """Stop the conversation, saying so, when a fall check begins (2026-10-13)."""
+            if self._closing or self._fall_check is None or self.dialogue is None:
+                return
+            inside = self._fall_check.in_window()
+            if inside == self._in_fall_window:
+                return
+            self._in_fall_window = inside
+            if not inside:
+                if self.situation is None or not self.situation.active:
+                    self.dialogue.resume()
+                return
+            self.dialogue.suspend()
+            # Played under the interrupted utterance's ID, it also ends STT's wait
+            # for that reply; otherwise the microphone would stay closed.
+            waiting, self._awaiting_reply = self._awaiting_reply, None
+
+            def announce(_done=None):
+                if self._closing or not self._in_fall_window:
+                    return
+                self.say(FALL_CHECK_START, request_id=waiting or '')
+                self.get_logger().info(json.dumps({
+                    'event': 'fall_check_announced', 'interrupted': waiting,
+                }, ensure_ascii=False))
+
+            if self._speech_stop.service_is_ready():
+                # The notice goes after the stop, or the stop would cut it too.
+                from malbut_interfaces.srv import ControlSpeechPlayback
+                self._speech_stop.call_async(ControlSpeechPlayback.Request(
+                    playback_id='', command=ControlSpeechPlayback.Request.STOP_ALL,
+                )).add_done_callback(announce)
+            else:
+                announce()
+
+        def _answer_during_fall_check(self, utterance_id, text):
+            """Before the question: help alerts at once, a stop ends the check, else wait."""
+            kind = ('help' if asks_for_help(text)
+                    else 'stop' if asks_to_stop(text) else None)
+            if kind is None:
+                self.say(FALL_CHECK_BUSY, request_id=utterance_id)
+                return
+            self._fall_voice.publish(self._fall_voice_message(data=json.dumps(
+                {'kind': kind, 'utterance_id': utterance_id})))
+            self.say(FALL_CHECK_HELP if kind == 'help' else FALL_CHECK_STOPPED,
+                     request_id=utterance_id)
+            self.get_logger().info(json.dumps({
+                'event': 'fall_check_voice', 'kind': kind, 'utterance_id': utterance_id,
+            }, ensure_ascii=False))
+
         def _drain_dialogue(self):
             if self._closing:
                 return
@@ -401,6 +478,9 @@ def create_communication_node(
                                         and not prerecorded_audio)
                                     else response.get('utterance_id', ''))))
                 if published is not None:
+                    if (response.get('kind') not in {'progress', 'acknowledgement'}
+                            and response.get('utterance_id') == self._awaiting_reply):
+                        self._awaiting_reply = None
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,
                     }, ensure_ascii=False))

@@ -1,9 +1,13 @@
 # Drive near an uncertain fall suspicion to look closely, to where the whole body
-# is visible (view), or back afterwards.
+# is visible (view), or back afterwards; or only hold the wheels (hold).
 # The fall coordinator owns the sequence; no question or alert happens here.
+# A fall check keeps a HIGH mission the whole time (the user, 2026-10-13): after
+# approach and view the goal reports its outcome as feedback and holds the
+# wheels in place until the next step replaces it or it is canceled.
 string APPROACH=approach
 string VIEW=view
 string RETURN=return
+string HOLD=hold
 string request_id
 string phase
 # Map frame point of the suspicion (approach and view).
@@ -23,5 +27,8 @@ string FAILED=failed
 string outcome
 string detail
 ---
-# PLANNING, DRIVING, TURNING
+# PLANNING, DRIVING, TURNING, HOLDING
 string phase
+# Set once the drive ended (as in the result), while the goal keeps holding.
+string outcome
+string detail

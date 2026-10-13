@@ -313,3 +313,19 @@ def test_same_person_request_and_reply_are_bounded_and_strict():
                     json.dumps(dict(verdict='same', explanation='x', name='kim'))):
         with pytest.raises(CloudFallProviderError, match='cloud_invalid_response'):
             parse_same_person(response(content))
+
+
+def test_a_spoken_stop_ends_the_check_without_a_question_and_alerts_once():
+    """2026-10-13: "그만/멈춰" during the check stops it like 직접 움직이기."""
+    monitor, _, _, question = setup()
+    assert decide(monitor, question, 'check_stopped', reason='user_stop')
+    assert seen(monitor) == [('check_stopped', 'user_stop', None),
+                             ('notification_requested', 'check_stopped_by_user', 'check')]
+    incident = monitor.incident(question.incident_id)
+    assert incident.state is IncidentState.RECHECK_REQUIRED  # Open for the guardian.
+    # No answer: the question is not handed over again.
+    assert not [e for e in monitor.pending_questions() if e.question_id == question.question_id]
+    assert not decide(monitor, question, 'check_stopped', reason='user_stop')
+    assert seen(monitor) == []
+    with pytest.raises(ValueError):
+        decide(monitor, question, 'check_stopped', reason='bored')

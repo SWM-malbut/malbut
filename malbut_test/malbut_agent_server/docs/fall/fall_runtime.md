@@ -61,6 +61,9 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   `check_not_confirmed`는 상태를 `recheck_required`로 두고 `check_not_confirmed`와 긴급 알림
   `robot_could_not_confirm`(사건당 한 번)을 낸다. `confirmation_failed`도 이유(`speech_unavailable`/
   `question_error`/`time_limit`)를 `agent_check_failed`에 싣고 같은 긴급 알림을 한 번 낸다.
+- `check_stopped`(2026-10-13, 확인 중 "그만/멈춰")는 묻지 않은 질문을 실패로 남기고 상태를 `recheck_required`로
+  둔다(도움 필요면 그대로). `check_stopped`(reason `user_stop`)와 확인 필요 알림 `check_stopped_by_user`(사건당 한 번)를
+  낸다. 사건은 닫지 않는다.
 - `revisit_started`는 `revisit_started`를 남기고 그 지점을 확인 중으로 둔다(새 Pose가 새 사건을 열지 않게).
   `revisit_result`는 `approach_completed`로 남기고, 도착하면 가까이 보기를 **다시 보기**로 시작한다.
 - 다시 보기는 사건을 스스로 닫지 않는다. 사람 없음 → `person_check_completed(nobody_there)` + 확인 필요 알림
@@ -417,6 +420,7 @@ Agent 요청에 복사하지 않는다. 사건·대상·버전의 연결 정보�
 | `check_waiting` | `question_id`, `reason: manual_drive·busy` | 아직 묻지 못하고 기다리는 중(기록만) |
 | `check_not_confirmed` | `question_id`, `reason: waited_manual_drive·waited_busy` | 막혀서 1분: `recheck_required`, 긴급 알림(사건당 한 번) |
 | `revisit_started` | `question_id`, `reason: manual_drive·busy` | 묻기 전에 의심 지점으로 다시 가는 중 |
+| `check_stopped` | `question_id`, `reason: user_stop` | 확인 중 "그만/멈춰": 묻지 않고 `recheck_required`, 확인 필요 알림(사건당 한 번) |
 | `revisit_result` | `question_id`, `outcome`(`approach_result`와 같음) | 다시 가기가 끝남. 도착하면 다시 보기(스스로 닫지 않음) |
 | `dismiss_normal` | 없음 | 대상이 확인된 사건에서 이전 낙상 관측이나 확인 대기가 없는 최신 정상 영상의 종결. 대상 미확인 장면 사건에는 적용하지 않음 |
 

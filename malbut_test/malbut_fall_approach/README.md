@@ -7,7 +7,11 @@
 2026-10-11(SWM25-238)까지는 `malbut_fall_coordinator` 패키지 안에 있었고 동작은 그대로다.
 
 - Action `/malbut/falls/approach`(`FallApproach`): `phase` = `approach`(1 m 앞, 의심 장소를 바라봄),
-  `view`(요청한 거리로 물러남), `return`(질문 ID별로 기억한 시작 위치로).
+  `view`(요청한 거리로 물러남), `return`(질문 ID별로 기억한 시작 위치로), `hold`(움직이지 않고 HIGH만 쥠).
+- 낙상 확인 내내 Manager에 HIGH 미션을 둔다(2026-10-13 사용자). `approach`·`view`는 끝나면 결과를 feedback
+  (`phase=HOLDING`, `outcome`, `detail`)으로 먼저 내고, 취소될 때까지 움직이지 않고 기다린다(최대 660초).
+  낙상 규칙이 다음 단계를 보내면 Manager가 이 미션을 대신하고, 확인이 끝나면 낙상 규칙이 취소한다.
+  `hold`는 바로 `HOLDING`으로 기다린다. 노드가 꺼질 때는 기다림을 바로 끝낸다.
 - ComputePathToPose(GridBased, 금지 구역 반영) → 1 m 원에서 경로를 자름(`standoff_route`) →
   FollowPath → Spin으로 바라봄. 이동마다 60초 상한.
 - 복귀는 저장한 출발 위치를 NavigateToPose에 전달해 Nav2의 재계획·복구를 사용하고,

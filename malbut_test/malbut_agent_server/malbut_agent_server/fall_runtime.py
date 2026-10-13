@@ -192,8 +192,9 @@ def apply_decision(monitor, payload):
     data = bounded_object(payload)
     action = data.get('action')
     fields = {'incident_id', 'evidence_revision', 'action'}
-    if action in {'check_waiting', 'check_not_confirmed', 'revisit_started'}:
-        # The fall rules could not ask yet: waiting, a minute of it, going back.
+    if action in {'check_waiting', 'check_not_confirmed', 'revisit_started', 'check_stopped'}:
+        # The fall rules could not ask yet: waiting, a minute of it, going back; or
+        # someone said "그만" and the check stopped without a question.
         fields.update({'boot_id', 'question_id', 'reason'})
         if (set(data) != fields or data['boot_id'] != monitor.boot_id
                 or type(data['evidence_revision']) is not int or data['evidence_revision'] < 1

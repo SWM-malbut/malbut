@@ -10,6 +10,7 @@ from typing import Optional, Sequence
 from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
 from malbut_stt.chime import play_endpoint_chime, play_failure_chime, play_wake_chime
 from malbut_stt.dialogue_pipeline import DialoguePipeline
+from malbut_stt.fall_check import FallCheckWindow
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
@@ -453,7 +454,19 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_service(
             ControlSpeechSession, '/malbut/speech/session_control', control_session)
 
+        # A fall check comes before the guardian's talk (the user, 2026-10-13): from
+        # the suspicion until its question ends the web microphone is refused, and a
+        # talk already going ends at its next renewal (the media agent renews each second).
+        fall_check = FallCheckWindow()
+        node.create_subscription(
+            String, '/malbut/falls/check/status',
+            lambda message: fall_check.observe(message.data), qos)
+
         def control_web_talk(request, response):
+            if request.active and fall_check.active():
+                pipeline.control_web_talk(request.lease_id, False, 0.0)  # This talk ends.
+                response.accepted = False
+                return response
             response.accepted = pipeline.control_web_talk(
                 request.lease_id, request.active, request.ttl_s)
             if response.accepted and request.active:

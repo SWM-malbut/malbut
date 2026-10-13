@@ -286,12 +286,19 @@ def test_question_refusals_that_pass_wait_and_go_again(link, message, why):
     respond(link, message=message)
     assert decisions(link) == [] and link.coordinator.waiting_for == why
     assert link.request is None and link.coordinator.requests
+    # The Agent refusing the question leaves nothing holding the wheels: a HIGH
+    # hold goes in while waiting (2026-10-13). The Manager's own refusals keep
+    # them held (or blocked) already.
+    holds = 1 if message == 'Downstream Action server rejected the goal' else 0
+    if holds:
+        assert link.goals[-1][0]['capability'] == 'fall_approach'
+        assert link.goals[-1][0]['phase'] == 'hold'
     link.now.value = 0.9
     link.tick()
-    assert len(link.goals) == 1
+    assert len(link.goals) == 1 + holds
     link.now.value = 1.0
     link.tick()
-    assert len(link.goals) == 2 and link.goals[-1][0]['capability'] == 'fall_confirmation'
+    assert len(link.goals) == 2 + holds and link.goals[-1][0]['capability'] == 'fall_confirmation'
     respond(link, message=message)
     link.now.value = 3.0  # Still refused three seconds on: the history notes it.
     link.tick()
