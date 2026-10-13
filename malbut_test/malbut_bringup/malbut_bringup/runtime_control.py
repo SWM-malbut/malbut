@@ -79,6 +79,10 @@ def required_groups(capabilities, mapping_ready=False):
     return needed
 
 
+class ProcessingRejected(RuntimeError):
+    """A processing server explicitly refused the requested state."""
+
+
 class RuntimeControl(Node):
     """Prepare dependencies before dispatch; pause them after confirmed completion."""
 
@@ -103,6 +107,7 @@ class RuntimeControl(Node):
         self._capabilities = set()
         self._have_state = False
         self._synced_demand = None
+        self._sync_retry_at = None
         self._preparations = []
         self._closing = False
         self._initialized = False
@@ -195,14 +200,23 @@ class RuntimeControl(Node):
         with self._lock:
             if self._closing or not self._initialized:
                 return
-            try:
-                self._sync()
-            except Exception as error:
-                self.get_logger().error(str(error))
-                self._report_usage(str(error))
-                self._resolve_preparations(str(error))
-            else:
-                self._resolve_preparations()
+            self._reconcile_demand()
+
+    def _reconcile_demand(self):
+        """Retry a confirmed processing refusal, never an unconfirmed RPC."""
+        self._sync_retry_at = None
+        try:
+            self._sync()
+        except Exception as error:
+            if isinstance(error, ProcessingRejected) and not self._uncertain:
+                # Action completion and processing cleanup can overlap. State
+                # demand need not change again once the server releases busy.
+                self._sync_retry_at = time.monotonic() + 1.0
+            self.get_logger().error(str(error))
+            self._report_usage(str(error))
+            self._resolve_preparations(str(error))
+        else:
+            self._resolve_preparations()
 
     def _receive_pose(self, message):
         with self._data_lock:
@@ -330,6 +344,9 @@ class RuntimeControl(Node):
                 self.get_logger().warning(f'Could not remember selected map: {error}')
 
     def _sync(self):
+        # Map RPCs also call _sync directly. A new attempt supersedes an old
+        # retry; only its own confirmed refusal may schedule another one.
+        self._sync_retry_at = None
         capabilities = self._capabilities_now()
         if 'recovery' in capabilities:
             self._report_usage('manual recovery in progress')
@@ -390,7 +407,8 @@ class RuntimeControl(Node):
             reply = self._call(
                 self._processing_clients[service], SetBool.Request(data=enabled), service)
             if not reply.success:
-                raise RuntimeError(reply.message or f'{service}: processing change rejected')
+                raise ProcessingRejected(
+                    reply.message or f'{service}: processing change rejected')
             self._processing_active[service] = enabled
 
     def _adopt_recovered_groups(self):
@@ -460,9 +478,13 @@ class RuntimeControl(Node):
                     self._map_initialized = True
                 self._initialized = True
                 # The first state event may precede initialization. After this
-                # one reconciliation, only demand/map events perform _sync.
+                # one reconciliation, only demand/map events and confirmed
+                # processing-refusal retries perform _sync.
                 if self._have_state:
-                    self._sync()
+                    self._reconcile_demand()
+            elif (self._sync_retry_at is not None
+                  and time.monotonic() >= self._sync_retry_at):
+                self._reconcile_demand()
         except Exception as error:
             if not self._closing:
                 self.get_logger().error(str(error))

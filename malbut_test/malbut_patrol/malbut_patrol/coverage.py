@@ -478,6 +478,11 @@ class CoveragePlanner:
         ))
 
     @property
+    def room_names(self):
+        """Return every labeled room this patrol uses, reachable or not."""
+        return tuple(sorted(self._room_masks))
+
+    @property
     def inaccessible_room_names(self):
         """Return labeled rooms with no safe connected navigation position."""
         return tuple(sorted(self._inaccessible_names))

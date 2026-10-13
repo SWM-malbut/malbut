@@ -249,10 +249,13 @@ class PatrolManager(Node):
                 self._image_subscription = None
 
     def _set_processing(self, request, response):
-        if not request.data and self.busy:
-            response.success, response.message = False, 'patrol is still running'
-            return response
-        self._change_processing(request.data)
+        # Goal acceptance reserves ownership under the same lock. Do not
+        # disable inputs between checking busy and accepting a new patrol.
+        with self.lock:
+            if not request.data and self.busy:
+                response.success, response.message = False, 'patrol is still running'
+                return response
+            self._change_processing(request.data)
         if request.data:
             # Image/costmap callbacks remain independent of this preparation RPC.
             deadline = time.monotonic() + self.settings['sensor_timeout_s']
@@ -574,41 +577,51 @@ class PatrolManager(Node):
             detail = f'Patrol failed: {error}'
         finally:
             settled = self._settle_child()
-            result = Patrol.Result()
-            result.success = success and settled and not handle.is_cancel_requested
-            result.coverage_ratio = float(self.planner.coverage_ratio) if self.planner else 0.0
-            result.viewpoints_visited = self.visited
-            result.message = detail
-            if not settled:
-                result.message += '; Nav2 stop unconfirmed; new patrols blocked until settled'
-            if handle.is_cancel_requested and settled:
-                handle.canceled()
-                state = 'idle'
-            elif result.success:
-                handle.succeed()
-                state = 'completed'
-            else:
-                handle.abort()
-                state = 'aborted'
-            self._publish_status(state, result.message)
-            with self.lock:
-                self.busy = False
-            return result
+            try:
+                result = Patrol.Result()
+                result.success = success and settled and not handle.is_cancel_requested
+                result.coverage_ratio = float(self.planner.coverage_ratio) if self.planner else 0.0
+                result.viewpoints_visited = self.visited
+                result.message = detail
+                if not settled:
+                    result.message += '; Nav2 stop unconfirmed; new patrols blocked until settled'
+                if handle.is_cancel_requested and settled:
+                    handle.canceled()
+                    state = 'idle'
+                elif result.success:
+                    handle.succeed()
+                    state = 'completed'
+                else:
+                    handle.abort()
+                    state = 'aborted'
+                self._publish_status(state, result.message)
+                return result
+            finally:
+                # Diagnostic/result publication must not strand busy after
+                # Nav2 has stopped. An unconfirmed stop still owns the inputs.
+                with self.lock:
+                    if settled:
+                        self.busy = False
 
     def _publish_status(self, state, detail):
-        message = String()
-        message.data = json.dumps({
-            'state': state, 'detail': detail,
-            'coverage_ratio': float(self.planner.coverage_ratio) if self.planner else 0.0,
-            'viewpoints_visited': self.visited,
-            'unvisited_rooms': list(self.planner.unvisited_room_names)
-            if self.planner else [],
-            'inaccessible_rooms': list(self.planner.inaccessible_room_names)
-            if self.planner else [],
-            # 0: no rooms for this map, so the web says it patrolled without rooms.
-            'room_count': len(self.planner.room_names) if self.planner else 0,
-        })
-        self.status.publish(message)
+        # This diagnostic topic is not the Action result or motion ownership.
+        # A serialization/publisher failure must not interrupt Nav2 cancellation.
+        try:
+            message = String()
+            message.data = json.dumps({
+                'state': state, 'detail': detail,
+                'coverage_ratio': float(self.planner.coverage_ratio) if self.planner else 0.0,
+                'viewpoints_visited': self.visited,
+                'unvisited_rooms': list(self.planner.unvisited_room_names)
+                if self.planner else [],
+                'inaccessible_rooms': list(self.planner.inaccessible_room_names)
+                if self.planner else [],
+                # 0: no rooms for this map, so the web says it patrolled without rooms.
+                'room_count': len(self.planner.room_names) if self.planner else 0,
+            })
+            self.status.publish(message)
+        except Exception as error:
+            self.get_logger().warning(f'Could not publish patrol status: {error}')
 
 
 def main(args=None):

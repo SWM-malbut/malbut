@@ -167,6 +167,16 @@ def test_robot_copy_retains_colcon_ignore():
     assert (ROOT / 'COLCON_IGNORE').is_file()
 
 
+def test_robot_patrol_and_idle_control_match_source():
+    """A source-only fix must not leave the deployed patrol API incomplete."""
+    original = ROOT.parent / 'malbut_autonomy/malbut_patrol/malbut_patrol'
+    deployed = ROOT / 'malbut_patrol/malbut_patrol'
+    for source in original.glob('*.py'):
+        assert source.read_bytes() == (deployed / source.name).read_bytes()
+    runtime = 'malbut_bringup/malbut_bringup/runtime_control.py'
+    assert (ROOT.parent / runtime).read_bytes() == (ROOT / runtime).read_bytes()
+
+
 def test_robot_copy_includes_the_same_fall_upload_startup_and_worker():
     for name in ('malbut_bringup/launch/fall.launch.py',
                  'malbut_bringup/malbut_bringup/fall_setup.py',
