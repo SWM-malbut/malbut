@@ -1,0 +1,4 @@
+# Optional offline evaluation only; not ROS runtime dependencies.
+numpy==2.2.6
+onnxruntime==1.23.2
+webrtcvad-wheels==2.0.14
