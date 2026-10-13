@@ -9,6 +9,7 @@
 using homecam_media_agent::AudioCaptureTimeline;
 using homecam_media_agent::EncodedFrame;
 using homecam_media_agent::KvsTimestampNormalizer;
+using homecam_media_agent::BufferedPlayout;
 using homecam_media_agent::PlayoutSchedule;
 using homecam_media_agent::SessionMode;
 using homecam_media_agent::SessionRefreshDecision;
@@ -241,4 +242,46 @@ TEST(KvsTransport, PlaysGuardianFramesOnTheirTimelineAfterADelay)
   EXPECT_EQ(schedule.schedule(100, 400'000'000), 520'000'000);
   schedule.reset();
   EXPECT_EQ(schedule.schedule(200, 0), 120'000'000);
+}
+
+TEST(KvsTransport, BufferedPlayoutDropsALateFrameInsteadOfMovingTheTimeline)
+{
+  // 2026-10-13: on PlayoutSchedule one late frame moved everything 120 ms on
+  // (the gap above, 180 ms -> 370 ms); here it costs only its own 20 ms.
+  BufferedPlayout playout(300'000'000);
+  auto plan = playout.schedule(5'000'000'000, 0);
+  EXPECT_EQ(plan.playout_ns, 300'000'000);
+  EXPECT_FALSE(plan.reanchored);
+  EXPECT_EQ(playout.schedule(5'020'000'000, 100'000'000).playout_ns, 320'000'000);
+  plan = playout.schedule(5'040'000'000, 350'000'000);  // Due at 340 ms: 10 ms late.
+  EXPECT_TRUE(plan.dropped);
+  EXPECT_EQ(plan.late_ns, 10'000'000);
+  // The next frame, on time again, keeps its slot on the same timeline.
+  plan = playout.schedule(5'060'000'000, 355'000'000);
+  EXPECT_FALSE(plan.dropped);
+  EXPECT_EQ(plan.playout_ns, 360'000'000);
+}
+
+TEST(KvsTransport, BufferedPlayoutMovesOnlyForARunOfLateFramesAJumpOrANewDelay)
+{
+  BufferedPlayout playout(300'000'000, 3);
+  playout.schedule(0, 0);  // Anchored: frame 0 at 300 ms.
+  // The network got slower: three frames in a row late, then a new anchor.
+  EXPECT_TRUE(playout.schedule(20'000'000, 400'000'000).dropped);
+  EXPECT_TRUE(playout.schedule(40'000'000, 420'000'000).dropped);
+  auto plan = playout.schedule(60'000'000, 440'000'000);
+  EXPECT_TRUE(plan.reanchored);
+  EXPECT_EQ(plan.playout_ns, 740'000'000);
+  // A jump far ahead (a pause in talking) and a new stream also start over.
+  EXPECT_TRUE(playout.schedule(10'000'000'000, 760'000'000).reanchored);
+  EXPECT_TRUE(playout.schedule(100, 800'000'000).reanchored);
+  // A new delay applies at once, on a new anchor.
+  playout.set_delay(500'000'000);
+  plan = playout.schedule(120, 900'000'000);
+  EXPECT_TRUE(plan.reanchored);
+  EXPECT_EQ(plan.playout_ns, 1'400'000'000);
+  playout.reset();
+  plan = playout.schedule(5, 0);
+  EXPECT_FALSE(plan.reanchored);
+  EXPECT_EQ(plan.playout_ns, 500'000'000);
 }

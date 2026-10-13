@@ -188,6 +188,71 @@ void PlayoutSchedule::reset()
   last_ns_ = -1;
 }
 
+BufferedPlayout::BufferedPlayout(const std::int64_t delay_ns, const int late_run_limit)
+: delay_ns_(std::max<std::int64_t>(delay_ns, 0)),
+  late_run_limit_(std::max(late_run_limit, 1))
+{
+}
+
+BufferedPlayout::Plan BufferedPlayout::schedule(
+  const std::int64_t frame_ns,
+  const std::int64_t running_now_ns)
+{
+  // A sender pause or a jump this far past the buffer is a new stretch of talk.
+  constexpr std::int64_t maximum_lead_ns = 1'000'000'000;
+  Plan plan;
+  if (anchored_ && frame_ns >= frame_anchor_ns_) {
+    const std::int64_t playout = running_anchor_ns_ + (frame_ns - frame_anchor_ns_);
+    if (playout >= running_now_ns) {
+      if (playout - running_now_ns <= delay_ns_ + maximum_lead_ns) {
+        late_run_ = 0;
+        plan.playout_ns = std::max(playout, last_ns_ + 1);
+        last_ns_ = plan.playout_ns;
+        return plan;
+      }
+    } else {
+      plan.late_ns = running_now_ns - playout;
+      if (++late_run_ < late_run_limit_) {
+        plan.dropped = true;  // One late frame: a 20 ms hole, the timeline stays.
+        return plan;
+      }
+      // Late for a while: the network got slower than the buffer.
+    }
+  }
+  return anchor(frame_ns, running_now_ns, plan);
+}
+
+BufferedPlayout::Plan BufferedPlayout::anchor(
+  const std::int64_t frame_ns,
+  const std::int64_t running_now_ns,
+  Plan plan)
+{
+  plan.reanchored = started_;
+  started_ = anchored_ = true;
+  late_run_ = 0;
+  frame_anchor_ns_ = frame_ns;
+  running_anchor_ns_ = running_now_ns + delay_ns_;
+  plan.playout_ns = std::max(running_anchor_ns_, last_ns_ + 1);
+  last_ns_ = plan.playout_ns;
+  return plan;
+}
+
+void BufferedPlayout::set_delay(const std::int64_t delay_ns)
+{
+  const std::int64_t wanted = std::max<std::int64_t>(delay_ns, 0);
+  if (wanted != delay_ns_) {
+    delay_ns_ = wanted;
+    anchored_ = false;
+  }
+}
+
+void BufferedPlayout::reset()
+{
+  started_ = anchored_ = false;
+  last_ns_ = -1;
+  late_run_ = 0;
+}
+
 bool SessionLease::valid_at(const std::int64_t now_unix_ms) const
 {
   return !channel_arn.empty() &&

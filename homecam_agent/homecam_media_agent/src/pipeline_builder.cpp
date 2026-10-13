@@ -153,4 +153,31 @@ std::string build_audio_playback_pipeline(const MediaConfig & config)
     quote_gst(config.audio_sink) + " sync=true";
 }
 
+std::string build_buffered_audio_playback_pipeline(const MediaConfig & config)
+{
+  // As the scheduled pipeline, with room for a jitter buffer of up to 1 s
+  // (ptt_playout_delay_ms) ahead of the sink.
+  return
+    "appsrc name=ptt_audio_source is-live=true block=false format=time "
+    "caps=audio/x-opus,rate=48000,channels=1,"
+    "channel-mapping-family=0 ! "
+    "queue max-size-time=1500000000 leaky=downstream ! opusdec plc=true ! "
+    "audioconvert ! audioresample ! alsasink device=" +
+    quote_gst(config.audio_sink) + " sync=true";
+}
+
+std::string build_arrival_audio_playback_pipeline(const MediaConfig & config)
+{
+  // The pipeline before the playout schedule (2026-10-09): each frame is
+  // timestamped and played as it arrives, the sink's own buffer absorbing
+  // the jitter. Kept to compare by ear while the guardian's voice breaks up.
+  return
+    "appsrc name=ptt_audio_source is-live=true block=false format=time "
+    "do-timestamp=true caps=audio/x-opus,rate=48000,channels=1,"
+    "channel-mapping-family=0 ! "
+    "queue max-size-time=200000000 leaky=downstream ! opusdec ! "
+    "audioconvert ! audioresample ! alsasink device=" +
+    quote_gst(config.audio_sink) + " sync=false";
+}
+
 }  // namespace homecam_media_agent

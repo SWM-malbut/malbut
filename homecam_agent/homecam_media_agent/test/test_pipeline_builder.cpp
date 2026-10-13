@@ -8,6 +8,8 @@
 
 using homecam_media_agent::MediaConfig;
 using homecam_media_agent::build_audio_capture_pipeline;
+using homecam_media_agent::build_arrival_audio_playback_pipeline;
+using homecam_media_agent::build_buffered_audio_playback_pipeline;
 using homecam_media_agent::build_audio_playback_pipeline;
 using homecam_media_agent::build_video_pipeline;
 using homecam_media_agent::video_format_from_ros;
@@ -103,4 +105,31 @@ TEST(PipelineBuilder, GuardianVoicePlaysOnItsTimestamps)
   EXPECT_EQ(pipeline.find("do-timestamp=true"), std::string::npos);
   EXPECT_NE(pipeline.find("opusdec plc=true ! "), std::string::npos);
   EXPECT_NE(pipeline.find(" sync=true"), std::string::npos);
+}
+
+TEST(PipelineBuilder, GuardianVoiceCanPlayBehindAJitterBuffer)
+{
+  // ptt_playout_mode=buffered: timestamps from the jitter buffer, room for up
+  // to 1 s of it queued before the sink.
+  MediaConfig config;
+  const auto pipeline = build_buffered_audio_playback_pipeline(config);
+  EXPECT_EQ(pipeline.find("do-timestamp=true"), std::string::npos);
+  EXPECT_NE(pipeline.find("queue max-size-time=1500000000"), std::string::npos);
+  EXPECT_NE(pipeline.find("opusdec plc=true ! "), std::string::npos);
+  EXPECT_NE(pipeline.find(" sync=true"), std::string::npos);
+}
+
+TEST(PipelineBuilder, GuardianVoiceCanPlayAsItArrivesAsBefore)
+{
+  // ptt_playout_mode=arrival (2026-10-13): the pipeline before 2026-10-09, to
+  // compare by ear while the scheduled voice breaks up.
+  MediaConfig config;
+  const auto pipeline = build_arrival_audio_playback_pipeline(config);
+  EXPECT_NE(
+    pipeline.find("caps=audio/x-opus,rate=48000,channels=1,channel-mapping-family=0 ! "),
+    std::string::npos);
+  EXPECT_NE(pipeline.find("name=ptt_audio_source"), std::string::npos);
+  EXPECT_NE(pipeline.find("do-timestamp=true"), std::string::npos);
+  EXPECT_NE(pipeline.find(" sync=false"), std::string::npos);
+  EXPECT_EQ(pipeline.find(" sync=true"), std::string::npos);
 }
