@@ -169,6 +169,7 @@ add_library(homecam_media_core
   src/heartbeat_client.cpp
   src/fall_settings_bridge.cpp
   src/session_client.cpp
+  src/rotating_credentials.cpp
   src/kvs_transport.cpp
   ${HOMECAM_KVS_COMMON_SOURCE})
 target_include_directories(homecam_media_core
@@ -233,6 +234,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_pipeline_builder homecam_media_core)
   ament_add_gtest(test_kvs_transport test/test_kvs_transport.cpp)
   target_link_libraries(test_kvs_transport homecam_media_core)
+  if(HOMECAM_HAVE_KVS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_rotating_credentials.cpp")
+    ament_add_gtest(test_rotating_credentials test/test_rotating_credentials.cpp
+      APPEND_LIBRARY_DIRS ${HOMECAM_KVS_RUNTIME_PATHS})
+    target_include_directories(test_rotating_credentials PRIVATE "${KVS_WEBRTC_DEPENDENCY_INCLUDE_DIR}")
+    target_link_libraries(test_rotating_credentials homecam_media_core)
+  endif()
   ament_add_gtest(test_session_client test/test_session_client.cpp)
   target_link_libraries(test_session_client homecam_media_core)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_fall_settings_bridge.cpp")
