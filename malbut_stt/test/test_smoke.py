@@ -606,15 +606,16 @@ def test_local_output_releases_real_reply_gate_before_next_turn(
                 return poll()
             if turns == 2:
                 raise KeyboardInterrupt
-            assert pipeline.session.active is manual
-            if not manual:
+            assert pipeline.session.active is (manual or turns > 0)
+            if not manual and turns == 0:
                 pipeline._accept_result('wake', pipeline._generation, None, '제이크야', None)
             uid = pipeline.session.user_speech_started()
             delivering = True
             assert pipeline.session.finish_utterance(uid, '질문', addressed=True)
             delivering = False
             assert pipeline._reply_request_id is None
-            assert pipeline.session.active is manual
+            assert pipeline.session.active
+            assert (pipeline._followup_deadline is None) is manual
             turns += 1
 
         # Drive the real session, publish callback and reply gate without audio hardware.
@@ -628,7 +629,7 @@ def test_local_output_releases_real_reply_gate_before_next_turn(
     output = events(capsys)
     assert len([row for row in output if row['event'] == 'transcript']) == 2
     assert [row['event'] for row in output].count('waiting_for_reply') == 2
-    assert [row['event'] for row in output].count('wake_detected') == (0 if manual else 2)
+    assert [row['event'] for row in output].count('wake_detected') == (0 if manual else 1)
 
 
 @pytest.mark.parametrize('phase', ['start', 'poll'])

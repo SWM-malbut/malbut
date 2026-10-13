@@ -62,8 +62,9 @@ class DialoguePipeline:
 
     One utterance may await inference or addressee classification. Additional
     utterances are explicitly discarded through their endpoint while it is busy.
-    An accepted ordinary request blocks capture until its final reply terminates;
-    the next request requires a new wake. Agent-owned sessions keep their policy.
+    An accepted ordinary request blocks capture until its final reply terminates.
+    Successful replies open a bounded, wake-free follow-up window; failed replies
+    return to wake listening. Agent-owned sessions keep their policy.
     ``input_has_aec`` asserts that the selected microphone already supplies AEC;
     this class does not remove playback echo from raw microphone audio.
     """
@@ -75,14 +76,18 @@ class DialoguePipeline:
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
-                 short_speech_guard=False):
+                 short_speech_guard=False, followup_timeout_s=10.0):
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
         if type(short_speech_guard) is not bool:
             raise ValueError('short_speech_guard must be a boolean')
+        if (type(followup_timeout_s) not in (int, float)
+                or not math.isfinite(followup_timeout_s) or followup_timeout_s < 0):
+            raise ValueError('followup_timeout_s must be finite and nonnegative')
         self.chime_tail_s = chime_tail_s
         self.short_speech_guard = short_speech_guard
+        self.followup_timeout_s = followup_timeout_s
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -154,6 +159,8 @@ class DialoguePipeline:
         self._utterance_playback_id = None
         self._pending = None
         self._reply_request_id = None
+        self._followup_pending = False
+        self._followup_deadline = None
         self._retry_notice_deadline = None
         self._command_start_deadline = None
         self._web_talk_lease_id = None
@@ -191,7 +198,9 @@ class DialoguePipeline:
                 reply_request_id=self._reply_request_id,
                 chime_gate_until=self._chime_gate_until,
                 chime_tail_s=self.chime_tail_s,
-                command_start_deadline=self._command_start_deadline)
+                command_start_deadline=self._command_start_deadline,
+                followup_timeout_s=self.followup_timeout_s,
+                followup_deadline=self._followup_deadline)
             if self.diagnostics.error and not self._diagnostic_error_reported:
                 self._diagnostic_error_reported = True
                 self._report('diagnostics_stopped')
@@ -346,9 +355,10 @@ class DialoguePipeline:
 
     def _publish_transcript(self, utterance_id, text):
         if not self.session.session_id:
-            # One wake accepts one ordinary request, including during reply generation.
+            # Keep capture closed until this request's final reply actually ends.
             self._terminate('waiting_for_reply')
             self._reply_request_id = utterance_id
+            self._followup_pending = self.followup_timeout_s > 0
             self._tail_stream = None
         self.publish_transcript(utterance_id, text)
 
@@ -537,6 +547,8 @@ class DialoguePipeline:
             cancel()
         self._pending = None
         self._reply_request_id = None
+        self._followup_pending = False
+        self._followup_deadline = None
         self._retry_notice_deadline = None
         self._command_start_deadline = None
         self._utterance_playback_id = None
@@ -601,6 +613,12 @@ class DialoguePipeline:
             self._terminate('retry_notice_timeout')
 
     def _expire_command_wait(self, captured_at):
+        if (self._followup_deadline is not None
+                and captured_at >= self._followup_deadline):
+            # A quiet conversation ending is not a failed recognition attempt.
+            self._terminate('session_ended:followup_timeout')
+            self.report('waiting_for_wake')
+            return True
         if (self._command_start_deadline is not None
                 and captured_at >= self._command_start_deadline):
             self._fail_command('session_ended:input_timeout')
@@ -657,6 +675,7 @@ class DialoguePipeline:
                     continue
                 if self.session.active:
                     self._command_start_deadline = None
+                    self._followup_deadline = None
                     self._capture_id = self.session.user_speech_started()
                     self._input_status('started', self._capture_id)
                     self._endpoint_result = None
@@ -989,6 +1008,9 @@ class DialoguePipeline:
             self._stop_speech(playback_id)
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
+        if self._followup_deadline is not None:
+            # Only the correlated reply starts this wait, not unrelated playback.
+            self.session.deadline = None
         current = (self.session.playback_id, self.session.playback_state)
         if previous != current and not self.input_has_aec:
             if current[1] in ('playing', 'paused') and self.session.utterance_id is not None:
@@ -1006,7 +1028,13 @@ class DialoguePipeline:
         if (self._reply_request_id is not None and request_id == self._reply_request_id
                 and not interim and state in ('finished', 'failed', 'stopped')):
             # Failed synthesis can terminate before PLAYING; progress cannot unlock input.
-            self._terminate('waiting_for_wake')
+            followup = (state == 'finished' and self._followup_pending
+                        and not self._web_talk_blocked(self.clock()))
+            self._terminate('reply_finished' if followup else 'waiting_for_wake')
+            if followup:
+                self.session.activate()
+                self._followup_deadline = self.clock() + self.followup_timeout_s
+                self.report('waiting_for_followup')
 
     def on_addressee(self, utterance_id, playback_id, decision):
         """Accept exactly one matching decision before the held candidate expires."""

@@ -133,7 +133,7 @@ def interrupt(harness, pipeline):
 
 
 @pytest.mark.parametrize('aec', [False, True])
-def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
+def test_followup_needs_no_wake_and_waits_for_its_final_reply(harness, aec):
     pipeline = harness.create(aec=aec)
     wake_up(harness, pipeline)
     finish_command(pipeline)
@@ -155,15 +155,8 @@ def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
     finish_command(pipeline)
     assert len(harness.transcripts) == 1
     pipeline.on_playback_status('answer', 'finished', request_id=first_id)
-    assert not pipeline.session.active
+    assert pipeline.session.active
     harness.now = 1.31
-    pipeline.wake.transcribe = lambda pcm, rate: '오늘은 책을 읽었습니다'
-    pipeline.feed(VOICE * 4 + QUIET * 20)
-    pump(pipeline, lambda: 'not_wake' in harness.reports)
-    assert len(harness.transcripts) == 1
-    pipeline.wake.transcribe = lambda pcm, rate: '제이크야'
-    pipeline.feed(VOICE * 4 + QUIET * 20)
-    pump(pipeline, lambda: pipeline.session.active)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 2)
     assert harness.transcripts == [(first_id, '문장 1'),
@@ -173,6 +166,8 @@ def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
     pipeline.on_playback_status('answer', 'finished', request_id=first_id)
     finish_command(pipeline)
     assert len(harness.command_calls) == 2
+    assert len(harness.wake_calls) == 1
+    assert harness.reports.count('wake_chime_unavailable') == 1
     assert harness.recorder.active and harness.closed == []
     assert 'wake_chime_unavailable' in harness.reports
     pipeline.close()
@@ -180,6 +175,155 @@ def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
     assert harness.closed == ['stop', 'delete']
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert pipeline.audio.empty() and pipeline.jobs.empty() and pipeline.results.empty()
+
+
+@pytest.mark.parametrize('aec', [False, True])
+def test_twenty_turns_share_one_wake_and_open_a_fresh_wait_after_each_reply(harness, aec):
+    pipeline = harness.create(aec=aec)
+    wake_up(harness, pipeline)
+    for turn in range(20):
+        finish_command(pipeline)
+        pump(pipeline, lambda: len(harness.transcripts) == turn + 1)
+        uid = harness.transcripts[-1][0]
+        harness.now += 30  # Agent latency must not consume the follow-up wait.
+        pipeline.on_playback_status(str(turn), 'playing', request_id=uid)
+        harness.now += 5
+        pipeline.on_playback_status(str(turn), 'finished', request_id=uid)
+        assert pipeline.session.active
+        assert pipeline._followup_deadline == harness.now + 10
+        harness.now += 9
+    assert len({uid for uid, _ in harness.transcripts}) == 20
+    assert len(harness.wake_calls) == 1
+    assert harness.reports.count('wake_chime_unavailable') == 1
+    assert harness.failure_chimes == []
+
+
+def open_followup(harness, pipeline):
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+    pipeline.on_playback_status('answer', 'playing', request_id=uid)
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    return uid
+
+
+@pytest.mark.parametrize('aec', [False, True])
+def test_followup_silence_expires_at_ten_seconds_without_failure_chime(harness, aec):
+    pipeline = harness.create(aec=aec)
+    uid = open_followup(harness, pipeline)
+    harness.now = 9.999
+    pipeline.feed(QUIET * 100)
+    pipeline.poll()
+    assert pipeline.session.active
+    harness.now = 10
+    pipeline.poll()
+    assert not pipeline.session.active
+    assert harness.failure_chimes == []
+    assert 'session_ended:followup_timeout' in harness.reports
+    # Delayed completion cannot reopen the conversation after its timeout.
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    assert not pipeline.session.active
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+    assert len(harness.wake_calls) == 2
+
+
+@pytest.mark.parametrize('queued', [False, True])
+def test_followup_onset_before_deadline_can_finish_after_deadline(harness, queued):
+    pipeline = harness.create()
+    open_followup(harness, pipeline)
+    harness.now = 9.9
+    if queued:
+        pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+    else:
+        pipeline.feed(VOICE)
+    harness.now = 10.1
+    pipeline.poll()
+    assert pipeline.session.active and pipeline.session.utterance_id is not None
+    harness.now = 12
+    pipeline.feed(QUIET * 100)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+    assert len(harness.wake_calls) == 1
+    assert harness.failure_chimes == []
+
+
+def test_followup_onset_at_deadline_cannot_become_a_command(harness):
+    pipeline = harness.create()
+    open_followup(harness, pipeline)
+    harness.now = 10
+    finish_command(pipeline)
+    pipeline.poll()
+    assert not pipeline.session.active
+    assert len(harness.transcripts) == len(harness.command_calls) == 1
+
+
+@pytest.mark.parametrize('interim', [False, True])
+def test_other_playback_and_duplicate_completion_do_not_change_followup_wait(harness, interim):
+    pipeline = harness.create()
+    uid = open_followup(harness, pipeline)
+    harness.now = 1
+    pipeline.on_playback_status('other', 'playing', request_id='other', interim=interim)
+    pipeline.on_playback_status('other', 'finished', request_id='other', interim=interim)
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    harness.now = 9.999
+    pipeline.poll()
+    assert pipeline.session.active
+    harness.now = 10
+    pipeline.poll()
+    assert not pipeline.session.active
+    assert harness.failure_chimes == []
+
+
+def test_followup_discards_playback_backlog_and_raw_echo_tail(harness):
+    pipeline = harness.create(aec=False)
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+    pipeline.on_playback_status('answer', 'playing', request_id=uid)
+    pipeline.audio.put_nowait((pipeline._audio_generation, 0., VOICE * 4, False))
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    harness.now = .299
+    finish_command(pipeline)
+    assert pipeline.session.utterance_id is None and pipeline.jobs.empty()
+    assert len(harness.command_calls) == 1
+    harness.now = .301
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+
+
+@pytest.mark.parametrize('replacement', ['web_talk', 'proactive'])
+def test_other_input_owner_cancels_followup_timeout(harness, replacement):
+    pipeline = harness.create()
+    uid = open_followup(harness, pipeline)
+    if replacement == 'web_talk':
+        assert pipeline.control_web_talk('web-1', True, 10.)
+        assert pipeline.control_web_talk('web-1', False, 0.)
+    else:
+        assert pipeline.start_session('incident-1')
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    harness.now = 11
+    pipeline.poll()
+    assert pipeline._followup_deadline is None
+    assert pipeline.session.active is (replacement == 'proactive')
+    assert harness.failure_chimes == []
+
+
+def test_zero_followup_timeout_keeps_single_turn_mode(harness):
+    pipeline = harness.create(followup_timeout_s=0)
+    open_followup(harness, pipeline)
+    assert not pipeline.session.active
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+    assert len(harness.wake_calls) == 2
+
+
+@pytest.mark.parametrize('value', [-1, True, None, '10', float('nan'), float('inf')])
+def test_invalid_followup_timeout_is_rejected(harness, value):
+    with pytest.raises(ValueError, match='followup_timeout_s'):
+        harness.create(followup_timeout_s=value)
+    assert not harness.recorder.active
 
 
 @pytest.mark.parametrize('state', ['failed', 'stopped'])
@@ -197,6 +341,8 @@ def test_reply_terminal_before_playing_reopens_wake_and_discards_buffered_audio(
     assert not pipeline._input_blocked(harness.now)
     assert not pipeline.session.active and pipeline.audio.empty()
     assert not pipeline.wake_stream.collector.started
+    pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    assert not pipeline.session.active  # A late success cannot revive a failed reply.
     pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: pipeline.session.active)
     assert len(harness.wake_calls) == 2
@@ -583,7 +729,7 @@ def test_busy_backlog_stays_discarded_after_result_is_ready(harness):
     pipeline.feed(VOICE * 20 + QUIET * 100)
     assert pipeline.jobs.empty() and harness.command_calls == []
     pipeline.on_playback_status('reply', 'finished', request_id=uid)
-    wake_up(harness, pipeline)
+    assert pipeline.session.active
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 2)
     assert len(harness.command_calls) == 1
@@ -1341,6 +1487,7 @@ def test_web_talk_does_not_release_unfinished_ordinary_reply(harness, reply_ends
     if not reply_ends_during_talk:
         pipeline.on_playback_status('answer', 'finished', request_id=uid)
     assert not pipeline._input_blocked(harness.now)
+    assert not pipeline.session.active
 
 
 @pytest.mark.parametrize('release_before_expiry', [True, False])

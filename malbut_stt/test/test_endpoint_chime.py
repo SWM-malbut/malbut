@@ -46,16 +46,11 @@ def reply(state, job, text='문을 닫아 주세요.', error=None):
     state.pipeline.poll()
 
 
-def finish_answer_and_wake(state, uid):
+def finish_answer_and_followup(state, uid):
     p = state.pipeline
     p.on_playback_status('answer', 'playing', request_id=uid)
     p.on_playback_status('answer', 'finished', request_id=uid)
-    assert not p.session.active
-    state.now += .31  # Drain the chime and raw playback tails before calling again.
-    p.feed(VOICE * 4 + QUIET * 20)
-    wake = p.jobs.get_nowait()
-    assert wake[0] == 'wake'
-    reply(state, wake, '제이크야')
+    state.now += .31  # Drain the chime and raw playback tails before speaking again.
     assert p.session.active and p.session.utterance_id is None
 
 
@@ -121,7 +116,7 @@ def test_chime_echo_queue_and_tail_are_excluded_then_new_speech_is_accepted(run,
     p.feed(SECOND)
     assert p.session.utterance_id is None and not p.command_stream.collector.started
     assert not p.session.active and p._reply_request_id == job[2][0]
-    finish_answer_and_wake(run, job[2][0])
+    finish_answer_and_followup(run, job[2][0])
     p.feed(SECOND)
     assert p.session.utterance_id is not None
     assert p.command_stream.collector.audio == SECOND
@@ -157,7 +152,7 @@ def test_failed_output_preserves_transcript_and_releases_echo_gate(run):
     run.pipeline.feed(SECOND)
     assert not run.pipeline.command_stream.collector.started
     assert run.pipeline._reply_request_id == job[2][0]
-    finish_answer_and_wake(run, job[2][0])
+    finish_answer_and_followup(run, job[2][0])
     run.pipeline.feed(SECOND)
     assert run.pipeline.command_stream.collector.started
 
@@ -175,7 +170,7 @@ def test_feedback_drops_remaining_events_precomputed_from_the_same_pcm_chunk(run
     p.feed(SECOND)
     assert p.session.utterance_id is None and not p.command_stream.collector.started
     assert not p.session.active and p._reply_request_id == job[2][0]
-    finish_answer_and_wake(run, job[2][0])
+    finish_answer_and_followup(run, job[2][0])
     p.feed(SECOND)
     assert p.session.utterance_id is not None and p.command_stream.collector.audio == SECOND
 

@@ -898,6 +898,14 @@ def test_chime_tail_and_quality_guard_parameters_reach_pipeline(runtime, duratio
     assert runtime.pipeline_args['short_speech_guard'] is True
 
 
+@pytest.mark.parametrize('duration', [0.0, 10.0, 15.0])
+def test_followup_timeout_parameter_reaches_pipeline(runtime, duration):
+    runtime.parameters['followup_timeout_s'] = duration
+    assert main() == 0
+    assert runtime.calls['defaults']['followup_timeout_s'] == 10.0
+    assert runtime.pipeline_args['followup_timeout_s'] == duration
+
+
 @pytest.mark.parametrize('name,value', [
     ('chime_tail_s', -1), ('chime_tail_s', 3.1), ('chime_tail_s', float('nan')),
     ('chime_tail_s', float('inf')), ('chime_tail_s', True),
@@ -998,6 +1006,9 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
     ('endpoint_predecode_s', 1.01), ('endpoint_predecode_s', True),
     ('endpoint_predecode_s', float('nan')), ('endpoint_predecode_s', float('inf')),
     ('endpoint_predecode_s', None),
+    ('followup_timeout_s', -1), ('followup_timeout_s', True),
+    ('followup_timeout_s', None), ('followup_timeout_s', '10'),
+    ('followup_timeout_s', float('nan')), ('followup_timeout_s', float('inf')),
 ])
 def test_invalid_configuration_fails_before_local_models_or_microphone(runtime, parameter, value):
     runtime.parameters[parameter] = value
