@@ -33,9 +33,9 @@ DOWNSTREAM_REJECTED = 'Downstream Action server rejected the goal'
 NO_MAP = 'select a saved map first; only mapping is available'
 # No conversation server: speech is off (or failed at start). Waiting cannot help.
 SPEECH_UNAVAILABLE = 'Action server /malbut/agent/confirm_situation is unavailable'
-# Only part of the body was seen from 1 m (2026-10-11): ask the drive to move
-# back to where the 12 cm camera sees a seated person's head (about 2.5 m).
-VIEW_STANDOFF_M = 2.5
+# Only part of the body was seen from 1 m (2026-10-11): the drive moves until the
+# person's torso is in view (2026-10-13), at most this far from the spot.
+VIEW_MAX_M = 3.0
 
 
 class FallConfirmationLink:
@@ -382,7 +382,7 @@ class FallConfirmationLink:
             # Going back after waiting is the same 1 m look as the first approach.
             capability, arguments = 'fall_approach', dict(
                 request_id=request.request_id, phase='view' if kind == 'view' else 'approach',
-                x=x, y=y, standoff_m=VIEW_STANDOFF_M if kind == 'view' else 1.0)
+                x=x, y=y, standoff_m=VIEW_MAX_M if kind == 'view' else 1.0)
         else:
             capability, arguments = 'fall_confirmation', dict(
                 request_id=request.request_id, situation_type='fall', summary=request.summary)

@@ -74,13 +74,13 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 ## 몸 전체 보고 판단하기 (2026-10-11, 런치 `fall_full_view`, 기본 켜짐)
 
 카메라가 12 cm 높이라 침대에 걸터앉은 사람은 1 m 앞에서 다리만 보인다(10월 10일 20:43, 11일 03:39).
-근접 확인이 사람이면 몸 전체가 보이는 자리로 물러나 클라우드 AI에게 자세를 두 번 묻고, 두 번 다
-침대·의자 위이거나 서 있으면 묻지 않는다. 12 cm에서 올려다보면 허벅지가 엉덩이를 가려 Pose 관절로는
-가리기 어려워 Pose는 쓰지 않는다.
+근접 확인이 사람이면 몸통이 보일 때까지 옮겨 클라우드 AI에게 자세를 두 번 묻고, 두 번 다
+침대·의자 위이거나 서 있으면 묻지 않는다. 12 cm에서 올려다보면 허벅지가 엉덩이를 가려 Pose 관절로 자세를
+가리기 어려워 판단에는 Pose를 쓰지 않는다. 언제 멈출지(몸통이 화면에 들어왔는지)만 Pose로 본다(2026-10-13).
 
 ```
 person_check_completed
-  ├ partial_body(사람) → fall_approach(phase=view, standoff 2.5 m): 바라본 채 후진, 안 되면 의심 장소가 보이는 가장 가까운 자리
+  ├ partial_body(사람) → fall_approach(phase=view, standoff 최대 3 m): 몸통이 보이면 멈춤(바라본 채 후진, 안 되면 주변 자리), 끝까지 안 보이면 가장 잘 보인 자리
   │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
   └ posture_check_completed
        ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)

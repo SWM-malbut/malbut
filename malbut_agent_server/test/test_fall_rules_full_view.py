@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.fall_rules.fall_confirmation import CHECK_WAIT_S, POSTURE_WAIT_S
-from malbut_agent_server.fall_rules.fall_confirmation_link import VIEW_STANDOFF_M
+from malbut_agent_server.fall_rules.fall_confirmation_link import VIEW_MAX_M
 from test_fall_rules_approach import (  # noqa: F401
     approaching, finish, link, looked, scene, sent,
 )
@@ -88,7 +88,7 @@ def test_link_moves_to_the_view_then_drives_back_with_the_reason(link):  # noqa:
     link.on_event(SimpleNamespace(data=looked('partial_body')))
     goal = finish(link, 'arrived')
     assert goal == dict(capability='fall_approach', request_id='question', phase='view',
-                        x=2.5, y=1.0, standoff_m=VIEW_STANDOFF_M)
+                        x=2.5, y=1.0, standoff_m=VIEW_MAX_M)
     assert [d['action'] for d in sent(link)] == ['approach_result', 'view_result']
     link.on_event(SimpleNamespace(data=posture('sitting_off_floor')))
     goal = finish(link, 'returned')
