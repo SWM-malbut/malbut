@@ -1,4 +1,4 @@
-"""Opt-in Silero admission immediately before each actual Whisper model call.
+"""Installed Silero admission immediately before each actual Whisper model call.
 
 Only the command transcriber's model is wrapped; wake recognition keeps its
 original model. Each command input is checked independently, including cropped
@@ -7,6 +7,7 @@ accepted audio is passed on unchanged.
 """
 
 import hashlib
+from pathlib import Path
 from time import monotonic
 
 from malbut_stt.silero_vad import MODEL_SHA256, load_pinned_model
@@ -129,6 +130,12 @@ class _GatedModel:
 
 
 def from_environment(environ):
-    """An explicit invalid setup fails startup instead of silently disabling."""
-    path = environ.get(ENVIRONMENT_KEY, '').strip()
-    return SileroGate(path) if path else None
+    """Use the installed model by default; an explicit empty override disables it."""
+    if ENVIRONMENT_KEY in environ:
+        path = environ[ENVIRONMENT_KEY].strip()
+        return SileroGate(path) if path else None
+    cache = Path(environ.get('XDG_CACHE_HOME') or Path.home() / '.cache').expanduser()
+    path = cache / 'malbut_speech/models/silero-v6.2.3.onnx'
+    # Installation opts this robot in. Missing weights never trigger a download;
+    # present but invalid weights/runtime must fail instead of bypassing the gate.
+    return SileroGate(str(path)) if path.is_file() else None
