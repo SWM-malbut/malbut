@@ -587,6 +587,27 @@ function mapCommand(row: CommandRow) {
   };
 }
 
+/**
+ * A fall check holds the robot's speaker from the suspicion until its question
+ * ends, so the guardian's talk waits (the user, 2026-10-13). The way back does
+ * not hold it. Only a robot reporting now (the online rule) can hold it.
+ */
+export async function fallCheckHoldsSpeaker(deviceId: string) {
+  const state = await getD1()
+    .prepare("SELECT drive_mode_json, observed_at FROM robot_runtime_state WHERE device_id = ?")
+    .bind(deviceId)
+    .first<Pick<StateRow, "drive_mode_json" | "observed_at">>();
+  if (!state || Date.parse(state.observed_at) < Date.now() - ROBOT_ONLINE_MS) return false;
+  const detail = parseObject(state.drive_mode_json).detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return false;
+  const record = detail as Record<string, unknown>;
+  if (record.fall_check_active !== true) return false;
+  const check = record.fall_check;
+  const phase = check && typeof check === "object" && !Array.isArray(check)
+    ? (check as Record<string, unknown>).phase : null;
+  return phase !== "return";
+}
+
 function parseObject(value: string): Record<string, unknown> {
   const parsed = parseJson(value);
   return parsed && typeof parsed === "object" && !Array.isArray(parsed)

@@ -18,6 +18,8 @@ const messages = {
   // A Cloud-only scene: someone answered they were fine, but the robot cannot
   // tell them from the person seen down (2026-10-12 16:31, no alert at all).
   scene_answer_unconfirmed: ["check", "누군가 괜찮다고 답했지만, 쓰러진 분인지 확인하지 못했습니다. 상태를 확인해 주세요."],
+  // "그만/멈춰" during the check stops it like 직접 움직이기, without a question (2026-10-13).
+  check_stopped_by_user: ["check", "말벗이 확인하러 가던 중 '그만'이라는 말을 듣고 멈췄습니다. 상태를 확인해 주세요."],
   // Web-originated only; robots cannot request it (see app/fall-contract.ts).
   reopened_by_opinion: ["check", "처리 완료된 낙상 사건에 다른 의견이 달렸습니다. 다시 확인해 주세요."],
 };
@@ -26,7 +28,8 @@ export const WEB_ONLY_FALL_REASONS = ["reopened_by_opinion"];
 // the other robot reasons: a later 도움 요청 or revisit result must still go out
 // after "직접 확인하지 못함".
 export const PER_REASON_FALL_REASONS = ["robot_could_not_confirm", "revisit_same_person_off_floor",
-  "revisit_person_unclear_off_floor", "revisit_nobody_there", "scene_answer_unconfirmed"];
+  "revisit_person_unclear_off_floor", "revisit_nobody_there", "scene_answer_unconfirmed",
+  "check_stopped_by_user"];
 
 export function buildFallNotification(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;

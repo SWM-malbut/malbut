@@ -446,3 +446,34 @@ test("map screen: fall status does not gate mission requests outside the Manager
   // 순찰 멈춤 카드: 다시 가서 본 뒤 알림만 보냄.
   assert.match(panel, /"확인 결과: 보호자에게 알렸어요 · 원래 자리로 돌아왔어요"/);
 });
+
+test("contract: '그만' during the check stops it without a question and alerts once (check)", async () => {
+  // 2026-10-13: "그만/멈춰" ranks above the fall check like 직접 움직이기.
+  const load = moduleLoader();
+  const { parseFallEvent } = load("app/fall-contract.ts");
+  const { fallEventLabel } = load("app/fall-event-label.ts");
+  const stopped = event({ eventKind: "check_stopped", reason: "user_stop", state: "recheck_required",
+    answer: "failed" });
+  assert.ok(parseFallEvent(stopped));
+  assert.equal(parseFallEvent({ ...stopped, reason: "other" }), null);
+  assert.equal(fallEventLabel(stopped), "'그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)");
+  const alert = notCheckedAlert({ reason: "check_stopped_by_user", notificationLevel: "check", answer: "failed" });
+  assert.ok(parseFallEvent(alert));
+  assert.equal(parseFallEvent({ ...alert, notificationLevel: "urgent" }), null);
+  assert.equal(buildFallNotification({ deviceId: "robot-a", notificationId: alert.eventId,
+    incidentId: alert.incidentId, level: "check", reason: alert.reason, occurredAt: alert.occurredAt }).body,
+  "말벗이 확인하러 가던 중 '그만'이라는 말을 듣고 멈췄습니다. 상태를 확인해 주세요.");
+  await withRepo(async ({ h, events }) => {
+    const [opened, stop, notice, help] = journal([
+      ["incident_opened", "cloud_crosscheck"],
+      ["check_stopped", "user_stop", { state: "recheck_required", answer: "failed" }],
+      ["notification_requested", "check_stopped_by_user",
+        { state: "recheck_required", answer: "failed", notificationLevel: "check" }],
+      ["notification_requested", "help_requested",
+        { state: "help_required", answer: "help_request", notificationLevel: "urgent" }],
+    ]);
+    for (const e of [opened, stop, notice, help, notice]) await events.storeFallEvent("robot-a", e);
+    assert.deepEqual((await h.db.query("SELECT reason,status FROM fall_push_outbox ORDER BY reason")).rows
+      .map((r) => [r.reason, r.status]), [["check_stopped_by_user", "pending"], ["help_requested", "pending"]]);
+  });
+});

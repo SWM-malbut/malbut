@@ -5,6 +5,7 @@ import {
   userCanViewDevice,
 } from "../../../../../db/homecam";
 import { isValidClientId } from "../../../../../db/homecam-validation";
+import { fallCheckHoldsSpeaker } from "../../../../../db/robot-map";
 import { noStore } from "../../../../api-response";
 import { getRequestUserId } from "../../../../server-auth";
 
@@ -55,6 +56,14 @@ export async function POST(
       (typeof payload.leaseId !== "string" || !isUuid(payload.leaseId)))
   ) {
     return noStore({ error: "말하기 lease 형식을 확인해 주세요." }, 400);
+  }
+  if (await fallCheckHoldsSpeaker(deviceId)) {
+    // The fall check comes first, renewals included: a talk going on ends here.
+    return noStore(
+      { error: "낙상 확인 중이라 잠시 후에 말할 수 있어요.", code: "fall_check" },
+      409,
+      { "retry-after": "5" },
+    );
   }
   const lease = await acquireTalkLease({
     deviceId,
