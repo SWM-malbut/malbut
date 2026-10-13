@@ -467,6 +467,14 @@ PTT 재생을 닫는다. 종료 시 재생 버퍼를 비운 뒤 같은 lease의 
 오디오 장치 초기화나 버퍼 할당이 지연되어도 실제 재생 버퍼 전달 직전에
 허가를 다시 검사하고, 만료됐다면 버퍼를 폐기하고 재생 경로를 닫는다.
 STT 재시작 시에도 첫 3초를 차단하여 이전 프로세스의 허가가 남은 구간을 보호한다.
+보호자 목소리 재생 방식은 `ptt_playout_mode`로 고르고 실행 중에도 바꿀 수 있다(2026-10-13).
+- `arrival`(기본): 받는 대로 재생(`sync=false`), 2026-10-09 이전 방식. 실기에서 끊김이 없었다.
+- `scheduled`: 보낸 쪽 시각 + 0.12초에 맞춰 재생(`PlayoutSchedule`, 2026-10-09). 늦은 조각마다 시각표를
+  통째로 옮겨 0.1초가 넘는 빈칸이 생겼다("툭툭", 10-12~13 실기). 비교용으로만 남긴다.
+- `buffered`: 보낸 쪽 간격대로, `ptt_playout_delay_ms`(기본 300, 100~1000) 뒤에 재생(`BufferedPlayout`).
+  늦은 조각 하나는 버리고(20 ms), 5개 연속으로 늦거나 크게 건너뛸 때만 시각표를 다시 잡는다.
+- 말하는 동안 5초마다 `PTT 5s: mode=… delay=… frames=… dropped_late=… reanchored=… max_late=… max_gap=…`
+  로그를 남긴다. 예: `ros2 param set --no-daemon --spin-time 5 /homecam_media_agent ptt_playout_mode buffered`.
 웹 DB의 `0022_talk_lease_readiness` 적용과 새 인터페이스·STT·미디어 노드의
 동시 갱신이 필요하다. 준비 상태가 없으면 웹 말하기는 시작되지 않는다.
 현재 C SDK media callback 자체는

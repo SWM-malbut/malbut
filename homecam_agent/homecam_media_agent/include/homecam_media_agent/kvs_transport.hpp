@@ -155,6 +155,43 @@ private:
   std::int64_t last_ns_{-1};
 };
 
+// The guardian's voice through a small jitter buffer (2026-10-13). Played on
+// PlayoutSchedule, every frame arriving after its slot moved the whole timeline
+// delay_ns ahead, leaving that much silence: the "툭툭" heard from 10-09 on.
+// Here frames keep the sender's spacing delay_ns behind the first; a late frame
+// is dropped (a 20 ms hole), and only a run of late frames, a jump far ahead or
+// a new stream moves the timeline.
+class BufferedPlayout
+{
+public:
+  struct Plan
+  {
+    std::int64_t playout_ns{-1};  // Running time to hear it; -1 when dropped.
+    bool dropped{false};
+    bool reanchored{false};       // The timeline moved (not the first anchor).
+    std::int64_t late_ns{0};      // How late a late frame was.
+  };
+
+  explicit BufferedPlayout(std::int64_t delay_ns, int late_run_limit = 5);
+  Plan schedule(std::int64_t frame_ns, std::int64_t running_now_ns);
+  // A new delay applies from the next frame, on a new anchor.
+  void set_delay(std::int64_t delay_ns);
+  std::int64_t delay_ns() const {return delay_ns_;}
+  void reset();
+
+private:
+  Plan anchor(std::int64_t frame_ns, std::int64_t running_now_ns, Plan plan);
+
+  std::int64_t delay_ns_;
+  int late_run_limit_;
+  bool started_{false};
+  bool anchored_{false};
+  std::int64_t frame_anchor_ns_{0};
+  std::int64_t running_anchor_ns_{0};
+  std::int64_t last_ns_{-1};
+  int late_run_{0};
+};
+
 using PttAudioCallback = std::function<void (const EncodedFrame &)>;
 
 class KvsTransport

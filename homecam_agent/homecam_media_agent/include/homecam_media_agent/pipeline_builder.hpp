@@ -29,5 +29,9 @@ std::string build_video_pipeline(
 std::string build_audio_capture_pipeline(
   const MediaConfig & config, bool use_silent_audio, bool use_fake_sink);
 std::string build_audio_playback_pipeline(const MediaConfig & config);
+// Scheduled playback behind a jitter buffer (ptt_playout_mode=buffered).
+std::string build_buffered_audio_playback_pipeline(const MediaConfig & config);
+// The guardian's voice as it arrives, as before 2026-10-09 (ptt_playout_mode=arrival).
+std::string build_arrival_audio_playback_pipeline(const MediaConfig & config);
 
 }  // namespace homecam_media_agent

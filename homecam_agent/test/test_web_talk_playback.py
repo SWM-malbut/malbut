@@ -49,11 +49,31 @@ struct PlayoutSchedule {
     return running_now_ns + 120000000LL + frame_ns;
   }
 };
+enum class PttPlayout { kScheduled, kArrival, kBuffered };
+// The jitter buffer drops a frame marked late (frame time 13) and plays the rest 300 ms on.
+struct BufferedPlayout {
+  struct Plan { std::int64_t playout_ns{-1}; bool dropped{false}; bool reanchored{false};
+    std::int64_t late_ns{0}; };
+  std::int64_t delay{300000000LL};
+  void set_delay(std::int64_t value) { delay = value; }
+  Plan schedule(std::int64_t frame_ns, std::int64_t running_now_ns) {
+    Plan plan;
+    if (frame_ns == 13) { plan.dropped = true; return plan; }
+    plan.playout_ns = running_now_ns + delay + frame_ns;
+    return plan;
+  }
+};
 struct EncodedFrame { std::vector<std::uint8_t> payload{1, 2}; std::int64_t presentation_time_ns{0}; };
 struct Harness {
   std::mutex ptt_mutex_;
   std::atomic<bool> shutting_down_{false};
   std::atomic<std::int64_t> ptt_allowed_until_ns_{11400000000LL};
+  std::atomic<PttPlayout> ptt_mode_{PttPlayout::kScheduled};
+  PttPlayout ptt_pipeline_mode_{PttPlayout::kScheduled};
+  std::atomic<std::int64_t> ptt_delay_ns_{300000000LL};
+  BufferedPlayout ptt_buffer_;
+  int noted{0};
+  void note_ptt_frame_locked(const BufferedPlayout::Plan *) { ++noted; }
   GstElement *ptt_playback_pipeline_{nullptr}, *ptt_source_{nullptr};
   std::chrono::steady_clock::time_point next_ptt_retry_{};
   std::int64_t startup_completes_at{0};
@@ -66,6 +86,7 @@ struct Harness {
   }
   bool start_ptt_playback_locked() {
     static GstElement element;
+    ptt_pipeline_mode_ = ptt_mode_.load();
     ptt_playback_pipeline_ = ptt_source_ = &element;
     if (startup_completes_at) clock_ns = startup_completes_at;
     return true;
@@ -96,6 +117,23 @@ int main() {
   { Harness h; allocation_completes_at = 12100000000LL; h.push_ptt_audio(EncodedFrame{});
     check(pushed == 0 && h.ptt_source_ == nullptr, "allocation_passing_stt_expiry_never_pushes_audio");
     check(allocated == unreferenced, "allocation_expiry_releases_buffer"); }
+  reset();
+  { Harness h; h.ptt_mode_.store(PttPlayout::kArrival); EncodedFrame frame;
+    frame.presentation_time_ns = 40000000LL; h.push_ptt_audio(frame);
+    check(pushed == 1 && pushed_pts == 40000000LL, "arrival_mode_keeps_the_frame_time"); }
+  reset();
+  { Harness h; EncodedFrame frame; h.push_ptt_audio(frame);
+    h.ptt_mode_.store(PttPlayout::kArrival); h.push_ptt_audio(frame);
+    check(h.stopped == 1 && h.ptt_pipeline_mode_ == PttPlayout::kArrival && pushed == 2,
+          "switching_the_mode_rebuilds_playback_at_the_next_frame"); }
+  reset();
+  { Harness h; h.ptt_mode_.store(PttPlayout::kBuffered); h.ptt_delay_ns_.store(400000000LL);
+    EncodedFrame frame; frame.presentation_time_ns = 40000000LL; h.push_ptt_audio(frame);
+    check(pushed == 1 && pushed_pts == 5 + 400000000LL + 40000000LL,
+          "buffered_mode_plays_behind_the_set_delay");
+    frame.presentation_time_ns = 13; h.push_ptt_audio(frame);
+    check(pushed == 1 && allocated == 1, "buffered_mode_drops_a_late_frame_without_allocating");
+    check(h.noted == 2, "every_frame_is_counted_for_the_5s_line"); }
   return failed ? 1 : 0;
 }
 '''
