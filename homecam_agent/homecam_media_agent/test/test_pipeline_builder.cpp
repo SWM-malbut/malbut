@@ -11,6 +11,8 @@ using homecam_media_agent::build_audio_capture_pipeline;
 using homecam_media_agent::build_arrival_audio_playback_pipeline;
 using homecam_media_agent::build_buffered_audio_playback_pipeline;
 using homecam_media_agent::build_audio_playback_pipeline;
+using homecam_media_agent::build_ptt_playback_pipeline;
+using homecam_media_agent::PttPipelineOptions;
 using homecam_media_agent::build_video_pipeline;
 using homecam_media_agent::video_format_from_ros;
 using homecam_media_agent::video_format_matches;
@@ -133,3 +135,21 @@ TEST(PipelineBuilder, GuardianVoiceCanPlayAsItArrivesAsBefore)
   EXPECT_NE(pipeline.find(" sync=false"), std::string::npos);
   EXPECT_EQ(pipeline.find(" sync=true"), std::string::npos);
 }
+
+TEST(PipelineBuilder, GuardianVoiceConcealmentAndFecCanBeSwitched)
+{
+  // ptt_plc / ptt_fec (2026-10-13): each repair can be turned off to compare by ear.
+  MediaConfig config;
+  PttPipelineOptions options;
+  options.plc = false;
+  auto pipeline = build_ptt_playback_pipeline(config, options);
+  EXPECT_NE(pipeline.find("! opusdec ! "), std::string::npos);
+  options.plc = true;
+  options.fec = true;
+  options.queue_ns = 500'000'000;
+  pipeline = build_ptt_playback_pipeline(config, options);
+  EXPECT_NE(pipeline.find("opusdec plc=true use-inband-fec=true ! "), std::string::npos);
+  EXPECT_NE(pipeline.find("queue max-size-time=500000000"), std::string::npos);
+  EXPECT_NE(pipeline.find(" sync=true"), std::string::npos);
+}
+

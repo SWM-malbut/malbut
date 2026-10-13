@@ -228,6 +228,12 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  if(HOMECAM_HAVE_GSTREAMER)
+    # Listen to the guardian voice playout on a PC (2026-10-13); not installed.
+    add_executable(ptt_playout_sim tools/ptt_playout_sim.cpp)
+    target_link_libraries(ptt_playout_sim homecam_media_core ${HOMECAM_OPTIONAL_LIBRARIES})
+    target_include_directories(ptt_playout_sim PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+  endif()
   ament_add_gtest(test_media_config test/test_config.cpp)
   target_link_libraries(test_media_config homecam_media_core)
   ament_add_gtest(test_pipeline_builder test/test_pipeline_builder.cpp)

@@ -138,46 +138,46 @@ std::string build_audio_capture_pipeline(
          audio_sink(use_fake_sink);
 }
 
-std::string build_audio_playback_pipeline(const MediaConfig & config)
+std::string build_ptt_playback_pipeline(
+  const MediaConfig & config, const PttPipelineOptions & options)
 {
   // WebRTC delivers bare Opus packets without an OpusHead. GStreamer 1.20 opusdec
   // refuses such caps unless channel-mapping-family=0 says they are plain mono/stereo.
-  // Buffers carry their playout time (PlayoutSchedule), and the sink plays them
-  // on it instead of as they arrive; opusdec conceals a missing frame.
+  // Scheduled: buffers carry their playout time and the sink plays them on it.
+  // As they arrive: timestamped on arrival, the sink's own buffer absorbing jitter.
   return
-    "appsrc name=ptt_audio_source is-live=true block=false format=time "
+    std::string("appsrc name=ptt_audio_source is-live=true block=false format=time ") +
+    (options.scheduled ? "" : "do-timestamp=true ") +
     "caps=audio/x-opus,rate=48000,channels=1,"
     "channel-mapping-family=0 ! "
-    "queue max-size-time=500000000 leaky=downstream ! opusdec plc=true ! "
+    "queue max-size-time=" + std::to_string(options.queue_ns) + " leaky=downstream ! opusdec" +
+    (options.plc ? " plc=true" : "") + (options.fec ? " use-inband-fec=true" : "") + " ! "
     "audioconvert ! audioresample ! alsasink device=" +
-    quote_gst(config.audio_sink) + " sync=true";
+    quote_gst(config.audio_sink) + (options.scheduled ? " sync=true" : " sync=false");
+}
+
+std::string build_audio_playback_pipeline(const MediaConfig & config)
+{
+  // On PlayoutSchedule (2026-10-09); opusdec conceals a missing frame.
+  return build_ptt_playback_pipeline(config, PttPipelineOptions{});
 }
 
 std::string build_buffered_audio_playback_pipeline(const MediaConfig & config)
 {
-  // As the scheduled pipeline, with room for a jitter buffer of up to 1 s
-  // (ptt_playout_delay_ms) ahead of the sink.
-  return
-    "appsrc name=ptt_audio_source is-live=true block=false format=time "
-    "caps=audio/x-opus,rate=48000,channels=1,"
-    "channel-mapping-family=0 ! "
-    "queue max-size-time=1500000000 leaky=downstream ! opusdec plc=true ! "
-    "audioconvert ! audioresample ! alsasink device=" +
-    quote_gst(config.audio_sink) + " sync=true";
+  // Room for a jitter buffer of up to 1 s ahead of the sink.
+  PttPipelineOptions options;
+  options.queue_ns = 1'500'000'000;
+  return build_ptt_playback_pipeline(config, options);
 }
 
 std::string build_arrival_audio_playback_pipeline(const MediaConfig & config)
 {
-  // The pipeline before the playout schedule (2026-10-09): each frame is
-  // timestamped and played as it arrives, the sink's own buffer absorbing
-  // the jitter. Kept to compare by ear while the guardian's voice breaks up.
-  return
-    "appsrc name=ptt_audio_source is-live=true block=false format=time "
-    "do-timestamp=true caps=audio/x-opus,rate=48000,channels=1,"
-    "channel-mapping-family=0 ! "
-    "queue max-size-time=200000000 leaky=downstream ! opusdec ! "
-    "audioconvert ! audioresample ! alsasink device=" +
-    quote_gst(config.audio_sink) + " sync=false";
+  // The pipeline before the playout schedule (2026-10-09).
+  PttPipelineOptions options;
+  options.scheduled = false;
+  options.plc = false;
+  options.queue_ns = 200'000'000;
+  return build_ptt_playback_pipeline(config, options);
 }
 
 }  // namespace homecam_media_agent

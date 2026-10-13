@@ -49,17 +49,31 @@ struct PlayoutSchedule {
     return running_now_ns + 120000000LL + frame_ns;
   }
 };
-enum class PttPlayout { kScheduled, kArrival, kBuffered };
+enum class PttPlayout { kScheduled, kArrival, kBuffered, kAdaptive };
+struct PttFrameNote { bool dropped{false}, skipped{false}, reanchored{false}, concealed{false};
+  std::int64_t late_ns{0}, delay_ns{-1}, target_ns{-1}; };
 // The jitter buffer drops a frame marked late (frame time 13) and plays the rest 300 ms on.
 struct BufferedPlayout {
   struct Plan { std::int64_t playout_ns{-1}; bool dropped{false}; bool reanchored{false};
     std::int64_t late_ns{0}; };
   std::int64_t delay{300000000LL};
   void set_delay(std::int64_t value) { delay = value; }
+  std::int64_t delay_ns() const { return delay; }
   Plan schedule(std::int64_t frame_ns, std::int64_t running_now_ns) {
     Plan plan;
     if (frame_ns == 13) { plan.dropped = true; return plan; }
     plan.playout_ns = running_now_ns + delay + frame_ns;
+    return plan;
+  }
+};
+// The adaptive buffer plays 200 ms on; frame time 60 ms comes after two lost frames.
+struct AdaptivePlayout {
+  struct Plan { std::int64_t playout_ns{-1}; bool dropped{false}, skipped{false}, reanchored{false};
+    std::int64_t gap_start_ns{-1}, late_ns{0}, delay_ns{0}, target_ns{0}; };
+  Plan schedule(std::int64_t frame_ns, std::int64_t running_now_ns, std::size_t) {
+    Plan plan;
+    plan.playout_ns = running_now_ns + 200000000LL + frame_ns;
+    if (frame_ns == 60000000LL) plan.gap_start_ns = plan.playout_ns - 40000000LL;
     return plan;
   }
 };
@@ -71,9 +85,16 @@ struct Harness {
   std::atomic<PttPlayout> ptt_mode_{PttPlayout::kScheduled};
   PttPlayout ptt_pipeline_mode_{PttPlayout::kScheduled};
   std::atomic<std::int64_t> ptt_delay_ns_{300000000LL};
+  std::atomic<bool> ptt_plc_{true}, ptt_fec_{false};
+  bool ptt_pipeline_plc_{true}, ptt_pipeline_fec_{false};
   BufferedPlayout ptt_buffer_;
-  int noted{0};
-  void note_ptt_frame_locked(const BufferedPlayout::Plan *) { ++noted; }
+  AdaptivePlayout ptt_adaptive_;
+  int noted{0}, concealed{0};
+  std::int64_t gap_start{-1}, gap_duration{-1};
+  void note_ptt_frame_locked(const PttFrameNote & note) { ++noted; concealed += note.concealed; }
+  void send_ptt_gap_locked(std::int64_t start, std::int64_t duration) {
+    gap_start = start; gap_duration = duration;
+  }
   GstElement *ptt_playback_pipeline_{nullptr}, *ptt_source_{nullptr};
   std::chrono::steady_clock::time_point next_ptt_retry_{};
   std::int64_t startup_completes_at{0};
@@ -87,6 +108,7 @@ struct Harness {
   bool start_ptt_playback_locked() {
     static GstElement element;
     ptt_pipeline_mode_ = ptt_mode_.load();
+    ptt_pipeline_plc_ = ptt_plc_.load(); ptt_pipeline_fec_ = ptt_fec_.load();
     ptt_playback_pipeline_ = ptt_source_ = &element;
     if (startup_completes_at) clock_ns = startup_completes_at;
     return true;
@@ -134,6 +156,28 @@ int main() {
     frame.presentation_time_ns = 13; h.push_ptt_audio(frame);
     check(pushed == 1 && allocated == 1, "buffered_mode_drops_a_late_frame_without_allocating");
     check(h.noted == 2, "every_frame_is_counted_for_the_5s_line"); }
+  reset();
+  { Harness h; h.ptt_mode_.store(PttPlayout::kAdaptive); EncodedFrame frame;
+    frame.presentation_time_ns = 60000000LL; h.push_ptt_audio(frame);
+    check(pushed == 1 && pushed_pts == 5 + 200000000LL + 60000000LL,
+          "adaptive_mode_plays_at_the_planned_time");
+    check(h.gap_start == 5 + 200000000LL + 20000000LL && h.gap_duration == 40000000LL &&
+          h.concealed == 1, "adaptive_mode_conceals_frames_lost_before_it"); }
+  reset();
+  { Harness h; h.ptt_mode_.store(PttPlayout::kAdaptive); h.ptt_plc_.store(false);
+    EncodedFrame frame; frame.presentation_time_ns = 60000000LL; h.push_ptt_audio(frame);
+    check(pushed == 1 && h.gap_start == -1 && h.concealed == 0,
+          "turning_plc_off_leaves_lost_frames_silent"); }
+  reset();
+  { Harness h; h.ptt_mode_.store(PttPlayout::kAdaptive); EncodedFrame frame;
+    frame.presentation_time_ns = 60000000LL; allocation_completes_at = 12100000000LL;
+    h.push_ptt_audio(frame);
+    check(pushed == 0 && h.gap_start == -1, "expired_permission_sends_no_concealment"); }
+  reset();
+  { Harness h; EncodedFrame frame; h.push_ptt_audio(frame);
+    h.ptt_fec_.store(true); h.push_ptt_audio(frame);
+    check(h.stopped == 1 && h.ptt_pipeline_fec_ && pushed == 2,
+          "switching_fec_rebuilds_playback_at_the_next_frame"); }
   return failed ? 1 : 0;
 }
 '''

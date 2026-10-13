@@ -9,6 +9,7 @@
 using homecam_media_agent::AudioCaptureTimeline;
 using homecam_media_agent::EncodedFrame;
 using homecam_media_agent::KvsTimestampNormalizer;
+using homecam_media_agent::AdaptivePlayout;
 using homecam_media_agent::BufferedPlayout;
 using homecam_media_agent::PlayoutSchedule;
 using homecam_media_agent::SessionMode;
@@ -285,3 +286,81 @@ TEST(KvsTransport, BufferedPlayoutMovesOnlyForARunOfLateFramesAJumpOrANewDelay)
   EXPECT_FALSE(plan.reanchored);
   EXPECT_EQ(plan.playout_ns, 500'000'000);
 }
+
+namespace
+{
+constexpr std::int64_t kMs = 1'000'000;
+}  // namespace
+
+TEST(KvsTransport, AdaptivePlayoutStartsSafeThenFollowsTheMeasuredJitter)
+{
+  // 2026-10-13: a jitter buffer like voice apps use; the delay follows the jitter.
+  AdaptivePlayout playout;
+  auto plan = playout.schedule(0, 40 * kMs, 80);
+  EXPECT_EQ(plan.playout_ns, 190 * kMs);  // Arrival + 150 ms before anything is known.
+  EXPECT_FALSE(plan.reanchored);
+  // Two seconds of frames arriving 0 or 40 ms late: the 95th percentile is 40 ms.
+  for (int i = 1; i <= 100; ++i) {
+    plan = playout.schedule(i * 20 * kMs, i * 20 * kMs + 40 * kMs + (i % 2) * 40 * kMs, 80);
+  }
+  EXPECT_EQ(plan.target_ns, 70 * kMs);  // 40 ms of jitter plus a 30 ms margin.
+  EXPECT_FALSE(plan.dropped);
+}
+
+TEST(KvsTransport, AdaptivePlayoutShortensTheDelayOnQuietFramesOnly)
+{
+  AdaptivePlayout playout;
+  std::int64_t delay = 0;
+  int skipped = 0;
+  for (int i = 0; i < 200; ++i) {
+    // Steady arrival; every third frame is quiet (fewer bytes).
+    const auto plan = playout.schedule(i * 20 * kMs, i * 20 * kMs + 40 * kMs, i % 3 ? 90 : 60);
+    if (plan.skipped) {
+      ++skipped;
+      EXPECT_EQ(i % 3, 0) << "only a quiet frame is skipped";
+    }
+    delay = plan.delay_ns;
+  }
+  EXPECT_EQ(skipped, 4);
+  EXPECT_EQ(delay, 70 * kMs);  // 150 ms down to within 10 ms of the 60 ms floor, 20 ms at a time.
+}
+
+TEST(KvsTransport, AdaptivePlayoutDropsOneLateFrameAndMovesOnlyWhenLateAgain)
+{
+  AdaptivePlayout playout;
+  playout.schedule(0, 40 * kMs, 80);  // Plays at 190 ms; the timeline is frame + 190 ms.
+  auto plan = playout.schedule(20 * kMs, 260 * kMs, 80);  // Due at 210 ms.
+  EXPECT_TRUE(plan.dropped);
+  EXPECT_FALSE(plan.reanchored);
+  plan = playout.schedule(40 * kMs, 265 * kMs, 80);  // Due at 230 ms: late again.
+  EXPECT_TRUE(plan.reanchored);
+  EXPECT_GT(plan.playout_ns, 265 * kMs);
+}
+
+TEST(KvsTransport, AdaptivePlayoutReportsLostFramesStillAheadForConcealment)
+{
+  AdaptivePlayout playout;
+  playout.schedule(0, 40 * kMs, 80);   // Plays 190-210 ms.
+  playout.schedule(20 * kMs, 60 * kMs, 80);  // Plays 210-230 ms.
+  // Frames 40 and 60 ms were lost; 80 ms arrives in time for its slot (270 ms).
+  auto plan = playout.schedule(80 * kMs, 100 * kMs, 80);
+  EXPECT_EQ(plan.playout_ns, 270 * kMs);
+  EXPECT_EQ(plan.gap_start_ns, 230 * kMs);  // Conceal 230-270 ms before it.
+  // A long pause is silence, not loss: no concealment, the delay settles.
+  plan = playout.schedule(2'000 * kMs, 2'020 * kMs, 80);
+  EXPECT_EQ(plan.gap_start_ns, -1);
+}
+
+TEST(KvsTransport, AdaptivePlayoutNeverDelaysPastItsMaximum)
+{
+  AdaptivePlayout playout(60 * kMs, 600 * kMs);
+  playout.schedule(0, 40 * kMs, 80);
+  // The network stalls for 2 s: frames come late in a burst.
+  playout.schedule(20 * kMs, 2'100 * kMs, 80);
+  const auto plan = playout.schedule(40 * kMs, 2'100 * kMs, 80);
+  EXPECT_TRUE(plan.reanchored);
+  EXPECT_LE(plan.delay_ns, 600 * kMs);
+  // A new stream on an unrelated timeline starts over.
+  EXPECT_TRUE(playout.schedule(5, 3'000 * kMs, 80).reanchored);
+}
+
