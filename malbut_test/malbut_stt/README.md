@@ -201,7 +201,8 @@ whisper.cpp ABI 4 연결부는 `decode_result.native_decode.windows`에 실제 �
 
 선택적으로 `MALBUT_STT_SILERO_GATE_MODEL=/absolute/path/to/silero-v6.2.3.onnx`를
 설정하면 실제 Whisper 호출 직전에 Silero 검사를 수행합니다. 점수 0.5 이상의 음성이
-연속 80ms 미만이면 호출어·중간·최종 인식 모두 Whisper에 보내지 않습니다.
+연속 80ms 미만이면 일반 발화의 중간·최종 인식 입력을 Whisper에 보내지 않습니다.
+호출어 인식은 Silero 차단에서 제외하고 기존 WebRTC·Whisper 경로를 유지합니다.
 통과한 오디오는 원본 그대로 전달하며, `MALBUT_STT_SHADOW_VAD_MODEL` 관찰 모드와는
 별개입니다. 짧거나 작은 목소리가 거절될 수 있으므로 실제 마이크 시험이 필요합니다.
 설치·활성화·로그·오류 동작은 [Silero 적용 안내](tools/README_VAD.md)를 확인하세요.

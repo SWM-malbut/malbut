@@ -2,9 +2,11 @@
 
 ## Block non-speech before Whisper (optional)
 
-The admission gate checks the actual PCM window immediately before every
-Whisper model call: wake recognition, incremental previews, endpoint checks,
-final decoding and incremental recovery. It uses the pinned Silero model below,
+The admission gate checks the actual PCM window immediately before command
+Whisper model calls: incremental previews, endpoint checks, final decoding and
+incremental recovery. Wake recognition bypasses this gate and retains its
+existing WebRTC/Whisper path, including when it shares the command model's
+underlying Whisper instance. It uses the pinned Silero model below,
 CPU execution with one inference thread, probability >=0.5 and at least 80ms of
 consecutive positive input. At the 32ms frame grid this normally needs three
 positive frames (96ms). Padding never counts toward the required duration.

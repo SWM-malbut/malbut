@@ -387,7 +387,7 @@ def test_explicit_missing_silero_gate_fails_before_whisper_or_microphone(runtime
 
 
 @pytest.mark.parametrize('shared', [False, True])
-def test_silero_gate_wraps_both_wake_and_command_outside_diagnostics(
+def test_silero_gate_wraps_only_command_outside_diagnostics(
         runtime, monkeypatch, tmp_path, shared):
     from malbut_stt.silero_gate import _GatedModel
 
@@ -401,9 +401,9 @@ def test_silero_gate_wraps_both_wake_and_command_outside_diagnostics(
     def spin():
         command = runtime.pipeline_args['transcriber'].model
         wake = runtime.pipeline_args['wake'].model
-        assert isinstance(command, _GatedModel) and isinstance(wake, _GatedModel)
-        assert (wake is command) is shared
-        assert command._gate is wake._gate
+        assert isinstance(command, _GatedModel) and not isinstance(wake, _GatedModel)
+        assert (wake is command._model) is shared
+        assert wake.__class__.__name__ == '_DiagnosticModel'
         assert command._model.__class__.__name__ == '_DiagnosticModel'
         raise KeyboardInterrupt
 

@@ -181,24 +181,27 @@ def pipeline(gate):
     states = []
 
     def create(*, active=True, text='네', streaming=True):
-        state = SimpleNamespace(calls=[], transcripts=[], partials=[], reports=[], sink=Sink())
+        state = SimpleNamespace(
+            now=0., calls=[], transcripts=[], partials=[], reports=[], sink=Sink())
 
         def decode(audio, **options):
             state.calls.append((audio.copy(), options))
             return iter([SimpleNamespace(text=text, start=0., end=.08)]), SimpleNamespace()
 
         transcriber = LocalWhisperTranscriber.__new__(LocalWhisperTranscriber)
-        transcriber.model = gate.wrap_model(SimpleNamespace(transcribe=decode), state.sink)
+        transcriber.model = SimpleNamespace(transcribe=decode)
+        wake = LocalWakeRecognizer.from_transcriber(transcriber)
+        transcriber.model = gate.wrap_model(transcriber.model, state.sink)
         if not streaming:
             transcriber.create_stream = None
         p = DialoguePipeline(
-            recorder_factory=lambda: None, wake=LocalWakeRecognizer.from_transcriber(transcriber),
+            recorder_factory=lambda: None, wake=wake,
             transcriber=transcriber, is_speech=lambda frame, _: frame == VOICE,
             publish_transcript=lambda *args: state.transcripts.append(args),
             publish_control=lambda *_: None, publish_interruption=lambda *_: None,
             report=state.reports.append, on_partial=lambda *args: state.partials.append(args),
             diagnostics=state.sink, on_wake=lambda: None, on_failure=lambda: None,
-            clock=lambda: 0., endpoint_predecode_s=.8,
+            clock=lambda: state.now, endpoint_predecode_s=.8,
         )
         if active:
             p.session.activate()
@@ -234,11 +237,18 @@ def test_nonspeech_endpoint_and_final_release_busy_without_decoding(pipeline, st
     assert p.start_session('next-turn')
 
 
-def test_wake_input_is_gated_too(pipeline):
+def test_wake_bypasses_silero_but_next_command_is_still_gated(pipeline, gate):
     state = pipeline(active=False, text='제이크야')
     state.pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(state, lambda: state.pipeline.session.active)
+    assert len(state.calls) == 1 and gate.model.resets == 0
+    assert state.calls[0][1]['initial_prompt'] == '로봇 이름은 제이크입니다.'
+    assert not any(row['event'].startswith('silero_gate') for row in state.sink.events)
+    state.now = .31  # Existing acknowledgement tail has ended.
+    state.pipeline.feed(VOICE * 4 + QUIET * 100)
     pump(state, lambda: 'transcription_failed:SileroNonSpeech' in state.reports)
-    assert not state.calls and not state.pipeline.session.active
+    assert len(state.calls) == 1 and gate.model.resets > 0
+    assert not state.transcripts and not state.pipeline.session.active
 
 
 @pytest.mark.parametrize('text', ['네', '아니요', '구독과 좋아요 부탁드려요!'])
