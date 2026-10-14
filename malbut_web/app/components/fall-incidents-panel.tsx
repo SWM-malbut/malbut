@@ -110,7 +110,9 @@ function looking(i: IncidentSummary) {
 function title(i: IncidentSummary) {
   if (i.origin === "user_report") return "놓친 낙상 신고";
   if (i.category === "off_floor") {
-    return i.approach?.reason === "standing" ? "말벗이 확인: 서 있음" : "말벗이 확인: 침대나 의자에 앉아 있음";
+    return i.approach?.reason === "standing" ? "말벗이 확인: 서 있음"
+      : i.approach?.reason === "active_on_floor" ? "말벗이 확인: 바닥에 앉아 활동 중"
+        : "말벗이 확인: 침대나 의자에 앉아 있음";
   }
   if (looking(i)) return "말벗이 확인하는 중";
   return i.fallSeen || i.assessment === "observed_fall" ? "낙상" : "낙상 의심";
@@ -167,7 +169,8 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
   if (i.category === "not_person") list.push(["is-neutral", "처리 완료"], ["is-neutral", "사람 아님"]);
   if (i.category === "off_floor") {
-    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.approach?.reason === "standing" ? "서 있음" : "앉아 있음"]);
+    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.approach?.reason === "standing" ? "서 있음"
+      : i.approach?.reason === "active_on_floor" ? "바닥에서 활동 중" : "앉아 있음"]);
   }
   if (i.category === "report") list.push(["is-report", "사용자 신고"], ["is-neutral", "자동 감지 아님"]);
   if (i.reviewState === "closed") list.push(["is-neutral", "처리 완료"]);

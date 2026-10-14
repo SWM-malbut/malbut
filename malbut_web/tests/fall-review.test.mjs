@@ -135,6 +135,31 @@ test("robot not-a-person closure is 처리 완료 without reminders; a fall opin
   });
 });
 
+test("sitting up busy on the floor closes like off the floor (2026-10-14)", async () => {
+  await withRepo(async ({ events, review }) => {
+    const incidentId = randomUUID();
+    const steps = [
+      { eventKind: "incident_opened", assessment: "suspected_fall" },
+      { eventKind: "posture_check_completed", assessment: "suspected_fall", reason: "active_on_floor",
+        analysis: { requestId: "posture-1", purpose: "posture_check", assessment: "normal_activity",
+          explanation: "좌식 책상 앞에 바르게 앉아 글을 쓰고 있습니다." } },
+      { eventKind: "incident_resolved", state: "resolved", assessment: "suspected_fall",
+        reason: "floor_activity_verified" },
+    ];
+    for (const [index, change] of steps.entries()) {
+      await events.storeFallEvent("robot-a", event({ incidentId, sequence: index + 1, occurredAt: at(index * 1000),
+        ...change }));
+    }
+    const detail = await review.getFallIncidentDetail("robot-a", incidentId);
+    assert.equal(detail.category, "off_floor");
+    assert.equal(detail.needsCheck, false);
+    assert.deepEqual(detail.approach, { kind: "posture_check_completed", reason: "active_on_floor" });
+    const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
+    assert.deepEqual(await ids("closed"), [incidentId]);
+    assert.ok(!(await ids("all")).includes(incidentId));
+  });
+});
+
 test("off-floor closure shows only under 처리 완료, never asks or reminds; a fall opinion reopens it", async () => {
   await withRepo(async ({ h, events, review }) => {
     const incidentId = randomUUID();

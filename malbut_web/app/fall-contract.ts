@@ -29,8 +29,9 @@ const approachReasons: Record<string, Array<string | null>> = {
   approach_returned: ["returned", "return_failed"],
   view_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
   // Off the floor only when the robot's measurement and Cloud agree; anything else asks.
-  posture_check_completed: ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
-    "posture_unconfirmed"],
+  // active_on_floor: sitting up busy on the floor, seen twice, no fall seen (2026-10-14).
+  posture_check_completed: ["sitting_off_floor", "standing", "active_on_floor", "on_floor", "body_unseen",
+    "judgements_differ", "posture_unconfirmed"],
   check_waiting: ["manual_drive", "busy"],
   check_not_confirmed: ["waited_manual_drive", "waited_busy"],
   revisit_started: ["manual_drive", "busy"],
@@ -40,7 +41,7 @@ const approachReasons: Record<string, Array<string | null>> = {
 };
 // A robot-side closure after its own check. Never a normal-activity judgment.
 const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person",
-  "off_floor_verified",
+  "off_floor_verified", "floor_activity_verified",
   // A member pressed 처리 완료 and the robot stopped trying (state response closedFallIncidents).
   "guardian_closed"];
 // The Cloud explanation each event may carry.
