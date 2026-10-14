@@ -22,9 +22,10 @@ CHECK_WAIT_S = 15.0
 PERSON_CHECK_REASONS = {'person', 'not_a_person', 'partial_body', 'nobody_there'}
 # Where the whole body rests (fall_full_view): two Cloud looks a few seconds apart.
 POSTURE_WAIT_S = 60.0
-POSTURE_REASONS = {'sitting_off_floor', 'standing', 'on_floor', 'body_unseen',
+POSTURE_REASONS = {'sitting_off_floor', 'standing', 'active_on_floor', 'on_floor', 'body_unseen',
                    'judgements_differ', 'posture_unconfirmed'}
-OFF_FLOOR_REASONS = {'sitting_off_floor', 'standing'}
+# No question: off the floor, or sitting up busy on it (2026-10-14).
+OFF_FLOOR_REASONS = {'sitting_off_floor', 'standing', 'active_on_floor'}
 # A fall check yields to 직접 움직이기 and waits out another job (2026-10-12): the
 # Manager refuses or interrupts the step, and the same step goes again a second
 # later. Only that waiting is counted, never a drive, a look or a question in

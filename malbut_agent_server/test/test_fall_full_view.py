@@ -30,6 +30,7 @@ ON_BED = PostureCheckReply('furniture', '침대 가장자리에 걸터앉아 있
 STANDS = PostureCheckReply('standing', '두 발로 서 있습니다.')
 FLOOR = PostureCheckReply('floor', '바닥에 무릎을 꿇고 있습니다.')
 UNCLEAR = PostureCheckReply('unclear', '엉덩이가 가려져 있습니다.')
+BUSY = PostureCheckReply('floor_active', '좌식 책상 앞에 바르게 앉아 글을 쓰고 있습니다.')
 
 
 class Viewer(Looker):
@@ -131,6 +132,9 @@ def test_both_looks_off_the_floor_close_it(answers, reason):
     ([ON_BED, FLOOR], 'on_floor', 2),
     ([ON_BED, UNCLEAR], 'posture_unconfirmed', 2),
     ([STANDS, CloudFallProviderError('cloud_timeout')], 'posture_unconfirmed', 2),
+    ([BUSY, FLOOR], 'on_floor', 2),
+    ([BUSY, UNCLEAR], 'posture_unconfirmed', 2),
+    ([BUSY, ON_BED], 'posture_unconfirmed', 2),  # On the floor once, off it once.
 ])
 def test_anything_short_of_two_off_floor_looks_asks(answers, reason, calls):
     monitor, clock, provider, question = setup()
@@ -142,6 +146,46 @@ def test_anything_short_of_two_off_floor_looks_asks(answers, reason, calls):
     assert ('posture_check_completed', reason) in kinds(events)
     assert len(provider.postures) == calls
     assert monitor.incident(question.incident_id).state is not IncidentState.RESOLVED
+
+
+def test_sitting_up_busy_on_the_floor_seen_twice_is_not_asked():
+    # 2026-10-14: someone studying at a low table was asked every time.
+    monitor, clock, provider, question = setup()
+    provider.answers = [BUSY, BUSY]
+    legs_only(monitor, clock)
+    monitor.drain_events()
+    view(monitor, question)
+    looks(monitor, clock, 2)
+    events = monitor.drain_events()
+    assert kinds(events) == [('view_completed', 'arrived'),
+                             ('posture_check_completed', 'active_on_floor'),
+                             ('incident_resolved', 'floor_activity_verified')]
+    assert events[1].analysis.explanation == '좌식 책상 앞에 바르게 앉아 글을 쓰고 있습니다.'
+    incident = monitor.incident(question.incident_id)
+    assert incident.close_reason == 'floor_activity_verified'
+    assert question.incident_id in monitor._cleared_places  # Not asked again there for now.
+    assert not any(e.kind == 'notification_requested' for e in events)
+
+
+def test_busy_on_the_floor_still_asks_after_a_fall_was_seen():
+    monitor, clock, provider, question = setup()
+    monitor._incidents[question.incident_id].fall_seen = True
+    provider.answers = [BUSY]
+    legs_only(monitor, clock)
+    view(monitor, question)
+    looks(monitor, clock, 1)
+    assert ('posture_check_completed', 'on_floor') in kinds(monitor.drain_events())
+    assert len(provider.postures) == 1
+
+
+def test_busy_on_the_floor_still_asks_on_a_revisit():
+    monitor, clock, provider, question = setup()
+    provider.answers = [BUSY]
+    legs_only(monitor, clock)
+    monitor._person_checks[question.incident_id].revisit = True
+    view(monitor, question)
+    looks(monitor, clock, 1)
+    assert ('posture_check_completed', 'on_floor') in kinds(monitor.drain_events())
 
 
 @pytest.mark.parametrize('outcome', ['no_path', 'timeout', 'rejected'])
@@ -210,7 +254,8 @@ def test_posture_check_wire_is_the_narrow_prompt_and_a_strict_reply():
                                                   model='gemma'))
     assert body['messages'][0]['content'] == POSTURE_CHECK_PROMPT
     assert len(body['messages'][1]['images']) == 2
-    for verdict in ('furniture', 'standing', 'floor', 'unclear'):
+    assert 'floor_active: the person sits upright on the floor' in POSTURE_CHECK_PROMPT
+    for verdict in ('furniture', 'standing', 'floor_active', 'floor', 'unclear'):
         assert parse_posture_check(response(json.dumps(
             dict(verdict=verdict, explanation='설명')))).verdict == verdict
     for bad in (dict(verdict='raised', explanation='x'), dict(verdict='sitting', explanation='x'),

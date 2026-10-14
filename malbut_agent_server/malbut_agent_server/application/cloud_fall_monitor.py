@@ -75,8 +75,8 @@ SAME_PLACE_CASE_S = 120.0
 # only for a fall seen happening (the user, 2026-10-12). Standing up there ends
 # it, and this bounds it.
 CLEARED_PLACE_MAX_S = 1800.0
-CLEARED_REASONS = frozenset({'off_floor_verified', 'normal_verified', 'not_a_person',
-                             'risk_cleared', 'response_completed'})
+CLEARED_REASONS = frozenset({'off_floor_verified', 'floor_activity_verified', 'normal_verified',
+                             'not_a_person', 'risk_cleared', 'response_completed'})
 # A body resting higher than this is on a bed or sofa, not on the floor: the
 # 30 cm the Pose detector already applies to the torso (maximum_floor_height_m).
 # 2026-10-09: a person lying on the bed became a Cloud scene case every minute.
@@ -96,6 +96,12 @@ POSTURE_SETTLE_S = 1.0
 POSTURE_GAP_S = 2.5
 OFF_FLOOR_LOOKS = frozenset({'furniture', 'standing'})
 OFF_FLOOR_REASONS = frozenset({'sitting_off_floor', 'standing'})
+# 2026-10-14 (the user): someone studying at a low table on the floor was asked
+# every time, since sitting on the floor counted as floor. Sitting upright and
+# busy (reading, writing, eating...) twice closes without asking too, but only
+# when no fall was seen and not on a revisit; anything else on the floor asks.
+FLOOR_ACTIVE_LOOK = 'floor_active'
+FLOOR_ACTIVE_REASON = 'active_on_floor'
 # The robot could not ask for a minute (2026-10-12): it goes back to the spot and
 # looks again, but never closes the case itself; the guardian does. What it saw
 # goes to the guardian, compared by clothing with the first scene for reference.
@@ -1301,9 +1307,13 @@ class CloudFallMonitor:
         except Exception:
             reply = None  # Unclear or failed: ask rather than close.
         verdict = reply.verdict if isinstance(reply, PostureCheckReply) else None
+        incident = self._incidents.get(iid)
+        calm = verdict in OFF_FLOOR_LOOKS or (
+            verdict == FLOOR_ACTIVE_LOOK and not check.revisit
+            and incident is not None and not incident.fall_seen)
         analysis = None
         if verdict is not None:
-            seen = (VideoAssessment.NORMAL_ACTIVITY if verdict in OFF_FLOOR_LOOKS
+            seen = (VideoAssessment.NORMAL_ACTIVITY if calm
                     else VideoAssessment.SUSPECTED_FALL)
             try:
                 analysis = CloudAnalysisExplanation(
@@ -1311,16 +1321,21 @@ class CloudFallMonitor:
             except (ValueError, TypeError, UnicodeError):
                 analysis = None
         check.looks += (verdict or 'failed',)
-        if verdict in OFF_FLOOR_LOOKS and len(check.looks) < 2:
+        if calm and len(check.looks) < 2:
             # One look is not enough to skip the question: look again on new frames.
             check.cloud, check.asked = False, False
             check.deadline = self._now() + POSTURE_GAP_S
             return True
-        if verdict in OFF_FLOOR_LOOKS:
+        if calm and all(v in OFF_FLOOR_LOOKS for v in check.looks):
             reason = ('standing' if all(v == 'standing' for v in check.looks)
                       else 'sitting_off_floor')
+        elif calm and all(v == FLOOR_ACTIVE_LOOK for v in check.looks):
+            reason = FLOOR_ACTIVE_REASON
+        elif calm:
+            reason = 'posture_unconfirmed'  # Off the floor once, on it once: ask.
         else:
-            reason = 'on_floor' if verdict == 'floor' else 'posture_unconfirmed'
+            reason = ('on_floor' if verdict in ('floor', FLOOR_ACTIVE_LOOK)
+                      else 'posture_unconfirmed')
         self._finish_posture_check(iid, reason, analysis)
         return True
 
@@ -1336,7 +1351,7 @@ class CloudFallMonitor:
                        reason=reason, analysis=analysis)
             self._compare_later(iid, check.question_id, reason in OFF_FLOOR_REASONS)
             return
-        if reason in OFF_FLOOR_REASONS:
+        if reason in OFF_FLOOR_REASONS or reason == FLOOR_ACTIVE_REASON:
             if self._active_incident == iid:
                 reason = 'posture_unconfirmed'  # Its analysis is in flight: ask instead.
             else:
@@ -1351,6 +1366,8 @@ class CloudFallMonitor:
                    reason=reason, analysis=analysis)
         if reason in OFF_FLOOR_REASONS:
             self.resolve(iid, revision=incident.revision, reason='off_floor_verified')
+        elif reason == FLOOR_ACTIVE_REASON:
+            self.resolve(iid, revision=incident.revision, reason='floor_activity_verified')
 
     async def _cloud_person_check(self, iid, check):
         check.asked = True
@@ -1744,7 +1761,7 @@ class CloudFallMonitor:
         """Only a verified fusion/operator decision may call this boundary."""
         incident = self._incidents[incident_id]
         if reason not in {'normal_verified', 'risk_cleared', 'response_completed', 'not_a_person',
-                          'off_floor_verified'}:
+                          'off_floor_verified', 'floor_activity_verified'}:
             raise ValueError('verified closure reason required')
         if (revision != incident.revision or incident.pending
                 or self._active_incident == incident_id):
