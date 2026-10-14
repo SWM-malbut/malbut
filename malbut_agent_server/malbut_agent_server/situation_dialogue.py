@@ -13,6 +13,9 @@ MAX_REQUEST_ID_LENGTH = 200
 MAX_SITUATION_TYPE_LENGTH = 100
 MAX_QUESTION_LENGTH = 600
 MAX_CLARIFICATIONS = 2
+FALL_CONFIRMATION_QUESTION = (
+    '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?'
+)
 
 
 def _text(value, name, limit, *, allow_empty=False):
@@ -257,6 +260,8 @@ class MockSituationProvider:
                               else '지금 어떤 상황인지 말씀해 주시겠어요?')
         help_question = '지금 괜찮으신가요? 도움이 필요하신가요?'
         if context.answer is None:
+            if context.request.situation_type in ('fall', '낙상'):
+                situation_question = FALL_CONFIRMATION_QUESTION
             return SituationInterpretation('unknown', None, situation_question)
         normalized = ''.join(context.answer.split()).rstrip('.!?。！？')
         established = context.situation_assessment

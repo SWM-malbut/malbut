@@ -199,11 +199,16 @@ def test_fixed_confirmation_speech_selects_file_only_when_enabled(rig, audio_id,
 
 @pytest.mark.parametrize('rig', [True, False], indirect=True)
 def test_user_rest_resolves_and_reports_before_closing_playback(rig):
+    from malbut_agent_server.mission_audio import CATALOG
+
     handle = rig.start('rest-confirmation')
     assert handle.accepted
     rig.spin_until(lambda: rig.agent.situation._session.phase == 'listening')
     assert rig.controls[0].command == 'stop_all'
     assert rig.spoken[0].request_type == SpeechRequest.CONFIRMATION
+    assert rig.spoken[0].text == CATALOG['situation.fall.confirmation']
+    assert rig.spoken[0].audio_id == (
+        'situation.fall.confirmation' if rig.prerecorded_audio else '')
     assert not rig.agent.say('일반 대화 답변')
     result = handle.get_result_async()
     rig.finish = False

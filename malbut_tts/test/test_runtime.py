@@ -829,6 +829,38 @@ def test_invalid_pending_limits_are_rejected_before_starting_workers(option, val
 START = 'function.get_weather.starting'
 
 
+def test_bundled_fall_question_finishes_without_calling_unavailable_api():
+    import numpy as np
+
+    from malbut_tts.api_synthesis import ApiTtsError
+    from malbut_tts.prerecorded import PrerecordedAudio
+
+    class UnavailableApi(FakeSynthesizer):
+        def generate(self, text, cancel_event):
+            self.texts.append(text)
+            raise ApiTtsError('timeout')
+
+    synth = UnavailableApi()
+    h = Harness(synth=synth, prerecorded=PrerecordedAudio())
+    try:
+        pid = h.runtime.submit(
+            '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?',
+            CONFIRMATION, audio_id='situation.fall.confirmation',
+        )
+        player = h.active(pid)
+        assert player.finishing.wait(3)
+        assert synth.texts == []
+        assert all(rate == 24000 for _, rate in player.audio)
+        pcm = np.concatenate([audio for audio, _ in player.audio])
+        assert pcm.size > 24000 and np.any(pcm)
+        assert (pid, 'finished') not in h.events
+        player.drain.set()
+        h.wait(pid, 'finished')
+        assert (pid, 'failed') not in h.events
+    finally:
+        h.runtime.close()
+
+
 @pytest.mark.parametrize('waiting', [
     'conversation.delay', 'conversation.model_retry', 'conversation.weather_retry',
 ])
