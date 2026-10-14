@@ -604,13 +604,14 @@ class SamePersonCheckReply:
 
 @dataclass(frozen=True)
 class PostureCheckReply:
-    """furniture: on a bed, chair or sofa; standing; floor: sitting, kneeling or lying on it."""
+    """furniture: on a bed, chair or sofa; standing; floor_active: sitting upright on the
+    floor, busy with something; floor: otherwise sitting, kneeling or lying on it."""
 
     verdict: str
     explanation: str
 
     def __post_init__(self):
-        if (self.verdict not in ('furniture', 'standing', 'floor', 'unclear')
+        if (self.verdict not in ('furniture', 'standing', 'floor_active', 'floor', 'unclear')
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):
             raise ValueError('invalid posture check reply')

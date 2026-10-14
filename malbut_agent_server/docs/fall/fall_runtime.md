@@ -98,7 +98,8 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   (`observed_fall`)는 그대로 따로 연다. 사건 자리는 확인 자리(`revisit_target`·`approach_target`) → 지금 Pose
   위치 → 마지막 후보 때 위치 순으로 쓴다.
 - "바닥 아님"으로 닫고 돌아온 뒤, 멀리서 앉은 사람을 Pose가 누운 자세로 읽어 다시 열었다. 이제 말벗이 낙상이
-  아니라고 확인한 자리(`off_floor_verified`, `normal_verified`, `not_a_person`, 괜찮다는 대답)는 기억한다.
+  아니라고 확인한 자리(`off_floor_verified`, `floor_activity_verified`, `normal_verified`, `not_a_person`,
+  괜찮다는 대답)는 기억한다.
   그 자리 1 m 안에서는 Pose의 쓰러져 있음(`candidate_rejected` `cleared_place`)과 Cloud의 의심
   (`cloud_discovery` `cleared_place`)으로 사건을 열지 않는다. 넘어지는 동작(Pose `motion_seen`, Cloud
   `observed_fall`)이면 평소처럼 열고 그 자리를 잊는다. 그 자리에서 선 사람이 보이거나(Pose `clear`) 30분이
@@ -113,6 +114,12 @@ Cloud의 `box_2d=[top,left,bottom,right]`(0~1000 정수)를 검사한 뒤,
   `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 `sitting_off_floor`(둘 다
   `standing`이면 `standing`)로 `incident_resolved(off_floor_verified)`. `floor`는 `on_floor`, 애매·실패·차단은
   `posture_unconfirmed`, 옮기지 못하면 `body_unseen`. 닫히지 않으면 지금처럼 묻는다.
+- 바닥에서 활동 중(2026-10-14): 좌식 책상에서 공부하는 사람이 바닥에 앉았다는 이유로 매번 질문을 받았다. 자세 확인에
+  `floor_active`(바닥에 바르게 앉아 읽기·쓰기·먹기 같은 일을 하고 있음)를 더했다. 두 번 다 `floor_active`이고,
+  넘어지는 장면을 못 봤고(`fall_seen` 아님), 다시 가서 보기(revisit)가 아닐 때만 `active_on_floor`로
+  `incident_resolved(floor_activity_verified)`. 그 밖의 `floor_active`는 `on_floor`(묻기), 한 번은 바닥 위·한 번은
+  바닥 아님이면 `posture_unconfirmed`다. 녹화 2초 구간 비교: 바닥 활동 7개는 `floor`→`floor_active`, 넘어진 뒤 앉음·
+  기댐·누움과 누워서 노트북 보기 8개는 `floor` 그대로(각 2번).
 - Pose 관절·몸통 높이는 쓰지 않는다. 12 cm에서 올려다보면 앉은 사람의 허벅지가 엉덩이를 가린다.
 - 웹 계약(#235)이 먼저 배포돼 있어야 한다. 로그 `fall posture: case … Cloud looks …: 이유`로 판단을 확인한다.
 

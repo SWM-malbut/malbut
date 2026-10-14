@@ -84,6 +84,7 @@ person_check_completed
   │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
   └ posture_check_completed
        ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
+       ├ active_on_floor(바닥에서 활동 중) → 질문 없음. 런타임이 floor_activity_verified로 종료 → return(reason=off_floor)
        ├ on_floor · body_unseen · posture_unconfirmed → 1 m로 다시 다가감 → fall_confirmation
        └ 60초 안에 답 없음 → 1 m로 다시 다가감 → fall_confirmation
 ```
@@ -94,9 +95,11 @@ person_check_completed
   길 없음·실패) 그 자리에서 묻고, 런타임에는 따로 보내지 않는다(다가가기 결과를 보내면 다시 보기가 시작된다).
   다시 가서 보기(revisit) 뒤에는 그 지점(`revisit_target`)을 쓴다.
 
-- 자세 확인(런타임): 도착 1초 뒤 Cloud `check_posture`(`furniture`/`standing`/`floor`/`unclear`)를 묻고,
+- 자세 확인(런타임): 도착 1초 뒤 Cloud `check_posture`(`furniture`/`standing`/`floor_active`/`floor`/`unclear`)를 묻고,
   `furniture`·`standing`이면 2.5초 뒤 새 장면으로 한 번 더 묻는다. 두 번 다 그럴 때만 닫는다(둘 다 `standing`이면
   `standing`). `floor`는 `on_floor`, 애매·실패·차단은 `posture_unconfirmed`, 옮기지 못하면 `body_unseen`.
+  `floor_active`는 두 번 다 그렇고 넘어지는 장면을 못 봤고 revisit가 아닐 때만 `active_on_floor`(질문 없음, 2026-10-14),
+  아니면 `on_floor`다.
 - 옮기기는 60초 안(사용자 결정 1분). 시작 위치는 다가가기 때의 것을 그대로 써서 return이 원래 자리로 간다.
 - return의 `reason`(`not_a_person`/`off_floor`/`revisit`)은 순찰 카드 결과(`fall_result`)를 가른다.
 - 로그: `fall posture: case … Cloud looks furniture, furniture: sitting_off_floor`.

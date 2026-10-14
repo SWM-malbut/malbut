@@ -41,8 +41,10 @@ def test_a_partial_body_moves_to_the_whole_body_view_then_waits_for_the_posture(
     assert coordinator.drain_commands() == ()  # Nothing for the runtime to record.
 
 
-@pytest.mark.parametrize('reason', ['sitting_off_floor', 'standing'])
-def test_off_the_floor_closes_without_a_question_and_drives_back(reason):
+@pytest.mark.parametrize('reason,closed', [('sitting_off_floor', 'off_floor_verified'),
+                                           ('standing', 'off_floor_verified'),
+                                           ('active_on_floor', 'floor_activity_verified')])
+def test_off_the_floor_closes_without_a_question_and_drives_back(reason, closed):
     coordinator, request = looking()
     coordinator.receive(looked('partial_body'))
     coordinator.view_done(request, 'arrived', 30.0)
@@ -52,7 +54,7 @@ def test_off_the_floor_closes_without_a_question_and_drives_back(reason):
     kind, job = coordinator.next_work(31.0)
     assert kind == 'return' and job.reason == 'off_floor'
     assert coordinator.receive(event(kind='incident_resolved', confirmation_scope='scene',
-                                     subject_key=None, reason='off_floor_verified'))
+                                     subject_key=None, reason=closed))
     assert coordinator.return_done(job, 'returned')
     assert coordinator.next_work(32.0) is None
 
