@@ -121,27 +121,28 @@ flowchart LR
 /absolute/external/venv/bin/python -m pip install -r malbut_tts/requirements-api.txt
 PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
   --api-model gpt-4o-mini-tts --api-voice nova \
-  --api-timeout-seconds 8 --text '안녕하세요. 말벗이에요.'
+  --api-timeout-seconds 10 --text '안녕하세요. 말벗이에요.'
 
 # ROS 및 외부 install overlay를 적용한 같은 Python 환경:
 /absolute/external/venv/bin/python -m malbut_tts.node --ros-args \
   -p api_model:=gpt-4o-mini-tts -p api_voice:=nova \
-  -p api_timeout_seconds:=8.0
+  -p api_timeout_seconds:=10.0
 ```
 
 `--text`를 생략하면 직접 텍스트와 기존 재생 제어 명령을 입력할 수 있다. 일반
 텍스트는 대화 답변, `/notice 텍스트`는 일반 알림으로 넣는다. `/pause`, `/resume`,
 `/stop`은 현재 재생 ID를 사용하며 `/quit` 또는 Ctrl+C로 종료한다.
 `--list-devices`와 `--device-index`로 출력 장치를 확인하고 선택할 수 있다.
-`api_timeout_seconds`는 네트워크 요청의 timeout 설정이며, 발화 종료부터
-사용자 청취까지의 종단간 지연이나 최대 재생 길이 보장이 아니다.
+`api_timeout_seconds`는 기본 10초이며 API 응답과 다음 음성 조각을 기다리는
+각 네트워크 대기에 적용한다. 발화 종료부터 사용자 청취까지의 종단간 지연이나
+최대 재생 길이 보장이 아니다.
 
 ## ROS 노드
 
 ### 기능별 사전 생성 안내
 
 Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한다. 전체 카탈로그는
-36개이며, 문구와 매핑은 `malbut_agent_server/mission_audio.py`,
+62개이며, 문구와 매핑은 `malbut_agent_server/mission_audio.py`,
 `mission_audio_cases.py`에 있다. 성공·실패·취소는 각각 “요청하신 작업이 완료됐어요.”,
 “작업을 완료하지 못했어요.”, “작업이 취소됐어요.”처럼 공통 문구를 사용한다.
 내부 실패 사유는 이벤트 로그에 남기고, 지도 선택·목적지·날씨 지역처럼 사용자가
@@ -159,11 +160,23 @@ Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한
 한 요청의 중간 안내는 한 번만 들리고, 실제 결과는 별도로 재생한다.
 날씨 수치·지역 후보·일반 대화처럼 값이 바뀌는 답변은 기존 TTS를 사용한다.
 
+고정 안내에는 입력·접수·답변 생성 실패, 처리 중 추가 요청, 대화 세션·기억 변경,
+대화 분량 초과, 이동 요청·목적지 확인 만료, 잘못된 실행 인자, 홈캠 조회 권한 안내도
+포함한다. 낙상 확인 시작·확인 중·보호자 알림·확인 중지·이동 제한 안내도 저장 음성이다.
+지도·방 정보 변경은 `navigation.changed`, 목적지 재입력은 `navigation.target_missing`,
+지도 선택 요청은 `navigation.map_required` 등 기존 WAV에 연결한다.
+만료 또는 지도 변경 중 어느 쪽인지 확정하지 못한 안내는 별도
+`navigation.confirmation_changed`로 보존하여 지도 변경으로 단정하지 않는다.
+음성 매핑은 발화 문구만 선택하며 요청의 실행·취소·실패 판단을 변경하지 않는다.
+
 낙상 확인 질문 “실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?”도
 `situation.fall.confirmation.wav`로 저장한다. `fall`/`낙상` 확인 대화의 첫 질문은
 모델 호출 없이 이 문구로 고정하여 저장 음성을 재생한다. 생성 문구의 차이 때문에
 첫 질문이 실시간 TTS API로 넘어가는 것을 방지한다. 상황이 해소된 뒤의 고정 마무리 문장
 “알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.”는 `situation.resolved.wav`로 재생한다.
+나머지 고정 마무리도 무응답(`situation.no_response`), 확인 불충분(`situation.unclear`),
+도움 필요(`situation.help_needed`), 도움 불필요(`situation.help_not_needed`)로 각각 저장한다.
+각 문구와 결과 의미를 그대로 유지하며 상황 확인 발화에는 축약 문구 매핑을 적용하지 않는다.
 사용자 답변의 해석, 추가 질문, 다른 상황 유형의 첫 질문은 기존 모델을 사용한다.
 저장되지 않은 질문·답변은 기존 TTS를 사용하며 재생 완료 후 응답을 기다리는 절차도
 유지한다. 사전 음성 옵션을 끄면 고정된 첫 질문·마무리 문장도 TTS를 사용한다.

@@ -78,7 +78,7 @@ def test_pcm_alignment_streaming_and_one_request():
                              'instructions': VOICE_INSTRUCTIONS}]
     assert options == [{'api_key': 'private-test-key',
                         'base_url': 'https://api.openai.com/v1',
-                        'max_retries': 0, 'timeout': 8.0}]
+                        'max_retries': 0, 'timeout': 10.0}]
     assert client.closed and client.context_closed
 
 

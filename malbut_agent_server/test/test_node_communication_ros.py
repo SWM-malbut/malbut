@@ -758,3 +758,32 @@ def test_prerecorded_outcome_id_and_dynamic_answer_share_speech_topic(communicat
     assert graph.agent.say('현재 기온은 이십 도예요.')
     _wait_until(lambda: any(item.text == '현재 기온은 이십 도예요.' for item in messages))
     assert next(item for item in messages if item.text == '현재 기온은 이십 도예요.').audio_id == ''
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_fixed_errors_and_aliases_select_audio_only_when_enabled(communication, enabled):
+    from malbut_agent_server.fall_check_watch import FALL_CHECK_START
+    from malbut_agent_server.mission_audio import CATALOG
+    from malbut_agent_server.speech_dialogue import ERROR_RESPONSE, NAVIGATION_CHANGED_RESPONSE
+
+    graph = communication(prerecorded_audio=enabled)
+    messages = []
+    graph.sender.create_subscription(
+        SpeechRequest, '/malbut/speech/response', messages.append, 10)
+    _wait_until(lambda: graph.agent._speech.get_subscription_count() >= 2)
+    cases = [
+        (ERROR_RESPONSE, 'conversation.answer_failed'),
+        (NAVIGATION_CHANGED_RESPONSE, 'navigation.changed'),
+        (FALL_CHECK_START, 'fall_check.start'),
+        ('앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.', 'conversation.busy'),
+        ('목적지 확인 시간이 지났어요. 다시 요청해 주세요.', 'navigation.confirmation_expired'),
+        ('현재 기온은 이십 도예요.', ''),
+    ]
+    for index, (text, audio_id) in enumerate(cases):
+        assert graph.agent.say(text, request_id=f'notice-{index}')
+        _wait_until(lambda: len(messages) == index + 1)
+        message = messages[-1]
+        selected = audio_id if enabled else ''
+        assert message.audio_id == selected
+        assert message.text == (CATALOG[selected] if selected else text)
+        assert message.request_id == f'notice-{index}'
