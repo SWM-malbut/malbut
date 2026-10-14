@@ -207,9 +207,11 @@ public:
     // How the guardian's voice is played (2026-10-13, compared by ear on the
     // robot): "arrival" as it comes (as before 2026-10-09), "scheduled" on the
     // sender's timeline (2026-10-09, it broke up), "buffered" on the sender's
-    // timeline behind a jitter buffer of ptt_playout_delay_ms. Both switch with
-    // ros2 param set; the next voice frame uses them.
-    PttPlayout initial_mode = PttPlayout::kArrival;
+    // timeline behind a jitter buffer of ptt_playout_delay_ms, "adaptive" behind
+    // a jitter buffer that follows the network. Both switch with ros2 param set;
+    // the next voice frame uses them. Default adaptive since 2026-10-14: no
+    // break-up on the robot, about 1 s behind.
+    PttPlayout initial_mode = PttPlayout::kAdaptive;
     if (!parse_ptt_playout(get_parameter("ptt_playout_mode").as_string(), &initial_mode)) {
       throw std::invalid_argument(
               "ptt_playout_mode must be arrival, scheduled, buffered or adaptive");
@@ -496,7 +498,7 @@ private:
     declare_parameter<bool>("monitoring_enabled", false);
     declare_parameter<bool>("camera_enabled", true);
     declare_parameter<bool>("microphone_enabled", true);
-    declare_parameter<std::string>("ptt_playout_mode", "arrival");
+    declare_parameter<std::string>("ptt_playout_mode", "adaptive");
     declare_parameter<int>("ptt_playout_delay_ms", 300);
     declare_parameter<bool>("ptt_plc", true);
     declare_parameter<bool>("ptt_fec", false);
@@ -2617,7 +2619,7 @@ private:
   std::mutex storage_transport_mutex_;
   std::atomic<bool> shutting_down_{false};
   std::atomic<bool> media_permitted_{false};
-  std::atomic<PttPlayout> ptt_mode_{PttPlayout::kArrival};  // ptt_playout_mode
+  std::atomic<PttPlayout> ptt_mode_{PttPlayout::kAdaptive};  // ptt_playout_mode
   std::atomic<std::int64_t> ptt_delay_ns_{300'000'000};  // ptt_playout_delay_ms
   std::atomic<bool> ptt_plc_{true};  // ptt_plc
   std::atomic<bool> ptt_fec_{false};  // ptt_fec
