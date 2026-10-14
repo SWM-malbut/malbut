@@ -69,6 +69,10 @@ async function frames(deviceId: string, momentAt: string, now: number): Promise<
     if (error instanceof Error && error.message === "KVS_BROKER_404") {
       return now - start < LATE_ARCHIVE_MS ? "frames_unavailable_yet" : "frames_unavailable";
     }
+    // Rejected or not allowed: the same request fails again, so do not retry.
+    if (error instanceof Error && /^KVS_BROKER_(400|403)$/.test(error.message)) {
+      return "kvs_request_invalid";
+    }
     return "kvs_unavailable";
   }
   const result: ReviewFrame[] = [];

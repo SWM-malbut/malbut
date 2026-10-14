@@ -132,6 +132,10 @@ export async function handler(event) {
       if (error instanceof Error && error.name === "ResourceNotFoundException") {
         return response(404, { error: "No media was found for the requested range" });
       }
+      // A request KVS rejects will be rejected again: say so instead of "try later".
+      if (error instanceof Error && error.name === "InvalidArgumentException") {
+        return response(400, { error: "Image request was rejected" });
+      }
       return response(502, { error: "Images could not be read" });
     }
   }
@@ -590,7 +594,9 @@ async function getImages(input) {
     SamplingInterval: Math.max(200, Math.floor((end - start) / (input.count - 1))),
     Format: "JPEG",
     FormatConfig: { JPEGQuality: "90" },
-    WidthPixels: 640,
+    // No size: the recording's own (640x400 on the robot, as it sends Cloud).
+    // KVS takes both width and height or neither; width alone was rejected
+    // with InvalidArgumentException on every request (2026-10-14).
     MaxResults: input.count,
   }));
   const images = (result.Images ?? []).slice(0, input.count).map((image) => ({
