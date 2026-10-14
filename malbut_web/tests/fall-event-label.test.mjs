@@ -184,12 +184,17 @@ test("whole-body check events read as short history lines (mockup 25)", () => {
     "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄");
   assert.equal(label("incident_resolved", "off_floor_verified", { state: "resolved" }),
     "로봇이 사건 종료: 바닥에 있지 않음 · 묻지 않음");
+  // 2026-10-14: sitting up busy on the floor (a low table) is not asked either.
+  assert.equal(label("posture_check_completed", "active_on_floor"), "몸 전체 확인: 바닥에 앉아 활동 중");
+  assert.equal(label("incident_resolved", "floor_activity_verified", { state: "resolved" }),
+    "로봇이 사건 종료: 바닥에 앉아 활동 중 · 묻지 않음");
 });
 
 test("the list says the robot is checking before it asks, and off-floor closures say so (mockup 25)", () => {
   const panel = readFileSync(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
   for (const copy of ["말벗이 확인하는 중", "가까이 가는 중", "몸 전체가 보이는 자리로 옮기는 중", "몸 전체를 보는 중",
-    "말벗이 확인: 침대나 의자에 앉아 있음", "말벗이 확인: 서 있음", "몸 일부만 보여 가서 확인 · 묻지 않음",
+    "말벗이 확인: 침대나 의자에 앉아 있음", "말벗이 확인: 서 있음", "말벗이 확인: 바닥에 앉아 활동 중",
+    "바닥에서 활동 중", "몸 일부만 보여 가서 확인 · 묻지 않음",
     "묻지도, 알리지도 않았어요."]) assert.ok(panel.includes(copy), copy);
   // Once the person is asked, the title is the suspicion again.
   assert.match(panel, /!a \|\| i\.asked\) return null/);
@@ -204,13 +209,15 @@ test("whole-body check events and the off-floor closure are strict contracts", (
   ok({ eventKind: "view_completed", reason: "arrived" });
   ok({ eventKind: "view_completed", reason: "no_path" });
   ok({ eventKind: "person_check_completed", reason: "whole_body" });
-  for (const reason of ["sitting_off_floor", "standing", "on_floor", "body_unseen", "judgements_differ",
-    "posture_unconfirmed"]) {
+  for (const reason of ["sitting_off_floor", "standing", "active_on_floor", "on_floor", "body_unseen",
+    "judgements_differ", "posture_unconfirmed"]) {
     ok({ eventKind: "posture_check_completed", reason });
   }
   ok({ eventKind: "posture_check_completed", reason: "sitting_off_floor",
     analysis: analysis({ purpose: "posture_check", assessment: "normal_activity" }) });
   ok({ eventKind: "incident_resolved", state: "resolved", reason: "off_floor_verified" });
+  ok({ eventKind: "incident_resolved", state: "resolved", reason: "floor_activity_verified" });
+  bad({ eventKind: "posture_check_completed", reason: "floor_active" });  // A Cloud verdict, not a reason.
   bad({ eventKind: "view_completed", reason: null });
   bad({ eventKind: "view_completed", reason: "returned" });
   bad({ eventKind: "posture_check_completed", reason: null });
