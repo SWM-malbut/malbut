@@ -198,6 +198,28 @@ def test_fixed_confirmation_speech_selects_file_only_when_enabled(rig, audio_id,
 
 
 @pytest.mark.parametrize('rig', [True, False], indirect=True)
+def test_explicit_recording_uses_catalog_text_without_reverse_lookup(rig, monkeypatch):
+    from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
+
+    audio_id = 'situation.fall.confirmation'
+    owner = uuid4()
+    monkeypatch.setattr(rig.agent.situation, '_active_goal', SimpleNamespace(
+        goal_id=SimpleNamespace(uuid=owner.bytes)))
+    monkeypatch.setitem(TEXT_IDS, CATALOG[audio_id], 'situation.resolved')
+    rig.spin_until(lambda: rig.agent.situation._speech.get_subscription_count() > 0)
+    assert rig.agent.situation.speak('이전 표시 문구', 'selected-question', audio_id=audio_id)
+    rig.spin_until(lambda: len(rig.spoken) == 1)
+    message = rig.spoken[0]
+    assert message.text == CATALOG[audio_id]
+    assert message.audio_id == (audio_id if rig.prerecorded_audio else '')
+    assert message.owner_goal_id == owner.hex
+    assert message.request_type == SpeechRequest.CONFIRMATION
+    assert not rig.agent.situation.speak(
+        '알 수 없는 녹음', 'unknown-recording', audio_id='situation.missing',
+    )
+
+
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
 def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     from malbut_agent_server.mission_audio import CATALOG
 
@@ -422,15 +444,19 @@ def test_cancel_closes_proactive_input_and_releases_ordinary_dialogue(rig):
     ('그냥 누워 있는 거야', 'resolved', False),
     ('도와줘', 'unknown', True),
 ])
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
 def test_vlm_manager_real_agent_round_trip_applies_final_user_judgment(
-    rig, mission_manager, answer, assessment, help_needed,
+    rig, mission_manager, answer, assessment, help_needed, monkeypatch,
 ):
     from std_msgs.msg import String
     from malbut_agent_server.fall_rules.fall_confirmation_link import FallConfirmationLink
     from malbut_agent_server.fall_runtime import apply_decision, event_metadata
+    from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
     from test_fall_confirmation_result import assessed
 
     monitor, _, _, iid = assessed()
+    audio_id = 'situation.fall.confirmation'
+    monkeypatch.setitem(TEXT_IDS, CATALOG[audio_id], 'situation.resolved')
     question = next(e for e in monitor.drain_events() if e.kind == 'question_requested')
     manager = Node('confirmation_round_trip_manager')
     link = FallConfirmationLink(manager, runtime_id='integration-vlm')
@@ -452,6 +478,11 @@ def test_vlm_manager_real_agent_round_trip_applies_final_user_judgment(
         ))))
         rig.spin_until(lambda: rig.agent.situation._session is not None
                        and rig.agent.situation._session.phase == 'listening')
+        first = rig.spoken[0]  # Message forwarded by Manager to the private TTS topic.
+        assert first.text == CATALOG[audio_id]
+        assert first.audio_id == (audio_id if rig.prerecorded_audio else '')
+        assert first.request_type == SpeechRequest.CONFIRMATION
+        assert first.owner_goal_id
         rig.answer(answer)
         rig.spin_until(lambda: bool(received))
         assert received[0]['action'] == 'confirmation_result'

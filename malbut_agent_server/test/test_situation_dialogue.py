@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
+from malbut_agent_server.mission_audio import CATALOG
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.situation_dialogue import (
     MockSituationProvider, SituationDialogue, SituationInterpretation,
@@ -39,14 +40,14 @@ def start(provider=None, summary='거실 바닥에 누워 있어 낙상이 의�
 
 
 def test_resting_answer_resolves_conflicting_summary_without_asking_for_help():
-    provider = ScriptedProvider(judgment(), judgment('resolved', None, ''))
+    provider = ScriptedProvider(judgment('resolved', None, ''))
     dialogue = start(provider, summary='VLM은 실제 낙상이 발생했다고 판단함')
     final = dialogue.answer('아니, 스트레칭하려고 일부러 누운 거야.')
     assert asdict(final.result) == {
         'situation_assessment': 'resolved', 'help_needed': False,
     }
     assert provider.contexts[-1].answer == '아니, 스트레칭하려고 일부러 누운 거야.'
-    assert len(provider.contexts) == 2
+    assert len(provider.contexts) == 1
 
 
 @pytest.mark.parametrize('answer,expected', [
@@ -66,7 +67,7 @@ def test_explicit_help_decision_can_finish_while_actual_event_is_unknown(answer,
 ])
 def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assessment(
         confirmed, situation_type, answer):
-    replies = [judgment()]
+    replies = [] if situation_type in ('fall', '낙상') else [judgment()]
     if confirmed:
         replies.append(judgment('confirmed_incident'))
     # Real-model failure: a valid unknown/null response repeated the first question.
@@ -92,17 +93,17 @@ def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assess
     '그냥 누웠는데 일어나는 건 도와줘',
 ])
 def test_help_words_inside_other_answers_still_use_semantic_provider(answer):
-    provider = ScriptedProvider(judgment(), judgment('resolved', False, ''))
+    provider = ScriptedProvider(judgment('resolved', False, ''))
     dialogue = start(provider)
     assert dialogue.answer(answer).result.help_needed is False
-    assert len(provider.contexts) == 2 and provider.contexts[-1].answer == answer
+    assert len(provider.contexts) == 1 and provider.contexts[-1].answer == answer
 
 
 @pytest.mark.parametrize('confirmed', [False, True])
 @pytest.mark.parametrize('situation_type,answer', [('fall', '좋아져'), ('낙상', ' 좋아져! \n')])
 def test_fall_asr_help_alias_finishes_without_provider_and_keeps_original_answer(
         confirmed, situation_type, answer):
-    provider = ScriptedProvider(judgment(), judgment('confirmed_incident'))
+    provider = ScriptedProvider(judgment('confirmed_incident'))
     dialogue = SituationDialogue(provider)
     dialogue.start('alias-1', situation_type, '낙상 의심')
     if confirmed:
@@ -121,7 +122,8 @@ def test_fall_asr_help_alias_finishes_without_provider_and_keeps_original_answer
     ('fall', '상태가 좋아져'), ('fall', '좋아져서 괜찮아'), ('smoke', '좋아져'),
 ])
 def test_fall_asr_alias_does_not_override_other_sentences_or_incidents(situation_type, answer):
-    provider = ScriptedProvider(judgment(), judgment('resolved', False, ''))
+    replies = [] if situation_type == 'fall' else [judgment()]
+    provider = ScriptedProvider(*replies, judgment('resolved', False, ''))
     dialogue = SituationDialogue(provider)
     dialogue.start('alias-boundary', situation_type, '상황 확인')
     assert dialogue.answer(answer).result.help_needed is False
@@ -191,27 +193,27 @@ def test_no_response_requests_help_without_inventing_or_erasing_actual_event(con
 
 
 def test_silence_after_one_clarification_does_not_spend_remaining_retries():
-    provider = ScriptedProvider(judgment(), judgment())
+    provider = ScriptedProvider(judgment())
     dialogue = start(provider)
     dialogue.answer('음...')
     assert dialogue.no_response().result.help_needed is True
-    assert len(provider.contexts) == 2
+    assert len(provider.contexts) == 1
 
 
 def test_only_two_clarifications_after_initial_ambiguous_answer():
-    provider = ScriptedProvider(judgment(), judgment(), judgment(), judgment())
+    provider = ScriptedProvider(judgment(), judgment(), judgment())
     dialogue = start(provider)
     assert dialogue.answer('글쎄').result is None
     assert dialogue.answer('그게...').result is None
     final = dialogue.answer('모르겠네')
     assert final.result.situation_assessment == 'unknown'
     assert final.result.help_needed is True
-    assert len(provider.contexts) == 4
+    assert len(provider.contexts) == 3
 
 
 def test_each_confirmation_matter_has_its_own_two_clarifications():
     provider = ScriptedProvider(
-        judgment(), judgment(), judgment(),
+        judgment(), judgment(),
         judgment('confirmed_incident', None, '도움이 필요하세요?'),
         judgment('confirmed_incident', question='도움이 필요한지 말씀해 주시겠어요?'),
         judgment('confirmed_incident', question='지금 도움을 원하시나요?'),
@@ -231,7 +233,7 @@ def test_each_confirmation_matter_has_its_own_two_clarifications():
 
 
 def test_help_request_takes_precedence_over_an_otherwise_resolved_incident():
-    provider = ScriptedProvider(judgment(), judgment('resolved', True, ''))
+    provider = ScriptedProvider(judgment('resolved', True, ''))
     dialogue = start(provider)
     final = dialogue.answer('그냥 누웠는데 일어나는 건 도와줘')
     assert final.result.situation_assessment == 'resolved'
@@ -241,7 +243,7 @@ def test_help_request_takes_precedence_over_an_otherwise_resolved_incident():
 @pytest.mark.parametrize('help_needed', [False, True])
 def test_user_can_retract_confirmed_incident_to_unknown_and_keep_explicit_help_choice(help_needed):
     provider = ScriptedProvider(
-        judgment(), judgment('confirmed_incident', None, '도움이 필요하세요?'),
+        judgment('confirmed_incident', None, '도움이 필요하세요?'),
         judgment('unknown', help_needed, ''),
     )
     dialogue = start(provider)
@@ -273,7 +275,7 @@ def test_mock_explicit_retraction_reopens_actual_situation_confirmation():
 
 def test_returning_to_situation_after_retraction_does_not_reset_its_clarification_budget():
     provider = ScriptedProvider(
-        judgment(), judgment(),
+        judgment(),
         judgment('confirmed_incident', None, '도움이 필요하세요?'),
         judgment('unknown', None, '실제로 넘어진 것인지 다시 말씀해 주시겠어요?'),
         judgment('confirmed_incident', None, '지금 도움이 필요하세요?'),
@@ -294,7 +296,7 @@ def test_returning_to_situation_after_retraction_does_not_reset_its_clarificatio
 
 def test_returning_to_help_after_reconfirmation_does_not_reset_its_clarification_budget():
     provider = ScriptedProvider(
-        judgment(), judgment('confirmed_incident', None, '도움이 필요하세요?'),
+        judgment('confirmed_incident', None, '도움이 필요하세요?'),
         judgment('confirmed_incident', None, '도움을 원하시는지 알려주시겠어요?'),
         judgment('unknown', None, '실제로 무슨 일이 있었는지 말씀해 주시겠어요?'),
         judgment('confirmed_incident', None, '지금 도움을 원하시나요?'),
@@ -309,14 +311,16 @@ def test_returning_to_help_after_reconfirmation_does_not_reset_its_clarification
 
 
 def test_completed_turns_are_idempotent_and_dialogue_can_start_fresh():
-    provider = ScriptedProvider(judgment(), judgment('resolved', None, ''), judgment())
+    provider = ScriptedProvider(judgment('resolved', None, ''))
     dialogue = start(provider)
     final = dialogue.answer('일부러 누웠어')
     assert dialogue.answer('다시 보내진 답변') is final
     assert dialogue.no_response() is final
     new = dialogue.start('new-request', 'fall', '새 낙상 의심')
     assert new.result is None
+    assert new.audio_id == 'situation.fall.confirmation'
     assert dialogue.situation_assessment == 'unknown'
+    assert len(provider.contexts) == 1
     assert provider.contexts[-1].history == ()
 
 
@@ -335,7 +339,7 @@ def test_other_incident_type_uses_same_confirmation_and_help_flow():
 
 
 def test_provider_failure_is_operational_and_does_not_become_user_silence():
-    provider = ScriptedProvider(judgment(), TimeoutError('provider unavailable'),
+    provider = ScriptedProvider(TimeoutError('provider unavailable'),
                                 judgment('resolved', None, ''))
     dialogue = start(provider)
     with pytest.raises(TimeoutError):
@@ -347,7 +351,7 @@ def test_provider_failure_is_operational_and_does_not_become_user_silence():
 
 
 def test_missing_followup_question_does_not_commit_partial_facts():
-    provider = ScriptedProvider(judgment(), judgment('confirmed_incident', None, ''))
+    provider = ScriptedProvider(judgment('confirmed_incident', None, ''))
     dialogue = start(provider)
     with pytest.raises(ProviderError):
         dialogue.answer('넘어졌어')
@@ -356,17 +360,41 @@ def test_missing_followup_question_does_not_commit_partial_facts():
 
 
 def test_start_does_not_invent_a_confirmed_incident_from_a_model_guess():
-    dialogue = start(ScriptedProvider(judgment('confirmed_incident', True)))
+    dialogue = SituationDialogue(ScriptedProvider(judgment('confirmed_incident', True)))
+    dialogue.start('smoke-1', 'smoke', '연기 의심')
     assert dialogue.no_response().result.situation_assessment == 'unknown'
+
+
+@pytest.mark.parametrize('situation_type', ['fall', '낙상'])
+def test_fall_opener_selects_recording_without_calling_the_provider(situation_type, monkeypatch):
+    provider = ScriptedProvider(AssertionError('first question must not call the model'))
+    audio_id = 'situation.fall.confirmation'
+    # The text follows the selected catalog entry, not a duplicate constant.
+    monkeypatch.setitem(CATALOG, audio_id, '시험용 카탈로그 질문')
+    dialogue = SituationDialogue(provider)
+    turn = dialogue.start('first-fall', situation_type, '낙상 의심')
+    assert turn.audio_id == audio_id and turn.text == CATALOG[audio_id]
+    assert turn.result is None and dialogue.situation_assessment == 'unknown'
+    assert provider.contexts == []
+
+
+def test_followup_does_not_inherit_first_question_audio_id():
+    provider = ScriptedProvider(judgment('confirmed_incident', None, '도움이 필요하세요?'))
+    dialogue = start(provider)
+    question = dialogue._question
+    turn = dialogue.answer('넘어졌어요')
+    assert turn.text == '도움이 필요하세요?' and turn.audio_id == ''
+    assert provider.contexts[0].question == question
+    assert dialogue._history[0].question == question
 
 
 @pytest.mark.parametrize('value', ['', ' ', None, '가' * 16001, '\ud800'])
 def test_unusable_answers_are_not_silence_or_a_model_call(value):
-    provider = ScriptedProvider(judgment())
+    provider = ScriptedProvider()
     dialogue = start(provider)
     with pytest.raises(ValueError):
         dialogue.answer(value)
-    assert len(provider.contexts) == 1
+    assert provider.contexts == []
     assert dialogue.result is None
 
 

@@ -7,9 +7,9 @@ import pytest
 
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.mission_audio import CATALOG
 from malbut_agent_server.situation_dialogue import (
-    FALL_CONFIRMATION_QUESTION, SituationContext, SituationDialogue, SituationExchange,
-    SituationRequest,
+    SituationContext, SituationDialogue, SituationExchange, SituationRequest,
 )
 from malbut_agent_server.situation_provider import (
     INSTRUCTIONS, OpenAISituationProvider,
@@ -56,7 +56,8 @@ def test_first_fall_question_uses_recorded_wording_even_when_transport_is_down(s
     target, calls = provider(TimeoutError('network unavailable'))
     dialogue = SituationDialogue(target)
     first = dialogue.start('request-1', situation_type, '화장실에서 낙상이 의심됨')
-    assert first.text == FALL_CONFIRMATION_QUESTION
+    assert first.audio_id == 'situation.fall.confirmation'
+    assert first.text == CATALOG[first.audio_id]
     assert first.result is None
     assert dialogue.situation_assessment == 'unknown'
     assert calls == []

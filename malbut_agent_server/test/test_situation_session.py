@@ -37,6 +37,7 @@ class Harness:
         self.turns = deque(turns or [SituationTurn('실제로 넘어지셨나요?')])
         self.calls = []
         self.events = []
+        self.audio_ids = []
         self.openings = []
         self.verifications = []
         self.verify_automatically = True
@@ -90,8 +91,9 @@ class Harness:
             future.set_result(SimpleNamespace(accepted=self.verify_accepted))
         return future
 
-    def speak(self, text, playback_id):
+    def speak(self, text, playback_id, *, audio_id=''):
         self.events.append(('speak', text, playback_id))
+        self.audio_ids.append(audio_id)
         return self.speech_available
 
     def stop(self, playback_id):
@@ -120,6 +122,22 @@ class Harness:
 
 def ending(assessment='unknown', help_needed=True):
     return SituationTurn('확인을 마칠게요.', SituationResult(assessment, help_needed))
+
+
+def test_selected_recording_reaches_speech_and_does_not_leak_to_followup():
+    from malbut_agent_server.mission_audio import CATALOG
+
+    audio_id = 'situation.fall.confirmation'
+    h = Harness(SituationTurn(CATALOG[audio_id], audio_id=audio_id),
+                SituationTurn('도움이 필요하세요?'))
+    h.begin_question()
+    assert h.audio_ids == [audio_id]
+    assert not h.openings
+    h.played()
+    assert h.session.transcript(h.session.session_id, 'answer-1', '넘어졌어요')
+    h.complete_work()
+    assert h.session.phase == 'speaking'
+    assert h.audio_ids == [audio_id, '']
 
 
 def test_answer_timeout_starts_only_at_actual_playback_completion():

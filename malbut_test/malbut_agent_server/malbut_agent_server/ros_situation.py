@@ -290,20 +290,25 @@ class SituationActionServer:
                 'confirmation_input_close_failed:' + type(error).__name__)
             raise
 
-    def speak(self, text, playback_id):
+    def speak(self, text, playback_id, *, audio_id=''):
         if self._closed or not self.node.context.ok() or self._active_goal is None:
             return False
-        options = {}
-        if self._prerecorded_audio:
-            from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
-            audio_id = TEXT_IDS.get(text, '')
+        from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
+
+        if audio_id:
+            if audio_id not in CATALOG:
+                return False
+            # The dialogue selected the recording; its catalog owns the text.
+            text = CATALOG[audio_id]
+        elif self._prerecorded_audio:
+            candidate = TEXT_IDS.get(text, '')
             # Confirmation questions must keep the model's exact wording;
             # ordinary mission-reply aliases may have a shorter recording.
-            if audio_id and CATALOG[audio_id] == text:
-                options['audio_id'] = audio_id
+            if candidate and CATALOG[candidate] == text:
+                audio_id = candidate
         self._speech.publish(self._speech_type(
             text=text, request_type=self._speech_type.CONFIRMATION,
-            playback_id=playback_id, **options,
+            playback_id=playback_id, audio_id=audio_id if self._prerecorded_audio else '',
             owner_goal_id=self._key(self._active_goal).hex(),
         ))
         return True

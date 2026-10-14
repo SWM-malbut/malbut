@@ -15,7 +15,7 @@ class SituationSpeechSession:
     Ports provide ``open_session`` (a future yielding an accepted response),
     ``verify_session`` (a read-only active-session check), ``close_session``
     (a future yielding an accepted response),
-    ``speak(text, playback_id)`` and ``stop(playback_id)``.
+    ``speak(text, playback_id, audio_id=...)`` and ``stop(playback_id)``.
     Each completed question opens a new microphone session to reject late STT results.
     Input stays closed while a question is prepared or played, including with AEC.
     All public methods are owned by the event-loop thread; inference is isolated.
@@ -94,7 +94,8 @@ class SituationSpeechSession:
                 else:
                     self.phase = 'speaking'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
-                if not self.ports.speak(self._turn.text, self.playback_id):
+                if not self.ports.speak(
+                        self._turn.text, self.playback_id, audio_id=self._turn.audio_id):
                     raise RuntimeError('speech publication failed')
             if self._opening is not None and self._opening.done():
                 opening, self._opening = self._opening, None

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
+from malbut_agent_server.mission_audio import CATALOG
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.schemas import MAX_SPEECH_TRANSCRIPT_LENGTH
 
@@ -13,9 +14,6 @@ MAX_REQUEST_ID_LENGTH = 200
 MAX_SITUATION_TYPE_LENGTH = 100
 MAX_QUESTION_LENGTH = 600
 MAX_CLARIFICATIONS = 2
-FALL_CONFIRMATION_QUESTION = (
-    '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?'
-)
 
 
 def _text(value, name, limit, *, allow_empty=False):
@@ -63,6 +61,7 @@ class SituationTurn:
 
     text: str
     result: Optional[SituationResult] = None
+    audio_id: str = ''
 
 
 @dataclass(frozen=True)
@@ -142,19 +141,27 @@ class SituationDialogue:
         if self.request is not None and self.result is None:
             raise RuntimeError('situation dialogue is already active')
         request = SituationRequest(request_id, situation_type, summary)
-        context = SituationContext(request, 'situation', 'unknown', ())
-        interpreted = self._evaluate(context)
-        self._require_question(interpreted)
+        audio_id = ''
+        if request.situation_type in ('fall', '낙상'):
+            # The first fall question selects its recording by dialogue stage,
+            # never by model wording or a reverse text lookup.
+            audio_id = 'situation.fall.confirmation'
+            question = CATALOG[audio_id]
+        else:
+            context = SituationContext(request, 'situation', 'unknown', ())
+            interpreted = self._evaluate(context)
+            self._require_question(interpreted)
+            question = interpreted.question
         # An incoming summary describes a situation requiring confirmation.
-        # The first generated question is not evidence of an actual incident.
+        # Asking the first question is not evidence of an actual incident.
         self.request = request
         self.stage = 'situation'
         self.situation_assessment = 'unknown'
         self._history = []
         self._clarifications = {'situation': 0, 'help': 0}
         self._asked_stages = {'situation'}
-        self._question = interpreted.question
-        self._last_turn = SituationTurn(self._question)
+        self._question = question
+        self._last_turn = SituationTurn(self._question, audio_id=audio_id)
         return self._last_turn
 
     def answer(self, text):
@@ -260,8 +267,6 @@ class MockSituationProvider:
                               else '지금 어떤 상황인지 말씀해 주시겠어요?')
         help_question = '지금 괜찮으신가요? 도움이 필요하신가요?'
         if context.answer is None:
-            if context.request.situation_type in ('fall', '낙상'):
-                situation_question = FALL_CONFIRMATION_QUESTION
             return SituationInterpretation('unknown', None, situation_question)
         normalized = ''.join(context.answer.split()).rstrip('.!?。！？')
         established = context.situation_assessment

@@ -8,7 +8,7 @@ from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.schemas import MAX_UTTERANCE_LENGTH, validate_user_id
 from malbut_agent_server.situation_dialogue import (
-    ASSESSMENTS, FALL_CONFIRMATION_QUESTION, SituationContext, SituationInterpretation,
+    ASSESSMENTS, SituationContext, SituationInterpretation,
 )
 
 
@@ -130,15 +130,9 @@ class OpenAISituationProvider:
         self.user_id = validate_user_id(user_id)
 
     def evaluate(self, context):
-        """Use a fixed fall opener; interpret answers with the semantic model."""
+        """Make one bounded semantic call; propagate operational failures."""
         if not isinstance(context, SituationContext):
             raise TypeError('a SituationContext is required')
-        if (context.request.situation_type in ('fall', '낙상')
-                and context.stage == 'situation' and context.answer is None
-                and not context.history and not context.question):
-            # Keep the first spoken question identical to the bundled WAV.
-            # Generating a paraphrase would fall through to network TTS.
-            return SituationInterpretation('unknown', None, FALL_CONFIRMATION_QUESTION)
         provider = self.provider
         history = [asdict(exchange) for exchange in context.history]
         data = {

@@ -44,11 +44,11 @@ def test_packaged_suite_distinguishes_mock_state_flow_from_live_semantic_coverag
 def test_mismatched_result_and_operational_error_are_separate_from_silence(capsys):
     case = runner.load_cases()[0]
     bad = runner.run_evaluation([case], factory(
-        question(), SituationInterpretation('unknown', True, '')))
+        SituationInterpretation('unknown', True, '')))
     assert bad['counts']['failed'] == 1
     assert bad['cases'][0]['situation_assessment'] == 'unknown'
     failure = runner.run_evaluation([case], factory(
-        question(), RuntimeError('sk-private-do-not-print 原文 답변')))
+        RuntimeError('sk-private-do-not-print 原文 답변')))
     row = failure['cases'][0]
     assert row['status'] == 'error'
     assert row['situation_assessment'] is None and row['help_needed'] is None
@@ -60,10 +60,10 @@ def test_mismatched_result_and_operational_error_are_separate_from_silence(capsy
 
 def test_explicit_null_is_silence_but_exhausted_fixture_is_not():
     silence = runner.load_cases()[5]
-    report = runner.run_evaluation([silence], factory(question()))
+    report = runner.run_evaluation([silence], factory())
     assert report['counts']['passed'] == 1
     actual_answer = replace(silence, answers=('모호한 대답',))
-    report = runner.run_evaluation([actual_answer], factory(question(), question()))
+    report = runner.run_evaluation([actual_answer], factory(question()))
     assert report['counts']['failed'] == 1
     assert report['cases'][0]['help_needed'] is None
     assert report['cases'][0]['question_count'] == 2
@@ -72,7 +72,7 @@ def test_explicit_null_is_silence_but_exhausted_fixture_is_not():
 def test_question_count_and_premature_termination_fail_even_with_matching_final_fields():
     case = replace(runner.load_cases()[0], answers=('대답 하나', '남은 대답'), question_count=2)
     report = runner.run_evaluation([case], factory(
-        question(), SituationInterpretation('resolved', False, '')))
+        SituationInterpretation('resolved', False, '')))
     assert report['cases'][0]['situation_assessment'] == 'resolved'
     assert report['counts']['failed'] == 1
 
@@ -87,7 +87,7 @@ def test_live_only_case_is_skipped_without_constructing_a_provider():
 def test_live_mode_aggregation_can_be_tested_with_a_scripted_provider():
     case = runner.load_cases()[13]
     report = runner.run_evaluation([case], factory(
-        question(), SituationInterpretation('resolved', False, '')), provider='openai')
+        SituationInterpretation('resolved', False, '')), provider='openai')
     assert report['evaluation'] == 'openai_semantic_cases'
     assert report['counts']['passed'] == 1
 
