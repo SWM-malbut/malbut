@@ -279,6 +279,8 @@ class OpenAIResponsesProvider(AgentProvider):
                 request.request_id
             ),
         }
+        from malbut_agent_server.memory_trace import model_input_ready
+        model_input_ready(prepared.text, provider='openai', model=self.model)
         started = time.perf_counter()
         try:
             response = self.transport(

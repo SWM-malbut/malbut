@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from malbut_agent_server.memory_trace import record_trace
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -1508,6 +1509,11 @@ class SQLiteConversationStore:
                     token.conversation_id,
                 )
                 turn_row = self._select_turn_locked(token)
+                record_trace(self._connection, 'turn_committed', token.user_id,
+                             request_id=token.request_id,
+                             conversation_id=token.conversation_id, turn_id=token.turn_id,
+                             data={'generation': token.generation,
+                                   'ordinal': token.ordinal})
                 self._connection.commit()
                 return (
                     self._session_from_row(session_row),

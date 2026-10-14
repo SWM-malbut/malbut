@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import threading
+from malbut_agent_server.memory_trace import observe_inputs
 
 from malbut_agent_server.providers.base import (
     AgentProvider, accepts_memory_context, accepts_weather_context,
@@ -77,6 +78,15 @@ class StoryMemoryProvider(AgentProvider):
         conversation_summary=None, *, memory_context=None, weather_context=None,
     ):
         context = copy.deepcopy(memory_context or {})
+
+        def trace(event, data):
+            writer = getattr(self.service, 'trace', None)
+            if writer is not None:
+                try:
+                    writer(request, event, data)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).warning('Memory trace unavailable')
         # Fact extraction has its own source-only contract. This wrapper is
         # installed only around the foreground provider, but fail closed if a
         # future caller routes an extraction request through it.
@@ -86,6 +96,17 @@ class StoryMemoryProvider(AgentProvider):
             story_context = self.service.context(
                 request.user_id, request.utterance, conversation_turns,
             )
+        trace('memory_retrieved', {
+            'fact_ids': [item.id for item in memories],
+            'stories': [{'story_id': item['story_id'], 'version': item.get('version')}
+                        for item in (story_context or {}).get('stories', [])],
+            'story_enabled': bool((story_context or {}).get('enabled')),
+            'fact_enabled': bool(context.get('enabled')),
+            'status': (story_context or {}).get('status',
+                'ready' if (story_context or {}).get('enabled') else 'disabled'),
+            'pending': (story_context or {}).get('pending', 0),
+            'failed': (story_context or {}).get('failed', 0),
+        })
         revision = None
         readset = []
         if story_context is not None and story_context.get('enabled', True):
@@ -141,10 +162,18 @@ class StoryMemoryProvider(AgentProvider):
             revision = self.service.reply_dependency_revision(request.user_id, request.request_id)
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
-        result = self.provider.complete(
-            request, memories, conversation_turns, tools,
-            conversation_summary=conversation_summary, **arguments,
-        )
+        with observe_inputs(trace):
+            try:
+                result = self.provider.complete(
+                    request, memories, conversation_turns, tools,
+                    conversation_summary=conversation_summary, **arguments,
+                )
+            except Exception as error:
+                trace('provider_failed', {'error_type': type(error).__name__})
+                raise
+        trace('provider_completed', {'provider': getattr(result, 'provider', None),
+                                     'model': getattr(result, 'model', None),
+                                     'latency_ms': getattr(result, 'latency_ms', None)})
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
             with self._lock:

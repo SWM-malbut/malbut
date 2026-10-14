@@ -23,6 +23,7 @@ from typing import (
 )
 
 from malbut_agent_server.schemas import ValidationError, validate_user_id
+from malbut_agent_server.memory_trace import record_trace
 
 
 MAX_MEMORY_LENGTH = 4000
@@ -421,6 +422,14 @@ class SQLiteMemoryStore:
             self._bump_revision(
                 active, normalized_user, _automatic_insert=_automatic_insert,
             )
+            origin = safe_metadata.get('source', {})
+            origin = origin if isinstance(origin, dict) else {}
+            record_trace(active, 'fact_committed', normalized_user,
+                         request_id=origin.get('request_id', ''),
+                         conversation_id=origin.get('conversation_id', ''),
+                         turn_id=origin.get('turn_id', ''),
+                         data={'fact_ids': [record.id], 'kind': record.kind,
+                               'automatic': _automatic_insert})
         return record
 
     def search(

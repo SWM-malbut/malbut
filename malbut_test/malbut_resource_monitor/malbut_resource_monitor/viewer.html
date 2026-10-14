@@ -61,13 +61,22 @@
   .summary-card {background:#111d27;border:1px solid #314454;border-radius:9px;padding:14px}
   .summary-card strong {display:block;font-size:23px;margin:7px 0}.summary-card small {display:block}
   .gpu-notice {border-left:3px solid #88baff;padding:10px 14px;background:#111d27;line-height:1.6}
+  .memory-message,.memory-entry {background:#111d27;border:1px solid #314454;border-radius:8px;padding:14px;margin:12px 0;overflow-wrap:anywhere}
+  .memory-message p,.memory-lines {white-space:pre-wrap}.memory-message strong {color:#65dece}
+  .memory-id {font:12px ui-monospace,monospace;color:#a5b9ca;white-space:pre-wrap;overflow-wrap:anywhere}
+  #memoryPanel pre {white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+  #memoryPanel td {vertical-align:top}#memoryPanel .scroll {max-height:600px}
+  #memoryPanel button {width:auto}#memoryPanel select {max-width:100%}
+  .memory-failed {color:#ffb4a8}.memory-ok {color:#65dece}
+  #memoryActivity button,#memoryAttention button {text-align:left;white-space:normal;overflow-wrap:anywhere;max-width:360px}
+  #memoryActivity tr[aria-selected="true"] {background:#19323d}
   @media(max-width:650px) {body{padding:14px}.panel{padding:14px}canvas.chart{height:300px}.metric-groups{grid-template-columns:1fr}}
 </style>
 <header><div class="tag">MALBUT / OBSERVATION ONLY</div><h1>실기기 측정 로그</h1>
 <div class="muted">저장한 실측값을 조회합니다. 이 화면은 ROS에 연결하거나 로봇을 제어하지 않습니다.</div></header>
 <nav id="pages" class="pages" aria-label="측정 페이지">
   <a href="#system">전체 자원</a><a href="#launch">launch별</a><a href="#process">기능별</a>
-  <a href="#topic">토픽</a><a href="#speech">음성 대화</a><a href="#stt-trace">STT 실행 추적</a><a href="#action">실행 기록</a><a href="#catalog">프로세스 / 원본</a>
+  <a href="#topic">토픽</a><a href="#speech">음성 대화</a><a href="#memory">대화·장기기억</a><a href="#stt-trace">STT 실행 추적</a><a href="#action">실행 기록</a><a href="#catalog">프로세스 / 원본</a>
 </nav>
 <div class="page-heading"><h2 id="pageTitle">전체 자원</h2><div id="pageDescription" class="muted"></div></div>
 <section class="panel">
@@ -119,6 +128,38 @@
     <div id="traceDownloads" class="row"></div>
   </div>
 </section>
+<section class="panel" id="memoryPanel" hidden>
+  <div class="grid">
+    <label>대화 SQLite DB<select id="memoryDatabase"></select></label>
+    <label>사용자<select id="memoryUser"></select></label>
+    <label>대화 범위<select id="memoryConversation"></select></label>
+  </div>
+  <form id="memorySearchForm" class="row" style="margin-top:16px">
+    <label style="flex:1">대화 내용 / 요청 ID 검색<input id="memoryQuery" maxlength="300" placeholder="예: 독서모임, 전시, request ID"></label>
+    <button type="submit">검색</button><button type="button" id="memoryReload">다시 읽기</button>
+  </form>
+  <p id="memoryStatus" role="status" class="muted"></p>
+  <div id="memoryContent">
+    <div id="memoryCards" class="summary-cards"></div>
+    <h2 style="margin-top:24px">정리 실패·재시도 이력</h2>
+    <p class="muted">선택한 사용자의 실패 기록입니다. 재시도 후 완료된 작업도 남겨서 확인합니다.</p>
+    <div id="memoryAttention"></div>
+    <h2 style="margin-top:24px">최근 발화 한눈에 보기</h2>
+    <p class="muted">저장은 DB 커밋, 조회 결과 전달은 실제 모델 입력 기록으로 확인합니다. 발화를 누르면 아래에 상세 이력이 열립니다.</p>
+    <div class="scroll"><table><thead><tr><th>시각 / 발화</th><th>SQLite 저장</th><th>모델에 전달한 기억</th><th>정리 상태</th></tr></thead><tbody id="memoryActivity"></tbody></table></div>
+    <h2 style="margin-top:24px">발화별 저장·조회 흐름</h2>
+    <label>확인할 발화<select id="memoryTurn"></select></label>
+    <label class="check" style="width:fit-content;margin-top:12px"><input type="checkbox" id="memoryFollow" checked>최신 발화 따라가기</label>
+    <div id="memoryDialogue"></div>
+    <p id="memoryTraceNote" class="muted"></p>
+    <div class="scroll"><table><thead><tr><th>기록 시각</th><th>단계</th><th>결과 / 기억 ID</th></tr></thead><tbody id="memoryStages"></tbody></table></div>
+    <h2 style="margin-top:24px">이 발화의 백그라운드 저장 작업</h2><div id="memoryJobs"></div>
+    <h2 style="margin-top:24px">현재 SQLite에 저장된 장기기억</h2>
+    <p class="muted">아래는 현재 DB 내용입니다. 과거 모델 입력의 기억 버전과 다를 수 있습니다. 원문 근거는 현재 남아 있는 기록과 일치할 때만 표시합니다.</p>
+    <div id="memoryStored"></div>
+    <button type="button" id="memoryExport">현재 확인 결과 JSON 저장</button>
+  </div>
+</section>
 <section class="panel" id="dataPanel">
   <div class="grid">
     <label id="metricField">지표<select id="metric"></select></label>
@@ -158,6 +199,7 @@
   <details><summary>기타 원본 로그 / 측정 한계</summary><div id="otherLogs" class="row"></div><ul id="limitations"></ul></details>
 </section>
 <script src="/incident-viewer.js"></script>
+<script src="/memory-viewer.js"></script>
 <script>
   'use strict';
   const $=id=>document.getElementById(id), palette=['#65dece','#88baff','#ffcc7e','#cf9cf7','#fe92a8','#b7df81','#ddaf87','#a5b7cd'];
@@ -170,12 +212,15 @@
   const systemChoices=restored?.systemMetrics||{}, expandedUnits=new Set(restored?.expandedUnits||['%','MiB']);
   const systemPlots=new Map(), pageSelections=restored?.pageSelections||{};
   let legacyProcess=restored?.values?.process||'';
+  option($('kind'),'memory','대화·장기기억');
   option($('kind'),'stt-trace','STT 실행 추적');
   for(const id of ['kind','start','end'])if(typeof restored?.values?.[id]==='string')$(id).value=restored.values[id];
   if(!$('kind').value)$('kind').value='system';
   const pageInfo={system:['전체 자원','로봇 컴퓨터 전체의 CPU·RAM·GPU와 온도·전력을 확인합니다.'],launch:['launch별 자원','각 launch에서 시작된 프로세스를 비교합니다. 공통 Nav2·센서는 robot.launch.py 소속입니다.'],process:['기능별 자원','실행 파일·노드 이름으로 분류한 기능 그룹을 비교합니다.'],topic:['토픽 수신 지표','수집기가 받은 메시지의 빈도와 크기입니다. 발행률·네트워크 전송량과 다를 수 있습니다.'],speech:['음성 대화','STT 인식 문장, TTS 요청 문장과 재생 상태를 확인합니다.'],action:['실행 기록','Action 상태 토픽으로 관측한 시작·진행·종료 기록입니다.'],catalog:['프로세스 / 원본','프로세스 이름·실행 경로·launch 소속과 원본 로그를 확인합니다.']};
   pageInfo['stt-trace']=['STT 실행 추적','문제 발화가 만들어지고 Agent로 전달된 경로와 전후 프로그램 로그를 확인합니다.'];
   const incidentView=new IncidentView(get,refresh);
+  pageInfo.memory=['대화·장기기억','실제 SQLite의 대화·기억·작업 상태와 모델 입력 추적을 함께 확인합니다. 자원 수집 회차와 독립적으로 조회합니다.'];
+  const memoryView=new MemoryView(get,refresh);
   const initialPage=location.hash.slice(1);
   if(pageInfo[initialPage]){if(restored&&restored.values?.kind!==initialPage){restored.values={...restored.values,kind:initialPage,...(pageSelections[initialPage]||{channel:'',metric:'',action:''})};restored.scrollY=0}$('kind').value=initialPage}
   function processView(){return ['process','launch'].includes($('kind').value)}
@@ -263,6 +308,14 @@
   }
   function checkbox(label,checked,onchange){const card=document.createElement('label');card.className='check'+(checked?'':' off');const input=document.createElement('input');input.type='checkbox';input.checked=checked;input.setAttribute('aria-label',label);input.onchange=()=>onchange(input.checked);card.append(input);return card}
   function functions(){
+    const memoryPage=$('kind').value==='memory';
+    $('memoryPanel').hidden=!memoryPage;$('session').closest('.panel').hidden=memoryPage;
+    if(memoryPage){
+      $('pageTitle').textContent=pageInfo.memory[0];$('pageDescription').textContent=pageInfo.memory[1];
+      for(const id of ['dataPanel','actionPanel','catalogPanel','tracePanel'])if($(id))$(id).hidden=true;
+      for(const link of $('pages').querySelectorAll('a')){if(link.hash==='#memory')link.setAttribute('aria-current','page');else link.removeAttribute('aria-current')}
+      return;
+    }
     const kind=$('kind').value,speech=kind==='speech',records=kind==='action',inventory=kind==='catalog';$('speechPanel').hidden=!speech;
     const trace=kind==='stt-trace';$('tracePanel').hidden=!trace;$('sessionField').hidden=trace;$('sessionDetails').hidden=trace;
     $('pageTitle').textContent=pageInfo[kind][0];$('pageDescription').textContent=pageInfo[kind][1];
@@ -370,7 +423,7 @@
     clearTimeout(timer);request?.abort();const active=new AbortController();request=active;
     const timeout=setTimeout(()=>active.abort(),10000);
     try{
-      let loaded;if($('kind').value==='stt-trace'){functions();await incidentView.load(active.signal);loaded=true}else loaded=await sessions(active.signal);if(active.signal.aborted)return;
+      let loaded;if($('kind').value==='stt-trace'){functions();await incidentView.load(active.signal);loaded=true}else if($('kind').value==='memory'){functions();await memoryView.load(active.signal);loaded=true}else loaded=await sessions(active.signal);if(active.signal.aborted)return;
       $('liveStatus').textContent='자동 갱신 중 · '+new Date().toLocaleTimeString()+' 확인 · 변경된 항목만 반영';
       if(loaded){const previous=restored;restored=null;if(Number.isFinite(previous?.scrollY))window.scrollTo(0,previous.scrollY);saveState()}
     }catch(e){if(request===active)$('liveStatus').textContent='갱신 지연 · 기존 표시 유지 · '+(e.name==='AbortError'?'연결 대기시간 초과':e.message)+' · 자동 재시도'}
@@ -420,7 +473,7 @@
     for(const [key,plot] of systemPlots)if(!active.has(key))plot.root.hidden=true;
     let empty=$('systemEmpty');if(!empty){empty=document.createElement('p');empty.id='systemEmpty';empty.className='empty';$('systemCharts').append(empty)}empty.hidden=active.size>0;empty.textContent=rows.length?'표시할 지표를 체크하세요.':'이 구간에 측정 기록이 없습니다.';
   }
-  function chart(){if(['speech','action','catalog','stt-trace'].includes($('kind').value))return;if($('kind').value==='system'){systemChart();return}let series=[];
+  function chart(){if(['memory','speech','action','catalog','stt-trace'].includes($('kind').value))return;if($('kind').value==='system'){systemChart();return}let series=[];
     const metric=$('metric').value,filtered=processView()?rows.filter(r=>selectedGroups().includes(r._channel)):rows;const fields=metric==='__cores'||metric==='__clocks'?[...new Set(filtered.flatMap(r=>Object.keys(r)))].filter(k=>(metric==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(k)):[metric];
     const grouped=new Map();filtered.forEach(r=>{const key=r.identity||'';if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(r)});for(const[id,list]of grouped)for(const field of fields){const info=id?processInfo(id):null;series.push({key:curveKey(id,field),name:info?info.name:(labels[field]||field),detail:info?`${info.group} · ${info.raw} · PID ${info.pid} · ${labels[field]||field}`:($('kind').value==='system'?'로봇 컴퓨터 전체':$('channel').selectedOptions[0]?.textContent||''),path:info?info.path+' · '+id:'',field,rows:list,...curveStyle(id,field)})}
     drawChart($('chart'),$('hover'),legend(series),timeExtent(filtered));
