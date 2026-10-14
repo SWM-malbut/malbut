@@ -7,6 +7,7 @@ handoffs; the conversation Agent never subscribes to these runtime topics.
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -400,25 +401,33 @@ def main(argv=None):
         import aiohttp  # noqa: F401: check optional dependency before opening the journal
         import rclpy
 
+        from malbut_agent_server.application.fall_key_sync import key_sync_plan
+        from malbut_agent_server.fall_preflight import key_directory_reason
+
         key_sync = None
-        if settings.key_sync is None:
+        sync, synced_key_file, start_key_file = key_sync_plan(
+            settings, os.environ,
+            directory_ok=lambda path: key_directory_reason(path) == 'ok')
+        if sync is None:
             api_key = _read_token(settings.cloud_key_file)
         else:
             # With server key sync the robot may start before any key exists.
-            api_key = (_read_token(settings.cloud_key_file)
-                       if settings.cloud_key_file.exists() else None)
+            api_key = (_read_token(start_key_file)
+                       if start_key_file.exists() else None)
         provider = OllamaCloudFallProvider(model=settings.model, api_key=api_key)
-        if settings.key_sync is not None:
+        if sync is not None:
             from malbut_agent_server.adapters.outbound.homecam_fall_key import HomecamFallKeyClient
             from malbut_agent_server.application.fall_key_sync import FallCloudKeySync
-            sync = settings.key_sync
             key_sync = FallCloudKeySync(
                 client=HomecamFallKeyClient(
                     base_url=sync.base_url, device_id=settings.device_id,
                     device_token=_read_token(sync.token_file),
                     allowed_hosts=set(sync.allow_hosts), timeout_s=5),
-                key_file=settings.cloud_key_file, model=settings.model,
+                key_file=synced_key_file, model=settings.model,
                 apply_key=provider.replace_key)
+            # Paths and the host only; never the key or the token.
+            print(f'fall cloud key sync: every {sync.interval_s:.0f} s from '
+                  f'{sync.allow_hosts[0]}, key file {synced_key_file}', flush=True)
         tracker_factory = None
         if settings.tracking is not None:
             from functools import partial
@@ -434,8 +443,7 @@ def main(argv=None):
                 node = create_fall_node(settings, provider=provider, journal=journal,
                                         tracker_factory=tracker_factory)
                 await spin_runtime(node, key_sync=key_sync,
-                                   key_sync_interval_s=settings.key_sync.interval_s
-                                   if settings.key_sync else None)
+                                   key_sync_interval_s=sync.interval_s if sync else None)
             asyncio.run(run())
         finally:
             if node is not None:

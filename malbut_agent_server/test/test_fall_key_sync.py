@@ -14,7 +14,7 @@ import pytest
 from malbut_agent_server.adapters.outbound.homecam_fall_events import FallUploadError
 from malbut_agent_server.adapters.outbound.homecam_fall_key import HomecamFallKeyClient
 from malbut_agent_server.adapters.outbound.ollama_cloud_fall import OllamaCloudFallProvider
-from malbut_agent_server.application.fall_key_sync import FallCloudKeySync
+from malbut_agent_server.application.fall_key_sync import FallCloudKeySync, key_sync_plan
 from malbut_agent_server.fall_runtime import FallKeySyncSettings, FallNodeSettings
 from malbut_agent_server.ports.cloud_fall import CloudFallProviderError
 
@@ -243,3 +243,45 @@ def test_preflight_requires_a_private_key_directory(tmp_path):
     folder.chmod(0o770)
     assert key_directory_reason(folder / 'cloud.key') == 'writable_by_others'
     assert key_directory_reason(tmp_path / 'missing' / 'cloud.key') == 'not_accessible'
+
+
+WEB = {'HOMECAM_BACKEND_URL': 'https://d22pvju736a5yt.cloudfront.net/',
+       'HOMECAM_DEVICE_TOKEN_FILE': '/home/ubuntu/.config/malbut/device-token'}
+
+
+def plan_settings(tmp_path, **change):
+    data = {**EXAMPLE, 'journal_path': str(tmp_path / 'falls' / 'events.sqlite'),
+            'cloud_key_file': str(tmp_path / 'etc' / 'ollama-cloud.key'), **change}
+    return FallNodeSettings.parse(json.dumps(data))
+
+
+def test_robots_set_up_from_git_sync_the_owner_key_from_their_web_settings(tmp_path):
+    # 2026-10-14: a robot without key_sync never fetched the key saved in the app.
+    settings = plan_settings(tmp_path)
+    (tmp_path / 'falls').mkdir()
+    sync, synced, start = key_sync_plan(settings, WEB, directory_ok=lambda path: False)
+    assert sync == FallKeySyncSettings(
+        'https://d22pvju736a5yt.cloudfront.net/', ('d22pvju736a5yt.cloudfront.net',),
+        sync.token_file, 60.0)
+    assert str(sync.token_file) == '/home/ubuntu/.config/malbut/device-token'
+    # /etc is not this account's to write: the synced key lives by the journal.
+    assert synced == tmp_path / 'falls' / 'fall-cloud.key'
+    assert start == settings.cloud_key_file  # The team key until the owner sets one.
+    synced.with_name('fall-cloud.key.version').write_text('{"keyVersion": 2}')
+    assert key_sync_plan(settings, WEB, directory_ok=lambda path: False)[2] == synced
+    # A key directory this account owns is used as configured.
+    assert key_sync_plan(settings, WEB, directory_ok=lambda path: True)[1:] == (
+        settings.cloud_key_file, settings.cloud_key_file)
+
+
+def test_without_web_settings_or_with_explicit_key_sync_nothing_changes(tmp_path):
+    settings = plan_settings(tmp_path)
+    key = settings.cloud_key_file
+    for environ in ({}, {'HOMECAM_BACKEND_URL': WEB['HOMECAM_BACKEND_URL']},
+                    {**WEB, 'HOMECAM_BACKEND_URL': 'http://insecure.example.com'},
+                    {**WEB, 'HOMECAM_DEVICE_TOKEN_FILE': 'relative.token'}):
+        assert key_sync_plan(settings, environ, directory_ok=lambda path: True) == (
+            None, key, key)
+    explicit = plan_settings(tmp_path, key_sync=SYNC)
+    assert key_sync_plan(explicit, WEB, directory_ok=lambda path: False) == (
+        explicit.key_sync, key, key)

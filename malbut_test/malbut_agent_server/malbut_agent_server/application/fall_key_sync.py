@@ -14,6 +14,7 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+from urllib.parse import urlsplit
 
 LOG = logging.getLogger(__name__)
 
@@ -40,6 +41,43 @@ def write_private_file(path: Path, data: bytes):
         os.fsync(directory)  # make the rename durable before the version file
     finally:
         os.close(directory)
+
+
+SYNCED_KEY_NAME = 'fall-cloud.key'
+
+
+def key_sync_plan(settings, environ, *, directory_ok):
+    """How this robot gets the owner's fall Cloud key (2026-10-14).
+
+    An explicit ``key_sync`` in the config wins, with its key file as before.
+    Otherwise the robot's web settings (HOMECAM_BACKEND_URL and
+    HOMECAM_DEVICE_TOKEN_FILE, which the uploader already uses) turn sync on,
+    so a robot set up from git needs no extra config. The synced key goes
+    where only this account writes: the configured key file's directory if it
+    qualifies, else next to the journal (a 0700 directory of this account).
+    Until the owner registers a key the configured key file is used; once the
+    web manages it (a version file exists), only the synced key is.
+
+    Returns (sync settings or None, file the sync writes, file read at start).
+    """
+    from malbut_agent_server.fall_runtime import FallKeySyncSettings
+
+    if settings.key_sync is not None:
+        return settings.key_sync, settings.cloud_key_file, settings.cloud_key_file
+    backend = environ.get('HOMECAM_BACKEND_URL', '').strip()
+    token = environ.get('HOMECAM_DEVICE_TOKEN_FILE', '').strip()
+    host = urlsplit(backend).hostname if backend else None
+    if not host or not token:
+        return None, settings.cloud_key_file, settings.cloud_key_file
+    try:
+        sync = FallKeySyncSettings.parse(
+            {'base_url': backend, 'allow_hosts': [host], 'token_file': token})
+    except ValueError:
+        return None, settings.cloud_key_file, settings.cloud_key_file
+    synced = (settings.cloud_key_file if directory_ok(settings.cloud_key_file)
+              else settings.journal_path.parent / SYNCED_KEY_NAME)
+    managed = synced.with_name(synced.name + '.version').exists()
+    return sync, synced, synced if managed else settings.cloud_key_file
 
 
 class FallCloudKeySync:
