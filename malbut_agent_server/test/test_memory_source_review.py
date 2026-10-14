@@ -120,6 +120,32 @@ def test_lexically_supported_fact_needs_no_review(setup):
     assert len(flow.memory.list_for_user('alice')) == 1
 
 
+@pytest.mark.parametrize('evidence', [
+    '옆집 강아지 이름은 두부야', '강아지 이름은 두부야',
+])
+def test_third_party_pet_cannot_bypass_review_with_label_or_clipped_quote(setup, evidence):
+    flow, reviewer = setup
+    flow.enable()
+    reviewer.accept = False
+    text = '옆집 강아지 이름은 두부야'
+    fact = {'kind': 'pet', 'subject': '강아지', 'attribute': 'name',
+            'value': '두부', 'evidence': evidence}
+    flow.say(text, proposed('remember', text, facts=[fact]))
+    assert len(reviewer.calls) == 1
+    assert flow.memory.list_for_user('alice') == []
+
+
+def test_other_owner_mention_does_not_unconditionally_reject_own_pet(setup):
+    flow, reviewer = setup
+    flow.enable()
+    text = '우리 고양이 이름은 별이야. 이웃은 강아지를 키워'
+    fact = {'kind': 'pet', 'subject': '고양이', 'attribute': 'name',
+            'value': '별', 'evidence': '우리 고양이 이름은 별이야'}
+    flow.say(text, proposed('remember', text, facts=[fact]))
+    assert len(reviewer.calls) == 1
+    assert flow.memory.list_for_user('alice')[0].metadata['fact']['value'] == '별'
+
+
 def test_unenabled_automatic_candidate_is_not_reviewed_or_saved(setup):
     flow, reviewer = setup
     text = '난 김민재야'

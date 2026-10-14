@@ -254,6 +254,11 @@ OpenAI 대화 기본 모델은 `gpt-5.6-luna`, reasoning은 `low`, 출력 상한
 해당 문서의 운영 A 선택은 과거 기록이다. 비교용 harness는 현재 운영 worker의
 영속 큐·취소·재시작·실제 응답 전달 검증을 대신하지 않는다.
 
+원문 검토만 기존 Responses와 Decisions API로 비교하는 별도 실험과 기존 DB의
+검토 실행 비율 집계는 [Decisions 비교 실험](docs/MEMORY_REVIEW_DECISIONS_EXPERIMENT.md)을
+참고한다. Decisions는 비교 실험에서만 사용한다. 소유주·부분 인용 검사와 OpenAI
+원문 검토 지시문의 보완은 기존 Responses 경로에 반영했다.
+
 ## SWM25-73 Tool Gateway
 
 `available_tools`는 클라이언트가 capability를 선언하는 필드가 아니다. 서버

@@ -1,0 +1,402 @@
+[
+  {
+    "id": "h_neighbor_label",
+    "source": "옆집 고양이 이름은 구름이야",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "고양이",
+        "attribute": "name",
+        "value": "구름",
+        "evidence": "옆집 고양이 이름은 구름이야"
+      }
+    ],
+    "expected": [
+      "insufficient"
+    ]
+  },
+  {
+    "id": "h_neighbor_trimmed",
+    "source": "옆집 강아지 이름은 호두야",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "호두",
+        "evidence": "강아지 이름은 호두야"
+      }
+    ],
+    "expected": [
+      "insufficient"
+    ]
+  },
+  {
+    "id": "h_colleague_pet",
+    "source": "직장 동료가 키우는 강아지를 밤비라고 불러",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "밤비",
+        "evidence": "직장 동료가 키우는 강아지를 밤비라고 불러"
+      }
+    ],
+    "expected": [
+      "insufficient"
+    ]
+  },
+  {
+    "id": "h_unknown_owner",
+    "source": "공원에서 만난 강아지를 봉구라고 부르더라",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "봉구",
+        "evidence": "공원에서 만난 강아지를 봉구라고 부르더라"
+      }
+    ],
+    "expected": [
+      "insufficient"
+    ]
+  },
+  {
+    "id": "h_two_owners",
+    "source": "옆집 강아지는 호두라고 부르고 우리 강아지는 보리라고 불러",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "호두",
+        "evidence": "옆집 강아지는 호두라고 부르고 우리 강아지는 보리라고 불러"
+      },
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "보리",
+        "evidence": "옆집 강아지는 호두라고 부르고 우리 강아지는 보리라고 불러"
+      }
+    ],
+    "expected": [
+      "insufficient",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_adopted_now",
+    "source": "전에는 이웃이 키우던 강아지인데 지금은 내가 입양해서 키워. 이름은 루키야",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "루키",
+        "evidence": "전에는 이웃이 키우던 강아지인데 지금은 내가 입양해서 키워. 이름은 루키야"
+      }
+    ],
+    "expected": [
+      "supported"
+    ]
+  },
+  {
+    "id": "h_former_pet",
+    "source": "우리 강아지 이름은 코코였어. 지금은 동생네로 보내서 나는 더 이상 키우지 않아",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "강아지",
+        "attribute": "name",
+        "value": "코코",
+        "evidence": "우리 강아지 이름은 코코였어. 지금은 동생네로 보내서 나는 더 이상 키우지 않아"
+      }
+    ],
+    "expected": [
+      "contradicted"
+    ]
+  },
+  {
+    "id": "h_family_pet",
+    "source": "우리 가족이 함께 돌보는 고양이를 솜이라고 불러",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "고양이",
+        "attribute": "name",
+        "value": "솜",
+        "evidence": "우리 가족이 함께 돌보는 고양이를 솜이라고 불러"
+      }
+    ],
+    "expected": [
+      "supported"
+    ]
+  },
+  {
+    "id": "h_shared_pet",
+    "source": "동생과 내가 함께 키우는 고양이를 달이라고 불러",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "고양이",
+        "attribute": "name",
+        "value": "달",
+        "evidence": "동생과 내가 함께 키우는 고양이를 달이라고 불러"
+      }
+    ],
+    "expected": [
+      "supported"
+    ]
+  },
+  {
+    "id": "h_own_pet_other_owner_mentioned",
+    "source": "우리 고양이는 별이라고 불러. 이웃은 강아지를 키워",
+    "facts": [
+      {
+        "kind": "pet",
+        "subject": "고양이",
+        "attribute": "name",
+        "value": "별",
+        "evidence": "우리 고양이는 별이라고 불러. 이웃은 강아지를 키워"
+      }
+    ],
+    "expected": [
+      "supported"
+    ]
+  },
+  {
+    "id": "h_two_true_preferences",
+    "source": "나는 우유는 싫어하지만 두유는 좋아해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "dislikes",
+        "value": "우유",
+        "evidence": "나는 우유는 싫어하지만 두유는 좋아해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "두유",
+        "evidence": "나는 우유는 싫어하지만 두유는 좋아해"
+      }
+    ],
+    "expected": [
+      "supported",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_reverse_candidate_order",
+    "source": "나는 홍차를 싫어하지만 녹차는 좋아해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "녹차",
+        "evidence": "나는 홍차를 싫어하지만 녹차는 좋아해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "홍차",
+        "evidence": "나는 홍차를 싫어하지만 녹차는 좋아해"
+      }
+    ],
+    "expected": [
+      "supported",
+      "contradicted"
+    ]
+  },
+  {
+    "id": "h_two_wrong_polarities",
+    "source": "나는 사과는 좋아하지만 배는 싫어해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "dislikes",
+        "value": "사과",
+        "evidence": "나는 사과는 좋아하지만 배는 싫어해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "배",
+        "evidence": "나는 사과는 좋아하지만 배는 싫어해"
+      }
+    ],
+    "expected": [
+      "contradicted",
+      "contradicted"
+    ]
+  },
+  {
+    "id": "h_two_people",
+    "source": "동생은 재즈를 좋아해. 나는 클래식을 좋아해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "재즈",
+        "evidence": "동생은 재즈를 좋아해. 나는 클래식을 좋아해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "클래식",
+        "evidence": "동생은 재즈를 좋아해. 나는 클래식을 좋아해"
+      }
+    ],
+    "expected": [
+      "insufficient",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_preference_changed",
+    "source": "민트는 예전에 싫어했지만 지금은 좋아해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "dislikes",
+        "value": "민트",
+        "evidence": "민트는 예전에 싫어했지만 지금은 좋아해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "민트",
+        "evidence": "민트는 예전에 싫어했지만 지금은 좋아해"
+      }
+    ],
+    "expected": [
+      "contradicted",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_unresolved_one_candidate",
+    "source": "나는 수영을 좋아해. 등산은 좋아하는지 아직 모르겠어",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "수영",
+        "evidence": "나는 수영을 좋아해. 등산은 좋아하는지 아직 모르겠어"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "등산",
+        "evidence": "나는 수영을 좋아해. 등산은 좋아하는지 아직 모르겠어"
+      }
+    ],
+    "expected": [
+      "supported",
+      "insufficient"
+    ]
+  },
+  {
+    "id": "h_both_liked",
+    "source": "나는 바둑도 좋아하고 체스도 좋아해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "바둑",
+        "evidence": "나는 바둑도 좋아하고 체스도 좋아해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "체스",
+        "evidence": "나는 바둑도 좋아하고 체스도 좋아해"
+      }
+    ],
+    "expected": [
+      "supported",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_both_disliked",
+    "source": "나는 탄산음료도 싫어하고 에너지음료도 싫어해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "dislikes",
+        "value": "탄산음료",
+        "evidence": "나는 탄산음료도 싫어하고 에너지음료도 싫어해"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "dislikes",
+        "value": "에너지음료",
+        "evidence": "나는 탄산음료도 싫어하고 에너지음료도 싫어해"
+      }
+    ],
+    "expected": [
+      "supported",
+      "supported"
+    ]
+  },
+  {
+    "id": "h_preference_whole_source",
+    "source": "나는 매운 음식을 좋아해. 방금 말은 정정할게. 매운 음식은 싫어해",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "매운 음식",
+        "evidence": "나는 매운 음식을 좋아해"
+      }
+    ],
+    "expected": [
+      "contradicted"
+    ]
+  },
+  {
+    "id": "h_other_object_negation",
+    "source": "나는 아침 산책은 좋아하지만 밤 산책은 좋아하지 않아",
+    "facts": [
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "아침 산책",
+        "evidence": "나는 아침 산책은 좋아하지만 밤 산책은 좋아하지 않아"
+      },
+      {
+        "kind": "preference",
+        "subject": "user",
+        "attribute": "likes",
+        "value": "밤 산책",
+        "evidence": "나는 아침 산책은 좋아하지만 밤 산책은 좋아하지 않아"
+      }
+    ],
+    "expected": [
+      "supported",
+      "contradicted"
+    ]
+  }
+]
