@@ -142,11 +142,11 @@ PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
 ### 기능별 사전 생성 안내
 
 Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한다. 전체 카탈로그는
-62개이며, 문구와 매핑은 `malbut_agent_server/mission_audio.py`,
+70개이며, 문구와 매핑은 `malbut_agent_server/mission_audio.py`,
 `mission_audio_cases.py`에 있다. 성공·실패·취소는 각각 “요청하신 작업이 완료됐어요.”,
 “작업을 완료하지 못했어요.”, “작업이 취소됐어요.”처럼 공통 문구를 사용한다.
-내부 실패 사유는 이벤트 로그에 남기고, 지도 선택·목적지·날씨 지역처럼 사용자가
-다음 행동을 해야 하는 경우에만 짧은 별도 안내를 사용한다.
+내부 실패 사유는 이벤트 로그에 남긴다. 지도 선택·목적지·날씨 지역 안내와
+기능별 조회 오류 등 사용자에게 필요한 고정 응답은 별도 녹음을 사용한다.
 날씨 조회는 “네, 날씨 조회를 시작하겠습니다.”처럼
 기능별 문구를 사용한다. 이동·따라가기·순찰·지도 작성·위치 확인·수동 조작·복구와
 홈캠 조회에도 시작 음성이 있다. 문구는 `function_speech.py`에서 관리한다.
@@ -165,6 +165,11 @@ Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한
 포함한다. 낙상 확인 시작·확인 중·보호자 알림·확인 중지·이동 제한 안내도 저장 음성이다.
 지도·방 정보 변경은 `navigation.changed`, 목적지 재입력은 `navigation.target_missing`,
 지도 선택 요청은 `navigation.map_required` 등 기존 WAV에 연결한다.
+실행 요청의 처리 여부 불명, 음성 실행 기능 미연결, 날씨·홈캠의 조회 불가·인자 오류·
+답변 생성 실패 8종은 공통 문구로 줄이지 않고 각각 원문 그대로 녹음한다.
+`operation.request_unknown`, `operation.voice_unavailable`,
+`weather.{unavailable,invalid_arguments,answer_failed}`,
+`homecam.{unavailable,invalid_arguments,answer_failed}`가 해당 파일이다.
 만료 또는 지도 변경 중 어느 쪽인지 확정하지 못한 안내는 별도
 `navigation.confirmation_changed`로 보존하여 지도 변경으로 단정하지 않는다.
 음성 매핑은 발화 문구만 선택하며 요청의 실행·취소·실패 판단을 변경하지 않는다.

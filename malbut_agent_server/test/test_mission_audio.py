@@ -111,12 +111,25 @@ def test_packaged_catalogs_match_the_agent_and_ship_every_selected_recording():
     ('지도나 방 정보가 변경되어 이동하지 않았어요. 다시 말씀해 주세요.', 'navigation.changed'),
     ('사용 중인 저장 지도와 등록된 목적지를 확인할 수 없어요.', 'navigation.map_required'),
     ('등록된 목적지 이름을 확인해 다시 말씀해 주세요.', 'navigation.target_missing'),
-    ('실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.', 'operation.unknown'),
-    ('홈캠 조회 결과로 답변을 만들지 못했어요.', 'conversation.answer_failed'),
-    ('날씨 조회 결과로 답변을 만들지 못했어요.', 'conversation.answer_failed'),
 ])
 def test_equivalent_fixed_replies_reuse_the_matching_recording(text, audio_id):
     assert TEXT_IDS[text] == audio_id
+
+
+@pytest.mark.parametrize('text,audio_id', [
+    ('실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.',
+     'operation.request_unknown'),
+    ('이 음성 실행 기능이 연결되지 않았어요.', 'operation.voice_unavailable'),
+    ('날씨 조회 기능을 사용할 수 없습니다.', 'weather.unavailable'),
+    ('홈캠 조회가 연결되지 않았어요.', 'homecam.unavailable'),
+    ('날씨 조회 인자가 올바르지 않습니다.', 'weather.invalid_arguments'),
+    ('홈캠 조회 인자가 올바르지 않아요.', 'homecam.invalid_arguments'),
+    ('홈캠 조회 결과로 답변을 만들지 못했어요.', 'homecam.answer_failed'),
+    ('날씨 조회 결과로 답변을 만들지 못했어요.', 'weather.answer_failed'),
+])
+def test_tool_error_recordings_preserve_the_full_message(text, audio_id):
+    assert TEXT_IDS[text] == audio_id
+    assert CATALOG[audio_id] == text
 
 
 def test_expired_confirmation_does_not_claim_that_the_map_changed():
