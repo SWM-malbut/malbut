@@ -112,6 +112,13 @@ Do not change a judgment or omit a concerning person merely to avoid giving loca
 # Cloud calls only (squat became normal, a close-up seated person stayed
 # suspected, two synthetic falls stayed falls, 6 of 7 bag scenes became
 # normal), so evaluation profiles do NOT include it.
+# 2026-10-13 robot: a person lying on the floor was seen again in a mirror; the
+# Cloud said "거울에 비친 모습" yet flagged it four times, and the robot found
+# no path to the spot behind the mirror. Hence the mirror sentences. Checked
+# with recorded crosscheck windows, two calls each: 5 mirror-only windows
+# (10-13 17:13-17:15, 10-14 02:56) went from suspected to normal; a shorter
+# "do not report reflections" wording still flagged 3 of them. Real floor and
+# synthetic falls stayed the same; one bed-edge sitting false alarm cleared.
 LIVE_RULES = '''
 Additional classification rules for this household robot:
 Controlled sitting or lying down is normal_activity: lowering slowly, using the hands,
@@ -121,7 +128,13 @@ A person already sitting upright on the floor who moves purposefully (using the 
 changing posture or handling objects) is normal_activity even if the descent was not seen.
 Lying still, slumping or struggling to get up remains suspected_fall.
 Report a person only when a human body part is visible. Bags, clothes, bedding, cushions,
-furniture, boxes, shadows and pets are not people.'''
+furniture, boxes, shadows and pets are not people.
+Mirrors and screens: a mirror, window or glass door shows a reflection of the room, not a
+space behind it, and a TV, monitor or phone shows a picture. A person seen only inside such a
+frame is not a person to assess: never report it as a finding and never let it make the scene
+observed_fall or suspected_fall, even if it looks fallen and is the only person visible. If no
+directly visible person is concerning, return normal_activity with findings []. A person whose
+body is directly visible outside the frame is judged as usual.'''
 # No writing-style rule here: asking for noun-ending Korean turned the squat
 # back into observed_fall in 2 of 2 calls. The web shortens endings for display.
 

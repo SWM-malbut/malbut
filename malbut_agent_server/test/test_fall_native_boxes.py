@@ -159,6 +159,8 @@ def test_live_rules_reach_every_live_request_but_never_evaluation_payloads():
                    'even if the person ends up sitting',
                    'already sitting upright on the floor',
                    'Lying still, slumping or struggling to get up remains suspected_fall',
-                   'Bags, clothes, bedding'):
+                   'Bags, clothes, bedding',
+                   'Mirrors and screens: a mirror',
+                   'directly visible outside the frame is judged as usual'):
         assert phrase in LIVE_RULES
     assert '음슴체' not in LIVE_RULES  # Style rules changed the judgement; display converts.
