@@ -8,7 +8,8 @@ import pytest
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.situation_dialogue import (
-    SituationContext, SituationDialogue, SituationExchange, SituationRequest,
+    FALL_CONFIRMATION_QUESTION, SituationContext, SituationDialogue, SituationExchange,
+    SituationRequest,
 )
 from malbut_agent_server.situation_provider import (
     INSTRUCTIONS, OpenAISituationProvider,
@@ -50,11 +51,32 @@ def context(answer=None, history=(), summary='거실 바닥에 사람이 누워 
     )
 
 
-def test_question_generation_uses_summary_and_strict_json_without_normal_tools():
-    target, calls = provider(timeout_seconds=7, max_output_tokens=128)
+@pytest.mark.parametrize('situation_type', ['fall', '낙상'])
+def test_first_fall_question_uses_recorded_wording_even_when_transport_is_down(situation_type):
+    target, calls = provider(TimeoutError('network unavailable'))
     dialogue = SituationDialogue(target)
-    first = dialogue.start('request-1', 'fall', '화장실에서 낙상이 의심됨')
-    assert first.text == '혹시 넘어지신 건가요?'
+    first = dialogue.start('request-1', situation_type, '화장실에서 낙상이 의심됨')
+    assert first.text == FALL_CONFIRMATION_QUESTION
+    assert first.result is None
+    assert dialogue.situation_assessment == 'unknown'
+    assert calls == []
+    # Network failure during answer interpretation must still propagate.
+    with pytest.raises(TimeoutError):
+        dialogue.answer('잘 모르겠어요')
+    assert len(calls) == 1
+    data = json.loads(calls[0][2]['input'])
+    assert data['current_question_untrusted'] == first.text
+    assert data['current_answer_untrusted'] == '잘 모르겠어요'
+
+
+def test_other_question_generation_uses_summary_and_strict_json_without_normal_tools():
+    question = '주방에 실제로 연기가 나고 있나요?'
+    target, calls = provider(response(json.dumps({
+        'situation_assessment': 'unknown', 'help_needed': None, 'question': question,
+    })), timeout_seconds=7, max_output_tokens=128)
+    dialogue = SituationDialogue(target)
+    first = dialogue.start('request-1', 'smoke', '주방에서 연기가 관측됨')
+    assert first.text == question
     url, headers, payload, timeout = calls[0]
     assert url == 'https://api.openai.com/v1/responses'
     assert timeout == 7
@@ -66,7 +88,8 @@ def test_question_generation_uses_summary_and_strict_json_without_normal_tools()
     assert payload['text']['format']['strict'] is True
     assert payload['text']['format']['schema']['additionalProperties'] is False
     data = json.loads(payload['input'])
-    assert data['situation_summary_untrusted'] == '화장실에서 낙상이 의심됨'
+    assert data['situation_type_untrusted'] == 'smoke'
+    assert data['situation_summary_untrusted'] == '주방에서 연기가 관측됨'
     assert data['current_answer_untrusted'] is None
     assert headers['X-Client-Request-Id'].startswith('malbut-')
 
@@ -165,7 +188,6 @@ def test_transport_failure_propagates_without_credential_like_logs(capsys):
 ])
 def test_contextual_two_turn_path_uses_latest_cumulative_model_judgment(latest, answer):
     replies = iter([
-        response(),
         response(json.dumps({'situation_assessment': 'confirmed_incident',
                              'help_needed': None, 'question': '도움이 필요하세요?'})),
         response(json.dumps({'situation_assessment': latest,

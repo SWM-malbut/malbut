@@ -8,6 +8,7 @@ from malbut_agent_server.conversation_progress import (
 )
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
+from malbut_agent_server.situation_dialogue import FALL_CONFIRMATION_QUESTION
 
 
 CATALOG = {
@@ -16,9 +17,7 @@ CATALOG = {
     'conversation.model_retry': MODEL_RETRY_NOTICE,
     'conversation.weather_retry': WEATHER_RETRY_NOTICE,
     'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,
-    'situation.fall.confirmation': (
-        '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?'
-    ),
+    'situation.fall.confirmation': FALL_CONFIRMATION_QUESTION,
     'situation.resolved': '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.',
     **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()},
 }
