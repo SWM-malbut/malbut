@@ -81,6 +81,9 @@ const AI_ERROR_LABEL: Record<string, string> = {
   cloud_consent_off: "클라우드 분석 동의가 꺼져 있음", key_missing: "클라우드 AI 키 없음", model_unknown: "로봇 모델 정보 없음",
   frames_unavailable: "녹화 사진을 충분히 찾지 못함", cloud_quota_exhausted: "AI 사용 한도 초과",
   cloud_auth_required: "AI 키 인증 실패", cloud_timeout: "AI 응답 시간 초과", worker_lost: "처리 중단",
+  frames_unavailable_yet: "녹화 사진이 아직 준비되지 않음", kvs_unavailable: "녹화 사진을 가져오지 못함",
+  kvs_request_invalid: "녹화 사진 요청이 거절됨", cloud_transport_error: "AI 연결 오류",
+  cloud_http_error: "AI 서버 오류",
 };
 
 const clock = (value: string, seconds = false) => new Date(value).toLocaleTimeString("ko-KR",
@@ -642,7 +645,10 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
               {latest.status === "completed" && latest.assessment
                 ? <span className={`fall-pill ${ASSESSMENT[latest.assessment]?.[1] ?? "is-neutral"}`}>{ASSESSMENT[latest.assessment]?.[0] ?? latest.assessment}</span>
                 : <span className="fall-pill is-neutral">{latest.status === "failed"
-                  ? `검토 실패 · ${AI_ERROR_LABEL[latest.errorCode ?? ""] ?? latest.errorCode}` : "검토 진행 중"}</span>}
+                  ? `검토 실패 · ${AI_ERROR_LABEL[latest.errorCode ?? ""] ?? latest.errorCode}`
+                  // A queued review keeps its last failure while it waits to try again.
+                  : latest.errorCode
+                    ? `다시 시도 중 · ${AI_ERROR_LABEL[latest.errorCode] ?? latest.errorCode}` : "검토 진행 중"}</span>}
               <span className="fall-sub">사진만으로 받은 판정 · {clock(latest.completedAt ?? latest.createdAt, true)}</span>
               {latest.explanation && <p>{latest.explanation}</p>}
             </div>

@@ -252,6 +252,20 @@ test("worker failures: quota retries later, missing frames and withdrawn consent
       assert.equal((await worker.processFallAiJob()).reason, "frames_unavailable");
       [r] = await ai.listFallAiReviews("robot-a", report.incidentId);
       assert.equal(r.status, "failed");
+      // 2026-10-14: KVS rejected every request (width without height). A rejected
+      // request fails at once; a broker outage is retried.
+      for (const [brokerError, reason, status] of [["KVS_BROKER_502", "kvs_unavailable", "queued"],
+        ["KVS_BROKER_400", "kvs_request_invalid", "failed"], ["KVS_BROKER_403", "kvs_request_invalid", "failed"]]) {
+        const at = second(Date.now() - 600_000 - state.broker.length * 60_000);
+        const old = await review.reportMissedFall("robot-a", "u-owner", at);
+        await ai.requestFallAiReview("robot-a", old.incidentId, "u-owner", at);
+        state.brokerError = brokerError;
+        assert.equal((await worker.processFallAiJob()).reason, reason);
+        const [x] = await ai.listFallAiReviews("robot-a", old.incidentId);
+        assert.deepEqual([x.status, x.errorCode], [status, reason], brokerError);
+        await h.db.query("UPDATE fall_ai_reviews SET status='failed' WHERE incident_id=$1", [old.incidentId]);
+      }
+      state.brokerError = undefined;
       // A recent moment whose stills are not archived yet is retried, not failed.
       const fresh = await review.reportMissedFall("robot-a", "u-owner", second(Date.now() - 40_000));
       await ai.requestFallAiReview("robot-a", fresh.incidentId, "u-owner", second(Date.now() - 40_000));
@@ -350,6 +364,14 @@ test("HTTP: key routes, robot key sync, review route errors", async () => {
   }); } finally { await h.db.close(); }
 });
 
+test("a review waiting to try again shows why, not only \"in progress\"", async () => {
+  const panel = await readFile(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /다시 시도 중 · /);
+  for (const code of ["kvs_unavailable", "kvs_request_invalid", "frames_unavailable_yet"]) {
+    assert.match(panel, new RegExp(`${code}: "`), code);
+  }
+});
+
 test("KVS broker exposes bounded stills only and IAM allows GetImages", async () => {
   const [broker, stack] = await Promise.all([
     readFile(new URL("../infra/aws/kvs-broker/index.mjs", import.meta.url), "utf8"),
@@ -359,6 +381,9 @@ test("KVS broker exposes bounded stills only and IAM allows GetImages", async ()
   assert.match(broker, /maxImageRangeMs = 10_000/);
   assert.match(broker, /maxImageCount = 12/);
   assert.match(broker, /input\.streamArn !== resources\.streamArn/);
+  // KVS takes both width and height or neither (2026-10-14: width alone failed every time).
+  assert.equal(/WidthPixels/.test(broker), /HeightPixels/.test(broker));
+  assert.match(broker, /InvalidArgumentException[\s\S]{0,120}response\(400/);
   assert.match(stack, /"kinesisvideo:GetImages"/);
   assert.match(stack, /FALL_KEY_ENCRYPTION_SECRET: ecs\.Secret\.fromSecretsManager/);
 });
