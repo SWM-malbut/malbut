@@ -72,6 +72,9 @@ class StoryMemoryService:
         if self._stop.is_set():
             raise StoryServiceError('기억 서비스가 종료되었습니다.')
 
+    def trace(self, request, event, data):
+        self.store.trace(request, event, data)
+
     def _start(self):
         with self._condition:
             if self._stop.is_set() or self.extractor is None or not self._started:
@@ -196,6 +199,8 @@ class StoryMemoryService:
                 return False
             required[item['story_id']] = set(item['entry_hashes'])
         if required:
+            if required.keys() & self.store.failed_story_ids(user, request_id=request_id):
+                return False
             # list_stories reads valid source-backed stories in one snapshot.
             existing = {story['story_id']: {self._entry_hash(entry)
                                            for entry in story.get('current', [])}
@@ -248,26 +253,30 @@ class StoryMemoryService:
         stats = self.store.stats(user)
         result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
         result['failed'] = int(stats.get('failed', 0))
-        if result['pending'] or result['failed']:
+        if result['pending']:
             # A queued correction can invalidate the meaning of an old summary
             # even before extraction completes. Do not present it as current.
-            result['status'] = 'updating' if result['pending'] else 'update_failed'
+            result['status'] = 'updating'
             return result
-        stories = self.store.candidates(user, utterance, limit=3)
+        blocked = self.store.failed_story_ids(user) if result['failed'] else set()
+        stories = self.store.candidates(user, utterance, limit=3, exclude_ids=blocked)
         # A short deictic follow-up may use the latest two turns to identify the
         # topic. This affects local matching, never transmits an entire archive.
         if not stories and re.search(r'그(?:거|것|때| 이야기)|이어서|계속|지난번', utterance):
             recent = list(recent_turns)[-2:]
             text = ' '.join(getattr(turn, 'user_content', '') for turn in recent)
             if text:
-                stories = self.store.candidates(user, utterance + ' ' + text[-3000:], limit=3)
+                stories = self.store.candidates(user, utterance + ' ' + text[-3000:],
+                                                limit=3, exclude_ids=blocked)
         result['stories'] = [self._context_story(story) for story in stories]
         result['readset'] = [
             {'story_id': story['story_id'],
              'entry_hashes': sorted({self._entry_hash(entry) for entry in story['current']})}
             for story in result['stories']
         ]
-        if re.search(r'원문|정확|그대로|왜|이유|어떻게.*(?:정|결정)', utterance):
+        # Historical comparisons need source-backed changes even when the
+        # extractor retained them only as episodes, outside current context.
+        if re.search(r'원문|정확|그대로|왜|이유|비교|달라|변화|어떻게.*(?:정|결정)', utterance):
             remaining = 6000
             for story in stories:
                 for source in self.store.evidence(user, story['story_id']):
@@ -287,9 +296,16 @@ class StoryMemoryService:
         stats = self.store.stats(user)
         result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
         result['failed'] = int(stats.get('failed', 0))
-        if result['pending'] or result['failed']:
+        if result['pending']:
             result['stories'], result['evidence'], result['readset'] = [], [], []
-            result['status'] = 'updating' if result['pending'] else 'update_failed'
+            result['status'] = 'updating'
+        elif result['failed']:
+            # Recheck after gathering evidence: a job may have failed meanwhile.
+            blocked = self.store.failed_story_ids(user)
+            for field in ('stories', 'evidence', 'readset'):
+                result[field] = [item for item in result[field] if item['story_id'] not in blocked]
+            result['blocked_story_count'] = len(blocked)
+            result['status'] = 'partial_update_failed' if result['stories'] else 'update_failed'
         if not self.validate_readset(user, policy['revision'], result['readset']):
             # Caller validates again immediately before/after external inference.
             result['stories'], result['evidence'], result['readset'] = [], [], []
@@ -423,6 +439,13 @@ class StoryMemoryService:
             reason = ('invalid_extraction' if isinstance(exc, StoryExtractionError)
                       else 'provider_error' if isinstance(exc, ProviderError)
                       else 'story_processing_error')
+            if isinstance(exc, StoryExtractionError):
+                reason = {
+                    'entry actor does not match its sources': 'actor_source_mismatch',
+                    'old evidence can only retain existing context': 'invalid_previous_evidence',
+                    'empty episode must retain existing context and cite new coverage': 'invalid_recall_coverage',
+                    'evidence quote is missing or ambiguous': 'evidence_mismatch',
+                }.get(str(exc), reason)
             self._errors[user] = reason
             if not self._stop.is_set():
                 self.store.fail(job, reason)

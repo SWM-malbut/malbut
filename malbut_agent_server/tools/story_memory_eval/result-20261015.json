@@ -1,0 +1,783 @@
+{
+  "created_at": "2026-10-15T00:52:09.927884+09:00",
+  "summary": {
+    "scenarios_passed": 10,
+    "scenario_count": 10,
+    "probe_answers_passed": 15,
+    "probe_count": 15,
+    "unfinished_extractions": 0,
+    "job_states": {
+      "done": 28,
+      "cancelled": 1
+    },
+    "separate_phase_processes": 24,
+    "http_calls": 61
+  },
+  "method": {
+    "real_api": true,
+    "isolated_sqlite_per_case": true,
+    "new_interpreter_per_phase": true,
+    "empty_history_per_probe": true,
+    "scope": "story memory only; synthetic conversations; personal fact memory disabled",
+    "manual_semantic_review": true,
+    "case_source": "cases.json",
+    "case_sha256": "c3476f91e187376268e52de730eb7310f96c4116318ad29a642773a81497271b",
+    "timeout_seconds": {
+      "attempt": 30,
+      "total": 61
+    }
+  },
+  "changes": [
+    "실패한 사용자 발언과 관련된 이야기만 보류; 관련 없는 이야기 조회 유지",
+    "수업·모임 같은 공통 분류명만 겹친 경우는 실패 대상에서 제외",
+    "정정·지시어는 동일 세션의 앞선 대화와 연결해 보류 범위를 확인; 불명확한 정정은 보수적으로 기존 이야기 보류",
+    "답변 전송·완료 시 failed scope와 readset 재검사",
+    "사용자 질문과 AI 답변의 추출 항목/근거를 분리하도록 지침 보강",
+    "비교·변화 질문에는 저장된 원문 근거를 포함해 episode에만 보존된 경험도 전달"
+  ],
+  "existing_failure_replay": {
+    "failed_jobs_before": 1,
+    "failed_jobs_after": 1,
+    "answer": "은하 공방은 금요일 오후 4시에 예약했고, 접시 만들기 수업을 하기로 했어요. 친구에게 줄 선물을 직접 만들 계획이었어요.",
+    "empty_history": true,
+    "story_count_in_model_input": 1,
+    "verdict": "pass"
+  },
+  "intermediate_run": {
+    "scenarios_passed": 9,
+    "scenarios_failed": 1,
+    "failed_case": "04_emotion_timeline",
+    "cause": "Second visit was preserved in episode and raw sources but omitted from current context; comparison response lacked it.",
+    "resolution": "Source evidence attached for comparison/change queries; all ten scenarios rerun in this final directory."
+  },
+  "post_live_guard_hardening": {
+    "change": "바꿨어/바꾸기로/바뀐 같은 지시어 없는 정정 표현도 기존 실패 범위 보호에 포함",
+    "scope": "Failed-job targeting only; live scenarios have no failed jobs, so their inference inputs and outputs are unaffected.",
+    "targeted_regressions_passed": 10
+  },
+  "usage": {
+    "gpt-5.6-luna": {
+      "calls": 30,
+      "input_tokens": 162150,
+      "output_tokens": 3897,
+      "total_tokens": 166047
+    },
+    "gpt-6-luna": {
+      "calls": 31,
+      "input_tokens": 40849,
+      "output_tokens": 13755,
+      "total_tokens": 54604
+    }
+  },
+  "deletion_check": {
+    "all_logical_tables_scanned": true,
+    "deleted_detail_hits": []
+  },
+  "limitations": [
+    "각 시나리오 1회인 최종 확인이며 대량 기억/수백 턴 부하 시험은 아님",
+    "실패 범위는 단어·세션 문맥으로 판별하므로 의미상 대상을 완벽하게 판별하지 않음",
+    "대상을 찾지 못하는 정정과 아직 실행 중인 정리는 기존 기억을 보수적으로 보류",
+    "삭제는 논리적 원문/기억 삭제이며 물리적 디스크 소거 검증은 아님",
+    "이 결과는 관측 화면 확장 전의 기억 수정본에 대한 실행 기록이다. 추가한 로그/화면은 별도의 SQLite·브라우저 검사로 검증한다. ROS 음성 동작은 이 실험 범위 밖이다."
+  ],
+  "scenarios": [
+    {
+      "id": "01_restart_reason",
+      "name": "재시작 후 결정·이유 회상",
+      "verdict": "pass",
+      "rubric": "한 장 요약을 선택했고 일정 변경 때 수정하기 쉬운 것이 이유다. 그림 추가는 미정이다.",
+      "probes": [
+        {
+          "id": "recall",
+          "question": "노을 독서모임 안내문은 어떤 방식으로 만들기로 했고, 왜 그렇게 정했지? 그림도 확정했었나?",
+          "expected": [
+            "한 장 요약",
+            "일정 변경에 따른 수정 편의",
+            "그림은 미정"
+          ],
+          "answer": "노을 독서모임 안내문은 영상 대신, 일정 변경 때 수정하기 쉬운 한 장 요약으로 만들기로 했어요. 그림을 넣을지는 아직 확정하지 않았고, 그림 없이 먼저 구성하자는 건 제안 단계였어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "source_evidence_in_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 2506,
+              "input_sha256": "ac0c78df19d3999621d8a27ffa5404ab7085dc64e63621cad7772bbcacf40aa5",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-54b3deda986ab60b668190b3",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 6,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "01_restart_reason/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 2
+      },
+      "database": "01_restart_reason/memory.sqlite3"
+    },
+    {
+      "id": "02_paraphrase",
+      "name": "다른 표현으로 같은 경험 찾기",
+      "verdict": "pass",
+      "rubric": "책을 소리 내어 읽는 행사를 별빛 낭독회와 연결하고, 혼자 가서 긴장했다가 다른 참석자의 환대로 안심한 흐름을 회상한다.",
+      "probes": [
+        {
+          "id": "paraphrase",
+          "question": "지난번 책을 소리 내어 읽는 행사에 혼자 갔던 날, 내 마음이 어떻게 달라졌다고 했지?",
+          "expected": [
+            "처음 긴장",
+            "옆자리 참석자의 인사 또는 환대",
+            "나중에 안심"
+          ],
+          "answer": "처음에는 낯선 사람들 때문에 긴장했지만, 옆자리 분이 먼저 인사해 줘서 마음이 안심되고 한결 편해졌다고 했어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 2046,
+              "input_sha256": "08b34d7d9f5316ab28cef3571eb765b4ff1ab221bfa572ef0bce45b9453a08e9",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-ebfc97ea24613154d1ca99ec",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 4,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "02_paraphrase/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 2
+      },
+      "database": "02_paraphrase/memory.sqlite3"
+    },
+    {
+      "id": "03_correction",
+      "name": "변경된 결정 우선·기존 조건 유지",
+      "verdict": "pass",
+      "rubric": "최종 일정은 목요일 오후 3시, 장소는 나무도서관, 만나는 사람은 지우다. 화요일은 변경 전 일정으로만 다뤄야 한다.",
+      "probes": [
+        {
+          "id": "latest",
+          "question": "지우와 책 교환하는 최종 약속은 언제 어디였지?",
+          "expected": [
+            "목요일",
+            "오후 3시",
+            "나무도서관"
+          ],
+          "answer": "지우와는 목요일 오후 3시에 나무도서관에서 책을 교환하기로 했어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1164,
+              "input_sha256": "dd788b8dd296a99e947e99d6fe2dd8602ca11ff98a520a7ad32b0dfabb3d49d1",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-13ed04019332c0ccc6ef6d3f",
+                  "version": 2
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "03_correction/phase-02.json"
+        }
+      ],
+      "job_states": {
+        "done": 3
+      },
+      "database": "03_correction/memory.sqlite3"
+    },
+    {
+      "id": "04_emotion_timeline",
+      "name": "같은 사건의 감정 변화",
+      "verdict": "pass",
+      "rubric": "푸른정원 전시 첫 방문은 혼잡해서 지쳤고, 재방문은 한산해서 편안했다. 과거 피로를 현재 감정이나 성격으로 일반화하지 않는다.",
+      "probes": [
+        {
+          "id": "timeline",
+          "question": "푸른정원 전시의 첫 방문과 두 번째 방문에서 내가 느낀 점을 비교해 줄래?",
+          "expected": [
+            "첫 방문은 혼잡해서 피로",
+            "두 번째는 한산해서 편안"
+          ],
+          "answer": "첫 방문에서는 그림은 좋았지만 사람이 많아 지쳤고, 두 번째 방문에서는 한산한 덕분에 천천히 감상하며 편안함을 느끼셨네요. 같은 전시라도 관람 환경에 따라 경험이 크게 달라졌어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true,
+            "comparison_source_evidence_present": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 2046,
+              "input_sha256": "cdf4ee27d023725c8dee6dfa20d7c7635f6de7db54d73391a35dbc4d5ec7aa20",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-8f1c62d1aa7900299156e4bc",
+                  "version": 2
+                }
+              ],
+              "evidence_count": 4,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "04_emotion_timeline/phase-02.json"
+        }
+      ],
+      "job_states": {
+        "done": 3
+      },
+      "database": "04_emotion_timeline/memory.sqlite3"
+    },
+    {
+      "id": "05_similar_stories",
+      "name": "비슷한 두 이야기 분리",
+      "verdict": "pass",
+      "rubric": "솔빛 모임은 토요일 오전 10시 강변공원, 달빛 모임은 일요일 오후 2시 동네도서관이다. 서로 섞지 않는다.",
+      "probes": [
+        {
+          "id": "sun",
+          "question": "솔빛 사진 모임의 요일, 시간, 장소가 뭐였지?",
+          "expected": [
+            "토요일",
+            "오전 10시",
+            "강변공원"
+          ],
+          "answer": "솔빛 사진 모임은 토요일 오전 10시에 강변공원에서 만나기로 했어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1513,
+              "input_sha256": "fd7fb60be132a71a7ce53b2547fac55f85fbdd6b14bad00130b470f92c51065a",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-f270b358138d3b78dcae1959",
+                  "version": 1
+                },
+                {
+                  "story_id": "story-9e7a9bfc983899ad748a65b8",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "05_similar_stories/phase-01.json"
+        },
+        {
+          "id": "moon",
+          "question": "달빛 사진 모임의 요일, 시간, 장소가 뭐였지?",
+          "expected": [
+            "일요일",
+            "오후 2시",
+            "동네도서관"
+          ],
+          "answer": "달빛 사진 모임은 일요일 오후 2시에 동네도서관에서 만나기로 했어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1513,
+              "input_sha256": "d261ee02b6a67a79f21226e5d50c0ab0133faa0db38ec78fe6a1e80ae1343143",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-9e7a9bfc983899ad748a65b8",
+                  "version": 1
+                },
+                {
+                  "story_id": "story-f270b358138d3b78dcae1959",
+                  "version": 2
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "05_similar_stories/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 4
+      },
+      "database": "05_similar_stories/memory.sqlite3"
+    },
+    {
+      "id": "06_proposal_ownership",
+      "name": "AI 제안과 사용자 확정 구분",
+      "verdict": "pass",
+      "rubric": "별숲 설명서는 수정하기 쉬운 글 한 장으로 만들기로 확정했다. AI의 추가 구성 제안은 사용자가 아직 채택하지 않았으므로 확정이라고 말하면 안 된다.",
+      "probes": [
+        {
+          "id": "ownership",
+          "question": "별숲 설명서에서 내가 확정한 것과 아직 결정하지 않은 것을 구분해줘. 네가 제안했던 내용까지 내가 하기로 확정한 거야?",
+          "expected": [
+            "글 한 장은 확정",
+            "AI 추가 제안은 미채택 또는 미정"
+          ],
+          "answer": "확정한 것은 ‘설명서를 수정하기 쉬운 글 한 장으로 만든다’는 점입니다. ‘한눈에 보는 게임 흐름’을 순서도로 넣자는 내용은 제가 제안한 안일 뿐, 아직 채택하지 않고 비교 중이므로 확정된 것으로 보면 안 됩니다. 제안과 확정을 구분해 판단하면 됩니다.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1328,
+              "input_sha256": "c1aabca6767e507cc6b6a09236cadeba815a233345236ed79c9756270d903f95",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-f8b6e915851938233f485ed0",
+                  "version": 2
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "06_proposal_ownership/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 3
+      },
+      "database": "06_proposal_ownership/memory.sqlite3"
+    },
+    {
+      "id": "07_unknown_detail",
+      "name": "저장하지 않은 세부사항 지어내지 않기",
+      "verdict": "pass",
+      "rubric": "해솔 전시에 다녀온 경험은 기억하되, 말하지 않은 입장료와 동행자의 이름을 모른다고 한다.",
+      "probes": [
+        {
+          "id": "unknown",
+          "question": "해솔 전시 입장료가 얼마였고 같이 간 사람 이름은 뭐였지?",
+          "expected": [
+            "입장료 정보 없음",
+            "동행자 이름 정보 없음"
+          ],
+          "answer": "기록된 내용에는 해솔 전시에서 바다 그림을 보고 차를 마셨다는 이야기만 있고, 입장료와 함께 간 사람 이름은 나와 있지 않아요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1267,
+              "input_sha256": "77e0f69e3d1c2b7db5058c62622767455b1a8cf98eec1dfc89359506b43af153",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-98d241bf9d287d5a73971cfc",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "07_unknown_detail/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 2
+      },
+      "database": "07_unknown_detail/memory.sqlite3"
+    },
+    {
+      "id": "08_partial_delete",
+      "name": "한 이야기 삭제·다른 이야기 보존",
+      "verdict": "pass",
+      "rubric": "수채화 모임의 민서·화요일·연필공방 정보는 삭제되어야 한다. 같은 발화에 있던 등산 모임의 토요일 오전 8시·솔봉 입구는 보존해야 한다.",
+      "probes": [
+        {
+          "id": "deleted",
+          "question": "수채화 모임에서 누구와 언제 어디서 만나기로 했었지?",
+          "expected": [
+            "삭제된 약속을 특정하지 못함"
+          ],
+          "answer": "확인할 수 있는 대화 기록에 수채화 모임 약속 내용이 없어요. 누구와 언제 어디서 만나기로 했는지 지금은 알 수 없습니다.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true,
+            "forbidden_story_excluded": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 951,
+              "input_sha256": "2bf8596a9a0217de13ca7c87fcd261097e9ea1fa3124a4305ed2b7ac7efb36d7",
+              "fact_ids": [],
+              "stories": [],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "08_partial_delete/phase-02.json"
+        },
+        {
+          "id": "retained",
+          "question": "등산 모임은 언제 어디에서 만나기로 했었지?",
+          "expected": [
+            "토요일",
+            "오전 8시",
+            "솔봉 입구"
+          ],
+          "answer": "등산 모임은 토요일 오전 8시에 솔봉 입구에서 만나기로 했어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1155,
+              "input_sha256": "f3d3228c91eab3b75497480a944bc1445259a7fdb2fb2374cf4cf9b35b53d3d5",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-61b22771a5f46c029fee1955",
+                  "version": 3
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "08_partial_delete/phase-02.json"
+        }
+      ],
+      "job_states": {
+        "cancelled": 1,
+        "done": 3
+      },
+      "database": "08_partial_delete/memory.sqlite3"
+    },
+    {
+      "id": "09_user_isolation",
+      "name": "사용자 간 기억 격리",
+      "verdict": "pass",
+      "rubric": "사용자 B는 A의 달맞이 모임 정보를 알 수 없어야 하고 A는 자기 정보를 다시 회상할 수 있어야 한다.",
+      "probes": [
+        {
+          "id": "other_user",
+          "question": "내 달맞이 모임의 날짜, 시간, 장소와 인원이 어떻게 됐지?",
+          "expected": [
+            "기록이 없다고 말하거나 정보를 요청"
+          ],
+          "answer": "현재 대화와 제공된 기억에는 달맞이 모임의 날짜·시간·장소·인원 정보가 없어 확인할 수 없어요. 관련 내용을 알려주시면 정리해드릴게요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "no_story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 935,
+              "input_sha256": "1d8a80fd1a304796a06e121553e80c75f2f2c82d983d7b90e36f24f8005d5273",
+              "fact_ids": [],
+              "stories": [],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "09_user_isolation/phase-01.json"
+        },
+        {
+          "id": "owner",
+          "question": "달맞이 모임의 날짜, 시간, 장소와 인원이 어떻게 됐지?",
+          "expected": [
+            "수요일 저녁 7시",
+            "유리온실",
+            "다섯 명"
+          ],
+          "answer": "달맞이 모임은 수요일 저녁 7시에 유리온실에서 열리고, 참석자는 다섯 명이에요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1171,
+              "input_sha256": "9d48ac809a1eb524a87eb9c0a32e3f8a077c1ecf66741e7eaad8cdc522eac702",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-1c6d68fb77c6d45febd17148",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "09_user_isolation/phase-01.json"
+        }
+      ],
+      "job_states": {
+        "done": 3
+      },
+      "database": "09_user_isolation/memory.sqlite3"
+    },
+    {
+      "id": "10_consent_off_on",
+      "name": "기억 사용 중지·재개",
+      "verdict": "pass",
+      "rubric": "기능을 끄면 은하 공방의 예약을 재사용하지 않아야 한다. 다시 켜면 이전의 금요일 오후 4시·접시 만들기 예약은 회상해야 한다. 꺼진 동안의 새 이야기는 자동 소급 저장하지 않는다.",
+      "probes": [
+        {
+          "id": "off",
+          "question": "은하 공방 예약은 언제이고 무엇을 하기로 했었지?",
+          "expected": [
+            "기억이 없거나 확인할 수 없다고 응답"
+          ],
+          "answer": "현재 대화와 기억에는 은하 공방 예약 일정이나 하기로 한 내용이 없습니다. 예약 문자나 관련 정보를 보내주시면 확인해 드릴게요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "no_story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 806,
+              "input_sha256": "4b8d0f7acde26aa37a47681f6cc3d8e36d8993e97b816e6f495f7cd90101c4dd",
+              "fact_ids": [],
+              "stories": [],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "10_consent_off_on/phase-01.json"
+        },
+        {
+          "id": "on",
+          "question": "은하 공방 예약은 언제이고 무엇을 하기로 했었지?",
+          "expected": [
+            "금요일 오후 4시",
+            "접시 만들기"
+          ],
+          "answer": "은하 공방에서 금요일 오후 4시에 접시 만들기 수업을 예약했어요. 친구에게 줄 선물을 직접 만들기로 했었어요.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "story_in_actual_model_input": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1266,
+              "input_sha256": "5cca703d50ab6d604b216de90a67ac38e3f7af069acd6ad80aafbd2fa1a49ddb",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-46c3f3323b0f251284bfe363",
+                  "version": 1
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "10_consent_off_on/phase-02.json"
+        },
+        {
+          "id": "off_period",
+          "question": "민트 요가 수업은 언제 신청했다고 했지?",
+          "expected": [
+            "꺼진 동안 말한 월요일 오전 6시를 회상하지 못함"
+          ],
+          "answer": "민트 요가 수업을 언제 신청했다고 했는지는 현재 확인할 수 없어요. 관련 대화 기록이 보이지 않습니다.",
+          "semantic_verdict": "pass",
+          "structural_checks": {
+            "actual_model_input_observed": true,
+            "no_recent_history": true,
+            "actual_http_input_hash_matches": true,
+            "fact_memory_empty": true,
+            "retrieved_version_matches_db": true,
+            "forbidden_story_excluded": true
+          },
+          "input_receipts": [
+            {
+              "provider": "openai",
+              "model": "gpt-5.6-luna",
+              "input_chars": 1260,
+              "input_sha256": "25da176ab9a053e49741574736c2d7a6a423c7fbf4adabd46b6c13c840cdd950",
+              "fact_ids": [],
+              "stories": [
+                {
+                  "story_id": "story-46c3f3323b0f251284bfe363",
+                  "version": 2
+                }
+              ],
+              "evidence_count": 0,
+              "history_messages": 0,
+              "summary_present": false,
+              "context_truncated": false
+            }
+          ],
+          "phase_file": "10_consent_off_on/phase-02.json"
+        }
+      ],
+      "job_states": {
+        "done": 3
+      },
+      "database": "10_consent_off_on/memory.sqlite3"
+    }
+  ],
+  "regression_tests": {
+    "passed": 233,
+    "subtests_passed": 71
+  },
+  "final_source_sha256": {
+    "story_runtime_store.py": "c0e0c1472d58169b9600b3be9b2a70507d9834bc4d5daf6bfa270d135a5fd3c6",
+    "story_memory_service.py": "bb3b8ce9c3f6ad55fc08a38aa3ebd6090cc00eaa5b07e80d64ad2283ccb9d7e9",
+    "story_extractor.py": "698e391a0d1d01e827631e4ed5428a3e3d8c76525acd9383bf5246e4f1170748"
+  }
+}

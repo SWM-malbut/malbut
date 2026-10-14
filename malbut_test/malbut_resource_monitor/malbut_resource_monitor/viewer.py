@@ -9,6 +9,9 @@ import os
 from pathlib import Path
 import tempfile
 from urllib.parse import parse_qs, urlparse
+import sqlite3
+
+from malbut_resource_monitor.memory_view import MemoryView, configured_databases
 
 from malbut_resource_monitor.incidents import DOWNLOADS, IncidentStore
 
@@ -19,7 +22,8 @@ LEGACY_INCIDENT_ROOT = '~/.ros/malbut/stt_incidents'
 class LogServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, root, incident_root=None):
+    def __init__(self, address, root, incident_root=None, *, memory_databases=None):
+        self.memory = MemoryView(memory_databases)
         self.root = Path(root).expanduser().resolve()
         legacy = ()
         if incident_root is None and self.root == Path(DEFAULT_LOG_ROOT).expanduser().resolve():
@@ -130,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json({'session': session.name, 'display_name': name.strip()})
         except (BrokenPipeError, ConnectionResetError):
             pass
-        except (ValueError, OSError, KeyError) as error:
+        except (ValueError, OSError, KeyError, sqlite3.Error) as error:
             self.send_error(400, str(error))
         finally:
             if temporary is not None:
@@ -150,6 +154,31 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if url.path.startswith('/api/incident'):
                 self.incident_request(url.path, query)
+                return
+            if url.path == '/memory-viewer.js':
+                self.send(Path(__file__).with_name('memory-viewer.js').read_bytes(),
+                          'text/javascript; charset=utf-8')
+                return
+            if url.path == '/api/memory/databases':
+                self.json(self.server.memory.databases())
+                return
+            if url.path in {'/api/memory', '/api/memory/turn', '/api/memory/story'}:
+                database = query.get('database', [''])[0]
+                user = query.get('user', [''])[0]
+                if database not in self.server.memory.paths:
+                    raise ValueError('Unknown memory database')
+                database_path = self.server.memory.paths[database]
+                etag = self.unchanged([database_path, Path(str(database_path) + '-wal')])
+                if etag is None:
+                    return
+                if url.path == '/api/memory':
+                    value = self.server.memory.snapshot(database, user,
+                        query.get('conversation', [''])[0], query.get('q', [''])[0])
+                elif url.path == '/api/memory/turn':
+                    value = self.server.memory.turn(database, user, query.get('request', [''])[0])
+                else:
+                    value = self.server.memory.evidence(database, user, query.get('story', [''])[0])
+                self.json(value, etag)
                 return
             if url.path == '/api/sessions':
                 paths = [path for path in
@@ -232,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
                        'matching_rows': count, 'malformed_rows': malformed}, etag)
         except (BrokenPipeError, ConnectionResetError):
             pass
-        except (ValueError, OSError, KeyError) as error:
+        except (ValueError, OSError, KeyError, sqlite3.Error) as error:
             self.send_error(400, str(error))
 
     def incident_request(self, route, query):
@@ -283,8 +312,15 @@ def main(argv=None):
                         help='STT evidence directory (default: <root>/stt_incidents).')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8766)
+    parser.add_argument('--memory-db', action='append', help='Read-only conversation DB; repeat for experiments (default: ~/.local/state/malbut/speech-dialogue.sqlite3)')
+    parser.add_argument('--memory-config', help='JSON array of allowed DB paths (default: ~/.config/malbut/resource-viewer-memory.json when present)')
     args = parser.parse_args(argv)
-    with LogServer((args.host, args.port), args.root, args.incident_root) as server:
+    try:
+        databases = configured_databases(args.memory_db, args.memory_config)
+    except ValueError as error:
+        parser.error(str(error))
+    with LogServer((args.host, args.port), args.root, args.incident_root,
+                   memory_databases=databases) as server:
         print(f'Log viewer (session labels editable): http://{args.host}:{server.server_port}',
               flush=True)
         print('No authentication: bind to LAN only on a trusted network. No robot control.',

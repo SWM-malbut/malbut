@@ -18,6 +18,7 @@ import unicodedata
 
 from .story_memory import StoryEntry, StoryMemoryError, _entries, _id, _json, _text
 from .story_memory_sources import SourceRef, make_source_ref, read_source
+from .memory_trace import record_trace
 
 
 LEASE_SECONDS = 300
@@ -25,6 +26,24 @@ MAX_ATTEMPTS = 3
 MAX_SOURCE_CHARS = 48000
 MAX_UPDATES = 8
 MAX_PENDING = 256
+FAILURE_CODES = frozenset({
+    'invalid_extraction', 'actor_source_mismatch', 'invalid_previous_evidence',
+    'invalid_recall_coverage', 'evidence_mismatch', 'provider_error',
+    'story_processing_error', 'source_or_policy_changed', 'checkpoint_changed',
+})
+
+# Category words alone cannot identify a story (e.g. two unrelated classes).
+# These are used only to scope failed extraction, not to broaden recall.
+_TOPIC_CATEGORIES = frozenset({
+    '이야기', '기억', '대화', '경험', '상황', '계획', '일정', '예약', '신청',
+    '시점', '시간', '장소', '방문', '참석', '관람', '모임', '수업', '결정',
+})
+_DEICTIC_REFERENCE = re.compile(r'그(?:거|것|때|곳|날|쪽|\s)|이어서|지난번|아까')
+_CORRECTION = re.compile(r'정정|수정|바(?:꾸|꿔|꿨|꾼|뀌|뀐|뀔)|변경|취소|아니[야었라]|잘못|사실')
+
+
+def _normalized(text):
+    return unicodedata.normalize('NFKC', text).casefold()
 
 
 def _refs_json(refs):
@@ -140,6 +159,26 @@ class StoryRuntimeStore:
 
     def close(self):
         """The runtime owns the shared connection and closes it separately."""
+
+    def trace(self, request, event, data):
+        """Diagnostic writes have no effect on consent or memory revisions."""
+        try:
+            with self._transaction(True) as conn:
+                record_trace(conn, event, request.user_id,
+                             request_id=request.request_id,
+                             conversation_id=request.conversation_id,
+                             turn_id=request.turn_id, data=data)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('Memory trace transaction unavailable')
+
+    @staticmethod
+    def _job_trace(conn, event, user, request_id, data):
+        turn = conn.execute('SELECT conversation_id,turn_id FROM conversation_turns '
+                            'WHERE user_id=? AND request_id=?', (user, request_id)).fetchone()
+        record_trace(conn, event, user, request_id=request_id,
+                     conversation_id=turn['conversation_id'] if turn else '',
+                     turn_id=turn['turn_id'] if turn else '', data=data)
 
     def reply_record(self, user, request_id):
         """Read a completed owner's reply and legacy story provenance together."""
@@ -367,6 +406,8 @@ class StoryRuntimeStore:
              policy_revision,created_at) VALUES (?,?,?,?,?,'queued',?,?,?)''',
                      (user, _digest([user, request_id, digest]), request_id, digest,
                       _refs_json(refs), self._now(), policy['revision'], self._now()))
+        self._job_trace(conn, 'story_queued', user, request_id,
+                        {'job_id': _digest([user, request_id, digest]), 'state': 'queued'})
         return True
 
     def enqueue_completed(self, user, request_id):
@@ -445,11 +486,13 @@ class StoryRuntimeStore:
                 'updated_at': row['updated_at'], 'source_time': row['source_time'],
                 'untrusted': True, 'execution_authorized': False}
 
-    def _candidate_rows(self, conn, user, query, limit):
+    def _candidate_rows(self, conn, user, query, limit, exclude_ids=()):
         normalized_query = unicodedata.normalize('NFKC', query).casefold()
         terms = set(re.findall(r'\w+', normalized_query))
         ranked = []
         for row in conn.execute('SELECT * FROM story_runtime_stories WHERE user_id=? AND active=1', (user,)):
+            if row['story_id'] in exclude_ids:
+                continue
             text = unicodedata.normalize('NFKC', ' '.join([
                 row['title'], *json.loads(row['aliases_json']),
                 *(entry['text'] for entry in json.loads(row['current_json']))])).casefold()
@@ -512,6 +555,10 @@ class StoryRuntimeStore:
             if sum(len(item['text']) for item in sources) > MAX_SOURCE_CHARS:
                 conn.execute("UPDATE story_runtime_jobs SET state='failed',error_code='source_too_large' "
                              "WHERE sequence=?", (row['sequence'],))
+                self._job_trace(conn, 'story_extraction_failed', user, row['request_id'],
+                                {'job_id': row['job_id'], 'state': 'failed',
+                                 'error_code': 'source_too_large', 'retry_scheduled': False,
+                                 'attempt': row['attempts']})
                 return None
             previous = self._candidate_rows(conn, user, ' '.join(item['text'] for item in sources), 5)
             stories = []
@@ -546,6 +593,10 @@ class StoryRuntimeStore:
                              (claim, self._now() + LEASE_SECONDS, p['data_revision'],
                               _json([{'id': item['id'], 'ref': item['ref']} for item in sources]),
                               _json(batch_ids), member['sequence']))
+                self._job_trace(conn, 'story_extraction_started', user, member['request_id'],
+                                {'job_id': member['job_id'], 'state': 'running',
+                                 'attempt': member['attempts'] + 1,
+                                 'batch_job_ids': batch_ids})
             return {'user_id': user, 'job_id': row['job_id'], 'claim': claim,
                     'request_id': row['request_id'], 'policy_revision': p['revision'],
                     'expected_version': p['data_revision'], 'sources': sources, 'stories': stories,
@@ -684,6 +735,7 @@ class StoryRuntimeStore:
                 raise StoryMemoryError('one update per story per checkpoint')
             now = self._now()
             source_time = max((item['completed_at'] for item in source_list if item['id'].startswith('s')), default=now)
+            saved_stories = []
             for update, (story_id, title, aliases, current, episode, refs) in zip(updates, prepared):
                 prior = None
                 if story_id:
@@ -737,11 +789,24 @@ class StoryRuntimeStore:
                              (row['user_id'], story_id, title, _json(aliases), _json(current),
                               _json(episodes), _refs_json(list(combined.values())), version, now,
                               max(story_source_time, prior['source_time'] if prior else story_source_time)))
+                saved_stories.append({'story_id': story_id, 'version': version})
             if updates:
                 conn.execute('UPDATE story_runtime_policy SET data_revision=data_revision+1 WHERE user_id=?', (row['user_id'],))
+            members = conn.execute(
+                "SELECT request_id FROM story_runtime_jobs WHERE user_id=? AND state='running' AND claim=?",
+                (row['user_id'], row['claim'])).fetchall()
             conn.execute("UPDATE story_runtime_jobs SET state='done',processed=1,claim=NULL,lease_until=NULL,error_code=NULL,result_digest=? "
                          "WHERE user_id=? AND state='running' AND claim=?",
                          (result_digest, row['user_id'], row['claim']))
+            # One checkpoint can include several requests. Keep the exact source
+            # request IDs instead of attributing every update to the first turn.
+            source_refs = [item['ref'] for item in source_list if item['id'].startswith('s')]
+            for member in members:
+                self._job_trace(conn, 'story_committed' if saved_stories else 'story_no_change',
+                             row['user_id'], member['request_id'],
+                             {'stories': saved_stories, 'job_id': row['job_id'],
+                                   'source_refs': source_refs,
+                                   'source_request_ids': [item['request_id'] for item in members]})
             return True
 
     def release_claim(self, job):
@@ -761,15 +826,93 @@ class StoryRuntimeStore:
                                "AND state='running' AND claim=?", (job.get('user_id'), job.get('job_id'), job.get('claim'))).fetchone()
             if row is None:
                 return
-            code = type(error).__name__ if isinstance(error, Exception) else 'processing_failed'
+            code = (type(error).__name__ if isinstance(error, Exception)
+                    else error if isinstance(error, str) and error in FAILURE_CODES
+                    else 'processing_failed')
             for member in conn.execute("SELECT * FROM story_runtime_jobs WHERE user_id=? AND state='running' AND claim=?",
                                        (row['user_id'], row['claim'])).fetchall():
                 retry = member['attempts'] < MAX_ATTEMPTS
                 conn.execute('UPDATE story_runtime_jobs SET state=?,claim=NULL,lease_until=NULL, '
                              'available_at=?,error_code=? WHERE sequence=?',
                              ('queued' if retry else 'failed', self._now() + 2 ** member['attempts'], code, member['sequence']))
+                self._job_trace(conn, 'story_extraction_failed', row['user_id'], member['request_id'],
+                                {'job_id': member['job_id'], 'state': 'queued' if retry else 'failed',
+                                 'attempt': member['attempts'], 'error_code': code,
+                                 'retry_scheduled': retry,
+                                 'retry_after_seconds': 2 ** member['attempts'] if retry else None})
 
-    def candidates(self, user, query, limit=5):
+    def failed_story_ids(self, user, request_id=None):
+        """Quarantine affected stories, not every story owned by a failed job's user.
+
+        Use the failed turn's user text, not its assistant reply or the broad
+        extraction candidate list. A generic overlap such as '수업' does not make
+        a yoga question a correction of a pottery booking. Ambiguous corrections
+        use preceding conversation lineage; without a resolvable target they
+        conservatively hold existing stories until explicit retry succeeds.
+        No failed extraction output is trusted, and this works on existing DBs.
+        """
+        user = _id(user, 'user_id')
+        with self._transaction() as conn:
+            jobs = [job for job in conn.execute(
+                "SELECT * FROM story_runtime_jobs WHERE user_id=? AND state='failed'", (user,))
+                if request_id is None or job['request_id'] != request_id]
+            if not jobs:
+                return set()
+            stories = [row for row in conn.execute(
+                'SELECT * FROM story_runtime_stories WHERE user_id=? AND active=1', (user,))
+                if self._story_valid(conn, user, row)]
+            all_ids = {row['story_id'] for row in stories}
+            topics = {}
+            for row in stories:
+                labels = [row['title'], *json.loads(row['aliases_json'])]
+                words = set(re.findall(r'\w+', _normalized(' '.join(labels))))
+                specific = {word for word in words if len(word) >= 2} - _TOPIC_CATEGORIES
+                # A story called only '모임' has no more specific identity.
+                topics[row['story_id']] = specific or words
+
+            def matching(text):
+                text = _normalized(text)
+                return {identifier for identifier, words in topics.items()
+                        if any(word in text for word in words)}
+
+            blocked = set()
+            # A reply's own extraction cannot retroactively cancel delivery.
+            for job in jobs:
+                refs = [ref for ref in _refs(job['sources_json']) if ref.role == 'user']
+                sources = [self._resolve(conn, user, ref) for ref in refs]
+                if not sources or any(source is None for source in sources):
+                    blocked.update(all_ids)
+                    continue
+                text = ' '.join(source.text for source in sources)
+                direct = matching(text)
+                blocked.update(direct)
+                deictic = _DEICTIC_REFERENCE.search(text)
+                if not deictic and (direct or not _CORRECTION.search(text)):
+                    continue
+                # A turn may correct another topic as well as naming one topic.
+                # Resolve pronouns against the same session/generation only.
+                contextual = set()
+                for ref in refs:
+                    previous = conn.execute(
+                        "SELECT request_id,user_content,turn_id FROM conversation_turns WHERE user_id=? "
+                        "AND conversation_id=? AND session_instance_id=? AND generation=? "
+                        "AND status='completed' AND ordinal < (SELECT ordinal FROM conversation_turns "
+                        "WHERE user_id=? AND request_id=?) ORDER BY ordinal DESC LIMIT 2",
+                        (user, ref.conversation_id, ref.session_instance_id, ref.generation,
+                         user, job['request_id'])).fetchall()
+                    for turn in previous:
+                        contextual.update(matching(turn['user_content']))
+                        reply = conn.execute('SELECT stories_json FROM story_runtime_replies '
+                                             'WHERE user_id=? AND request_id=?',
+                                             (user, turn['request_id'])).fetchone()
+                        if reply:
+                            contextual.update(set(json.loads(reply[0])) & all_ids)
+                blocked.update(contextual)
+                if not direct and not contextual:
+                    blocked.update(all_ids)
+            return blocked
+
+    def candidates(self, user, query, limit=5, *, exclude_ids=()):
         user = _id(user, 'user_id')
         query = _text(query, 'query', 20000)
         if type(limit) is not int or not 1 <= limit <= 20:
@@ -778,7 +921,7 @@ class StoryRuntimeStore:
             if not self._policy(conn, user)['enabled']:
                 return []
             result = []
-            for row in self._candidate_rows(conn, user, query, limit):
+            for row in self._candidate_rows(conn, user, query, limit, exclude_ids):
                 story = self._story_dict(row)
                 story.pop('episodes')
                 result.append(story)
@@ -1272,5 +1415,8 @@ class StoryRuntimeStore:
                     continue
                 conn.execute("UPDATE story_runtime_jobs SET state='queued',attempts=0,available_at=?, "
                              "claim=NULL,lease_until=NULL,error_code=NULL WHERE sequence=?", (self._now(), row['sequence']))
+                self._job_trace(conn, 'story_retry_requested', user, row['request_id'],
+                                {'job_id': row['job_id'], 'state': 'queued',
+                                 'previous_attempts': row['attempts'], 'error_code': row['error_code']})
                 count += 1
             return count
