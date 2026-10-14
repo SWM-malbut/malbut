@@ -165,9 +165,18 @@ Git·Jira·설정 JSON에는 키 값을 넣지 않고 JSON의 `cloud_key_file`�
 Google Gemini 키로 대체하지 않는다. 키가 없으면 실제 실행이 실패하며,
 `--config`만 실행하는 구성 검사는 키를 읽지 않는다.
 
-#### 앱에서 등록한 키 받기 (`key_sync`, 선택)
+#### 앱에서 등록한 키 받기 (`key_sync`)
 
-소유자가 앱에서 등록한 로봇별 키를 낙상 노드가 서버에서 직접 받는다. 설정 JSON에 추가한다.
+소유자가 앱에서 등록한 로봇별 키를 낙상 노드가 서버에서 직접 받는다.
+
+- 자동(2026-10-14): 설정에 `key_sync`가 없어도, 로봇의 웹 설정(`HOMECAM_BACKEND_URL`·`HOMECAM_DEVICE_TOKEN_FILE`,
+  `cloud.launch`가 넘겨주고 사건 업로더도 쓰는 값)이 있으면 60초마다 받는다. git으로 설치한 로봇은 따로 설정할 것이 없다.
+  - 받은 키는 `cloud_key_file` 디렉터리가 실행 계정 소유·다른 계정 쓰기 불가면 거기에, 아니면(예: root 전용 `/etc/malbut`)
+    사건 기록 디렉터리의 `fall-cloud.key`(+`.version`)에 저장한다.
+  - 앱에 키가 등록되기 전에는 `cloud_key_file`(팀 키)을 쓰고, 웹이 키를 관리하기 시작하면(버전 파일 있음) 받은 키만 쓴다.
+  - 시작 로그: `fall cloud key sync: every 60 s from <호스트>, key file <경로>`.
+  - 10-14 실기: 이 로봇은 `key_sync`가 없고 키 파일이 `/etc/malbut`라, 앱에서 저장한 키가 전달되지 않았다.
+- 직접 지정: 설정 JSON에 추가하면 그 값이 우선한다(키 파일도 `cloud_key_file` 그대로).
 
 ```json
 "key_sync": {"base_url": "https://malbut.hyenje29.click", "allow_hosts": ["malbut.hyenje29.click"],
