@@ -1,6 +1,8 @@
 """Brief outcomes retain uncertainty without reading internal failure reasons."""
 
+import ast
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -62,8 +64,106 @@ def test_existing_detailed_replies_use_short_recordings():
         assert audio_id in CATALOG
 
 
+def test_fixed_input_errors_and_response_constants_have_recordings():
+    """Catch a new literal error response that would silently call live TTS."""
+    from malbut_agent_server import fall_check_watch, speech_dialogue
+
+    source = Path(__file__).resolve().parents[1] / 'malbut_agent_server/ros_communication.py'
+    literals = [node.args[0].value for node in ast.walk(ast.parse(source.read_text()))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'say' and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)]
+    assert literals
+    for module, names in (
+        (speech_dialogue, ('ERROR_RESPONSE', 'SESSION_ERROR_RESPONSE',
+                           'MEMORY_CHANGED_RESPONSE', 'NAVIGATION_CHANGED_RESPONSE')),
+        (fall_check_watch, ('FALL_CHECK_START', 'FALL_CHECK_BUSY', 'FALL_CHECK_HELP',
+                            'FALL_CHECK_STOPPED', 'FALL_CHECK_RESPONSE')),
+    ):
+        literals.extend(getattr(module, name) for name in names)
+    for text in literals:
+        assert text in TEXT_IDS, text
+
+
+def test_fixed_navigation_guard_replies_have_recordings():
+    """Map refusals returned just before dispatch, including expiration races."""
+    source = Path(__file__).resolve().parents[1] / 'malbut_agent_server/speech_dialogue.py'
+    guard = next(node for node in ast.walk(ast.parse(source.read_text()))
+                 if isinstance(node, ast.FunctionDef) and node.name == 'guard')
+    replies = [node.value.value for node in ast.walk(guard)
+               if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant)
+               and isinstance(node.value.value, str)]
+    assert replies
+    for text in replies:
+        assert text in TEXT_IDS, text
+
+
+def test_packaged_catalogs_match_the_agent_and_ship_every_selected_recording():
+    root = Path(__file__).resolve().parents[2]
+    for relative in ('malbut_tts', 'malbut_test/malbut_tts'):
+        directory = root / relative / 'malbut_tts/audio'
+        assert json.loads((directory / 'catalog.json').read_text()) == CATALOG
+        assert all((directory / (audio_id + '.wav')).is_file() for audio_id in CATALOG)
+
+
+@pytest.mark.parametrize('text,audio_id', [
+    ('지도나 방 정보가 변경되어 이동하지 않았어요. 다시 말씀해 주세요.', 'navigation.changed'),
+    ('사용 중인 저장 지도와 등록된 목적지를 확인할 수 없어요.', 'navigation.map_required'),
+    ('등록된 목적지 이름을 확인해 다시 말씀해 주세요.', 'navigation.target_missing'),
+])
+def test_equivalent_fixed_replies_reuse_the_matching_recording(text, audio_id):
+    assert TEXT_IDS[text] == audio_id
+
+
+@pytest.mark.parametrize('text,audio_id', [
+    ('실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.',
+     'operation.request_unknown'),
+    ('이 음성 실행 기능이 연결되지 않았어요.', 'operation.voice_unavailable'),
+    ('날씨 조회 기능을 사용할 수 없습니다.', 'weather.unavailable'),
+    ('홈캠 조회가 연결되지 않았어요.', 'homecam.unavailable'),
+    ('날씨 조회 인자가 올바르지 않습니다.', 'weather.invalid_arguments'),
+    ('홈캠 조회 인자가 올바르지 않아요.', 'homecam.invalid_arguments'),
+    ('홈캠 조회 결과로 답변을 만들지 못했어요.', 'homecam.answer_failed'),
+    ('날씨 조회 결과로 답변을 만들지 못했어요.', 'weather.answer_failed'),
+])
+def test_tool_error_recordings_preserve_the_full_message(text, audio_id):
+    assert TEXT_IDS[text] == audio_id
+    assert CATALOG[audio_id] == text
+
+
+def test_expired_confirmation_does_not_claim_that_the_map_changed():
+    text = '확인 중 지도나 목적지가 변경되었거나 시간이 지났어요. 다시 요청해 주세요.'
+    assert CATALOG[TEXT_IDS[text]] == text
+    text = '목적지 확인 시간이 지났어요. 다시 요청해 주세요.'
+    assert CATALOG[TEXT_IDS[text]] == text
+
+
+@pytest.mark.parametrize('answers,audio_id', [
+    ([], 'situation.no_response'),
+    (['잘 모르겠어요'] * 3, 'situation.unclear'),
+    (['도와주세요'], 'situation.help_needed'),
+    (['도움은 필요 없어요'], 'situation.help_not_needed'),
+    (['그냥 누워 있었어'], 'situation.resolved'),
+])
+def test_each_situation_outcome_keeps_its_exact_recorded_closing(answers, audio_id):
+    from malbut_agent_server.situation_dialogue import MockSituationProvider, SituationDialogue
+
+    dialogue = SituationDialogue(MockSituationProvider())
+    dialogue.start('fixed-closing', 'fall', '낙상 여부 확인')
+    if not answers:
+        turn = dialogue.no_response()
+    else:
+        for answer in answers:
+            turn = dialogue.answer(answer)
+    assert turn.result is not None
+    assert TEXT_IDS[turn.text] == audio_id
+    assert CATALOG[audio_id] == turn.text
+
+
 def test_announcer_suppresses_routine_events_and_deduplicates_results():
     spoken = []
+
     def unexpected(text):
         pytest.fail('known notices must not call text speech')
     announcer = MissionAnnouncer(unexpected, speak_audio=lambda text, audio_id:

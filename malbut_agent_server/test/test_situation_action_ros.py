@@ -46,15 +46,18 @@ def rig(monkeypatch, tmp_path, request):
         sessions=[],
         prerecorded_audio=getattr(request, 'param', False),
     )
-    audio_namespace = '/malbut/tts' if 'mission_manager' in request.fixturenames else '/malbut/speech'
-    playback = voice.create_publisher(SpeechPlaybackStatus, audio_namespace + '/playback_status', 10)
+    audio_namespace = ('/malbut/tts' if 'mission_manager' in request.fixturenames
+                       else '/malbut/speech')
+    playback = voice.create_publisher(
+        SpeechPlaybackStatus, audio_namespace + '/playback_status', 10)
     inputs = voice.create_publisher(SpeechInputStatus, '/malbut/speech/input_status', 10)
     transcripts = voice.create_publisher(SpeechTranscript, '/malbut/speech/transcript', 10)
 
     def speak(message):
         state.spoken.append(message)
         if audio_namespace == '/malbut/speech':
-            playback.publish(SpeechPlaybackStatus(playback_id=message.playback_id, state='accepted'))
+            playback.publish(SpeechPlaybackStatus(
+                playback_id=message.playback_id, state='accepted'))
         playback.publish(SpeechPlaybackStatus(playback_id=message.playback_id, state='playing'))
         if state.finish:
             playback.publish(SpeechPlaybackStatus(
@@ -166,7 +169,10 @@ def mission_manager(rig):
 
 
 @pytest.mark.parametrize('rig', [True, False], indirect=True)
-@pytest.mark.parametrize('audio_id', ['situation.fall.confirmation', 'situation.resolved'])
+@pytest.mark.parametrize('audio_id', [
+    'situation.fall.confirmation', 'situation.resolved', 'situation.no_response',
+    'situation.unclear', 'situation.help_needed', 'situation.help_not_needed',
+])
 def test_fixed_confirmation_speech_selects_file_only_when_enabled(rig, audio_id, monkeypatch):
     from malbut_agent_server.mission_audio import CATALOG
 

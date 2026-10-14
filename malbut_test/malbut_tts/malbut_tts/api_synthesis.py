@@ -87,7 +87,7 @@ class OpenAISynthesizer:
     max_audio_bytes = 24000 * 2 * 300
 
     def __init__(self, *, model='gpt-4o-mini-tts', voice='nova',
-                 timeout_seconds=8.0, api_key=None, client_factory=None,
+                 timeout_seconds=10.0, api_key=None, client_factory=None,
                  notice_path=NOTICE_PATH, instructions=VOICE_INSTRUCTIONS):
         for value in (model, voice):
             if (not isinstance(value, str)

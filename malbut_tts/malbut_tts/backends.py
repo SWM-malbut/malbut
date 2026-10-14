@@ -5,7 +5,7 @@ def create_synthesizer(model_path=None, *, backend='openai', speaker='Sohee',
                        language='Korean', cuda_dtype='float32',
                        cuda_sentence_mode=True, sentence_max_chars=80,
                        api_model='gpt-4o-mini-tts', api_voice='nova',
-                       api_timeout_seconds=8.0):
+                       api_timeout_seconds=10.0):
     """Create the selected backend, defaulting to OpenAI audio streaming."""
     if backend == 'openai':
         from malbut_tts.api_synthesis import OpenAISynthesizer
