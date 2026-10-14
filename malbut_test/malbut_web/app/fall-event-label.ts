@@ -60,6 +60,7 @@ const APPROACH_BLOCKED: Record<string, string> = {
 const POSTURE: Record<string, string> = {
   sitting_off_floor: "몸 전체 확인: 침대나 의자에 앉아 있음",
   standing: "몸 전체 확인: 서 있음",
+  active_on_floor: "몸 전체 확인: 바닥에 앉아 활동 중",
   on_floor: "몸 전체 확인: 바닥에 있음 → 물어봄",
   body_unseen: "몸 전체를 못 봄 → 이 자리에서 물어봄",
   judgements_differ: "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄",
@@ -175,6 +176,9 @@ function approachLabel(event: FallHistoryEvent): string | null {
   if (event.eventKind === "incident_resolved" && reason === "not_a_person") return "로봇이 사건 종료: 사람 아님";
   if (event.eventKind === "incident_resolved" && reason === "off_floor_verified") {
     return "로봇이 사건 종료: 바닥에 있지 않음 · 묻지 않음";
+  }
+  if (event.eventKind === "incident_resolved" && reason === "floor_activity_verified") {
+    return "로봇이 사건 종료: 바닥에 앉아 활동 중 · 묻지 않음";
   }
   return null;
 }

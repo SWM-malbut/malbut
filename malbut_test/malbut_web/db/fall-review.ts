@@ -44,10 +44,11 @@ const ROBOT_NORMAL_SQL = `(i.origin='robot' AND i.state='resolved' AND i.assessm
 const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND ${ROBOT_CLOSE_REASON_SQL}='not_a_person')`;
 // The robot saw the whole body off the floor (on a bed or chair, or standing) and
 // did not ask (목업 25번). Only 처리 완료 shows it, so the suspicion itself stays out
-// of 전체, the voice agent and the timeline (2026-10-11).
+// of 전체, the voice agent and the timeline (2026-10-11). Sitting up busy on the
+// floor, seen twice with no fall seen, is closed the same way (2026-10-14).
 // NULL-safe: a resolved incident without a robot closure must stay in 전체.
 export const ROBOT_OFF_FLOOR_SQL = `(i.origin='robot' AND i.state='resolved' AND
-  COALESCE(${ROBOT_CLOSE_REASON_SQL}='off_floor_verified', FALSE))`;
+  COALESCE(${ROBOT_CLOSE_REASON_SQL} IN ('off_floor_verified','floor_activity_verified'), FALSE))`;
 const ROBOT_CLOSED_SQL = `(${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL} OR ${ROBOT_OFF_FLOOR_SQL})`;
 /** Shown only under 처리 완료 until a member reopens it. */
 export const OFF_FLOOR_HIDDEN_SQL = `(${ROBOT_OFF_FLOOR_SQL} AND i.reopened_at IS NULL)`;
