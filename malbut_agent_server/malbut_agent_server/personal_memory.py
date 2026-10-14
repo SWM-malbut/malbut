@@ -177,6 +177,12 @@ def fact_matches_source(fact, source):
     kind = fact['kind']
     if evidence not in source or not value or value not in raw:
         return False
+    remaining_source = compact(source).replace(raw, '', 1)
+    if re.search(r'정정|취소|아니|않|싫|실은|사실은|예전|지금|하지만|그런데|반면',
+                 remaining_source):
+        # A clipped quote can hide a later correction or a different polarity.
+        # Resolve the full source semantically instead of approving the clip.
+        return False
     self_subject = subject in {'user', 'self', '사용자', '나', '저'}
     self_name = bool(re.search(r'(내|제|나의|저의)이름', raw))
     self_nickname = bool(re.search(
@@ -198,6 +204,8 @@ def fact_matches_source(fact, source):
             return False
         return preference_matches_source(attribute, value, raw)
     if kind != 'pet' or self_subject:
+        return False
+    if not pet_owner_is_unambiguous(fact, source):
         return False
     if not re.search(
         r'반려동물|강아지|반려견|고양이|반려묘|토끼|햄스터|앵무새|거북이', raw,
@@ -222,6 +230,28 @@ def fact_matches_source(fact, source):
     if attribute in labels:
         return _label_value(labels[attribute], value, raw)
     return preference_matches_source(attribute, value, raw)
+
+
+def pet_owner_is_unambiguous(fact, source):
+    """Only fast-approve explicit personal ownership; otherwise ask the reviewer.
+
+    Check the full source as well as the selected evidence, so trimming 'the
+    neighbor's' from a quote cannot turn a third-party pet into the user's pet.
+    Ambiguity routes to semantic review rather than rejecting a valid candidate.
+    """
+    raw = compact(fact['evidence'])
+    ownership = r'(?:우리(?:집)?|저희(?:집)?|내|제|나의|저의)'
+    animal = r'(?:반려동물|강아지|반려견|고양이|반려묘|토끼|햄스터|앵무새|거북이)'
+    ordinal = r'(?:(?:첫째|둘째|셋째|넷째|첫번째|두번째|세번째))?'
+    if not (re.search(ownership + ordinal + animal, raw)
+            or (requested_operation(source, 'correct')
+                and re.match(animal + r'(?:의)?(?:이름|품종|나이|생일|털색)', raw))):
+        return False
+    return not re.search(
+        r'옆집|이웃|다른집|친구(?:의|네)|동료(?:의|네)|'
+        r'(?:동생|형|누나|언니|오빠|부모님)(?:의|네)|주인|소유|입양',
+        compact(source),
+    )
 
 
 def _label_value(label, value, text):

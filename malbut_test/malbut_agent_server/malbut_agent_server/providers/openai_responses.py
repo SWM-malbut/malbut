@@ -25,6 +25,7 @@ from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.memory_contract import (
     MEMORY_INSTRUCTIONS,
     MEMORY_PROPOSAL_SCHEMA,
+    SOURCE_REVIEW_SCOPE_INSTRUCTIONS,
     validate_memory_proposal,
 )
 from malbut_agent_server.prompting import (
@@ -462,6 +463,8 @@ class OpenAIResponsesProvider(AgentProvider):
                 )
 
                 raise ContextBudgetExceeded()
+        if memory_mode == 'source_review':
+            payload['instructions'] += '\n\n' + SOURCE_REVIEW_SCOPE_INSTRUCTIONS
         return payload
 
     def _preserve_conversation(self, memory_mode: Optional[str]) -> bool:
