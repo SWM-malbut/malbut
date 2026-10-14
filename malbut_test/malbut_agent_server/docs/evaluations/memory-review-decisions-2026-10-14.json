@@ -1,0 +1,6039 @@
+{
+  "created_at": "2026-10-14T14:28:20.463057+00:00",
+  "live": true,
+  "dataset_sha256": "b28ae0f3b8cee14deda2d5e01383b17661c9ba11e37e7a0b58b4075cdec0a1cd",
+  "dataset_scope": "fictional fixed candidates; not production traffic or extraction accuracy",
+  "case_count": 38,
+  "review_batches": 28,
+  "review_candidates": 30,
+  "skipped_case_ids": [
+    "greeting",
+    "lexical_name",
+    "lexical_preference",
+    "no_consent",
+    "quoted_name",
+    "hypothetical_name",
+    "do_not_store",
+    "question",
+    "absent_value",
+    "preference_two_clauses"
+  ],
+  "repeats": 2,
+  "timeout_seconds": 30,
+  "reasoning_effort": "low",
+  "responses_max_output_tokens": 1024,
+  "price_date": "2026-10-14",
+  "price_sources": [
+    "https://developers.openai.com/api/docs/pricing",
+    "https://developers.openai.com/api/docs/guides/decisions"
+  ],
+  "planned_calls": 168,
+  "production_changed": false,
+  "records": [
+    {
+      "usage": {
+        "input_tokens": 872,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 872
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 599.266040022485,
+      "case_id": "batch_mixed_names",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        },
+        {
+          "label": "supported",
+          "supported_probability": 0.9
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 599.3141459766775,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.72e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5042,
+        "input_tokens_details": {
+          "cache_write_tokens": 5039,
+          "cached_tokens": 0
+        },
+        "output_tokens": 162,
+        "output_tokens_details": {
+          "reasoning_tokens": 51
+        },
+        "total_tokens": 5204
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3917.808566999156,
+      "case_id": "batch_mixed_names",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 3918.375273991842,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000711175,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5042,
+        "input_tokens_details": {
+          "cache_write_tokens": 5039,
+          "cached_tokens": 0
+        },
+        "output_tokens": 150,
+        "output_tokens_details": {
+          "reasoning_tokens": 41
+        },
+        "total_tokens": 5192
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 4229.06626999611,
+      "case_id": "batch_mixed_names",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 4229.5993129955605,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00144035,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 407.9580780235119,
+      "case_id": "name_correction_old",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 408.01901899976656,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 117,
+        "output_tokens_details": {
+          "reasoning_tokens": 38
+        },
+        "total_tokens": 5126
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3028.9489140268415,
+      "case_id": "name_correction_old",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 3029.500246979296,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00029954,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 108,
+        "output_tokens_details": {
+          "reasoning_tokens": 32
+        },
+        "total_tokens": 5117
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3885.528273996897,
+      "case_id": "name_correction_old",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 3886.0153349814937,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00013356999999999998,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 457,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 457
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 455.9780909912661,
+      "case_id": "injection_in_source",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 456.02357800817117,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.57e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5015,
+        "input_tokens_details": {
+          "cache_write_tokens": 260,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 119,
+        "output_tokens_details": {
+          "reasoning_tokens": 31
+        },
+        "total_tokens": 5134
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 9569.620573020075,
+      "case_id": "injection_in_source",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 9570.059228048194,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030343999999999993,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5015,
+        "input_tokens_details": {
+          "cache_write_tokens": 260,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 83,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5098
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2446.8882529763505,
+      "case_id": "injection_in_source",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2447.44558702223,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012182,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 108,
+        "output_tokens_details": {
+          "reasoning_tokens": 32
+        },
+        "total_tokens": 5117
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2360.901186999399,
+      "case_id": "name_correction_old",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2361.704673967324,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00010436,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 263.0457289633341,
+      "case_id": "name_correction_old",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 263.10918503440917,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 114,
+        "output_tokens_details": {
+          "reasoning_tokens": 34
+        },
+        "total_tokens": 5123
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2382.3310479638167,
+      "case_id": "name_correction_old",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2382.901936012786,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00023752,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 457,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 457
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 379.4819900067523,
+      "case_id": "injection_in_source",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 379.525515018031,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.57e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5015,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5012
+        },
+        "output_tokens": 85,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5100
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3276.210126990918,
+      "case_id": "injection_in_source",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 3276.6427400056273,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.292e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5015,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5012
+        },
+        "output_tokens": 116,
+        "output_tokens_details": {
+          "reasoning_tokens": 28
+        },
+        "total_tokens": 5131
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2356.4183529815637,
+      "case_id": "injection_in_source",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2356.8938359967433,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00024003999999999999,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 102,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5108
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3773.368953028694,
+      "case_id": "pet_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3774.135835992638,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000130195,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 135,
+        "output_tokens_details": {
+          "reasoning_tokens": 38
+        },
+        "total_tokens": 5141
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2674.514938960783,
+      "case_id": "pet_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2675.0080719939433,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00032039,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 303.6959659657441,
+      "case_id": "pet_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.98
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 303.73718397459015,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 208.78744003130123,
+      "case_id": "preference_friend",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.03
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 208.83086696267128,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 131,
+        "output_tokens_details": {
+          "reasoning_tokens": 44
+        },
+        "total_tokens": 5140
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2558.2736739888787,
+      "case_id": "preference_friend",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2558.7096459930763,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00014507,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 131,
+        "output_tokens_details": {
+          "reasoning_tokens": 51
+        },
+        "total_tokens": 5140
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2517.529717995785,
+      "case_id": "preference_friend",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2518.0413799826056,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00031634,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 443,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 443
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 342.7053129998967,
+      "case_id": "name_negated",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 342.7488469751552,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4300000000000006e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5001,
+        "input_tokens_details": {
+          "cache_write_tokens": 246,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 72,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5073
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2398.2905540033244,
+      "case_id": "name_negated",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2398.7597100203857,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011457,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5001,
+        "input_tokens_details": {
+          "cache_write_tokens": 246,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 110,
+        "output_tokens_details": {
+          "reasoning_tokens": 32
+        },
+        "total_tokens": 5111
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2614.9247129797004,
+      "case_id": "name_negated",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2615.364140016027,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00028914,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4993,
+        "input_tokens_details": {
+          "cache_write_tokens": 238,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 123,
+        "output_tokens_details": {
+          "reasoning_tokens": 35
+        },
+        "total_tokens": 5116
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2522.8165760054253,
+      "case_id": "role_not_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2523.5597300343215,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030274,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4993,
+        "input_tokens_details": {
+          "cache_write_tokens": 238,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 77,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5070
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2492.8661720477976,
+      "case_id": "role_not_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2493.3746210299432,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011606999999999999,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 435,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 435
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 249.21081098727882,
+      "case_id": "role_not_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.1
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 249.2561750113964,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.35e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 120,
+        "output_tokens_details": {
+          "reasoning_tokens": 34
+        },
+        "total_tokens": 5129
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2632.8674699761905,
+      "case_id": "preference_friend",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2633.652062038891,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011036,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 132,
+        "output_tokens_details": {
+          "reasoning_tokens": 47
+        },
+        "total_tokens": 5141
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2950.382298033219,
+      "case_id": "preference_friend",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2950.839804019779,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00025912,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 237.1380309923552,
+      "case_id": "preference_friend",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.03
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 237.18184197787195,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 439,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 439
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 239.40354899968952,
+      "case_id": "name_casual",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 239.49240997899324,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.39e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4997,
+        "input_tokens_details": {
+          "cache_write_tokens": 242,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 123,
+        "output_tokens_details": {
+          "reasoning_tokens": 28
+        },
+        "total_tokens": 5120
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 10403.548214992043,
+      "case_id": "name_casual",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 10404.116386955138,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030374,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4997,
+        "input_tokens_details": {
+          "cache_write_tokens": 242,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 86,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5083
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 4766.552793036681,
+      "case_id": "name_casual",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 4767.084949999116,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012107,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 411.8854260304943,
+      "case_id": "pet_name_breed_swap",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.04
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 411.9479119544849,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 115,
+        "output_tokens_details": {
+          "reasoning_tokens": 35
+        },
+        "total_tokens": 5121
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2758.0463910126127,
+      "case_id": "pet_name_breed_swap",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2758.4951809840277,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00029639,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 87,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5093
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2153.0694420216605,
+      "case_id": "pet_name_breed_swap",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2153.5470639937557,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000122695,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 221.91525402013212,
+      "case_id": "preference_negation",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.01
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 221.98624798329547,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 72,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5078
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1672.6159219979309,
+      "case_id": "preference_negation",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 1673.0831299792044,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000115195,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 251,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 119,
+        "output_tokens_details": {
+          "reasoning_tokens": 37
+        },
+        "total_tokens": 5125
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2688.013266015332,
+      "case_id": "preference_negation",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2688.5340649751015,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030118999999999995,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4999,
+        "input_tokens_details": {
+          "cache_write_tokens": 244,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 95,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5094
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1755.2192640141584,
+      "case_id": "name_formal",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 1756.029543990735,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012582,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4999,
+        "input_tokens_details": {
+          "cache_write_tokens": 244,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 118,
+        "output_tokens_details": {
+          "reasoning_tokens": 27
+        },
+        "total_tokens": 5117
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2036.9894240284339,
+      "case_id": "name_formal",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2037.5045500113629,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00029824,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 441,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 441
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 233.71461901115254,
+      "case_id": "name_formal",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 233.75770804705098,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.41e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 259,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 124,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5138
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2969.193816999905,
+      "case_id": "pet_wrong_owner",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2970.097227022052,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000142195,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 456,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 456
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 242.76448198361322,
+      "case_id": "pet_wrong_owner",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.66
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 242.83354100771248,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5600000000000004e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 259,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 180,
+        "output_tokens_details": {
+          "reasoning_tokens": 64
+        },
+        "total_tokens": 5194
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3127.355530974455,
+      "case_id": "pet_wrong_owner",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 3127.9141110135242,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00037639,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5003,
+        "input_tokens_details": {
+          "cache_write_tokens": 248,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 139,
+        "output_tokens_details": {
+          "reasoning_tokens": 37
+        },
+        "total_tokens": 5142
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3523.3101040357724,
+      "case_id": "name_explicit_save",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3524.03560600942,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00014832,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5003,
+        "input_tokens_details": {
+          "cache_write_tokens": 248,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 140,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5143
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2882.6234249863774,
+      "case_id": "name_explicit_save",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2883.087361988146,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00032564,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 445,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 445
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 269.1516060149297,
+      "case_id": "name_explicit_save",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 269.1948210122064,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.45e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 443,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 443
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 233.4461830323562,
+      "case_id": "name_introduction",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.99
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 233.48972195526585,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4300000000000006e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5002,
+        "input_tokens_details": {
+          "cache_write_tokens": 247,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 100,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5102
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2392.2550390125252,
+      "case_id": "name_introduction",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2392.741614021361,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000128695,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5002,
+        "input_tokens_details": {
+          "cache_write_tokens": 247,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 132,
+        "output_tokens_details": {
+          "reasoning_tokens": 29
+        },
+        "total_tokens": 5134
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2728.544963989407,
+      "case_id": "name_introduction",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2729.0624430170283,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00031579000000000004,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5005,
+        "input_tokens_details": {
+          "cache_write_tokens": 250,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 72,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5077
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2496.5559170232154,
+      "case_id": "friend_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2497.220479999669,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011507,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5005,
+        "input_tokens_details": {
+          "cache_write_tokens": 250,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 114,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5119
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2366.5594559861347,
+      "case_id": "friend_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2366.9758770265616,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00029493999999999994,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 447,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 447
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 328.0476829968393,
+      "case_id": "friend_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 328.0932329944335,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.47e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 131,
+        "output_tokens_details": {
+          "reasoning_tokens": 51
+        },
+        "total_tokens": 5138
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2383.5740849608555,
+      "case_id": "mentioned_without_identity",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2384.1838669613935,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00031584,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 449,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 449
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 319.48279100470245,
+      "case_id": "mentioned_without_identity",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 319.5366659783758,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.490000000000001e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 78,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5085
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2786.5473460406065,
+      "case_id": "mentioned_without_identity",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2787.220083991997,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011832,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 154,
+        "output_tokens_details": {
+          "reasoning_tokens": 47
+        },
+        "total_tokens": 5163
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2763.3634569938295,
+      "case_id": "preference_dislikes",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2764.17225797195,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00015657,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 239.53245498705655,
+      "case_id": "preference_dislikes",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.96
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 239.5904809818603,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 147,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5156
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2608.0858229543082,
+      "case_id": "preference_dislikes",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2608.5778340348043,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033554,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 108,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5117
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2977.598114986904,
+      "case_id": "name_correction_new",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2978.3720719860867,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00013356999999999998,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 253.2045349944383,
+      "case_id": "name_correction_new",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.91
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 253.24775697663426,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 254,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 150,
+        "output_tokens_details": {
+          "reasoning_tokens": 43
+        },
+        "total_tokens": 5159
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3347.157951036934,
+      "case_id": "name_correction_new",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3347.698319994379,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033914,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 4999,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4996
+        },
+        "output_tokens": 97,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5096
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2505.8090210077353,
+      "case_id": "name_formal",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2506.6002790117636,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.876e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4999,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4996
+        },
+        "output_tokens": 138,
+        "output_tokens_details": {
+          "reasoning_tokens": 49
+        },
+        "total_tokens": 5137
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3070.5854559782892,
+      "case_id": "name_formal",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3071.2260780273937,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00026612,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 441,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 441
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 792.0979770133272,
+      "case_id": "name_formal",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 792.1652219956741,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.41e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5011,
+        "input_tokens_details": {
+          "cache_write_tokens": 256,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 79,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5090
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2341.7442059726454,
+      "case_id": "preference_object_swap",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2342.504361993633,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00011931999999999999,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 453,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 453
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 432.58655397221446,
+      "case_id": "preference_object_swap",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.01
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 432.6468610088341,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.53e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5011,
+        "input_tokens_details": {
+          "cache_write_tokens": 256,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 118,
+        "output_tokens_details": {
+          "reasoning_tokens": 32
+        },
+        "total_tokens": 5129
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2562.390722974669,
+      "case_id": "preference_object_swap",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2563.0039570387453,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030124,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5044,
+        "input_tokens_details": {
+          "cache_write_tokens": 289,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 110,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5154
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1833.4395089768805,
+      "case_id": "batch_preferences",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 1834.3019219464622,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000138945,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5044,
+        "input_tokens_details": {
+          "cache_write_tokens": 289,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 159,
+        "output_tokens_details": {
+          "reasoning_tokens": 47
+        },
+        "total_tokens": 5203
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2821.862246026285,
+      "case_id": "batch_preferences",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 2822.4969480070285,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00035868999999999994,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 874,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 874
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 284.4094089814462,
+      "case_id": "batch_preferences",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        },
+        {
+          "label": "supported",
+          "supported_probability": 0.84
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 284.4616490183398,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.740000000000001e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5016,
+        "input_tokens_details": {
+          "cache_write_tokens": 261,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 145,
+        "output_tokens_details": {
+          "reasoning_tokens": 24
+        },
+        "total_tokens": 5161
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2516.190127993468,
+      "case_id": "pet_species",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2516.8236469617113,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033488999999999996,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 458,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 458
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 230.04818899789825,
+      "case_id": "pet_species",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.96
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 230.0995200057514,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.58e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5016,
+        "input_tokens_details": {
+          "cache_write_tokens": 261,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 113,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5129
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2556.617771042511,
+      "case_id": "pet_species",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2557.291018019896,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000136945,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5004
+        },
+        "output_tokens": 71,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5078
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2751.711464021355,
+      "case_id": "mentioned_without_identity",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2752.3546619922854,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.584e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5004
+        },
+        "output_tokens": 124,
+        "output_tokens_details": {
+          "reasoning_tokens": 46
+        },
+        "total_tokens": 5131
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2480.4006459889933,
+      "case_id": "mentioned_without_identity",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2481.204675976187,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00024947999999999995,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 449,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 449
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 211.4432390080765,
+      "case_id": "mentioned_without_identity",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 211.5001649945043,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.490000000000001e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5042,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5039
+        },
+        "output_tokens": 167,
+        "output_tokens_details": {
+          "reasoning_tokens": 60
+        },
+        "total_tokens": 5209
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3025.868787022773,
+      "case_id": "batch_mixed_names",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 3026.5462940442376,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00013419,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5042,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5039
+        },
+        "output_tokens": 145,
+        "output_tokens_details": {
+          "reasoning_tokens": 46
+        },
+        "total_tokens": 5187
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2909.960893972311,
+      "case_id": "batch_mixed_names",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 2910.5480260332115,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00027538,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 872,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 872
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 398.3185190008953,
+      "case_id": "batch_mixed_names",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        },
+        {
+          "label": "supported",
+          "supported_probability": 0.9
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 398.4176740050316,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.72e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5012,
+        "input_tokens_details": {
+          "cache_write_tokens": 257,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 203,
+        "output_tokens_details": {
+          "reasoning_tokens": 117
+        },
+        "total_tokens": 5215
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3963.9238190138713,
+      "case_id": "preference_changed",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 3964.6665999898687,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000181445,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 454,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 454
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 243.36547998245806,
+      "case_id": "preference_changed",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.09
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 243.42512100702152,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5400000000000006e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5012,
+        "input_tokens_details": {
+          "cache_write_tokens": 257,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 139,
+        "output_tokens_details": {
+          "reasoning_tokens": 49
+        },
+        "total_tokens": 5151
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2609.14406896336,
+      "case_id": "preference_changed",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2609.6304660313763,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.0003266899999999999,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 456,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 456
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 409.5917009981349,
+      "case_id": "batch_rule_plus_review",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.98
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 409.653773996979,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5600000000000004e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 259,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 162,
+        "output_tokens_details": {
+          "reasoning_tokens": 48
+        },
+        "total_tokens": 5176
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3256.6492240293883,
+      "case_id": "batch_rule_plus_review",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3257.2566919843666,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000161195,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 259,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 156,
+        "output_tokens_details": {
+          "reasoning_tokens": 39
+        },
+        "total_tokens": 5170
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3174.358549003955,
+      "case_id": "batch_rule_plus_review",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3174.9356130021624,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00034759,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5004,
+        "input_tokens_details": {
+          "cache_write_tokens": 249,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 148,
+        "output_tokens_details": {
+          "reasoning_tokens": 43
+        },
+        "total_tokens": 5152
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2552.725123008713,
+      "case_id": "nickname_supported",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2553.5719509935006,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033549000000000003,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5004,
+        "input_tokens_details": {
+          "cache_write_tokens": 249,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 162,
+        "output_tokens_details": {
+          "reasoning_tokens": 59
+        },
+        "total_tokens": 5166
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 3816.2613479653373,
+      "case_id": "nickname_supported",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3816.791059973184,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000159945,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 446,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 446
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 341.88644599635154,
+      "case_id": "nickname_supported",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 341.9894120306708,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.46e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 143,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5152
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 10030.215626000427,
+      "case_id": "preference_dislikes",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 10031.04848897783,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00027232,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 217.12191897677258,
+      "case_id": "preference_dislikes",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.96
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 217.18817699002102,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 106,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5115
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2584.378139988985,
+      "case_id": "preference_dislikes",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2584.911272977479,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00010336,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 159,
+        "output_tokens_details": {
+          "reasoning_tokens": 51
+        },
+        "total_tokens": 5168
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2879.4487639679573,
+      "case_id": "name_correction_new",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2880.688723002095,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012986,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5009,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5006
+        },
+        "output_tokens": 148,
+        "output_tokens_details": {
+          "reasoning_tokens": 41
+        },
+        "total_tokens": 5157
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2987.851884041447,
+      "case_id": "name_correction_new",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2988.371033978183,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00027832,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 451,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 451
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 287.8329550148919,
+      "case_id": "name_correction_new",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.91
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 287.9200710449368,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.51e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5003,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5000
+        },
+        "output_tokens": 148,
+        "output_tokens_details": {
+          "reasoning_tokens": 52
+        },
+        "total_tokens": 5151
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2683.2750710309483,
+      "case_id": "name_explicit_save",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2684.2155769700184,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.0002782,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 445,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 445
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 267.8676809882745,
+      "case_id": "name_explicit_save",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 267.9324870114215,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.45e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5003,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5000
+        },
+        "output_tokens": 137,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5140
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2761.3321489770897,
+      "case_id": "name_explicit_save",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2762.4421400250867,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.0001188,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 120,
+        "output_tokens_details": {
+          "reasoning_tokens": 38
+        },
+        "total_tokens": 5127
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2582.916525017936,
+      "case_id": "preference_uncertain",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2583.726631011814,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00030263999999999996,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 449,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 449
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 423.8365330384113,
+      "case_id": "preference_uncertain",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.13
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 423.9246880169958,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.490000000000001e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 124,
+        "output_tokens_details": {
+          "reasoning_tokens": 43
+        },
+        "total_tokens": 5131
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2558.718947984744,
+      "case_id": "preference_uncertain",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2559.209649974946,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00014131999999999998,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 228.38318097637966,
+      "case_id": "pet_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.98
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 228.4529889584519,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 145,
+        "output_tokens_details": {
+          "reasoning_tokens": 41
+        },
+        "total_tokens": 5151
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2704.3168040108867,
+      "case_id": "pet_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2705.035802035127,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012283,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 144,
+        "output_tokens_details": {
+          "reasoning_tokens": 38
+        },
+        "total_tokens": 5150
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2760.3675160207786,
+      "case_id": "pet_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2760.8740959549323,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00027346,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 446,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 446
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 236.4786840043962,
+      "case_id": "nickname_supported",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 236.52217898052186,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.46e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5004,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5001
+        },
+        "output_tokens": 192,
+        "output_tokens_details": {
+          "reasoning_tokens": 87
+        },
+        "total_tokens": 5196
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2998.601994011551,
+      "case_id": "nickname_supported",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2999.1517059970647,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00014631,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5004,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5001
+        },
+        "output_tokens": 139,
+        "output_tokens_details": {
+          "reasoning_tokens": 42
+        },
+        "total_tokens": 5143
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2691.372931993101,
+      "case_id": "nickname_supported",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2691.906583029777,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00026742,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4997,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4994
+        },
+        "output_tokens": 107,
+        "output_tokens_details": {
+          "reasoning_tokens": 20
+        },
+        "total_tokens": 5104
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2152.204773039557,
+      "case_id": "name_casual",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2152.917085972149,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00022888,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 439,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 439
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 399.278752040118,
+      "case_id": "name_casual",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 1.0
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 399.33782001025975,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.39e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4997,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4994
+        },
+        "output_tokens": 86,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5083
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2248.4371779719368,
+      "case_id": "name_casual",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2248.9018990308978,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.324e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 456,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 456
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 404.8218539683148,
+      "case_id": "pet_wrong_owner",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.66
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 404.8642269917764,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5600000000000004e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5011
+        },
+        "output_tokens": 203,
+        "output_tokens_details": {
+          "reasoning_tokens": 85
+        },
+        "total_tokens": 5217
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3074.890731018968,
+      "case_id": "pet_wrong_owner",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 3075.4379619611427,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00034441999999999996,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5011
+        },
+        "output_tokens": 216,
+        "output_tokens_details": {
+          "reasoning_tokens": 102
+        },
+        "total_tokens": 5230
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 4288.38983195601,
+      "case_id": "pet_wrong_owner",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 4288.890374999028,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00015841,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5011
+        },
+        "output_tokens": 154,
+        "output_tokens_details": {
+          "reasoning_tokens": 45
+        },
+        "total_tokens": 5168
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2584.352759004105,
+      "case_id": "batch_rule_plus_review",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2585.1340540102683,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00028562,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 456,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 456
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 273.7745770136826,
+      "case_id": "batch_rule_plus_review",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.98
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 273.81759200943634,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5600000000000004e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5014,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5011
+        },
+        "output_tokens": 109,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5123
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2478.9645459968597,
+      "case_id": "batch_rule_plus_review",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2479.4852870400064,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00010491,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5044,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5041
+        },
+        "output_tokens": 154,
+        "output_tokens_details": {
+          "reasoning_tokens": 42
+        },
+        "total_tokens": 5198
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2464.5534040173516,
+      "case_id": "batch_preferences",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 2465.3703609947115,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00028621999999999995,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 874,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 874
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 244.8711539618671,
+      "case_id": "batch_preferences",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        },
+        {
+          "label": "supported",
+          "supported_probability": 0.84
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 244.9227399774827,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.740000000000001e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5044,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5041
+        },
+        "output_tokens": 150,
+        "output_tokens_details": {
+          "reasoning_tokens": 43
+        },
+        "total_tokens": 5194
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2773.6050710082054,
+      "case_id": "batch_preferences",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        },
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted",
+        "supported"
+      ],
+      "elapsed_ms": 2774.1570390062407,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012571000000000001,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5013,
+        "input_tokens_details": {
+          "cache_write_tokens": 258,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 144,
+        "output_tokens_details": {
+          "reasoning_tokens": 48
+        },
+        "total_tokens": 5157
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2615.543936030008,
+      "case_id": "partial_evidence_retracted",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2616.388782975264,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033293999999999994,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 455,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 455
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 230.04799894988537,
+      "case_id": "partial_evidence_retracted",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 230.09349399944767,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.55e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5013,
+        "input_tokens_details": {
+          "cache_write_tokens": 258,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 81,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5094
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2879.524431016762,
+      "case_id": "partial_evidence_retracted",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2879.9604170490056,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012056999999999999,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 454,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 454
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 408.1492509576492,
+      "case_id": "preference_changed",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.09
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 408.19473401643336,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5400000000000006e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5012,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5009
+        },
+        "output_tokens": 138,
+        "output_tokens_details": {
+          "reasoning_tokens": 49
+        },
+        "total_tokens": 5150
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2641.2314500194043,
+      "case_id": "preference_changed",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2641.9269519974478,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00026638,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5012,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5009
+        },
+        "output_tokens": 170,
+        "output_tokens_details": {
+          "reasoning_tokens": 79
+        },
+        "total_tokens": 5182
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2991.277972003445,
+      "case_id": "preference_changed",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2991.7587399831973,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00013539,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4993,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4990
+        },
+        "output_tokens": 118,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5111
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2442.1820580027997,
+      "case_id": "role_not_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2442.8836409933865,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000242,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 435,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 435
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 234.01248099980876,
+      "case_id": "role_not_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.1
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 234.0575130074285,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.35e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 4993,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4990
+        },
+        "output_tokens": 71,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5064
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1804.7106540179811,
+      "case_id": "role_not_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 1805.1585460198112,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.569999999999998e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 114,
+        "output_tokens_details": {
+          "reasoning_tokens": 44
+        },
+        "total_tokens": 5120
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2569.604385003913,
+      "case_id": "pet_name_breed_swap",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2570.3659289865755,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00023745999999999997,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 218.15704798791558,
+      "case_id": "pet_name_breed_swap",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.04
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 218.20198994828388,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 82,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5088
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2408.7072610273026,
+      "case_id": "pet_name_breed_swap",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2409.1317409765907,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.133e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 455,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 455
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 232.8123910119757,
+      "case_id": "partial_evidence_retracted",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 232.85864701028913,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.55e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5013,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5010
+        },
+        "output_tokens": 128,
+        "output_tokens_details": {
+          "reasoning_tokens": 35
+        },
+        "total_tokens": 5141
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2262.7285140333697,
+      "case_id": "partial_evidence_retracted",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2263.1657739984803,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.0002544,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5013,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5010
+        },
+        "output_tokens": 81,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5094
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1909.024965018034,
+      "case_id": "partial_evidence_retracted",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 1909.4817209988832,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.09e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 453,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 453
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 298.13596699386835,
+      "case_id": "preference_object_swap",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.01
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 298.1803669827059,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.53e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5011,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5008
+        },
+        "output_tokens": 72,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5083
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1957.4927600333467,
+      "case_id": "preference_object_swap",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 1957.9276359872892,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.638e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5011,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5008
+        },
+        "output_tokens": 113,
+        "output_tokens_details": {
+          "reasoning_tokens": 33
+        },
+        "total_tokens": 5124
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2293.1777680059895,
+      "case_id": "preference_object_swap",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2293.6767209903337,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00023636,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5022,
+        "input_tokens_details": {
+          "cache_write_tokens": 267,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 82,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5104
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1798.417554993648,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 1799.1083230008371,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.000122195,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5022,
+        "input_tokens_details": {
+          "cache_write_tokens": 267,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 130,
+        "output_tokens_details": {
+          "reasoning_tokens": 45
+        },
+        "total_tokens": 5152
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2386.544278007932,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2387.0469360263087,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00031839,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 464,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 464
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 272.91601995239034,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 272.96018099877983,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.64e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 443,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 443
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 323.4648740035482,
+      "case_id": "name_negated",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.0
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 323.51186498999596,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4300000000000006e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5001,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4998
+        },
+        "output_tokens": 73,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5074
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1888.6288509820588,
+      "case_id": "name_negated",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 1889.16453596903,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.678e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5001,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4998
+        },
+        "output_tokens": 110,
+        "output_tokens_details": {
+          "reasoning_tokens": 33
+        },
+        "total_tokens": 5111
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2427.9957719845697,
+      "case_id": "name_negated",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2428.4259720006958,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00023256,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5008,
+        "input_tokens_details": {
+          "cache_write_tokens": 253,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 87,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5095
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2277.837597008329,
+      "case_id": "nickname_not_legal_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2278.6825459916145,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00012294499999999998,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 450,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 450
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 225.96694604726508,
+      "case_id": "nickname_not_legal_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.37
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 226.0118029662408,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5008,
+        "input_tokens_details": {
+          "cache_write_tokens": 253,
+          "cached_tokens": 4752
+        },
+        "output_tokens": 107,
+        "output_tokens_details": {
+          "reasoning_tokens": 34
+        },
+        "total_tokens": 5115
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2583.7394580012187,
+      "case_id": "nickname_not_legal_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2584.256825968623,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00028728999999999994,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5002,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4999
+        },
+        "output_tokens": 192,
+        "output_tokens_details": {
+          "reasoning_tokens": 94
+        },
+        "total_tokens": 5194
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3418.3015010203235,
+      "case_id": "name_introduction",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 3419.047089992091,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00033098,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 443,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 443
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 399.451061966829,
+      "case_id": "name_introduction",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.99
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 399.511381983757,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4300000000000006e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5002,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 4999
+        },
+        "output_tokens": 103,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5105
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2631.7678859923035,
+      "case_id": "name_introduction",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2632.3130649980158,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00010178999999999999,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5008,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5005
+        },
+        "output_tokens": 115,
+        "output_tokens_details": {
+          "reasoning_tokens": 38
+        },
+        "total_tokens": 5123
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2608.390297042206,
+      "case_id": "nickname_not_legal_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2608.944309002254,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.0002387,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 450,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 450
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 273.0595709872432,
+      "case_id": "nickname_not_legal_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.37
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 273.10356200905517,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.5e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5008,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5005
+        },
+        "output_tokens": 73,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5081
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 1650.6748520187102,
+      "case_id": "nickname_not_legal_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 1651.091062987689,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.685e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 464,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 464
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 386.1073850421235,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 386.1898630275391,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.64e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5022,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5019
+        },
+        "output_tokens": 76,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5098
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2144.692652975209,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2145.188833004795,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.849e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5022,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5019
+        },
+        "output_tokens": 133,
+        "output_tokens_details": {
+          "reasoning_tokens": 48
+        },
+        "total_tokens": 5155
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2804.8421510029584,
+      "case_id": "two_pets_wrong_subject",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2805.274525017012,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00026058,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 449,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 449
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 221.86045395210385,
+      "case_id": "preference_uncertain",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.13
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 221.90491302171722,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.490000000000001e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5004
+        },
+        "output_tokens": 120,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5127
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2925.098401028663,
+      "case_id": "preference_uncertain",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2925.5393799976446,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00024468,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5007,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5004
+        },
+        "output_tokens": 91,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5098
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 9180.20661897026,
+      "case_id": "preference_uncertain",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 9180.741909018252,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.584e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 448,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 448
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 215.87577497120947,
+      "case_id": "preference_negation",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "contradicted",
+          "supported_probability": 0.01
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 215.9202879993245,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.4800000000000005e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 145,
+        "output_tokens_details": {
+          "reasoning_tokens": 63
+        },
+        "total_tokens": 5151
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 3286.601433996111,
+      "case_id": "preference_negation",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 3287.0232720160857,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00027466,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 5006,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5003
+        },
+        "output_tokens": 75,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5081
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2782.690133957658,
+      "case_id": "preference_negation",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "contradicted"
+      ],
+      "elapsed_ms": 2783.18255598424,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 8.783e-05,
+      "repeat": 0
+    },
+    {
+      "usage": {
+        "input_tokens": 447,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 447
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 221.19710402330384,
+      "case_id": "friend_name",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "insufficient",
+          "supported_probability": 0.02
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 221.2414380046539,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.47e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5005,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5002
+        },
+        "output_tokens": 134,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 5139
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2403.2251079916023,
+      "case_id": "friend_name",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2403.7478829850443,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00026144,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5005,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5002
+        },
+        "output_tokens": 87,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 5092
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2474.0959040354937,
+      "case_id": "friend_name",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "rejected",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "insufficient"
+      ],
+      "elapsed_ms": 2474.5964590110816,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 9.381999999999999e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5016,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5013
+        },
+        "output_tokens": 175,
+        "output_tokens_details": {
+          "reasoning_tokens": 59
+        },
+        "total_tokens": 5191
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 2822.64068396762,
+      "case_id": "pet_species",
+      "arm": "responses_control",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2823.5102720209397,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00013793,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 458,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 458
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "network_ms": 274.08001897856593,
+      "case_id": "pet_species",
+      "arm": "decisions",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": 0.96
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 274.15945497341454,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 4.58e-05,
+      "repeat": 1
+    },
+    {
+      "usage": {
+        "input_tokens": 5016,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5013
+        },
+        "output_tokens": 155,
+        "output_tokens_details": {
+          "reasoning_tokens": 33
+        },
+        "total_tokens": 5171
+      },
+      "error": null,
+      "http_status": null,
+      "model": "gpt-5.6-luna",
+      "returned_model": "gpt-5.6-luna",
+      "network_ms": 2628.5885850084014,
+      "case_id": "pet_species",
+      "arm": "responses_current",
+      "predictions": [
+        {
+          "label": "supported",
+          "supported_probability": null
+        }
+      ],
+      "expected": [
+        "supported"
+      ],
+      "elapsed_ms": 2629.07088000793,
+      "call_count": 1,
+      "validation_error": null,
+      "cost_usd": 0.00028686,
+      "repeat": 1
+    }
+  ],
+  "summary": {
+    "responses_current": {
+      "attempted_batches": 56,
+      "valid_batches": 56,
+      "failed_batches": 0,
+      "api_calls": 56,
+      "counts": {
+        "unsupported": 36,
+        "false_approval": 2,
+        "false_rejection": 0,
+        "correct_binary": 58,
+        "refusal": 0,
+        "supported": 24
+      },
+      "p50_ms": 2622.729831491597,
+      "p95_ms": 9570.059228048194,
+      "over_production_5s_batches": 3,
+      "known_cost_usd": 0.01743021,
+      "unknown_cost_batches": 0
+    },
+    "responses_control": {
+      "attempted_batches": 56,
+      "valid_batches": 56,
+      "failed_batches": 0,
+      "api_calls": 56,
+      "counts": {
+        "unsupported": 36,
+        "false_approval": 2,
+        "false_rejection": 0,
+        "correct_binary": 58,
+        "refusal": 0,
+        "supported": 24
+      },
+      "p50_ms": 2608.6121689877473,
+      "p95_ms": 4288.890374999028,
+      "over_production_5s_batches": 1,
+      "known_cost_usd": 0.007303704999999999,
+      "unknown_cost_batches": 0
+    },
+    "decisions": {
+      "attempted_batches": 56,
+      "valid_batches": 56,
+      "failed_batches": 0,
+      "api_calls": 56,
+      "counts": {
+        "unsupported": 36,
+        "false_approval": 2,
+        "false_rejection": 0,
+        "correct_binary": 58,
+        "refusal": 0,
+        "correct_three_way": 56,
+        "supported": 24
+      },
+      "p50_ms": 271.0775010054931,
+      "p95_ms": 456.02357800817117,
+      "over_production_5s_batches": 0,
+      "known_cost_usd": 0.0026868,
+      "unknown_cost_batches": 0,
+      "supported_probability_threshold": 0.9,
+      "threshold_counts": {
+        "false_approval": 0,
+        "false_rejection": 2
+      }
+    }
+  }
+}
