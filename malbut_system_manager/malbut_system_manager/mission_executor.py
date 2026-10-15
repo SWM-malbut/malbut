@@ -136,17 +136,18 @@ class MissionExecutor:
                 execution, 'preparation_timer', self._preparation_timeout_s,
                 lambda current: self._finish(
                     current, TerminalOutcome.ABORTED,
-                    message='Dependency preparation timed out; no goal was sent'))
+                    message='Dependency preparation timed out; no goal was sent',
+                    preparing_only=True))
             future.add_done_callback(
                 lambda future: self._prepared(execution, request, future))
         except Exception as error:
             self._finish(execution, TerminalOutcome.ABORTED, message=str(error))
 
     def _prepared(self, execution, request, future):
-        self._clear_timer(execution, 'preparation_timer')
         with self._lock:
-            if not self._is_current(execution):
+            if not self._is_current(execution) or not execution.preparing:
                 return
+            self._clear_timer(execution, 'preparation_timer')
             execution.preparing = False
             canceled = execution.cancel_pending
         if canceled:
@@ -477,9 +478,9 @@ class MissionExecutor:
             if not self._is_current(execution):
                 return
             preparing = execution.preparing
+            execution.cancel_required = True
+            execution.cancel_pending = True
             if not preparing:
-                execution.cancel_required = True
-                execution.cancel_pending = True
                 if execution.command_kind is CommandKind.SERVICE:
                     # ROS Services have no cancellation protocol. Keep the request
                     # and its resources alive until the actual response arrives.
@@ -496,7 +497,8 @@ class MissionExecutor:
             # manager enters executor methods while holding its effects lock.
             # A late preparation reply is still generation-checked.
             self._finish(execution, TerminalOutcome.CANCELED,
-                         message='Canceled during dependency preparation')
+                         message='Canceled during dependency preparation',
+                         preparing_only=True)
             return
         self._arm_timer(
             execution,
@@ -600,11 +602,13 @@ class MissionExecutor:
         *,
         result_yaml: str = '',
         message: str = '',
+        preparing_only: bool = False,
     ) -> None:
         if not self._is_current(execution):
             return
         with self._lock:
-            if not self._is_current(execution):
+            if (not self._is_current(execution)
+                    or (preparing_only and not execution.preparing)):
                 return
             self._runs.pop(execution.mission_id, None)
         self._clear_execution_timers(execution)
@@ -702,9 +706,18 @@ class MissionExecutor:
             ):
                 return
             try:
+                def fire():
+                    # cancel()/destroy_timer() cannot retract a callback the
+                    # executor already took. Also reject an earlier watchdog
+                    # after this attribute was rearmed for another attempt.
+                    with self._lock:
+                        if getattr(execution, attribute) is not timer:
+                            return
+                    callback(execution)
+
                 timer = self._node.create_timer(
                     timeout_s,
-                    lambda: callback(execution),
+                    fire,
                     callback_group=self._callback_group,
                     clock=self._steady_clock,
                 )
@@ -738,8 +751,14 @@ class MissionExecutor:
         self._clear_timer(execution, 'preparation_timer')
         future = execution.preparation_future
         if future is not None and not future.done():
-            execution.preparation_client.remove_pending_request(future)
-            future.cancel()
+            try:
+                try:
+                    execution.preparation_client.remove_pending_request(future)
+                finally:
+                    future.cancel()
+            except Exception as error:
+                self._node.get_logger().warning(
+                    f'Could not clean up dependency preparation: {error}')
         self._clear_timer(execution, 'goal_response_timer')
         self._clear_timer(execution, 'cancel_completion_timer')
 

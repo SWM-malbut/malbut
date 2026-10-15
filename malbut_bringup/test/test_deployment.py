@@ -201,7 +201,11 @@ def test_robot_fall_rules_and_drive_match_source_without_manager_domain_code():
         deployed = ROOT / 'malbut_fall_approach' / name
         assert (package / name).read_bytes() == deployed.read_bytes()
     assert not (ROOT / 'malbut_fall_approach/test').exists()
-    assert not (ROOT / 'malbut_fall_coordinator').exists()
+    # Ignored pytest caches can outlive a removed package in a developer tree.
+    # Assert that no deployable ROS package or Python source remains.
+    retired = ROOT / 'malbut_fall_coordinator'
+    assert not (retired / 'package.xml').exists()
+    assert not any(retired.rglob('*.py'))
     for name in ('malbut_bringup/launch/agent.launch.py',
                  'malbut_agent_server/malbut_agent_server/ros_communication.py'):
         assert (ROOT.parent / name).read_bytes() == (ROOT / name).read_bytes()

@@ -104,10 +104,15 @@ class RuntimeControl(Node):
                                          callback_group=self.group) if relocalize else None)
         self._lock = threading.Lock()
         self._data_lock = threading.Lock()
+        self._report_lock = threading.Lock()
+        self._pending_reports = {}
         self._capabilities = set()
         self._have_state = False
         self._synced_demand = None
         self._sync_retry_at = None
+        self._verify_requested = False
+        self._ready_groups = set()
+        self._group_errors = {}
         self._preparations = []
         self._closing = False
         self._initialized = False
@@ -119,12 +124,15 @@ class RuntimeControl(Node):
         self._configured = set()
         self._map_initialized = False
         self._uncertain = False
+        self._pending_command = None
+        self._pending_restore = None
         self._active = {name: False for name in GROUPS}
         self._processing_active = {
             service: False for services in PROCESSING_GROUPS.values() for service in services}
         self._processing_clients = {
             service: self.create_client(SetBool, service, callback_group=self.group)
             for service in self._processing_active}
+        self._processing_pending = {}
         self._pose = None
         self._pose_sequence = 0
         self._cached_map_odom = None
@@ -200,6 +208,7 @@ class RuntimeControl(Node):
         with self._lock:
             if self._closing or not self._initialized:
                 return
+            self._settle_command()
             self._reconcile_demand()
 
     def _reconcile_demand(self):
@@ -243,20 +252,55 @@ class RuntimeControl(Node):
         with self._data_lock:
             return self._capabilities.copy()
 
-    def _call(self, client, request, label):
+    def _call(self, client, request, label, *, read_only=False):
         deadline = time.monotonic() + self.timeout
         while not client.service_is_ready():
             if self._closing or time.monotonic() >= deadline:
                 raise RuntimeError(f'{label}: service unavailable')
             time.sleep(0.02)
-        future = client.call_async(request)
+        try:
+            future = client.call_async(request)
+        except Exception:
+            if not read_only:
+                self._uncertain = True
+            raise
         try:
             return self._wait(future, label, self.timeout)
-        except RuntimeError:
-            client.remove_pending_request(future)
-            self._uncertain = True
-            self._report_usage(f'{label}: response unconfirmed')
+        except Exception:
+            if read_only:
+                client.remove_pending_request(future)
+                future.cancel()
+            else:
+                # Keep the original reply: timeout is not cancellation. Do
+                # not resend a mutation just because the machine is slow.
+                self._pending_command = (client, request, future)
+                self._uncertain = True
+                self._report_usage(f'{label}: response unconfirmed')
             raise
+
+    def _settle_command(self):
+        if self._pending_command is None:
+            return False
+        client, request, future = self._pending_command
+        if not future.done() or future.cancelled():
+            return False
+        try:
+            reply = future.result()
+        except Exception:
+            return False  # Transport completion is not a remote acknowledgement.
+        if reply is None:
+            return False
+        self._pending_command = None
+        if hasattr(reply, 'success') and not reply.success:
+            return False  # A rejected command can leave a partially changed group.
+        if client is self._localization:
+            command = request.command
+            self._localization_active = command in (
+                ManageLifecycleNodes.Request.STARTUP, ManageLifecycleNodes.Request.RESUME)
+            self._localization_started = command != ManageLifecycleNodes.Request.RESET
+        self._uncertain = False
+        self._synced_demand = None
+        return True
 
     def _wait(self, future, label, timeout):
         deadline = time.monotonic() + timeout
@@ -316,22 +360,60 @@ class RuntimeControl(Node):
                 self._manage(self._managers['motion'], ManageLifecycleNodes.Request.RESUME)
                 self._active['motion'] = True
             goal = Relocalize.Goal(method=Relocalize.Goal.AUTO)
-            handle = self._wait(
-                self._relocalize.send_goal_async(goal), 'pose restore', self.timeout)
-            if handle.accepted:
-                finished = handle.get_result_async()
-                try:
-                    result = self._wait(finished, 'pose restore', 90.0).result
-                    if not result.success:
-                        self.get_logger().warning(result.message)
-                except RuntimeError:
-                    handle.cancel_goal_async()
-                    # Do not sleep Spin's dependencies while it can still move.
+            pending = self._pending_restore = {
+                'path': path, 'response': None, 'handle': None, 'result': None,
+                'cancel_sent': False,
+            }
+            try:
+                pending['response'] = self._relocalize.send_goal_async(goal)
+                handle = self._wait(pending['response'], 'pose restore', self.timeout)
+                pending['handle'] = handle
+                if handle.accepted:
+                    finished = pending['result'] = handle.get_result_async()
                     try:
-                        self._wait(finished, 'pose restore cancellation', self.timeout)
+                        result = self._wait(finished, 'pose restore', 90.0).result
+                        if not result.success:
+                            self.get_logger().warning(result.message)
                     except RuntimeError:
-                        self._uncertain = True
-                        raise
+                        handle.cancel_goal_async()
+                        pending['cancel_sent'] = True
+                        # Cancellation acknowledgement is not completion.
+                        self._wait(finished, 'pose restore cancellation', self.timeout)
+            except Exception:
+                self._uncertain = True
+                raise
+            self._pending_restore = None
+        self._finish_map_provider(path)
+
+    def _settle_restore(self):
+        pending = self._pending_restore
+        if pending is None or pending['response'] is None:
+            return False
+        try:
+            if pending['handle'] is None:
+                if not pending['response'].done():
+                    return False
+                pending['handle'] = pending['response'].result()
+            handle = pending['handle']
+            if handle.accepted:
+                if pending['result'] is None:
+                    pending['result'] = handle.get_result_async()
+                if not pending['cancel_sent'] and not pending['result'].done():
+                    handle.cancel_goal_async()
+                    pending['cancel_sent'] = True
+                if not pending['result'].done():
+                    return False
+                # A terminal result, not just a CancelGoal response, proves
+                # that the old Spin can no longer overlap the next mission.
+                pending['result'].result()
+        except Exception:
+            return False
+        self._pending_restore = None
+        self._uncertain = False
+        self._finish_map_provider(pending['path'])
+        return True
+
+    def _finish_map_provider(self, path):
         self._map_initialized = True
         # Pose restore can temporarily wake motion without a mission owner.
         self._synced_demand = None
@@ -354,13 +436,13 @@ class RuntimeControl(Node):
         if self._recovery_pending:
             # One readback after the existing recovery Action, not a new
             # recovery loop. It may have activated or replaced our servers.
-            self._recovery_pending = False
             self._synced_demand = None
             try:
                 self._adopt_recovered_groups()
             except Exception:
                 self._uncertain = True
                 raise
+            self._recovery_pending = False
             capabilities = self._capabilities_now()
             if 'recovery' in capabilities:
                 self._report_usage('manual recovery in progress')
@@ -368,11 +450,16 @@ class RuntimeControl(Node):
         if self._uncertain:
             raise RuntimeError('previous lifecycle transition is unconfirmed')
         demand = (frozenset(capabilities), self._mapping_ready)
-        if demand == self._synced_demand:
+        with self._data_lock:
+            verify = self._verify_requested
+            self._verify_requested = False
+        if demand == self._synced_demand and not verify and not self._group_errors:
             return
         # A partial transition must not leave the previous successful demand
         # cached: that previous list can return while cleanup is still needed.
         self._synced_demand = None
+        self._ready_groups.clear()
+        self._group_errors.clear()
         needed = required_groups(capabilities, self._mapping_ready)
         if self._mapping and (capabilities - {'autoslam'}) & set(PROFILES):
             raise RuntimeError('mapping source handoff has not finished')
@@ -380,52 +467,151 @@ class RuntimeControl(Node):
             raise RuntimeError('map provider unavailable; select a valid map')
         # Navigation and feature input processing sleep. map_server/AMCL stay
         # active: particles, location, TF and fall geometry need no wake logic.
-        for group in PROCESSING_GROUPS:
-            if group not in needed:
-                self._process_group(group, False)
-        for group in ('planning', 'motion'):
-            if self._active[group] and group not in needed:
-                self._manage(self._managers[group], ManageLifecycleNodes.Request.PAUSE)
-                self._active[group] = False
         for group in ('motion', 'planning'):
-            if group in needed and not self._active[group]:
-                if group == 'planning':
-                    self._wait_map_tf()
-                self._manage(self._managers[group], ManageLifecycleNodes.Request.RESUME)
-                self._active[group] = True
+            if group not in needed:
+                continue
+            try:
+                # Native bond failure/recovery can change state without this
+                # process knowing. Check the manager AND its member nodes.
+                self._active[group] = self._group_active(group)
+                if not self._active[group]:
+                    if group == 'planning':
+                        self._wait_map_tf()
+                    self._manage(self._managers[group], ManageLifecycleNodes.Request.RESUME)
+                    self._active[group] = True
+                    if not self._group_active(group):
+                        raise RuntimeError(f'{group}: activation was not confirmed')
+                self._ready_groups.add(group)
+            except Exception as error:
+                self._group_errors[group] = str(error)
+                if self._uncertain:
+                    raise  # Never overlap an unconfirmed lifecycle command.
         for group in PROCESSING_GROUPS:
-            if group in needed:
-                self._process_group(group, True)
+            try:
+                if group in needed:
+                    self._process_group(group, True)
+                    self._ready_groups.add(group)
+                else:
+                    # Cleanup is best effort, without waiting for a dead
+                    # optional module before admitting unrelated navigation.
+                    self._process_group(group, False, wait=False)
+            except Exception as error:
+                self._group_errors[group] = str(error)
+                if self._uncertain:
+                    raise
+        # Preserve the old conservative cleanup order: a busy former consumer
+        # keeps its Nav2 dependencies awake until it confirms processing stop.
+        # This must not prevent preparing an unrelated function above.
+        cleanup_pending = any(group not in needed and group in self._group_errors
+                              for group in PROCESSING_GROUPS)
+        if not cleanup_pending:
+            for group in ('planning', 'motion'):
+                if self._active[group] and group not in needed:
+                    try:
+                        self._active[group] = self._group_active(group)
+                        if self._active[group]:
+                            self._manage(self._managers[group], ManageLifecycleNodes.Request.PAUSE)
+                            self._active[group] = False
+                    except Exception as error:
+                        self._group_errors[group] = str(error)
+                        if self._uncertain:
+                            raise
         self._synced_demand = demand
+        if self._group_errors:
+            self._sync_retry_at = time.monotonic() + 1.0
         self._report_usage()
 
-    def _process_group(self, group, enabled):
+    def _process_group(self, group, enabled, *, wait=True):
         services = PROCESSING_GROUPS[group]
         for service in (services if enabled else reversed(services)):
+            pending = self._processing_pending.get(service)
+            if pending is not None:
+                previous, future = pending
+                if future is None:
+                    raise RuntimeError(f'{service}: processing dispatch is unconfirmed')
+                if wait:
+                    self._wait(future, service, self.timeout)
+                if not future.done():
+                    raise ProcessingRejected(f'{service}: processing response pending')
+                # Keep an exceptional/canceled transport result unresolved.
+                # It is not proof that the remote side effect did not occur.
+                reply = future.result()
+                self._processing_pending.pop(service)
+                if not reply.success:
+                    raise ProcessingRejected(
+                        reply.message or f'{service}: processing change rejected')
+                self._processing_active[service] = previous
             if self._processing_active[service] == enabled:
                 continue
-            reply = self._call(
-                self._processing_clients[service], SetBool.Request(data=enabled), service)
+            client = self._processing_clients[service]
+            if not client.service_is_ready():
+                raise ProcessingRejected(f'{service}: service unavailable')
+            try:
+                future = client.call_async(SetBool.Request(data=enabled))
+            except Exception:
+                self._processing_pending[service] = (enabled, None)
+                raise
+            # Retain the response, even after timeout, and never send an
+            # opposite command while this one can still finish remotely.
+            self._processing_pending[service] = (enabled, future)
+            if wait:
+                self._wait(future, service, self.timeout)
+            elif not future.done():
+                future.add_done_callback(self._processing_changed)
+            if not future.done():
+                raise ProcessingRejected(f'{service}: processing response pending')
+            reply = future.result()
+            self._processing_pending.pop(service)
             if not reply.success:
                 raise ProcessingRejected(
                     reply.message or f'{service}: processing change rejected')
             self._processing_active[service] = enabled
 
+    def _processing_changed(self, _future):
+        # Resume cleanup on the actual response, not after a fixed sleep per
+        # receiver. This callback never sends a command or owns the control lock.
+        with self._data_lock:
+            self._verify_requested = True
+        self._demand_changed.trigger()
+
+    def _group_active(self, group):
+        active = self._call(
+            self._manager_states[group], Trigger.Request(), group + ' state',
+            read_only=True).success
+        expected = (State.PRIMARY_STATE_ACTIVE if active else State.PRIMARY_STATE_INACTIVE)
+        names = MOTION_NODES if group == 'motion' else PLANNING_NODES
+        for name in names:
+            state = self._call(
+                self._node_states[name][0], GetState.Request(), name,
+                read_only=True).current_state.id
+            if state != expected:
+                raise RuntimeError(f'{group}: {name} lifecycle state is inconsistent ({state})')
+        return active
+
     def _adopt_recovered_groups(self):
         """Read native lifecycle state once after manual recovery finishes."""
+        if self._pending_restore is not None and not self._settle_restore():
+            raise RuntimeError('previous pose restore still has no terminal result')
+        if self._pending_command is not None:
+            self._settle_command()
+            if self._pending_command is not None:
+                raise RuntimeError('previous lifecycle command is still awaiting acknowledgement')
         active = {}
         for group, names in (('motion', MOTION_NODES), ('planning', PLANNING_NODES)):
             active[group] = self._call(
-                self._manager_states[group], Trigger.Request(), group + ' state').success
+                self._manager_states[group], Trigger.Request(), group + ' state',
+                read_only=True).success
             expected = (State.PRIMARY_STATE_ACTIVE if active[group]
                         else State.PRIMARY_STATE_INACTIVE)
             for name in names:
                 state = self._call(
-                    self._node_states[name][0], GetState.Request(), name).current_state.id
+                    self._node_states[name][0], GetState.Request(), name,
+                    read_only=True).current_state.id
                 if state != expected:
                     raise RuntimeError(f'{group}: lifecycle state remains inconsistent')
         localization_active = self._call(
-            self._manager_states['localization'], Trigger.Request(), 'map provider state').success
+            self._manager_states['localization'], Trigger.Request(), 'map provider state',
+            read_only=True).success
         if not self._mapping and not localization_active:
             raise RuntimeError('manual recovery did not restore the map provider')
         self._active = active
@@ -436,7 +622,8 @@ class RuntimeControl(Node):
     def _report_usage(self, error=''):
         if self._closing:
             return
-        self._usage.publish(String(data=json.dumps({
+        error = error or '; '.join(self._group_errors.values())
+        self._publish_report(self._usage, {
             'ready': (self._initialized and not self._uncertain and not error
                       and (self._map_initialized or self._mapping_ready)),
             'error': error, 'active_groups': sorted(
@@ -445,18 +632,35 @@ class RuntimeControl(Node):
                    if any(self._processing_active[service] for service in services)]),
             'capabilities': sorted(self._capabilities_now()),
             'localization_active': self._localization_active,
-        })))
+        })
+
+    def _publish_report(self, publisher, payload):
+        with self._report_lock:
+            self._pending_reports[publisher] = String(data=json.dumps(payload))
+            self._flush_reports_locked()
+
+    def _flush_reports_locked(self):
+        for publisher, message in list(self._pending_reports.items()):
+            try:
+                publisher.publish(message)
+            except Exception as error:
+                self.get_logger().warning(f'Could not publish runtime status: {error}')
+            else:
+                self._pending_reports.pop(publisher)
 
     def _tick(self):
+        with self._report_lock:
+            self._flush_reports_locked()
         self._resolve_preparations()
         if self._closing:
             return
         self._refresh_map_odom()
-        if self._uncertain and not self._recovery_pending:
-            return
         if not self._lock.acquire(blocking=False):
             return
         try:
+            settled = self._settle_command() or self._settle_restore()
+            if self._uncertain and not self._recovery_pending:
+                return
             if not self._initialized:
                 # Configure without activate: the Action endpoints exist while
                 # costmap update threads remain asleep. RESUME is Nav2's
@@ -464,7 +668,8 @@ class RuntimeControl(Node):
                 for name, (state_client, change_client) in self._node_states.items():
                     if name in self._configured:
                         continue
-                    state = self._call(state_client, GetState.Request(), name).current_state.id
+                    state = self._call(
+                        state_client, GetState.Request(), name, read_only=True).current_state.id
                     if state == State.PRIMARY_STATE_UNCONFIGURED:
                         request = ChangeState.Request()
                         request.transition.id = Transition.TRANSITION_CONFIGURE
@@ -482,8 +687,10 @@ class RuntimeControl(Node):
                 # processing-refusal retries perform _sync.
                 if self._have_state:
                     self._reconcile_demand()
-            elif (self._sync_retry_at is not None
-                  and time.monotonic() >= self._sync_retry_at):
+            elif (settled or (self._sync_retry_at is not None
+                              and time.monotonic() >= self._sync_retry_at)):
+                with self._data_lock:
+                    self._verify_requested = True
                 self._reconcile_demand()
         except Exception as error:
             if not self._closing:
@@ -499,6 +706,9 @@ class RuntimeControl(Node):
         # Only the existing state-change handler performs dependency changes.
         future = Future()
         with self._data_lock:
+            self._verify_requested = True
+            # Do not let an earlier cached success resolve this new request
+            # before its endpoints have been checked again.
             self._preparations.append(
                 (capability, response, time.monotonic() + self.timeout, future))
         self._demand_changed.trigger()
@@ -512,18 +722,25 @@ class RuntimeControl(Node):
     def _resolve_preparations(self, error=''):
         with self._data_lock:
             current = (frozenset(self._capabilities), self._mapping_ready)
+            checked = not self._verify_requested and current == self._synced_demand
             for capability, response, deadline, future in self._preparations:
                 # Keep resolved RPCs until their coroutine actually returned.
                 if future.done():
                     continue
                 ready = (self._initialized and capability in self._capabilities
                          and (capability == 'recovery'
-                              or (not self._uncertain and current == self._synced_demand)))
-                failed = error or self._closing or self._uncertain or time.monotonic() >= deadline
+                              or (not self._uncertain and checked
+                                  and all(group in self._ready_groups
+                                          for group in PROFILES[capability]))))
+                problem = error or (next((message for group in PROFILES[capability]
+                                          if (message := self._group_errors.get(group))), '')
+                                    if checked else '')
+                failed = (problem or self._closing or self._uncertain
+                          or time.monotonic() >= deadline)
                 if ready or failed:
-                    response.success = bool(ready and not error and not self._closing)
+                    response.success = bool(ready and not self._closing)
                     response.message = ('dependencies ready' if response.success else
-                                        error or 'mission demand/preparation unavailable')
+                                        problem or 'mission demand/preparation unavailable')
                     # This private Future schedules the waiting ROS callback;
                     # finish it atomically with its response, including shutdown.
                     future.set_result(response)
@@ -716,11 +933,11 @@ class RuntimeControl(Node):
 
     def _publish_map(self, ready, message):
         # Legacy field is a view of the actual provider, never a manager gate.
-        self._status.publish(String(data=json.dumps({
+        self._publish_report(self._status, {
             'source': 'slam' if self._mapping else 'amcl', 'ready': ready,
             'mode': ('MAPPING' if self._mapping else 'LOCALIZATION') if ready else 'SWITCHING',
             'map': None if self._mapping else self.map_path, 'message': message,
-        })))
+        })
 
 
 def main(args=None):

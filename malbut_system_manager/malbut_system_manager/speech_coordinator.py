@@ -48,6 +48,7 @@ class SpeechCoordinator:
         self.playback_timeout_s = playback_timeout_s
         self.playbacks = {}
         self.retired = OrderedDict()
+        self.pending_statuses = OrderedDict()
         self.controls = []
         self.closed = False
         qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
@@ -71,11 +72,23 @@ class SpeechCoordinator:
             clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def _emit(self, request, state):
-        self.statuses.publish(SpeechPlaybackStatus(
+        self.pending_statuses[request.playback_id] = SpeechPlaybackStatus(
             playback_id=request.playback_id, state=state, interim=request.interim,
             request_id=(request.request_id if request.request_type
                         != SpeechRequest.CONFIRMATION else ''),
-        ))
+        )
+        while len(self.pending_statuses) > MAX_TRACKED:
+            self.pending_statuses.popitem(last=False)
+        self._flush_statuses()
+
+    def _flush_statuses(self):
+        for playback_id, message in list(self.pending_statuses.items()):
+            try:
+                self.statuses.publish(message)
+            except Exception as error:
+                self.node.get_logger().warning(f'Could not publish speech status: {error}')
+                break
+            self.pending_statuses.pop(playback_id)
 
     def _retire(self, request, state):
         self._emit(request, state)
@@ -112,10 +125,15 @@ class SpeechCoordinator:
             elif owners or pending or request.request_type == SpeechRequest.CONFIRMATION:
                 self._retire(request, 'stopped')
                 return
+            try:
+                available = (self.client.service_is_ready()
+                             and self.requests.get_subscription_count() > 0)
+            except Exception as error:
+                available = False
+                self.node.get_logger().warning(f'Could not inspect TTS endpoints: {error}')
             if (self.closed or len(self.playbacks) >= MAX_TRACKED
                     or any(item.timed_out for item in self.playbacks.values())
-                    or not self.client.service_is_ready()
-                    or self.requests.get_subscription_count() == 0):
+                    or not available):
                 self._retire(request, 'failed')
                 return
             self.playbacks[request.playback_id] = _Playback(
@@ -124,7 +142,13 @@ class SpeechCoordinator:
             # confirmation may report its judgment after its closing utterance
             # is admitted, while the manager retains that utterance's lifetime.
             self._emit(request, 'accepted')
-            self.requests.publish(request)
+            try:
+                self.requests.publish(request)
+            except Exception as error:
+                # A failed send is not proof that TTS received nothing. Keep
+                # the playback owned until its terminal status confirms stop.
+                self.node.get_logger().error(f'Could not send speech request: {error}')
+                self._stop(self.playbacks[request.playback_id])
 
     def status(self, message):
         """Forward only actual states for known requests, once at termination."""
@@ -142,10 +166,10 @@ class SpeechCoordinator:
 
     def _send_control(self, request):
         result = Future()
-        if not self.client.service_is_ready():
-            result.set_result(False)
-            return result
         try:
+            if not self.client.service_is_ready():
+                result.set_result(False)
+                return result
             downstream = self.client.call_async(request)
         except Exception:
             result.set_result(False)
@@ -187,6 +211,7 @@ class SpeechCoordinator:
     def tick(self):
         """Bound service waits and report lost playback without assuming silence."""
         with self.lock:
+            self._flush_statuses()
             now = monotonic()
             pending, self.controls = self.controls, []
             for downstream, result, deadline in pending:
@@ -198,8 +223,12 @@ class SpeechCoordinator:
                         except Exception:
                             pass
                     else:
-                        downstream.cancel()
-                        self.client.remove_pending_request(downstream)
+                        try:
+                            downstream.cancel()
+                            self.client.remove_pending_request(downstream)
+                        except Exception as error:
+                            self.node.get_logger().warning(
+                                f'Could not clean up speech control: {error}')
                     if not result.done():
                         result.set_result(accepted)
                 else:
