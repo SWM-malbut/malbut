@@ -63,16 +63,24 @@ def _runtime():
     node._lock = Lock()
     node.timeout = 1.0
     node._data_lock = Lock()
+    node._report_lock = Lock()
+    node._pending_reports = {}
     node._capabilities = set()
     node._have_state = True
     node._synced_demand = None
     node._sync_retry_at = None
+    node._verify_requested = False
+    node._ready_groups = set()
+    node._group_errors = {}
     node._preparations = []
     node._demand_changed = Mock()
     node._closing = False
     node._initialized = True
+    node._configured = set()
     node._map_initialized = True
     node._uncertain = False
+    node._pending_command = None
+    node._pending_restore = None
     node._mapping = False
     node._mapping_ready = False
     node._recovery_pending = False
@@ -80,7 +88,12 @@ def _runtime():
     node._processing_active = {
         service: False for services in runtime_control.PROCESSING_GROUPS.values()
         for service in services}
-    node._processing_clients = {name: name for name in node._processing_active}
+    node._processing_clients = {name: Mock() for name in node._processing_active}
+    node._processing_pending = {}
+    for client in node._processing_clients.values():
+        future = runtime_control.Future()
+        future.set_result(SimpleNamespace(success=True))
+        client.call_async.return_value = future
     node._process_group = Mock()
     node._managers = {'motion': 'motion', 'planning': 'planning'}
     node._manager_states = {
@@ -104,6 +117,7 @@ def _runtime():
     node._wait_map_tf = Mock()
     node._wait_amcl_pose = Mock()
     node._manage = Mock()
+    node._group_active = Mock(side_effect=lambda group: node._active[group])
     node.get_logger = Mock()
     node.tf = Mock()
     node.tf.lookup_transform.return_value = TransformStamped()
@@ -201,7 +215,7 @@ def test_periodic_tick_keeps_tf_refresh_without_dependency_calculation(monkeypat
     node._on_demand_changed()
     for _ in range(6):
         node._tick()
-        assert _prepare(node, 'manual_drive').success
+    # Periodic TF work must not query lifecycle or recalculate dependencies.
     assert calculate.call_count == 1
     assert node._refresh_map_odom.call_count == 6
     assert node._manage.call_count == 1
@@ -250,8 +264,9 @@ def test_partial_wake_does_not_cache_the_previous_idle_demand():
     node._sync()
     node._capabilities = {'follow_person'}
     node._manage.side_effect = [None, RuntimeError('planner preparation failed')]
-    with pytest.raises(RuntimeError, match='preparation failed'):
-        node._sync()
+    node._sync()
+    assert 'preparation failed' in node._group_errors['planning']
+    assert 'planning' not in node._ready_groups
     assert node._active['motion']
     node._manage.side_effect = None
     node._capabilities = set()
@@ -311,27 +326,30 @@ def test_shared_planning_stays_active_until_its_last_mission_finishes():
 
 def test_processing_wake_receivers_first_and_stop_detector_first():
     node = _runtime()
-    node._call = Mock(return_value=SimpleNamespace(success=True))
+    calls = []
+    for name, client in node._processing_clients.items():
+        client.call_async.side_effect = lambda request, name=name: (
+            calls.append((name, request.data)) or
+            node._processing_clients[name].call_async.return_value)
     services = runtime_control.PROCESSING_GROUPS['person_perception']
     RuntimeControl._process_group(node, 'person_perception', True)
-    assert [call.args[0] for call in node._call.call_args_list] == list(services)
+    assert calls == [(name, True) for name in services]
     assert all(node._processing_active[name] for name in services)
-    node._call.reset_mock()
+    calls.clear()
     RuntimeControl._process_group(node, 'person_perception', False)
-    assert [call.args[0] for call in node._call.call_args_list] == list(reversed(services))
+    assert calls == [(name, False) for name in reversed(services)]
     assert not any(node._processing_active.values())
 
 
 def test_partial_processing_wake_is_kept_for_cleanup_after_failure():
     node = _runtime()
-    node._call = Mock(side_effect=[
-        SimpleNamespace(success=True), RuntimeError('missing identity server')])
     services = runtime_control.PROCESSING_GROUPS['person_perception']
-    with pytest.raises(RuntimeError, match='missing'):
+    node._processing_clients[services[1]].service_is_ready.return_value = False
+    with pytest.raises(RuntimeError, match='unavailable'):
         RuntimeControl._process_group(node, 'person_perception', True)
     assert node._processing_active[services[0]]
     assert not any(node._processing_active[name] for name in services[1:])
-    node._call = Mock(return_value=SimpleNamespace(success=True))
+    node._processing_clients[services[1]].service_is_ready.return_value = True
     RuntimeControl._process_group(node, 'person_perception', False)
     assert not any(node._processing_active.values())
 
@@ -696,3 +714,161 @@ def test_missing_pose_restore_server_is_not_silently_reported_ready(monkeypatch)
     assert node._synced_demand is None
     node._relocalize.send_goal_async.assert_not_called()
     assert all(not call.args[0] for call in node._publish_map.call_args_list)
+
+
+def test_get_state_timeout_does_not_permanently_poison_initialization():
+    node = _runtime()
+    node._initialized = False
+    node._refresh_map_odom = Mock()
+    client = Mock()
+    future = runtime_control.Future()
+    client.call_async.return_value = future
+    node._node_states = {'controller_server': (client, Mock())}
+    node._wait = Mock(side_effect=[
+        RuntimeError('slow GetState'),
+        SimpleNamespace(current_state=SimpleNamespace(id=State.PRIMARY_STATE_INACTIVE))])
+    node._tick()
+    assert not node._uncertain and not node._initialized
+    assert future.cancelled()
+    node._tick()
+    assert node._initialized
+    assert client.call_async.call_count == 2
+
+
+def test_late_configure_acknowledgement_is_used_without_resending_the_command():
+    node = _runtime()
+    node._initialized = False
+    node._refresh_map_odom = Mock()
+    state, change = Mock(), Mock()
+    configure = runtime_control.Future()
+    change.call_async.return_value = configure
+    unconfigured, inactive = runtime_control.Future(), runtime_control.Future()
+    for future, value in ((unconfigured, State.PRIMARY_STATE_UNCONFIGURED),
+                          (inactive, State.PRIMARY_STATE_INACTIVE)):
+        future.set_result(SimpleNamespace(current_state=SimpleNamespace(id=value)))
+    state.call_async.side_effect = [unconfigured, inactive]
+    node._node_states = {'controller_server': (state, change)}
+
+    def wait(future, *_):
+        if not future.done():
+            raise RuntimeError('slow configure')
+        return future.result()
+
+    node._wait = wait
+    node._tick()
+    assert node._uncertain and not node._initialized
+    node._tick()
+    assert change.call_async.call_count == 1
+    configure.set_result(SimpleNamespace(success=True))
+    node._tick()
+    assert not node._uncertain and node._initialized
+    assert change.call_async.call_count == 1
+
+
+def test_new_preparation_checks_native_state_even_when_demand_is_unchanged():
+    node = _runtime()
+    node._capabilities = {'manual_drive'}
+    assert _prepare(node, 'manual_drive').success
+    node._group_active.side_effect = RuntimeError('controller is no longer active')
+    response = _prepare(node, 'manual_drive')
+    assert not response.success
+    assert 'no longer active' in response.message
+    # A later request must not fail from the previous cached error alone.
+    node._group_active.side_effect = lambda group: node._active[group]
+    assert _prepare(node, 'manual_drive').success
+
+
+def test_native_manager_active_flag_cannot_hide_missing_or_reset_members():
+    node = _runtime()
+    node._call = Mock(return_value=SimpleNamespace(
+        success=True, current_state=SimpleNamespace(id=State.PRIMARY_STATE_UNCONFIGURED)))
+    with pytest.raises(RuntimeError, match='inconsistent'):
+        RuntimeControl._group_active(node, 'motion')
+    assert all(call.kwargs['read_only'] for call in node._call.call_args_list)
+
+
+def test_dead_detector_cleanup_cannot_block_unrelated_navigation():
+    node = _runtime()
+    node._process_group = lambda *args, **kw: RuntimeControl._process_group(node, *args, **kw)
+    service = runtime_control.PROCESSING_GROUPS['person_perception'][-1]
+    node._processing_active[service] = True
+    client = node._processing_clients[service]
+    client.service_is_ready.return_value = False
+    node._capabilities = {'navigate_to_pose'}
+    assert _prepare(node, 'navigate_to_pose').success
+    assert not node._uncertain
+    assert 'person_perception' in node._group_errors
+    client.call_async.assert_not_called()
+
+
+def test_cleanup_pending_response_is_not_resent_or_reversed():
+    node = _runtime()
+    node._process_group = lambda *args, **kw: RuntimeControl._process_group(node, *args, **kw)
+    service = runtime_control.PROCESSING_GROUPS['person_perception'][-1]
+    node._processing_active[service] = True
+    client = node._processing_clients[service]
+    pending = runtime_control.Future()
+    client.call_async.return_value = pending
+    node._capabilities = {'manual_drive'}
+    assert _prepare(node, 'manual_drive').success
+    assert not pending.done() and client.call_async.call_count == 1
+    assert _prepare(node, 'manual_drive').success
+    assert client.call_async.call_count == 1
+    node._wait = Mock(side_effect=RuntimeError('still stopping detector'))
+    with pytest.raises(RuntimeError, match='still stopping'):
+        RuntimeControl._process_group(node, 'person_perception', True)
+    assert client.call_async.call_count == 1
+    pending.set_result(SimpleNamespace(success=True))
+    RuntimeControl._process_group(node, 'person_perception', False, wait=False)
+    assert not node._processing_active[service]
+    assert not node._processing_pending
+
+
+def test_failed_perception_prepare_does_not_fail_shared_planning_request():
+    node = _runtime()
+    node._capabilities = {'follow_person', 'compute_path_to_pose'}
+    node._process_group.side_effect = RuntimeError('detector unavailable')
+    assert not _prepare(node, 'follow_person').success
+    assert _prepare(node, 'compute_path_to_pose').success
+    assert not node._uncertain
+
+
+def test_runtime_reporting_failure_is_retried_without_losing_dependency_state():
+    node = _runtime()
+    node._capabilities = {'manual_drive'}
+    node._usage.publish.side_effect = RuntimeError('temporary DDS error')
+    assert _prepare(node, 'manual_drive').success
+    assert node._active['motion'] and node._pending_reports
+    node._usage.publish.side_effect = None
+    node._refresh_map_odom = Mock()
+    node._tick()
+    assert not node._pending_reports
+    usage = json.loads(node._usage.publish.call_args.args[0].data)
+    assert usage['capabilities'] == ['manual_drive']
+
+
+def test_late_pose_restore_acceptance_cannot_start_a_second_rotation():
+    node = _runtime()
+    node._initialized = False
+    node._map_server = object()
+    node._call = Mock(return_value=LoadMap.Response(result=LoadMap.Response.RESULT_SUCCESS))
+    response, result = runtime_control.Future(), runtime_control.Future()
+    handle = Mock(accepted=True)
+    handle.get_result_async.return_value = result
+    node._relocalize = Mock()
+    node._relocalize.send_goal_async.return_value = response
+    node._wait = Mock(side_effect=RuntimeError('pose restore response delayed'))
+    with pytest.raises(RuntimeError, match='delayed'):
+        RuntimeControl._map_provider(node, node.map_path)
+    assert node._uncertain and not node._map_initialized
+    assert not node._settle_restore()
+    response.set_result(handle)
+    assert not node._settle_restore()
+    handle.cancel_goal_async.assert_called_once()
+    assert node._uncertain  # Cancellation accepted is not terminal completion.
+    assert not node._settle_restore()
+    handle.cancel_goal_async.assert_called_once()
+    result.set_result(SimpleNamespace(result=SimpleNamespace(success=False)))
+    assert node._settle_restore()
+    assert not node._uncertain and node._map_initialized
+    node._relocalize.send_goal_async.assert_called_once()

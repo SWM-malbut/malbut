@@ -10,6 +10,7 @@ import time
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -118,6 +119,14 @@ class SystemManagerNode(Node):
             STATE_TOPIC,
             state_qos,
         )
+        state_retry_period = float(self.declare_parameter(
+            'state_publish_retry_period_s', 1.0).value)
+        _require_positive_finite('state_publish_retry_period_s', state_retry_period)
+        self._state_publish_pending = False
+        self._state_retry_timer = self.create_timer(
+            state_retry_period, self._retry_state_publication,
+            callback_group=self._server_group,
+            clock=Clock(clock_type=ClockType.STEADY_TIME))
         self._publish_state()
 
         self._registry = ManifestRegistry(configured_directory or None)
@@ -573,6 +582,28 @@ class SystemManagerNode(Node):
             pass
 
     def _publish_state(self) -> None:
+        # Serialize snapshots with mission effects, including retries: an older
+        # idle snapshot must not overwrite the demand of a newly started goal.
+        with self._effects_lock:
+            message = self._state_message()
+            try:
+                self._state_publisher.publish(message)
+            except Exception as error:
+                # A transport/reporting failure does not undo a scheduler
+                # decision or justify releasing a live downstream resource.
+                if not self._state_publish_pending:
+                    self.get_logger().error(f'Could not publish system state: {error}')
+                self._state_publish_pending = True
+            else:
+                self._state_publish_pending = False
+
+    def _retry_state_publication(self) -> None:
+        with self._effects_lock:
+            if self._state_publish_pending:
+                # Rebuild from current state, never replay an obsolete message.
+                self._publish_state()
+
+    def _state_message(self) -> SystemStateMsg:
         with self._lock:
             message = SystemStateMsg()
             message.system_state = _system_state_value(
@@ -597,7 +628,7 @@ class SystemManagerNode(Node):
                 _mission_status(item)
                 for item in self._state.pending.values()
             ]
-        self._state_publisher.publish(message)
+        return message
 
 
 def _goal_uuid(goal_handle) -> str:

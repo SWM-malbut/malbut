@@ -6,6 +6,7 @@ The ROS-backed RuntimeControl tests cover generated messages and callbacks.
 """
 
 import ast
+from concurrent.futures import Future
 import json
 from pathlib import Path
 from threading import Lock
@@ -41,13 +42,21 @@ def runtime(request):
     node = object.__new__(namespace['RuntimeControl'])
     node._lock = Lock()
     node._data_lock = Lock()
+    node.timeout = 1.0
+    node._report_lock = Lock()
+    node._pending_reports = {}
     node._capabilities = set()
     node._have_state = True
     node._synced_demand = (frozenset({'patrol'}), False)
     node._sync_retry_at = None
+    node._verify_requested = False
+    node._ready_groups = set()
+    node._group_errors = {}
     node._initialized = True
     node._map_initialized = True
     node._uncertain = False
+    node._pending_command = None
+    node._pending_restore = None
     node._closing = False
     node._mapping = False
     node._mapping_ready = False
@@ -58,9 +67,21 @@ def runtime(request):
     node._processing_active = {
         service: service == '/patrol_manager/set_processing'
         for services in namespace['PROCESSING_GROUPS'].values() for service in services}
-    node._processing_clients = {name: name for name in node._processing_active}
+    node._processing_pending = {}
     node._call = Mock(return_value=SimpleNamespace(success=True))
+
+    def processing_reply(service, request):
+        future = Future()
+        future.set_result(node._call(service, request, service))
+        return future
+
+    node._processing_clients = {}
+    for name in node._processing_active:
+        client = Mock()
+        client.call_async.side_effect = lambda request, name=name: processing_reply(name, request)
+        node._processing_clients[name] = client
     node._manage = Mock()
+    node._group_active = Mock(side_effect=lambda group: node._active[group])
     node._wait_map_tf = Mock()
     node._resolve_preparations = Mock()
     node._refresh_map_odom = Mock()
@@ -127,7 +148,9 @@ def test_unknown_rpc_or_lifecycle_failure_is_not_retried(runtime, unconfirmed):
     node, now, _ = runtime
 
     def fail(*_):
-        node._uncertain = unconfirmed
+        # Native _manage marks rejected/partial lifecycle changes uncertain;
+        # an ambiguous processing dispatch is held by the fake transport here.
+        node._uncertain = True
         raise RuntimeError('response unconfirmed' if unconfirmed else 'lifecycle rejected')
 
     if unconfirmed:
@@ -194,7 +217,12 @@ def test_direct_map_sync_failure_supersedes_an_old_processing_retry(runtime):
     node._call.return_value = SimpleNamespace(success=False, message='patrol is still running')
     node._on_demand_changed()
     node._call.return_value = SimpleNamespace(success=True)
-    node._manage.side_effect = RuntimeError('lifecycle rejected')
+
+    def rejected(*_):
+        node._uncertain = True
+        raise RuntimeError('lifecycle rejected')
+
+    node._manage.side_effect = rejected
     with pytest.raises(RuntimeError, match='lifecycle rejected'):
         node._sync()  # Map RPCs use this same direct entry point.
     assert node._sync_retry_at is None

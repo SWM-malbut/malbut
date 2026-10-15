@@ -341,6 +341,74 @@ def test_failed_preparation_does_not_dispatch(monkeypatch):
     assert 'lifecycle failed' in events.terminal[-1][-1]
 
 
+def test_taken_preparation_watchdog_cannot_forget_a_dispatched_goal(monkeypatch):
+    """A callback already queued before timer cancellation is harmless."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    node = _ServiceNode(service)
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=node, prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    taken_callback = node.timers[0].callback
+    service.response.resolve(SimpleNamespace(success=True, message='ready'))
+    assert len(action.goal_handles) == 1
+    taken_callback()  # rclpy can invoke work taken before destroy_timer().
+    assert executor.active_count == 1
+    assert events.terminal == []
+    assert executor.cancel(mission.mission_id)
+    assert action.goal_handles[0].cancel_calls == 1
+
+
+def test_preparation_cancel_racing_with_dispatch_keeps_goal_owned(monkeypatch):
+    """A pre-dispatch cancel must not pop a run once preparation completed."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=_ServiceNode(service), prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    original = executor._finish
+
+    def finish_after_reply(execution, *args, **kwargs):
+        # Cancellation marked the preparation, then a worker takes its reply
+        # before the cancellation worker reaches _finish().
+        service.response.resolve(SimpleNamespace(success=True, message='ready'))
+        return original(execution, *args, **kwargs)
+
+    executor._finish = finish_after_reply
+    executor.cancel(mission.mission_id)
+    assert not action.goal_handles
+    assert executor.active_count == 0
+    assert len(events.terminal) == 1
+    assert events.terminal[0][2] is TerminalOutcome.CANCELED
+
+
+def test_preparation_cleanup_failure_still_completes_the_public_mission(monkeypatch):
+    """Local ROS entity cleanup must not strand a canceled preparation."""
+    action = _Client()
+    monkeypatch.setattr(executor_module, 'ActionClient', lambda *_args, **_kw: action)
+    service = _ServiceClient()
+
+    def remove_failed(_future):
+        raise RuntimeError('client is already unavailable')
+
+    service.remove_pending_request = remove_failed
+    mission = _mission('prepared')
+    executor, events = _executor(
+        node=_ServiceNode(service), prepare_service_prefix='/prepare',
+        prepared_capabilities=[mission.capability.capability_id])
+    executor.start(mission, object())
+    assert executor.cancel(mission.mission_id)
+    assert executor.active_count == 0
+    assert events.terminal[0][2] is TerminalOutcome.CANCELED
+    assert not action.goal_handles
+
+
 @pytest.mark.parametrize('path', ['preparing', 'before_dispatch'])
 def test_pre_dispatch_cancel_calls_manager_without_executor_lock(monkeypatch, path):
     """The manager's effects lock must never be entered from the executor lock."""
