@@ -94,6 +94,27 @@ def test_under_bringup_the_agent_module_starts_the_agent(speech):
         'tts_node', 'weather', 'stt', 'key_sync']
 
 
+def test_robot_tts_config_overrides_only_tts(speech, tmp_path, monkeypatch):
+    monkeypatch.setattr(speech.Path, 'home', lambda: tmp_path)
+    config = tmp_path / '.config/malbut/tts.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('/**:\n  ros__parameters:\n    backend: piper\n')
+    context = _context(speech)
+    actions = speech._setup(context)
+    nodes = [item for item in actions if isinstance(item, Node)]
+    tts = next(item for item in nodes if item.node_executable == 'tts_node')
+    assert evaluate_parameters(context, tts._Node__parameters)[-1] == config
+    for node in nodes:
+        if node is not tts:
+            assert config not in evaluate_parameters(context, node._Node__parameters)
+
+
+def test_explicit_missing_tts_config_fails_before_starting(speech, tmp_path):
+    context = _context(speech, tts_config=str(tmp_path / 'missing.yaml'))
+    with pytest.raises(RuntimeError, match='TTS configuration does not exist'):
+        speech._setup(context)
+
+
 def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     context = _context(
         speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',

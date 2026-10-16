@@ -47,6 +47,14 @@ def _setup(context):
     start_manager = value('start_manager') == 'true'
     prerecorded_audio = value('prerecorded_audio') == 'true'
     audio_directory = value('audio_directory')
+    # A robot's local selection survives bringup restarts without changing the
+    # Agent/STT configuration. Explicit paths must exist; the default is optional.
+    tts_config_arg = value('tts_config')
+    tts_config = (Path(tts_config_arg).expanduser() if tts_config_arg
+                  else Path.home() / '.config/malbut/tts.yaml')
+    if tts_config_arg and not tts_config.is_file():
+        raise RuntimeError(f'TTS configuration does not exist: {tts_config}')
+    tts_overrides = [str(tts_config)] if tts_config.is_file() else []
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     # Under Bringup the agent module starts the Agent (with the fall rules),
@@ -118,7 +126,8 @@ def _setup(context):
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
             parameters=[{'backend': 'openai', 'output_device': output_device,
-                         **({'audio_directory': audio_directory} if audio_directory else {})}],
+                         **({'audio_directory': audio_directory} if audio_directory else {})},
+                        *tts_overrides],
         )
         weather = Node(
             package='malbut_agent_server', executable='weather',
@@ -179,6 +188,7 @@ def generate_launch_description():
         'control_server': 'none',
         'manager_commands': 'true', 'start_manager': 'false',
         'prerecorded_audio': 'true', 'audio_directory': '',
+        'tts_config': '',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],

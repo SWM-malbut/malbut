@@ -338,3 +338,33 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 환경을 적용한 뒤 실행한다. API 단위 시험은 가짜 SDK 응답을 사용하며
 유료 API를 호출하지 않는다. 실제 스피커와 로컬 모델 또는 API 시험은 위
 터미널 명령으로 별도로 확인하며, 자동 시험 통과를 실제 청취로 간주하지 않는다.
+
+## 로컬 Piper 설정
+
+`piper` 백엔드는 KSS medium ONNX 모델과 한국어 정규화 v2.1을 로봇 CPU에서
+실행합니다. 숫자·단위·영문 약어와 발음 사전을 적용하며 TTS 서버/API를 호출하지
+않습니다. 기존 Manager 요청 경로, 재생 큐, pause/resume/stop을 사용합니다.
+중지는 진행 중인 한 문장의 ONNX 계산이 끝나는 시점에 반영됩니다.
+
+음성 런타임에 `requirements-piper.txt`를 설치하고 로컬 `.onnx`와
+`.onnx.json` 파일을 함께 배치합니다. 선택 모델은 `rhasspy/piper-voices`의
+`ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx`이며 SHA-256은
+`624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9`입니다.
+
+로봇의 `~/.config/malbut/tts.yaml`:
+
+```yaml
+/**:
+  ros__parameters:
+    backend: piper
+    model_path: /home/ubuntu/.cache/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx
+    piper_threads: 6
+    output_device: -1
+```
+
+`speech.launch.py`는 이 파일이 있으면 TTS 설정으로 읽습니다. 다른 파일은
+`tts_config:=/absolute/path/tts.yaml`로 지정합니다. 해당 파일이 없는 일반
+환경의 기본 백엔드는 기존 OpenAI이며, **Piper 실행 실패 시 API로 전환하지 않습니다**.
+직접 실행할 때는 `tts_node --ros-args --params-file /absolute/path/tts.yaml`을
+사용합니다. 저장된 알림 WAV(`audio_id`)는 기존 파일을 그대로 재생합니다.
+발음 사전은 패키지의 `config/korean_pronunciation_lexicon.json`에 있습니다.
