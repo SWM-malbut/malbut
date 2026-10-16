@@ -186,23 +186,39 @@ Agent는 기능 시작과 짧은 처리 결과를 사전 생성 WAV로 재생한
 저장되지 않은 질문·답변은 기존 TTS를 사용하며 재생 완료 후 응답을 기다리는 절차도
 유지한다. 사전 음성 옵션을 끄면 고정된 첫 질문·마무리 문장도 TTS를 사용한다.
 
-저장소 루트에서 기존 API 키가 **실행 환경에 설정된 상태**로 한 번 생성한다.
-키를 명령줄 인자나 저장소에 넣지 않는다. 아래 생성 명령만 TTS API를 호출하며,
-이미 준비한 파일은 문구·모델·목소리·말투 지시·해시가 일치하면 다시 합성하지 않는다.
-목소리나 말투를 바꿀 때는 새 출력 폴더에서 전체 생성·검증한 뒤 교체한다.
+배포 카탈로그 70개와 대화 불가 기본 안내는 실시간 대화와 같은 **정규화 Piper
+KSS CPU 음성**이다. 생성과 재생에 API 키가 필요하지 않다. 카탈로그 문구와
+`audio_id`는 유지하고, 저장 음성만 교체했다. Piper 원본 22,050 Hz PCM은 생성할 때
+한 번만 24,000 Hz로 리샘플링하여 기존 재생기와 같은 WAV 형식을 유지한다.
+
+저장소 루트에서 `requirements-notices.txt`를 설치한 Python으로 생성한다.
+이 파일의 SciPy 의존성은 오프라인 생성에만 필요하며, 저장된 WAV 재생에는
+Piper 모델이나 SciPy가 필요하지 않다. 모델 경로는 아래 로컬 Piper 설정을 따른다.
+새 출력 폴더에서 전체 생성·검증한 뒤 원본과 로봇 배포 복사본을 함께 교체한다.
 
 ```bash
 PYTHONPATH=malbut_agent_server python3 -m malbut_agent_server.mission_audio > /tmp/malbut-notices.json
+notice_dir=$(mktemp -d)
+notice_model=/home/ubuntu/.cache/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx
 PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
-  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio
+  --backend piper --model-path "$notice_model" --piper-threads 6 \
+  --catalog /tmp/malbut-notices.json --output-dir "$notice_dir"
 PYTHONPATH=malbut_tts python3 -m malbut_tts.prepare_notices \
-  --catalog /tmp/malbut-notices.json --output-dir malbut_tts/malbut_tts/audio --check
+  --backend piper --model-path "$notice_model" --piper-threads 6 \
+  --catalog /tmp/malbut-notices.json --output-dir "$notice_dir" --check
+for package in malbut_tts malbut_test/malbut_tts; do
+  cp "$notice_dir/"*.wav "$notice_dir/manifest.json" "$package/malbut_tts/audio/"
+  cp /tmp/malbut-notices.json "$package/malbut_tts/audio/catalog.json"
+  cp "$notice_dir/conversation.unavailable.wav" "$package/malbut_tts/assets/notice_no_dialogue.wav"
+done
 ```
 
-기본값은 기존 대화와 같은 `gpt-4o-mini-tts` / `nova`이다. 출력은
-mono 24 kHz PCM16 WAV와 `manifest.json`이며 패키지에 함께 설치된다.
-실시간 TTS와 모든 안내 파일에 `voice_style.py`의 한국어 여성 음색 지시를 적용한다.
-말투 제어는 [OpenAI Speech API의 instructions](https://developers.openai.com/api/docs/guides/text-to-speech)를 사용한다.
+출력은 mono 24 kHz PCM16 WAV와 `manifest.json`이며 패키지에 함께 설치된다.
+매니페스트에 원문, 모델·설정 파일·정규화 코드·발음 사전의 해시, CPU 설정과
+생성 라이브러리 버전을 기록한다. 파일을 재사용할 때 이 정보와 WAV 해시가 모두
+일치해야 한다. `--check`는 모델을 로드하거나 음성을 합성하지 않는다.
+기존 API 생성 경로도 `--backend openai`로 사용할 수 있으며 CLI 기본값은 호환성을
+위해 `openai`를 유지한다. 위 Piper 명령에는 API 호출이나 API 실패 시 대체 생성이 없다.
 별도 배포 폴더는 TTS의 `audio_directory` ROS parameter로 지정한다.
 생성 후 `malbut_interfaces`, Agent, TTS를 함께 다시 빌드하고 재시작한다.
 `SpeechRequest.audio_id`가 추가되어 이전 인터페이스와 혼용할 수 없다.
@@ -366,5 +382,5 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 `tts_config:=/absolute/path/tts.yaml`로 지정합니다. 해당 파일이 없는 일반
 환경의 기본 백엔드는 기존 OpenAI이며, **Piper 실행 실패 시 API로 전환하지 않습니다**.
 직접 실행할 때는 `tts_node --ros-args --params-file /absolute/path/tts.yaml`을
-사용합니다. 저장된 알림 WAV(`audio_id`)는 기존 파일을 그대로 재생합니다.
+사용합니다. 저장된 알림 WAV(`audio_id`)도 같은 정규화 Piper로 미리 생성되어 있습니다.
 발음 사전은 패키지의 `config/korean_pronunciation_lexicon.json`에 있습니다.
