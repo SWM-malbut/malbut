@@ -12,7 +12,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model-path', type=Path)
     parser.add_argument('--backend', choices=('qwen-cuda', 'openai', 'piper'),
-                        default='openai')
+                        default='piper')
     parser.add_argument('--piper-threads', type=int, default=6)
     parser.add_argument('--api-model', default='gpt-4o-mini-tts')
     parser.add_argument('--api-voice', default='nova')
@@ -34,6 +34,9 @@ def main(argv=None):
         args.model_path is None or not args.model_path.is_dir()
     ):
         parser.error('--model-path must point to an existing local model')
+    if args.backend == 'piper' and args.model_path is None:
+        from malbut_tts.backends import default_piper_model
+        args.model_path = default_piper_model()
     if args.backend == 'piper' and (
         args.model_path is None or not args.model_path.is_file()
     ):

@@ -134,7 +134,7 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
         '--prerecorded-audio',
         '--enable-manager-commands', '--ros-args']
     assert evaluate_parameters(context, tts._Node__parameters) == (
-        {'backend': 'openai', 'output_device': 3},)
+        {'backend': 'piper', 'output_device': 3},)
     config, params = evaluate_parameters(context, stt._Node__parameters)
     assert config == ROOT / 'malbut_stt/config/jetson.yaml'
     assert params == {

@@ -67,7 +67,8 @@ def _setup(context):
         cmd=[*supervised, '--', *command,
              '--stt-model-path', model, '--stt-library-path', library,
              '--input-device', str(input_device), '--output-device', str(output_device),
-             '--cpp-threads', str(threads), '--agent-provider', agent_provider],
+             '--cpp-threads', str(threads), '--agent-provider', agent_provider,
+             *(['--tts-config', str(tts_config)] if tts_overrides else [])],
         name='speech_preflight', output='screen',
     )
     stage = 'preflight'
@@ -125,7 +126,7 @@ def _setup(context):
         )] if own_agent else []
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
-            parameters=[{'backend': 'openai', 'output_device': output_device,
+            parameters=[{'backend': 'piper', 'output_device': output_device,
                          **({'audio_directory': audio_directory} if audio_directory else {})},
                         *tts_overrides],
         )

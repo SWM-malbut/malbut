@@ -57,7 +57,7 @@ def test_unknown_backend_fails_before_runtime_creation(tmp_path, monkeypatch):
     (['--api-model', 'tts-1', '--api-voice', 'alloy',
       '--api-timeout-seconds', '3.5'], 'tts-1', 'alloy', 3.5),
 ])
-def test_default_api_request_needs_no_local_model_and_discloses_external_audio(
+def test_explicit_api_request_needs_no_local_model_and_discloses_external_audio(
     monkeypatch, capsys, options, model, voice, timeout,
 ):
     factory = Mock()
@@ -78,7 +78,7 @@ def test_default_api_request_needs_no_local_model_and_discloses_external_audio(
             received['closed'] = True
 
     monkeypatch.setattr(smoke, 'SpeechRuntime', Runtime)
-    assert smoke.main(['--text', ' 원문 ', *options]) == 0
+    assert smoke.main(['--backend', 'openai', '--text', ' 원문 ', *options]) == 0
     factory.assert_called_once_with(
         None, backend='openai', cuda_dtype='float32', cuda_sentence_mode=True,
         sentence_max_chars=80, api_model=model, api_voice=voice,

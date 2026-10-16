@@ -9,6 +9,21 @@ import pytest
 from malbut_tts.backends import create_synthesizer
 
 
+def test_default_piper_needs_no_api_or_cuda_and_never_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    factory = Mock()
+    monkeypatch.setitem(sys.modules, 'malbut_tts.piper_synthesis',
+                        SimpleNamespace(PiperSynthesizer=factory))
+    for module in ('openai', 'torch', 'malbut_tts.api_synthesis', 'malbut_tts.cuda_synthesis'):
+        monkeypatch.setitem(sys.modules, module, None)
+    assert create_synthesizer() is factory.return_value
+    factory.assert_called_once_with(
+        tmp_path / 'malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx', threads=6)
+    factory.side_effect = FileNotFoundError('local voice missing')
+    with pytest.raises(FileNotFoundError, match='local voice missing'):
+        create_synthesizer()
+
+
 def test_cuda_is_explicit_and_receives_precision(monkeypatch):
     factory = Mock()
     monkeypatch.setitem(sys.modules, 'malbut_tts.cuda_synthesis',
@@ -66,13 +81,13 @@ def test_cuda_failure_never_falls_back(monkeypatch):
     api.assert_not_called()
 
 
-def test_openai_is_default_without_local_model_or_sentence_wrapper(monkeypatch):
+def test_openai_is_explicit_without_local_model_or_sentence_wrapper(monkeypatch):
     factory = Mock()
     monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis',
                         SimpleNamespace(OpenAISynthesizer=factory))
     for module in ('cuda_synthesis', 'sentence_synthesis'):
         monkeypatch.setitem(sys.modules, f'malbut_tts.{module}', None)
-    assert create_synthesizer() is factory.return_value
+    assert create_synthesizer(backend='openai') is factory.return_value
     factory.assert_called_once_with(
         model='gpt-4o-mini-tts', voice='nova', timeout_seconds=10.0,
     )
@@ -97,4 +112,4 @@ def test_openai_failure_never_falls_back(monkeypatch):
     for module in ('cuda_synthesis', 'sentence_synthesis'):
         monkeypatch.setitem(sys.modules, f'malbut_tts.{module}', None)
     with pytest.raises(RuntimeError, match='API unavailable'):
-        create_synthesizer()
+        create_synthesizer(backend='openai')

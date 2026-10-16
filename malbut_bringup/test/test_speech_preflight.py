@@ -44,7 +44,7 @@ def test_success_checks_consumers_before_microphone_and_reports_proof_limits(che
     ]) == 0
     assert checks.calls == [
         ('check_interfaces', (), {}), ('check_agent', ('mock',), {}),
-        ('check_tts', (3,), {}),
+        ('check_tts', (3, ''), {}),
         ('check_stt', ('/model.bin', '/bridge.so'), {'device_index': 2, 'cpp_threads': 4}),
     ]
     output = capsys.readouterr()
@@ -304,7 +304,15 @@ def audio_output(monkeypatch):
         def __exit__(self, *_):
             state.closed = True
 
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-key-never-sent')
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    state.engine = SimpleNamespace(sample_rate=22050, load=lambda: None)
+    state.options = None
+
+    def factory(**options):
+        state.options = options
+        return state.engine
+
+    monkeypatch.setattr('malbut_tts.backends.create_synthesizer', factory)
     monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(AsyncOpenAI=forbidden))
     monkeypatch.setitem(sys.modules, 'sounddevice', SimpleNamespace(
         check_output_settings=check_output_settings, OutputStream=OutputStream))
@@ -312,19 +320,22 @@ def audio_output(monkeypatch):
 
 
 @pytest.mark.parametrize('device,expected', [(-1, None), (2, 2)])
-def test_tts_validates_real_sdk_loader_and_writes_only_silence(audio_output, device, expected):
+def test_tts_loads_local_voice_without_key_and_writes_only_silence(audio_output, device, expected):
     preflight.check_tts(device)
-    options = {'device': expected, 'channels': 1, 'dtype': 'float32', 'samplerate': 24000}
+    options = {'device': expected, 'channels': 1, 'dtype': 'float32', 'samplerate': 22050}
     assert audio_output.calls == [('settings', options), ('stream', options)]
-    assert audio_output.data.shape == (2400, 1)
+    assert audio_output.data.shape == (2205, 1)
     assert audio_output.data.dtype == np.float32
     assert not np.any(audio_output.data)
     assert audio_output.closed
 
 
-def test_tts_missing_key_fails_before_output_device_is_opened(audio_output, monkeypatch):
-    monkeypatch.delenv('OPENAI_API_KEY')
-    with pytest.raises(RuntimeError, match='missing_api_key'):
+def test_tts_missing_model_fails_before_output_device_is_opened(audio_output):
+    def missing_model():
+        raise FileNotFoundError('local voice missing')
+
+    audio_output.engine.load = missing_model
+    with pytest.raises(FileNotFoundError, match='local voice missing'):
         preflight.check_tts(-1)
     assert audio_output.calls == []
 
@@ -334,3 +345,14 @@ def test_tts_output_failure_closes_stream(audio_output):
     with pytest.raises(RuntimeError, match='output failed'):
         preflight.check_tts(-1)
     assert audio_output.closed
+
+
+def test_tts_diagnostic_uses_robot_voice_threads_and_output_override(audio_output, tmp_path):
+    config = tmp_path / 'tts.yaml'
+    config.write_text('/**:\n  ros__parameters:\n    backend: piper\n'
+                      '    model_path: /local/kss.onnx\n    piper_threads: 4\n'
+                      '    output_device: 2\n')
+    preflight.check_tts(-1, str(config))
+    assert audio_output.options == {
+        'backend': 'piper', 'model_path': '/local/kss.onnx', 'piper_threads': 4}
+    assert audio_output.calls[0][1]['device'] == 2

@@ -75,7 +75,7 @@ def test_piper_cli_never_creates_an_api_client_or_loads_a_model_to_check(
     monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', None)
     monkeypatch.setattr(notices, 'notice_settings', lambda *a, **kw: settings)
     monkeypatch.setattr(notices, 'PiperNotices', Voice)
-    args = ['--backend', 'piper', '--model-path', '/local/kss.onnx',
+    args = ['--model-path', '/local/kss.onnx',
             '--catalog', str(catalog_path), '--output-dir', str(tmp_path / 'out')]
     assert main(args + (['--check'] if check else [])) == 0
     assert calls == ([] if check else ['load'])
