@@ -26,7 +26,8 @@ def read_catalog(path):
 
 
 def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
-            voice='nova', instructions=VOICE_INSTRUCTIONS, check_only=False):
+            voice='nova', instructions=VOICE_INSTRUCTIONS, check_only=False,
+            generation_profile=None):
     """Resume matching WAVs; never silently reuse stale or changed recordings."""
     directory = Path(directory)
     manifest_path = directory / 'manifest.json'
@@ -39,6 +40,8 @@ def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
             raise ValueError('invalid notice catalog')
         path = directory / (audio_id + '.wav')
         expected = {'text': text, 'model': model, 'voice': voice, 'instructions': instructions}
+        if generation_profile is not None:
+            expected['generation'] = generation_profile
         entry = manifest.get(audio_id, {})
         if path.exists():
             if (any(entry.get(key) != value for key, value in expected.items())
@@ -100,6 +103,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--catalog', required=True)
     parser.add_argument('--output-dir', required=True)
+    parser.add_argument('--backend', choices=('openai', 'piper'), default='openai')
+    parser.add_argument('--model-path', type=Path, help='Local Piper ONNX file')
+    parser.add_argument('--piper-threads', type=int, default=6)
     parser.add_argument('--model', default='gpt-4o-mini-tts')
     parser.add_argument('--voice', default='nova')
     parser.add_argument('--instructions', default=VOICE_INSTRUCTIONS)
@@ -109,14 +115,20 @@ def main(argv=None):
     try:
         catalog = read_catalog(args.catalog)
         synthesizer = None
-        if not args.check:
+        settings = dict(model=args.model, voice=args.voice, instructions=args.instructions)
+        if args.backend == 'piper':
+            from malbut_tts.piper_notices import PiperNotices, notice_settings
+            settings = notice_settings(args.model_path, threads=args.piper_threads)
+            if not args.check:
+                synthesizer = PiperNotices(args.model_path, threads=args.piper_threads)
+        elif not args.check:
             from malbut_tts.api_synthesis import OpenAISynthesizer
             synthesizer = OpenAISynthesizer(
                 model=args.model, voice=args.voice, instructions=args.instructions,
                 timeout_seconds=30, notice_path=None)
             synthesizer.load()
-        count = prepare(catalog, args.output_dir, synthesizer, model=args.model,
-                        voice=args.voice, instructions=args.instructions, check_only=args.check)
+        count = prepare(catalog, args.output_dir, synthesizer,
+                        **settings, check_only=args.check)
     except Exception as error:
         # API response details and credentials never reach console output.
         print(f'Notice preparation failed: {type(error).__name__}')

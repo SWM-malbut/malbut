@@ -36,6 +36,7 @@ def create_tts_node(runtime_factory=None):
             try:
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'openai')
+                self.declare_parameter('piper_threads', 6)
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
                 self.declare_parameter('api_voice', 'nova')
                 self.declare_parameter('api_timeout_seconds', 10.0)
@@ -75,11 +76,11 @@ def create_tts_node(runtime_factory=None):
         def _create_runtime(self):
             model_path = self.get_parameter('model_path').value
             backend = self.get_parameter('backend').value
-            if backend not in ('openai', 'qwen-cuda'):
-                raise ValueError('backend must be openai or qwen-cuda')
+            if backend not in ('openai', 'qwen-cuda', 'piper'):
+                raise ValueError('backend must be openai, qwen-cuda or piper')
             if backend != 'openai' and not model_path.strip():
                 raise ValueError(
-                    'Set the local TTS model directory with '
+                    'Set the local TTS model path with '
                     '--ros-args -p model_path:=/absolute/model/path'
                 )
             device = self.get_parameter('output_device').value
@@ -101,7 +102,14 @@ def create_tts_node(runtime_factory=None):
                 sentence_max_chars=self.get_parameter('sentence_max_chars').value,
                 speaker=self.get_parameter('speaker').value,
                 language=self.get_parameter('language').value,
+                piper_threads=self.get_parameter('piper_threads').value,
             )
+            if backend == 'piper':
+                synthesizer.load()
+                self.get_logger().info(
+                    'Piper ready: CPU only, Korean normalization v2.1; '
+                    f'{synthesizer.sample_rate} Hz, '
+                    f'{self.get_parameter("piper_threads").value} threads')
             if backend == 'openai':
                 self.get_logger().info(
                     'OpenAI TTS: speech text is sent to a paid external API; '

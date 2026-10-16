@@ -1,0 +1,7 @@
+# CPU-only local speech; no OpenAI, torch, or qwen-tts dependency.
+piper-tts==1.8.0
+onnxruntime==1.23.2
+numpy>=1.26,<3
+sounddevice==0.5.3
+typing_extensions>=4.10
+tqdm>=4.66

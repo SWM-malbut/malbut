@@ -9,6 +9,7 @@ import wave
 import pytest
 
 from malbut_tts.prepare_notices import prepare
+from malbut_tts.piper_notices import MODEL, MODEL_SHA256, VOICE, source_hashes
 
 
 @pytest.mark.parametrize('relative', ['malbut_tts', 'malbut_test/malbut_tts'])
@@ -33,5 +34,12 @@ def test_built_package_contains_the_real_notice(tmp_path, relative):
     assert catalog['situation.fall.confirmation'] == (
         '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?')
     assert catalog['situation.resolved'] == '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.'
-    assert prepare(catalog, directory, check_only=True) == 0
+    manifest = json.loads((directory / 'manifest.json').read_text())
+    profile = manifest['conversation.unavailable']['generation']
+    assert profile['backend'] == 'piper'
+    assert profile['provider'] == 'CPUExecutionProvider'
+    assert profile['model_sha256'] == MODEL_SHA256
+    assert profile['source_sha256'] == source_hashes()
+    assert prepare(catalog, directory, model=MODEL, voice=VOICE, instructions=None,
+                   generation_profile=profile, check_only=True) == 0
     assert installed.read_bytes() == (directory / 'conversation.unavailable.wav').read_bytes()

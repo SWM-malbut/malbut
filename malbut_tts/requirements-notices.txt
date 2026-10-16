@@ -1,0 +1,3 @@
+# Offline catalog generation only; playback does not import scipy or Piper.
+-r requirements-piper.txt
+scipy==1.15.3
