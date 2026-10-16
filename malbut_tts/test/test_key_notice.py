@@ -214,7 +214,7 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
 
     class FakeNode:
         def __init__(self, name):
-            self.parameters = {}
+            self.parameters = {'backend': 'openai'}
 
         def declare_parameter(self, name, default):
             self.parameters.setdefault(name, default)

@@ -35,7 +35,7 @@ def create_tts_node(runtime_factory=None):
             self._key_health_publisher = None
             try:
                 self.declare_parameter('model_path', '')
-                self.declare_parameter('backend', 'openai')
+                self.declare_parameter('backend', 'piper')
                 self.declare_parameter('piper_threads', 6)
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
                 self.declare_parameter('api_voice', 'nova')
@@ -78,7 +78,7 @@ def create_tts_node(runtime_factory=None):
             backend = self.get_parameter('backend').value
             if backend not in ('openai', 'qwen-cuda', 'piper'):
                 raise ValueError('backend must be openai, qwen-cuda or piper')
-            if backend != 'openai' and not model_path.strip():
+            if backend == 'qwen-cuda' and not model_path.strip():
                 raise ValueError(
                     'Set the local TTS model path with '
                     '--ros-args -p model_path:=/absolute/model/path'
@@ -219,7 +219,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         epilog=(
             'OpenAI is the default. Example: tts_node --ros-args '
             '-p output_device:=1. Local CUDA: tts_node --ros-args '
-            '-p backend:=qwen-cuda -p model_path:=/absolute/model/path'
+            '-p backend:=piper -p model_path:=/absolute/model.onnx'
         ),
     )
     _, ros_args = parser.parse_known_args(argv)

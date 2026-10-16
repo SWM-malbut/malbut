@@ -86,7 +86,8 @@ Cloud VLM도 설정 파일이 준비되면 센서 준비 후 함께 시작한다
 PyTorch 2.8.0, torchvision 0.23.0, CUDA available=True**.
 `slam`, `navigation`의 설치 경로도 확인됐다. 기존 PyTorch와 ROS를 재설치하지 않는다.
 이 기록과 현재 설정 기준으로 CUDA를 사용하는 구성이다. YOLO는 PyTorch CUDA,
-STT는 whisper.cpp CUDA를 사용하며 Agent와 TTS는 기본 OpenAI API 방식이다.
+STT는 로컬 whisper.cpp CUDA, TTS는 로컬 CPU Piper를 사용한다.
+답변을 생성하는 Agent만 기존 OpenAI API를 사용한다.
 이 기록은 이번 변경의 실기기 검증 결과가 아니며 실제 동시 GPU 추론은 별도 확인해야 한다.
 
 로봇의 Zsh 터미널에서:
@@ -343,7 +344,10 @@ ros2 launch malbut_bringup bringup.launch.py
 
 `speech:=true`가 기본값이다. Agent·TTS·STT는 관리자·Nav2 준비를 기다리지 않고
 실행한다. 음성 초기화 실패는 다른 모듈을 종료하지 않으며 로그로 확인한다.
-STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한다.
+STT는 로컬 whisper.cpp CUDA, TTS는 한국어 정규화 CPU Piper를 사용한다.
+답변을 생성하는 Agent는 기존 OpenAI API를 사용한다. STT·TTS에는 API 키가 필요 없다.
+Piper 모델과 `.onnx.json`은 `~/.cache/malbut_speech/models/piper-kss/`에 배치한다.
+`build.sh`는 Piper 의존성을 설치하며 모델을 자동 다운로드하지 않는다.
 Agent의 로봇 명령은 실제 요청 시 관리자 Action 연결이 필요하다.
 
 기본 모델 경로는 `~/.cache/malbut_speech/models/ggml-small.bin`, CUDA 라이브러리는

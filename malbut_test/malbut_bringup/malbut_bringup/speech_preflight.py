@@ -55,20 +55,34 @@ def check_agent(provider):
         raise ValueError('invalid_agent_configuration')
 
 
-def check_tts(output_device):
-    """Validate API settings and briefly write silence to the actual output."""
+def check_tts(output_device, config_path=''):
+    """Load the selected local voice and briefly write silence to its output."""
     import numpy as np
     import sounddevice as sd
 
-    from malbut_tts.api_synthesis import OpenAISynthesizer
+    from malbut_tts.backends import create_synthesizer
 
-    # load() checks the key and SDK; it does not create a client or send a request.
-    synthesizer = OpenAISynthesizer()
+    settings = {}
+    if config_path:
+        from pathlib import Path
+        import yaml
+        document = yaml.safe_load(Path(config_path).read_text())
+        # These are the root-namespace node selectors used by speech.launch.py.
+        for selector in ('/**', 'malbut_tts', '/malbut_tts'):
+            settings.update(document.get(selector, {}).get('ros__parameters', {}))
+    options = {key: settings[key] for key in (
+        'backend', 'model_path', 'piper_threads', 'speaker', 'language',
+        'cuda_dtype', 'cuda_sentence_mode', 'sentence_max_chars',
+        'api_model', 'api_voice', 'api_timeout_seconds',
+    ) if key in settings}
+    synthesizer = create_synthesizer(**options)
     synthesizer.load()
+    output_device = settings.get('output_device', output_device)
     device = None if output_device == -1 else output_device
-    sd.check_output_settings(device=device, channels=1, dtype='float32', samplerate=24000)
-    with sd.OutputStream(device=device, channels=1, dtype='float32', samplerate=24000) as stream:
-        stream.write(np.zeros((2400, 1), dtype=np.float32))
+    rate = getattr(synthesizer, 'sample_rate', 24000)
+    sd.check_output_settings(device=device, channels=1, dtype='float32', samplerate=rate)
+    with sd.OutputStream(device=device, channels=1, dtype='float32', samplerate=rate) as stream:
+        stream.write(np.zeros((rate // 10, 1), dtype=np.float32))
 
 
 def wait_for_control(server, timeout_s):
@@ -174,6 +188,7 @@ def main(argv=None):
     parser.add_argument('--input-device', type=int, default=0)
     parser.add_argument('--output-device', type=int, default=-1)
     parser.add_argument('--cpp-threads', type=int, default=6)
+    parser.add_argument('--tts-config', default='')
     parser.add_argument('--agent-provider', choices=('openai', 'mock'), default='openai')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--wait-for-peers', action='store_true')
@@ -201,7 +216,7 @@ def main(argv=None):
         phase = 'agent_configuration'
         check_agent(args.agent_provider)
         phase = 'tts_output'
-        check_tts(args.output_device)
+        check_tts(args.output_device, args.tts_config)
         phase = 'stt_model_and_microphone'
         from malbut_stt.preflight import check_stt
 

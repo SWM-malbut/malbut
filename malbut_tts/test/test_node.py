@@ -272,10 +272,10 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
     ({'api_model': 'tts-1', 'api_voice': 'alloy', 'api_timeout_seconds': 4.5},
      'tts-1', 'alloy', 4.5),
 ])
-def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
+def test_explicit_openai_node_needs_no_model_and_reuses_ros_contract(
     fake_ros, monkeypatch, options, model, voice, timeout,
 ):
-    fake_ros.parameters.update(**options)
+    fake_ros.parameters.update(backend='openai', **options)
     received = {}
 
     def synthesizer(**kwargs):
@@ -314,6 +314,23 @@ def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
     assert any('AI-generated' in message for message in fake_ros.logs)
     assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC
     assert fake_ros.services[0][1] == tts_node.CONTROL_SERVICE
+    node.destroy_node()
+
+
+def test_default_node_warms_local_voice_without_api_key(fake_ros, monkeypatch):
+    from unittest.mock import Mock
+
+    engine = Mock(sample_rate=22050)
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', None)
+    monkeypatch.setitem(sys.modules, 'malbut_tts.piper_synthesis', SimpleNamespace(
+        PiperSynthesizer=lambda *a, **k: engine))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
+        SpeechRuntime=lambda synth, player, on_status, **kwargs: FakeRuntime(on_status)))
+    node = tts_node.create_tts_node()
+    assert node.parameters['backend'] == 'piper'
+    engine.load.assert_called_once_with()
+    assert any('CPU only' in line for line in fake_ros.logs)
     node.destroy_node()
 
 

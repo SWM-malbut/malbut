@@ -99,11 +99,11 @@ def prepare(catalog, directory, synthesizer=None, *, model='gpt-4o-mini-tts',
 
 
 def main(argv=None):
-    """Use only an existing process key; do not accept secrets as CLI arguments."""
+    """Generate locally by default; API synthesis requires explicit selection."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--catalog', required=True)
     parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--backend', choices=('openai', 'piper'), default='openai')
+    parser.add_argument('--backend', choices=('openai', 'piper'), default='piper')
     parser.add_argument('--model-path', type=Path, help='Local Piper ONNX file')
     parser.add_argument('--piper-threads', type=int, default=6)
     parser.add_argument('--model', default='gpt-4o-mini-tts')
@@ -117,7 +117,9 @@ def main(argv=None):
         synthesizer = None
         settings = dict(model=args.model, voice=args.voice, instructions=args.instructions)
         if args.backend == 'piper':
+            from malbut_tts.backends import default_piper_model
             from malbut_tts.piper_notices import PiperNotices, notice_settings
+            args.model_path = args.model_path or default_piper_model()
             settings = notice_settings(args.model_path, threads=args.piper_threads)
             if not args.check:
                 synthesizer = PiperNotices(args.model_path, threads=args.piper_threads)

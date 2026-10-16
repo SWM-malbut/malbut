@@ -1,9 +1,10 @@
 # Malbut TTS
 
 Agent가 보낸 답변 한 건을 하나의 요청으로 관리하고, 선택한 backend의
-음성을 재생한다. 기본 backend는 OpenAI이며, backend를 생략하면 Agent 답변
-텍스트를 OpenAI TTS API로 전송한다. 실험용 Qwen CUDA backend만 로컬 모델
-경로와 함께 명시적으로 선택할 수 있다. 선택한 backend가 실패해도 다른
+음성을 재생한다. 기본 backend는 한국어 정규화를 적용한 CPU Piper다.
+기본 모델은 `~/.cache/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx`이며
+`XDG_CACHE_HOME`을 설정하면 해당 캐시 루트를 사용한다. 모델이 없으면 실패하며
+다운로드하거나 API에 요청하지 않는다. OpenAI·Qwen CUDA는 명시적으로 선택한 경우만 사용한다. 선택한 backend가 실패해도 다른
 backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하여 앞 문장
 재생과 다음 문장 합성을 겹친다. 모델 내부의 토큰/음성 스트리밍과는 구분한다.
 명세는 [tts_agent.md](docs/tts_agent.md)에 있다.
@@ -65,8 +66,8 @@ Agent·TTS·STT·모니터 등 관련 발행·수신 노드를 같은 정의로 
 
 ## OpenAI API 스트리밍 음성
 
-OpenAI는 CLI와 ROS node의 기본 backend다. `--backend`/`backend`를 생략하면
-기존 Agent·STT를 바꾸지 않고 TTS 합성만 API로 처리한다. 로컬 모델 경로,
+OpenAI는 `--backend openai` 또는 ROS `backend:=openai`로 명시적으로 선택해야 한다.
+로봇 기본 빌드와 실행은 로컬 Piper를 사용한다. 로컬 모델 경로,
 CUDA, PyTorch는 이 backend에 필요하지 않다. 기본 설정은
 `gpt-4o-mini-tts`, `nova`, PCM이다.
 공식 SDK의 스트리밍 응답을 받아 24 kHz signed 16-bit little-endian PCM을
@@ -120,12 +121,12 @@ flowchart LR
 ```bash
 /absolute/external/venv/bin/python -m pip install -r malbut_tts/requirements-api.txt
 PYTHONPATH=malbut_tts /absolute/external/venv/bin/python -m malbut_tts.smoke \
-  --api-model gpt-4o-mini-tts --api-voice nova \
+  --backend openai --api-model gpt-4o-mini-tts --api-voice nova \
   --api-timeout-seconds 10 --text '안녕하세요. 말벗이에요.'
 
 # ROS 및 외부 install overlay를 적용한 같은 Python 환경:
 /absolute/external/venv/bin/python -m malbut_tts.node --ros-args \
-  -p api_model:=gpt-4o-mini-tts -p api_voice:=nova \
+  -p backend:=openai -p api_model:=gpt-4o-mini-tts -p api_voice:=nova \
   -p api_timeout_seconds:=10.0
 ```
 
@@ -217,8 +218,8 @@ done
 매니페스트에 원문, 모델·설정 파일·정규화 코드·발음 사전의 해시, CPU 설정과
 생성 라이브러리 버전을 기록한다. 파일을 재사용할 때 이 정보와 WAV 해시가 모두
 일치해야 한다. `--check`는 모델을 로드하거나 음성을 합성하지 않는다.
-기존 API 생성 경로도 `--backend openai`로 사용할 수 있으며 CLI 기본값은 호환성을
-위해 `openai`를 유지한다. 위 Piper 명령에는 API 호출이나 API 실패 시 대체 생성이 없다.
+카탈로그 생성 CLI도 기본값은 `piper`다. 기존 API 생성 경로는
+`--backend openai`로 명시적으로 선택해야 한다. 위 Piper 명령에는 API 호출이나 API 실패 시 대체 생성이 없다.
 별도 배포 폴더는 TTS의 `audio_directory` ROS parameter로 지정한다.
 생성 후 `malbut_interfaces`, Agent, TTS를 함께 다시 빌드하고 재시작한다.
 `SpeechRequest.audio_id`가 추가되어 이전 인터페이스와 혼용할 수 없다.
@@ -250,10 +251,10 @@ ros2 topic pub --once /malbut/speech/response malbut_interfaces/msg/SpeechReques
 ```
 
 위 노드의 실제 합성에는 같은 Python 환경에 ROS와 해당 합성·오디오 의존성이
-필요하다. 일반 음성 합성에는 `requirements-api.txt`의 의존성과 유효한 OpenAI
-키가 필요하다. 고정 장애 안내 WAV는 API 키·OpenAI SDK 없이 재생할 수 있지만
-오디오 장치와 재생 의존성은 필요하다. SDK 누락 시 일반 합성은 `failed`가 되며
-로컬 backend로 자동 전환하지 않는다. 아래 CUDA 경로는 x86_64 Linux 노트북 실험용이며
+필요하다. 기본 음성 합성에는 `requirements-piper.txt`와 로컬 KSS 모델이 필요하며
+API 키가 필요 없다. 고정 장애 안내 WAV도 API 키·OpenAI SDK 없이 재생한다.
+모델이나 오디오 의존성이 없으면 실패하며 API로 자동 전환하지 않는다.
+아래 CUDA 경로는 x86_64 Linux 노트북 실험용이며
 Jetson 및 YOLO·STT 동시 성능은 별도 검증 대상이다.
 
 ## Linux CUDA 실험 경로
@@ -380,7 +381,7 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 
 `speech.launch.py`는 이 파일이 있으면 TTS 설정으로 읽습니다. 다른 파일은
 `tts_config:=/absolute/path/tts.yaml`로 지정합니다. 해당 파일이 없는 일반
-환경의 기본 백엔드는 기존 OpenAI이며, **Piper 실행 실패 시 API로 전환하지 않습니다**.
+환경도 기본 백엔드는 Piper이며, **Piper 실행 실패 시 API로 전환하지 않습니다**.
 직접 실행할 때는 `tts_node --ros-args --params-file /absolute/path/tts.yaml`을
 사용합니다. 저장된 알림 WAV(`audio_id`)도 같은 정규화 Piper로 미리 생성되어 있습니다.
 발음 사전은 패키지의 `config/korean_pronunciation_lexicon.json`에 있습니다.
