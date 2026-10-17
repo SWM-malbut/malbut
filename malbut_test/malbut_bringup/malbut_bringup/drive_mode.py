@@ -38,6 +38,10 @@ _UNREACHED = ('no_map', 'no_path', 'timeout', 'failed')
 # The Agent fall rules' status (/malbut/falls/check/status), 목업 27번.
 _CHECK_PHASES = ('approach', 'look', 'ask', 'return', 'wait')
 _WAITING_FOR = ('manual_drive', 'busy')
+# The one fall check (SWM25-261, 목업 32번): which step, and why the robot goes.
+_CHECK_STEPS = ('queued', 'approach', 'compare', 'reverify', 'departure', 'view', 'posture',
+                'closer', 'ask', 'wait', 'return')
+_CHECK_PURPOSES = ('approach', 'revisit', 'recheck', 'stood_up', 'again', 'restart')
 
 
 def drive_mission(system):
@@ -109,13 +113,19 @@ def fall_check_detail(check):
             type(target.get(key)) in (int, float) and math.isfinite(target[key])
             for key in ('x', 'y'))):
         point = {'x': round(float(target['x']), 3), 'y': round(float(target['y']), 3)}
-    return {
+    detail = {
         'phase': check.get('phase') if check.get('phase') in _CHECK_PHASES else None,
         'waiting_for': (check.get('waiting_for')
                         if check.get('waiting_for') in _WAITING_FOR else None),
         'alerted': check.get('alerted') is True,
         'target': point,
     }
+    # Only the one fall check sends these; the earlier check's detail stays as it was.
+    if check.get('step') in _CHECK_STEPS:
+        detail['step'] = check['step']
+    if check.get('purpose') in _CHECK_PURPOSES:
+        detail['purpose'] = check['purpose']
+    return detail
 
 
 def _now():

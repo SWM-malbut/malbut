@@ -65,6 +65,10 @@ def defaults():
         # starts Bringup with a fixed command, and anything short of two such
         # looks still asks. Needs fall_approach.
         'fall_full_view': 'true',
+        # The one fall check (SWM25-261): the Agent's fall rules decide every step and
+        # the fall monitor only reports, looks and writes. false: the earlier check,
+        # kept until the robot is checked (a same-time comparison, no rebuild).
+        'fall_flow': 'true',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',

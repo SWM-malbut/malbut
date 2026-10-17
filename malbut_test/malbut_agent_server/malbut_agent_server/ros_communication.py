@@ -657,6 +657,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # (the former fall coordinator) then still run here, without a dialogue.
     parser.add_argument('--speech', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--fall-rules', action='store_true')
+    # The one fall check (SWM25-261, Bringup fall_flow): FallFlow decides every step.
+    parser.add_argument('--fall-flow', action='store_true')
     for peer in ('', 'bridge-', 'vlm-'):
         parser.add_argument(f'--fall-{peer}runtime-id', default='')
     args, ros_args = parser.parse_known_args(argv)
@@ -799,7 +801,7 @@ def run_with_fall_rules(args, ros_args, settings):
         try:
             rules = FallRulesNode(
                 runtime_id=args.fall_runtime_id, bridge_runtime_id=args.fall_bridge_runtime_id,
-                vlm_runtime_id=args.fall_vlm_runtime_id)
+                vlm_runtime_id=args.fall_vlm_runtime_id, flow=args.fall_flow)
             rules_executor = MultiThreadedExecutor(num_threads=2)
             rules_executor.add_node(rules)
         except Exception as error:

@@ -335,6 +335,17 @@ def test_the_rules_status_marks_a_fall_check_between_missions_and_reaches_the_ma
                                            'alerted': False, 'target': None}
 
 
+def test_the_one_fall_check_also_names_its_step_and_why_it_goes():
+    # SWM25-261, 목업 32번: the map card words come from these.
+    check = dict(CHECK, phase='look', waiting_for=None, step='compare', purpose='recheck')
+    detail = robot_drive_mode({}, _status(), None, ready=True, can_follow=True,
+                              fall_check=check)['detail']['fall_check']
+    assert (detail['step'], detail['purpose']) == ('compare', 'recheck')
+    odd = robot_drive_mode({}, _status(), None, ready=True, can_follow=True, fall_check=dict(
+        check, step='dance', purpose=3))['detail']['fall_check']
+    assert 'step' not in odd and 'purpose' not in odd
+
+
 def test_a_patrol_stopped_while_the_check_waits_between_missions_is_not_called_asked():
     stops = PatrolFallStops(clock=lambda: T0)
     _stopped_by_fall(stops)

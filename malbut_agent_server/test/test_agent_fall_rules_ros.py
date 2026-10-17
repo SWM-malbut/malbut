@@ -204,3 +204,31 @@ def test_driven_by_hand_the_rules_wait_say_so_and_unlock_when_stopped(agent):
     assert wait_for(lambda: probe.goals == ['fall_confirmation'])
     assert stop(process) == 0
     assert statuses[-1][1]['active'] is False  # Stopping unlocks the moves at once.
+
+
+def test_with_the_one_fall_check_a_sighting_becomes_a_look_and_then_a_drive(agent):
+    """SWM25-261 (Bringup fall_flow): FallFlow decides; the VLM only reports and looks."""
+    probe = Probe(manager=True)
+    decisions = []
+    probe.create_subscription(String, '/malbut/falls/runtime/decision',
+                              lambda m: decisions.append(json.loads(m.data)), 10)
+    process = agent(probe, '--no-speech', '--fall-rules', '--fall-flow', *IDS)
+    assert wait_for(lambda: any(d['action'] == 'flow_hello' for d in decisions))
+    probe.events.publish(String(data=json.dumps(dict(
+        kind='flow_ready', flow=True, open_incidents=[], recent=[], runtime_id='vlm-id'))))
+    probe.events.publish(String(data=json.dumps(dict(
+        kind='fall_sighting', runtime_id='vlm-id', sighting=dict(
+            sighting_id='s1', at=time.monotonic(), kind='lying', track='pose:1:a',
+            point=[2.0, 0.5], box=[0.3, 0.5, 0.7, 0.9], view=0, robot=[0.0, 0.0],
+            on_floor=None, photo='p1', fall_moment=None)))))
+    assert wait_for(lambda: any(d['action'] == 'look' for d in decisions))
+    look = next(d for d in decisions if d['action'] == 'look')
+    assert look['what'] == 'filter' and look['sighting_id'] == 's1'
+    probe.events.publish(String(data=json.dumps(dict(
+        kind='fall_look_result', runtime_id='vlm-id', look_id=look['look_id'], what='filter',
+        sighting_id='s1', verdict='suspect', earlier=None, reason=None))))
+    assert wait_for(lambda: probe.goals == ['fall_approach'])
+    assert [d['event'] for d in decisions if d['action'] == 'record'][:3] == [
+        'incident_opened', 'analysis_completed', 'approach_started']
+    assert stop(process) == 0
+    assert probe.cancels  # The drive the rules started is cancelled on the way out.
