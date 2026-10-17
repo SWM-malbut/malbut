@@ -105,14 +105,25 @@ def test_wake_audio_never_reaches_api_and_first_command_frame_is_preserved():
     assert all(recorder.closed for recorder in run.recorders)
 
 
-@pytest.mark.parametrize('text', ['안녕', '제이크야 거실로 가줘', '제이크 거실로 가줘', '',
+@pytest.mark.parametrize('text', ['안녕', '제이크가 거실로 갔어', '',
                                  '로봇 이름은 제이크입니다.'])
-def test_non_wake_and_combined_command_never_open_command_capture_or_call_api(text):
+def test_non_wake_never_opens_command_capture_or_calls_api(text):
     run = make_pipeline([wake_frames()], [], [text])
     run.pipeline.run()
     assert run.events[-1] == 'not_wake'
     assert len(run.recorders) == 1
     assert run.calls == run.messages == []
+
+
+@pytest.mark.parametrize('text', ['야 제이크 거실로 가줘.', '제이크야 거실로 가줘.',
+                                 '저기 제이크, 거실로 가줘.'])
+def test_attached_command_reuses_local_text_without_second_capture_or_api(text):
+    run = make_pipeline([wake_frames()], [], [text])
+    run.pipeline.run()
+    assert [text for _, text in run.messages] == ['거실로 가줘.']
+    assert len(run.recorders) == len(run.wake_calls) == 1
+    assert run.calls == [] and 'listening' not in run.events
+    assert str(UUID(run.messages[0][0])) == run.messages[0][0]
 
 
 def test_specified_name_without_vocative_opens_command_capture():
@@ -184,8 +195,9 @@ def test_shutdown_during_api_response_suppresses_late_publication():
     assert all(recorder.closed for recorder in run.recorders)
 
 
-def test_stop_after_wake_detection_never_opens_command_microphone():
-    run = make_pipeline([wake_frames()], [])
+@pytest.mark.parametrize('text', ['제이크야', '야 제이크 거실로 가'])
+def test_stop_after_wake_detection_never_opens_command_microphone(text):
+    run = make_pipeline([wake_frames()], [], [text])
     report = run.pipeline.report
 
     def stop(event):

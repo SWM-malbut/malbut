@@ -392,7 +392,11 @@ def test_explicit_missing_silero_gate_fails_before_whisper_or_microphone(runtime
 @pytest.mark.parametrize('activation', ['explicit', 'installed'])
 def test_silero_gate_wraps_only_command_outside_diagnostics(
         runtime, monkeypatch, tmp_path, shared, activation):
-    from malbut_stt.silero_gate import _GatedModel
+    from malbut_stt.silero_gate import SileroGate, _GatedModel
+
+    admissions = []
+    monkeypatch.setattr(SileroGate, 'require_speech',
+                        lambda self, pcm, diagnostics: admissions.append((pcm, diagnostics)))
 
     if activation == 'explicit':
         monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', 'local.onnx')
@@ -413,6 +417,8 @@ def test_silero_gate_wraps_only_command_outside_diagnostics(
         assert (wake is command._model) is shared
         assert wake.__class__.__name__ == '_DiagnosticModel'
         assert command._model.__class__.__name__ == '_DiagnosticModel'
+        runtime.pipeline_args['validate_wake_command'](b'combined audio')
+        assert admissions == [(b'combined audio', runtime.pipeline_args['diagnostics'])]
         raise KeyboardInterrupt
 
     runtime.on_spin = spin

@@ -73,6 +73,21 @@ def test_gaps_break_runs_and_each_decode_resets_model(gate):
     assert gate.model.resets == 2
 
 
+def test_reused_wake_command_requires_speech_and_records_admission(gate):
+    sink = Sink()
+    with pytest.raises(SileroNonSpeech):
+        gate.require_speech(VOICE * 5, sink)
+    assert sink.events[-1]['allowed'] is False
+    gate.model.score = .9
+    gate.require_speech(VOICE * 5, sink)
+    assert sink.events[-1]['allowed'] is True
+    gate.model.probability = lambda _: 1 / 0
+    with pytest.raises(SileroGateError):
+        gate.require_speech(VOICE * 5, sink)
+    assert sink.events[-1] == dict(
+        event='silero_gate_error', error='ZeroDivisionError', allowed=False)
+
+
 def test_model_gets_original_audio_and_options_only_after_allow(gate):
     sink, calls = Sink(), []
     result = (iter(()), SimpleNamespace())
