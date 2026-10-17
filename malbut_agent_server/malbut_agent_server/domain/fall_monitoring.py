@@ -746,7 +746,7 @@ class CloudAnalysisExplanation:
         identifier(self.request_id)
         if (not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', self.request_id)
                 or self.purpose not in {'incident', 'crosscheck', 'person_check', 'posture_check',
-                                        'same_person_check'}
+                                        'same_person_check', 'arrival_check', 'departure_check'}
                 or not isinstance(self.assessment, VideoAssessment)
                 or not isinstance(self.explanation, str) or not self.explanation.strip()
                 or len(self.explanation) > 1000):

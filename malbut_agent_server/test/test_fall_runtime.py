@@ -491,3 +491,56 @@ def test_guardian_closed_incidents_reach_the_runtime_from_their_topic(tmp_path, 
     for bad in ('{"incident_ids": "a"}', json.dumps({'incident_ids': ['x'] * 17}), 'not json'):
         receive(std.String(data=bad))
     assert closed == ['a', 'b'] and node.logs == ['guardian_close_rejected']
+
+
+def test_with_fall_flow_the_node_reports_and_takes_the_rules_decisions(tmp_path, monkeypatch):
+    """SWM25-261 (Bringup fall_flow): the same node, with the reporting VLM inside."""
+    node_module = pytest.importorskip('rclpy.node')
+    std = pytest.importorskip('std_msgs.msg')
+    from malbut_agent_server.application.fall_flow_sensor import FallFlowSensor
+
+    class Node:
+        def __init__(self, name):
+            self.subscriptions, self.publishers, self.services = {}, {}, {}
+
+        def declare_parameter(self, name, default, descriptor):
+            return SimpleNamespace(value={
+                'manager_runtime_id': 'manager-1', 'runtime_id': 'vlm-1',
+                'flow_enabled': True}.get(name, default))
+
+        def create_service(self, srv, name, callback):
+            self.services[name] = callback
+
+        def create_subscription(self, msg, topic, callback, qos):
+            self.subscriptions[topic] = callback
+
+        def create_publisher(self, msg, topic, qos):
+            self.publishers[topic] = publisher = Mock()
+            return publisher
+
+        def create_timer(self, *args, **kwargs):
+            pass
+
+        def get_clock(self):
+            return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+
+        def get_logger(self):
+            return Mock()
+
+        def count_publishers(self, topic):
+            return 1
+
+    monkeypatch.setattr(node_module, 'Node', Node)
+    _, clock, provider = make()
+    node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                            provider=provider, journal=None, clock=clock)
+    assert isinstance(node.monitor, FallFlowSensor) and node.tracking is None
+    node.subscriptions['/malbut/falls/runtime/decision'](
+        std.String(data=json.dumps(dict(action='flow_hello', flow=True))))
+    node.publish_events()
+    events = node.publishers['/malbut/falls/runtime/events']
+    sent = json.loads(events.publish.call_args.args[0].data)
+    assert sent['kind'] == 'flow_ready' and sent['flow'] is True
+    assert sent['runtime_id'] == 'vlm-1' and sent['boot_id'] == node.monitor.boot_id
+    # The earlier reply path is not used: the rules ask and decide.
+    node.subscriptions['/malbut/falls/runtime/agent_reply'](std.String(data='{}'))
