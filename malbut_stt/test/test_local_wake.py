@@ -9,6 +9,7 @@ import unicodedata
 import pytest
 
 from malbut_stt.local_wake import is_wake_phrase, main
+from malbut_stt.wake import parse_wake_phrase
 
 
 @pytest.mark.parametrize('text, expected', [
@@ -22,16 +23,45 @@ from malbut_stt.local_wake import is_wake_phrase, main
     ('Jake', False),
     ('안녕 제이크야', False),
     ('안녕 제이크', False),
-    ('제이크 거실로 가', False),
-    ('제이크야 거실로 가', False),
+    ('야 제이크', True),
+    ('야, 제이크야!', True),
+    ('저기 제이크', True),
+    ('저기 제이크야', True),
+    ('제이크 거실로 가', True),
+    ('제이크야 거실로 가', True),
+    ('야 제이크 거실로 가', True),
+    ('야 제이크가 거실로 갔어', False),
+    ('제이크는 어디 있어?', False),
+    ('제이크를 불러줘', False),
+    ('제이크야구장', False),
+    ('“제이크”라고 불러', False),
     ('제이크야 제이크야', False),
     ('제이크야2', False),
     ('', False),
     (' \n!?', False),
 ])
-def test_only_the_whole_normalized_phrase_is_accepted(text, expected):
-    """Punctuation and spaces cannot turn aliases or sentences into a wake."""
+def test_calls_require_a_supported_prefix_and_name_boundary(text, expected):
     assert is_wake_phrase(text) is expected
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('야, 제이 크야! ', ''),
+    ('저기제이크', ''),
+    ('야 제이크 거실로 가', '거실로 가'),
+    ('제이크야, 거실로 가줘.', '거실로 가줘.'),
+    ('저기, 제이크야! 오늘 날씨가 어때?', '오늘 날씨가 어때?'),
+    ('제이크,거실로 가', '거실로 가'),
+    ('야 제이크, “안녕!”이라고 말해.', '“안녕!”이라고 말해.'),
+    ('제이크야 -5도인지 확인해', '-5도인지 확인해'),
+    ('제이크야  오후 3시 30분에 알려줘.', '오후 3시 30분에 알려줘.'),
+    (unicodedata.normalize('NFD', '야 제이크, 거실로 가.'), '거실로 가.'),
+    ('야 제이크가 거실로 갔어.', None),
+    ('오늘 제이크 얘기 들었어?', None),
+    ('제이크야거실로가', None),
+    (None, None),
+])
+def test_call_parser_preserves_only_the_attached_request(text, expected):
+    assert parse_wake_phrase(text) == expected
 
 
 @pytest.fixture
@@ -142,7 +172,7 @@ def events(capsys):
 
 @pytest.mark.parametrize('segments, outcome', [
     (['제이크야!'], 'wake_detected'),
-    (['제이크야', ' 거실로 가'], 'not_wake'),
+    (['제이크야', ' 거실로 가'], 'wake_detected'),
     (['안녕'], 'not_wake'),
     ([], 'not_wake'),
 ])
@@ -169,7 +199,7 @@ def test_wav_needs_only_a_local_model_and_checks_all_segments(
 
 @pytest.mark.parametrize('segments, outcome', [
     (['제이크야'], 'wake_detected'),
-    (['제이크야 거실로 가'], 'not_wake'),
+    (['제이크야 거실로 가'], 'wake_detected'),
     ([], 'not_wake'),
 ])
 def test_once_preserves_first_frame_and_closes_before_recognition(

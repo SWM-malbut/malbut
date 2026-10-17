@@ -710,7 +710,7 @@ def test_wake_once_sends_only_a_fresh_command_capture_to_api(runtime, tmp_path, 
 
 def test_command_once_keeps_listening_after_rejected_wake(runtime, tmp_path, capsys):
     """The command attempt begins only after a complete valid wake phrase."""
-    runtime.wake_texts = ['제이크야 거실로 가', '제이크야']
+    runtime.wake_texts = ['제이크가 거실로 갔어', '제이크야']
     runtime.recordings = [list(runtime.frames) for _ in range(3)]
     assert main(model_args(tmp_path) + ['--once']) == 0
     output = [item['event'] for item in events(capsys)]
@@ -729,7 +729,7 @@ def test_wake_only_once_needs_no_openai_and_stops_after_first_attempt(
     monkeypatch.delenv('OPENAI_API_KEY')
     monkeypatch.setitem(sys.modules, 'openai', None)
     if outcome == 'not_wake':
-        runtime.wake_texts = ['제이크야 거실로 가']
+        runtime.wake_texts = ['제이크가 거실로 갔어']
     elif outcome == 'wake_no_speech':
         runtime.frames = [[0] * 512] * 157
     elif outcome == 'wake_too_long':

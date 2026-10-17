@@ -424,6 +424,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             chime_tail_s=chime_tail_s,
             short_speech_guard=short_speech_guard,
             followup_timeout_s=followup_timeout_s,
+            validate_wake_command=(
+                (lambda pcm: silero_gate.require_speech(pcm, diagnostics))
+                if silero_gate is not None else None),
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),

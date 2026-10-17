@@ -13,7 +13,7 @@ from malbut_stt.conversation import ConversationSession
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
-from malbut_stt.wake import is_wake_phrase
+from malbut_stt.wake import parse_wake_phrase
 
 
 MAX_RETIRED_SESSION_IDS = 256
@@ -76,7 +76,8 @@ class DialoguePipeline:
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
-                 short_speech_guard=False, followup_timeout_s=10.0):
+                 short_speech_guard=False, followup_timeout_s=10.0,
+                 validate_wake_command=None):
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
@@ -88,6 +89,7 @@ class DialoguePipeline:
         self.chime_tail_s = chime_tail_s
         self.short_speech_guard = short_speech_guard
         self.followup_timeout_s = followup_timeout_s
+        self.validate_wake_command = validate_wake_command
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -456,8 +458,12 @@ class DialoguePipeline:
                     else:
                         engine = self.wake if kind == 'wake' else self.transcriber
                         text = engine.transcribe(pcm, 16000)
+                    wake_command = kind == 'wake' and bool(parse_wake_phrase(text))
+                    if wake_command and self.validate_wake_command is not None:
+                        self.validate_wake_command(pcm)
                     rejection = (_short_speech_rejection(text, getattr(pcm, 'voiced_s', None))
-                                 if self.short_speech_guard and kind != 'wake' else None)
+                                 if self.short_speech_guard and (kind != 'wake' or wake_command)
+                                 else None)
                     if rejection is not None:
                         if self.diagnostics is not None:
                             self.diagnostics.event(
@@ -809,7 +815,7 @@ class DialoguePipeline:
         payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s,
                                          audio_start_s=event.audio_start_s,
                                          voiced_s=event.voiced_s)
-                   if kind == 'command' else event.pcm)
+                   if kind == 'command' else _SpeechPCM(event.pcm, event.voiced_s))
         self._enqueue_job((kind, self._generation, uid, payload))
 
     def _fail_command(self, reason):
@@ -953,11 +959,22 @@ class DialoguePipeline:
                 self.report(failure)
             return
         if kind == 'wake':
-            if is_wake_phrase(text):
+            command = parse_wake_phrase(text)
+            if command is not None:
                 self._trace_job('result_accepted', kind, generation, uid, reason='wake_match')
                 self.session.activate()
                 self._reset_audio()
                 self.report('wake_detected')
+                if command:
+                    # This utterance already contains the request. Reuse its local
+                    # transcript, and enter the same once-only reply/follow-up path.
+                    uid = self.session.user_speech_started()
+                    self._input_status('started', uid)
+                    self._utterance_playback_id = self.session.interrupted_playback_id
+                    self.report('wake_command_detected')
+                    self._play_endpoint_chime()
+                    self._accept_result('command', generation, uid, command, None)
+                    return
                 if self.on_wake is None:
                     self.report('wake_chime_unavailable')
                 else:

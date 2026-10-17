@@ -1,16 +1,53 @@
-"""Recognize a complete wake phrase with an already downloaded local model."""
+"""Recognize a Korean call and preserve any request spoken in the same utterance."""
 
 from pathlib import Path
 import unicodedata
 
 
-def is_wake_phrase(text: str) -> bool:
-    """Accept 제이크 and its vocative 제이크야, ignoring spaces and punctuation."""
+_WAKE_PHRASES = tuple(sorted(
+    (prefix + name for prefix in ('', '야', '저기') for name in ('제이크', '제이크야')),
+    key=len, reverse=True,
+))
+_CALL_DELIMITERS = ',，、.!！?？:：;；…'
+
+
+def parse_wake_phrase(text: str) -> str | None:
+    """Return the remaining request, '' for a call alone, or None for no call.
+
+    Match only at the beginning. Ignore spacing/punctuation within the call,
+    but require a boundary after the name so 제이크가/제이크는 are not calls.
+    Keep the request's spacing, quotes, numbers and punctuation intact.
+    """
+    if not isinstance(text, str):
+        return None
     normalized = unicodedata.normalize('NFC', text)
-    return ''.join(
-        char for char in normalized
+    positions = [
+        index for index, char in enumerate(normalized)
         if not char.isspace() and not unicodedata.category(char).startswith('P')
-    ) in ('제이크', '제이크야')
+    ]
+    compact = ''.join(normalized[index] for index in positions)
+    if compact in _WAKE_PHRASES:
+        return ''
+    for phrase in _WAKE_PHRASES:
+        if not compact.startswith(phrase):
+            continue
+        end = positions[len(phrase) - 1] + 1
+        if end == len(normalized) or not (
+                normalized[end].isspace() or normalized[end] in _CALL_DELIMITERS):
+            continue
+        while end < len(normalized) and (
+                normalized[end].isspace() or normalized[end] in _CALL_DELIMITERS):
+            end += 1
+        # Repeating just the name is not a request to publish to the Agent.
+        if compact[len(phrase):] in _WAKE_PHRASES:
+            return None
+        return normalized[end:].strip()
+    return None
+
+
+def is_wake_phrase(text: str) -> bool:
+    """Accept a supported call, optionally followed by a request."""
+    return parse_wake_phrase(text) is not None
 
 
 class LocalWakeRecognizer:
