@@ -76,6 +76,7 @@ TTS의 `STOP_ALL`을 요청하고, 개별 질문은 재생 ID로 제어한다.
 - [STT 명세](../malbut_stt/docs/stt_agent.md) · [TTS 명세](../malbut_tts/docs/tts_agent.md): 각 노드의 입출력과 음성 처리.
 - [낙상 설정·상태 계약](../malbut_agent_server/docs/fall/fall_manager_contract.md): 설정 적용·연결 확인·실행 상태·홈캠 전달용 타입.
 - [VLM 런타임–낙상 규칙 JSON 계약](../malbut_agent_server/docs/fall/fall_runtime.md): 기존 `/malbut/falls/runtime/events`·`decision`은 `std_msgs/msg/String`을 유지한다. JSON 필드와 검증 규칙은 이 문서를 따르며, 확인 대화 Agent는 이 토픽을 직접 사용하지 않는다.
+- [낙상 사건 기록 계약](contracts/fall_events.json): 로봇이 사건 기록에 쓰고 웹이 받는 기록 종류·이유·상태·답·알림 이유와 등급의 원본. 웹은 `malbut_web/scripts/sync-fall-contract.mjs`로 만든 사본을 쓰고, 둘이 다르면 웹 테스트가 실패한다. 새 값은 웹을 먼저 배포한 뒤 로봇이 보낸다.
 
 계약 변경 시 영향받는 발행·수신 노드와 동작 명세, `malbut_test`의 대응 파일을 함께
 갱신한다. 필드·상수는 ROS 정의에서 바꾸고 문서에 독립된 규격을 추가하지 않는다.

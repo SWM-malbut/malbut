@@ -704,6 +704,9 @@ def test_agent_runs_only_the_parts_whose_modules_started(launch_module, started,
     # Speech uses its own Python; the fall rules alone need only ROS.
     prefix = perform_substitutions(context, node.process_description.prefix)
     assert prefix == (sys.executable if speech else '')
+    # The fall rules live in this process, so it comes back after dying.
+    assert node._ExecuteLocal__respawn is True
+    assert node._ExecuteLocal__respawn_delay == 5.0
 
 
 def test_agent_without_a_started_fall_or_speech_module_is_reported(launch_module):
