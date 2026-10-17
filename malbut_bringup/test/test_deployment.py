@@ -189,8 +189,8 @@ def test_robot_fall_rules_and_drive_match_source_without_manager_domain_code():
     rules = 'malbut_agent_server/malbut_agent_server/fall_rules'
     sources = sorted((ROOT.parent / rules).glob('*.py'))
     assert [path.name for path in sources] == [
-        '__init__.py', 'fall_confirmation.py', 'fall_confirmation_link.py',
-        'fall_settings.py', 'fall_settings_link.py', 'node.py']
+        '__init__.py', 'fall_confirmation.py', 'fall_confirmation_link.py', 'fall_flow.py',
+        'fall_flow_link.py', 'fall_settings.py', 'fall_settings_link.py', 'node.py']
     for source in sources:
         assert source.read_bytes() == (ROOT / rules / source.name).read_bytes()
     package = ROOT.parent / 'malbut_fall_approach'

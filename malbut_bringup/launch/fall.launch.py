@@ -26,7 +26,7 @@ ARGUMENTS = [
     'fall_pose_opencv_num_threads', 'fall_pose_allow_spinning', 'rgb_topic', 'odom_topic',
     'depth_topic', 'global_frame', 'fall_depth_aligned_to_rgb', 'fall_depth_camera_info_topic',
     'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_camera_roll_rad', 'fall_approach',
-    'fall_full_view', 'robot_frame',
+    'fall_full_view', 'fall_flow', 'robot_frame',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
 ]
 
@@ -108,7 +108,9 @@ def _setup(context):
                          'mount_height_correction_m': camera_height - MODEL_CAMERA_HEIGHT_M,
                          'approach_enabled': approach_on,
                          # Look at the whole body before asking; needs the approach.
-                         'full_view_enabled': approach_on and value('fall_full_view') == 'true'}],
+                         'full_view_enabled': approach_on and value('fall_full_view') == 'true',
+                         # The one fall check: the same switch goes to the fall rules.
+                         'flow_enabled': value('fall_flow') == 'true'}],
             remappings=[(fall_image_topic, value('rgb_topic'))],
         )
 
@@ -123,7 +125,8 @@ def _setup(context):
             output='screen', arguments=[
                 '--no-speech', '--fall-rules', '--fall-runtime-id', fall_ids['manager'],
                 '--fall-bridge-runtime-id', fall_ids['bridge'],
-                '--fall-vlm-runtime-id', fall_ids['vlm']]))
+                '--fall-vlm-runtime-id', fall_ids['vlm'],
+                *(['--fall-flow'] if value('fall_flow') == 'true' else [])]))
     if approach_on:
         actions.append(Node(
             package='malbut_fall_approach', executable='fall_approach', name='fall_approach',

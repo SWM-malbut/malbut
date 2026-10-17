@@ -82,6 +82,10 @@ class Robot:
         self.flow.asked(incident, answer, self.now)
         return self.take()
 
+    def only(self):
+        incident, = self.flow.incidents.values()
+        return incident
+
     def to_posture(self, compare='same_person'):
         """Approach, compare on arrival, move for the whole body."""
         self.drive('approach')
@@ -203,7 +207,7 @@ def test_case07_not_reaching_the_circle_still_compares_from_where_it_got_to():
     out = robot.drive('view', 'failed')
     assert looks(out, 'arrival')  # Compared again with the whole body in view.
     out = robot.arrival('person_unsure')
-    assert notices(out) == [('person_may_differ', 'check')] and looks(out, 'posture')
+    assert notices(out) == [] and looks(out, 'posture')  # Unsure is not "different" (B).
     out = robot.posture(('unclear', None))
     assert drives(out, 'closer')
 
@@ -254,7 +258,7 @@ def test_case12_no_question_possible_is_an_urgent_alert():
     robot.drive('closer')
     out = robot.ask('failed')
     assert notices(out) == [('robot_could_not_confirm', 'urgent')]
-    assert robot.flow.incidents['i1'].idle == 'person'
+    assert robot.only().idle == 'person'
 
 
 def test_case13_a_reflection_is_dropped_and_never_approached():
@@ -274,7 +278,7 @@ def test_case14_floor_activity_closes_and_is_checked_again_every_30_minutes():
     robot.wait(RECHECK_S - 60)
     robot.see('seen', track='t1')  # Still in view (the VLM keeps reporting it).
     out = robot.wait(60)
-    assert records(out, 'incident_reopened') == ['recheck'] and drives(out, 'approach')
+    assert records(out, 'recheck_started') == ['floor_recheck'] and drives(out, 'approach')
 
 
 def test_case15_a_minute_of_waiting_alerts_then_goes_late_and_reports_the_close():
@@ -301,7 +305,7 @@ def test_case15_a_different_person_found_late_is_checked_and_the_incident_stays_
     robot.posture(('floor', None))
     robot.drive('closer')
     robot.ask('okay')
-    assert robot.flow.incidents['i1'].state == 'open'  # The first person is still unknown.
+    assert robot.only().state == 'open'  # The first person is still unknown.
 
 
 def test_case16_stop_and_help_during_a_check():
@@ -324,11 +328,12 @@ def test_case17_okay_on_the_floor_is_checked_again_after_30_minutes():
     robot.posture(('floor', None))
     robot.drive('closer')
     out = robot.ask('okay')
-    assert records(out, 'incident_resolved') == ['okay'] and not drives(out, 'return')
+    assert records(out, 'incident_resolved') == ['response_completed']
+    assert not drives(out, 'return')
     robot.wait(RECHECK_S - 60)
     robot.see('seen', track='t1')
     out = robot.wait(60)
-    assert records(out, 'incident_reopened') == ['recheck']
+    assert records(out, 'recheck_started') == ['floor_recheck']
 
 
 def test_case18_a_pet_that_left_is_closed_after_looking_again_and_reviewing_the_way():
@@ -341,7 +346,7 @@ def test_case18_a_pet_that_left_is_closed_after_looking_again_and_reviewing_the_
     assert looks(out, 'departure')
     robot.flow.departure_answered(robot.active(), 'animal_left', robot.now)
     out = robot.take()
-    assert records(out, 'incident_resolved') == ['left'] and drives(out, 'return')
+    assert records(out, 'incident_resolved') == ['not_a_person'] and drives(out, 'return')
 
 
 def test_case18_leaving_unseen_stays_open_and_tells_the_guardian():
@@ -353,7 +358,7 @@ def test_case18_leaving_unseen_stays_open_and_tells_the_guardian():
     robot.arrival('gone')
     robot.flow.departure_answered(robot.active(), 'not_seen', robot.now)
     assert notices(robot.take()) == [('left_unseen', 'check')]
-    assert robot.flow.incidents['i1'].idle == 'nobody'
+    assert robot.only().idle == 'nobody'
 
 
 # ------------------------------------------------------------ design decisions
@@ -365,7 +370,7 @@ def test_a_suspicion_that_cannot_be_told_apart_joins_the_open_incident():
     _, out = robot.see(point=None, box=(0.6, 0.1, 0.9, 0.8), view=2)  # Robot moved, no place.
     assert records(out, 'incident_opened') == [] and len(robot.flow.incidents) == 1
     _, out = robot.see('seen', track='t9', point=None)
-    assert 't9' not in robot.flow.incidents['i1'].body.tracks  # A plain sighting never joins.
+    assert 't9' not in robot.only().body.tracks  # A plain sighting never joins.
 
 
 def test_another_place_on_the_map_is_another_person():
@@ -380,9 +385,10 @@ def test_a_fall_while_being_checked_joins_that_check():
     robot.open(track='t1', fall_moment='fall-1')
     robot.drive('approach')
     _, out = robot.see('motion', track='t1', fall_moment='fall-2')
-    assert out == [] and robot.flow.incidents['i1'].fall_moments == ['fall-1', 'fall-2']
+    assert [c['kind'] for c in out] == ['link']
+    assert robot.only().fall_moments == ['fall-1', 'fall-2']
     _, out = robot.see('motion', track='t1', fall_moment='fall-3')
-    assert robot.flow.incidents['i1'].fall_moments == ['fall-1', 'fall-3']  # First and last.
+    assert robot.only().fall_moments == ['fall-1', 'fall-3']  # First and last.
 
 
 def test_a_fall_after_a_close_opens_a_new_incident():
@@ -400,7 +406,7 @@ def test_someone_seen_where_nobody_was_verified_is_checked_again():
     robot.drive('approach')
     robot.arrival('not_visible')
     robot.drive('reverify', 'failed')
-    assert robot.flow.incidents['i1'].idle == 'nobody'
+    assert robot.only().idle == 'nobody'
     _, out = robot.see(track='t5')
     assert drives(out, 'approach') and robot.flow.status()['purpose'] == 'again'
 
@@ -435,7 +441,8 @@ def test_after_a_restart_open_incidents_are_checked_from_the_start():
     flow.restore([incident], 5.0)
     out = flow.drain()
     assert flow.status()['incident_id'] == 'i7' and drives(out, 'approach')
-    assert flow.status()['purpose'] == 'again'
+    assert flow.status()['purpose'] == 'restart'
+    assert records(out, 'recheck_started') == ['agent_restart'] and incident.check_round == 2
 
 
 def test_someone_unseen_for_30_minutes_is_forgotten():
@@ -493,3 +500,194 @@ def test_a_guardian_close_stops_the_check_quietly():
     out = robot.take()
     assert kinds(out, 'stop') and records(out, 'incident_resolved') == ['guardian_closed']
     assert not notices(out) and not drives(out, 'return')
+
+
+# ------------------------------------------------------------ the web record (4-3)
+
+
+def record(commands, event):
+    found = [c for c in kinds(commands, 'record') if c['event'] == event]
+    assert len(found) == 1, (event, found)
+    return found[0]
+
+
+def test_records_carry_the_web_state_round_and_answer():
+    robot = Robot()
+    s, _ = robot.see('motion', track='t1', fall_moment='fall-1')
+    look = looks(robot.log, 'filter')[0]['look_id']
+    robot.flow.filter_answered(s.sighting_id, 'suspect', robot.now, look_id=look)
+    out = robot.take()
+    opened = record(out, 'incident_opened')
+    assert opened['reason'] == 'pose_rapid_posture_change'
+    assert opened['sighting_id'] == s.sighting_id
+    assert (opened['state'], opened['fall_seen'], opened['check_round']) == ('verifying', True, 1)
+    assert record(out, 'analysis_completed')['look_id'] == look  # The filter's explanation.
+    assert record(out, 'approach_started')['reason'] is None
+    robot.to_posture()
+    robot.posture(('floor', 'fall'))
+    assert record(robot.log, 'fall_moment_reviewed')['reason'] == 'fall'
+    robot.drive('closer')
+    out = robot.ask('help')
+    done = record(out, 'confirmation_completed')
+    assert (done['state'], done['answer']) == ('help_required', 'help_request')
+    alert, = kinds(out, 'notify')
+    assert (alert['reason'], alert['state'], alert['answer']) == (
+        'confirmation_help_required', 'help_required', 'help_request')
+
+
+def test_a_stale_look_answer_is_ignored():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.flow.arrival_answered(robot.active(), 'gone', robot.now, look_id='old-look')
+    assert robot.take() == [] and robot.only().step == 'compare'
+
+
+def test_okay_after_a_seen_fall_tells_the_guardian_and_closes():
+    robot = Robot()
+    robot.open('motion', track='t1', fall_moment='fall-1')
+    robot.to_posture()
+    robot.posture(('standing', 'fall'))
+    robot.drive('closer')
+    out = robot.ask('okay')
+    assert notices(out) == [('fall_observed_person_okay', 'info')]
+    assert record(out, 'confirmation_completed')['state'] == 'resolved'
+    order = [c['kind'] for c in out if c['kind'] in ('notify', 'record')]
+    assert order[:2] == ['notify', 'record']
+
+
+def test_closed_after_an_alert_is_told_while_still_open():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    robot.wait(WAIT_ALERT_S)
+    robot.flow.resumed(incident, robot.now)
+    robot.to_posture()
+    out = robot.posture(('furniture', None), ('furniture', None))
+    alert = [c for c in kinds(out, 'notify') if c['reason'] == 'closed_after_alert'][0]
+    assert alert['state'] != 'resolved'  # The web refuses a notice on a resolved state.
+    assert out.index(alert) < out.index(record(out, 'incident_resolved'))
+
+
+def test_a_minute_of_waiting_goes_back_and_starts_again_then_ten_minutes_stop():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.drive('approach')
+    robot.arrival('same_person')
+    robot.flow.blocked(incident, 'manual_drive', robot.now)  # The view drive is refused.
+    out = robot.wait(WAIT_ALERT_S)
+    assert record(out, 'check_not_confirmed')['reason'] == 'waited_manual_drive'
+    assert drives(out, 'approach') and not records(out, 'approach_started')
+    robot.wait(30)
+    robot.flow.resumed(incident, robot.now)  # The drive back starts.
+    assert record(robot.take(), 'revisit_started')['reason'] == 'manual_drive'
+    robot.flow.blocked(incident, 'manual_drive', robot.now)  # Refused again later.
+    out = robot.wait(WAIT_LIMIT_S - WAIT_ALERT_S - 30)
+    assert kinds(out, 'stop') and record(out, 'agent_check_failed')['reason'] == 'time_limit'
+    assert robot.active() is None  # Ten minutes of waiting in all, not per wait.
+
+
+def test_a_helper_standing_where_someone_else_was_keeps_it_open():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.arrival('different_person')
+    robot.drive('view')
+    out = robot.posture(('standing', None), ('standing', None))
+    assert not records(out, 'incident_resolved') and not kinds(out, 'ask')
+    assert robot.only().idle == 'nobody' and robot.only().state == 'open'
+
+
+def test_consent_off_during_the_check_stops_without_a_question():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.flow.arrival_answered(robot.active(), 'guard', robot.now, reason='cloud_consent_missing')
+    out = robot.take()
+    assert records(out, 'analysis_unavailable') == ['cloud_consent_missing']
+    assert not kinds(out, 'ask') and robot.only().idle == 'person' and robot.active() is None
+
+
+def test_a_person_seen_walking_away_closes_as_left_the_spot():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.arrival('gone')
+    robot.drive('reverify')
+    robot.arrival('gone')
+    robot.flow.departure_answered(robot.active(), 'person_walked', robot.now)
+    assert records(robot.take(), 'incident_resolved') == ['left_the_spot']
+
+
+def test_a_guardian_close_after_the_robot_closed_it_stops_rechecking():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    incident = robot.only().incident_id
+    robot.flow.guardian_closed(incident, robot.now)
+    assert records(robot.take(), 'incident_resolved') == ['guardian_closed']
+    robot.flow.guardian_closed(incident, robot.now)  # The web repeats the list.
+    assert robot.take() == []
+    robot.see('seen', track='t1')
+    assert not records(robot.wait(RECHECK_S), 'recheck_started')  # 목업 31번.
+
+
+def test_a_recheck_is_a_new_round_that_alerts_again():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    robot.wait(WAIT_ALERT_S)
+    robot.flow.resumed(incident, robot.now)
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.wait(RECHECK_S - 60)
+    robot.see('seen', track='t1')
+    out = robot.wait(60)
+    started = record(out, 'recheck_started')
+    assert (started['reason'], started['check_round'], started['state']) == (
+        'floor_recheck', 2, 'verifying')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    out = robot.wait(WAIT_ALERT_S)
+    alert, = kinds(out, 'notify')
+    assert (alert['reason'], alert['check_round']) == ('robot_could_not_confirm', 2)  # Decision B.
+
+
+def test_a_suspicion_joining_an_incident_extends_its_clip():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.drive('approach')
+    s, out = robot.see('lying', track='t1')
+    assert kinds(out, 'link') == [
+        dict(kind='link', sighting_id=s.sighting_id, incident_id=incident)]
+    _, out = robot.see('seen', track='t1')
+    assert out == []  # Plain sightings are not clip evidence.
+
+
+def test_someone_merely_in_view_does_not_move_the_incidents_place():
+    # 4-4 replay, bed 10-10 20:43: a box 1 m off moved the place; the next Cloud find at
+    # the first spot then opened a second incident for the same person.
+    robot = Robot()
+    robot.open('cloud', point=(2.0, 1.2))
+    robot.drive('approach')
+    robot.see('seen', track='t7', point=(1.3, 0.6))
+    assert robot.only().body.point == (2.0, 1.2) and 't7' not in robot.only().body.tracks
+    _, out = robot.see('cloud', point=(2.0, 1.2))
+    assert records(out, 'incident_opened') == [] and len(robot.flow.incidents) == 1
+
+
+def test_still_unsure_with_the_whole_body_goes_on_as_the_same_person():
+    # The user, 2026-10-17 (B): only legs at first sight is common; no alert, not kept open.
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.arrival('person_unsure')
+    robot.drive('view')
+    out = robot.arrival('person_unsure')
+    assert not notices(out) and looks(out, 'posture') and not robot.only().keep_open
+    out = robot.posture(('furniture', None), ('furniture', None))
+    assert records(out, 'incident_resolved') == ['off_floor_verified']

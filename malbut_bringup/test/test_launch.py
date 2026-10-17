@@ -784,6 +784,28 @@ def test_the_whole_body_look_is_on_by_default_and_needs_the_approach(
     assert _parameters(context, monitor)['full_view_enabled'] is enabled
 
 
+@pytest.mark.parametrize('overrides,enabled', [
+    ({}, True),  # SWM25-261: the one fall check by default.
+    ({'fall_flow': 'false'}, False),  # The earlier check, kept until the robot is checked.
+])
+def test_one_fall_flow_switch_reaches_the_monitor_and_the_fall_rules(
+        launch_module, fall_config, overrides, enabled):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), **overrides)
+    actions = module._setup(context)
+    monitor, = _nodes(actions, 'malbut-fall-monitor')
+    assert _parameters(context, monitor)['flow_enabled'] is enabled
+    alone = _arguments(context, _nodes(actions, 'agent_communication')[0])
+    agent = _load('agent')
+    ids = {f'fall_{peer}_runtime_id': peer + '-id' for peer in ('manager', 'bridge', 'vlm')}
+    rules_context = _context(agent, **ids, **overrides)
+    rules_context.extend_globals({'malbut_modular_bringup': True,
+                                  'malbut_modules': {'fall': ''}})
+    rules = _arguments(rules_context, _nodes(agent._setup(rules_context),
+                                             'agent_communication')[0])
+    assert ('--fall-flow' in alone) is enabled and ('--fall-flow' in rules) is enabled
+
+
 def test_disabled_fall_never_starts_uploader(launch_module, fall_config):
     module = _load('fall')
     context = _context(module, fall_monitor='false', fall_config=str(fall_config))
