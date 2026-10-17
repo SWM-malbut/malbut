@@ -149,3 +149,21 @@ class FallPlaceLocator:
         if abs(stamp - observed_at) > tolerance_s:
             return None
         return map_point3d(self._frames[stamp], box)
+
+    def camera_near(self, observed_at, *, tolerance_s=0.25):
+        """((x, y) of the camera on the map, unit (x, y) it faces), or None (SWM25-261).
+
+        Where the robot saw something from, and whether a spot is in view while it
+        drives; the optical axis (z) projected on the floor.
+        """
+        if not self._frames:
+            return None
+        stamp = min(self._frames, key=lambda t: abs(t - observed_at))
+        if abs(stamp - observed_at) > tolerance_s:
+            return None
+        geometry = self._frames[stamp]
+        x, y, _ = _rotate(geometry.rotation, (0.0, 0.0, 1.0))
+        length = math.hypot(x, y)
+        if length < 1e-6:
+            return None
+        return ((geometry.translation[0], geometry.translation[1]), (x / length, y / length))

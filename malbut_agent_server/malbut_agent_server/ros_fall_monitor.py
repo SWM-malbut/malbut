@@ -13,6 +13,7 @@ import time
 from uuid import uuid4
 
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
+from malbut_agent_server.application.fall_flow_sensor import FallFlowSensor
 from malbut_agent_server.application.fall_detector_input import (
     FallDetectorInput, bounded_object, ros_stamp,
 )
@@ -88,15 +89,26 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 'approach_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
             full_view = self.declare_parameter(
                 'full_view_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value
-            self.monitor = CloudFallMonitor(
-                device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
-                buffer=FallFrameBuffer(retention_s=settings.retention_s,
-                                       max_bytes=settings.buffer_bytes,
-                                       max_frames=settings.buffer_frames),
-                provider=provider, journal=journal, clock=clock, place_locator=self.place,
-                place_log=self.get_logger().info)
-            self.monitor.approach_enabled = bool(approach)
-            self.monitor.full_view_enabled = bool(full_view)
+            # The one fall check (SWM25-261, Bringup fall_flow): this process only
+            # reports what it sees, runs the Cloud looks the Agent's fall rules ask
+            # for and writes their records. Off: the earlier check, unchanged.
+            self.flow = bool(self.declare_parameter(
+                'flow_enabled', False, descriptor=ParameterDescriptor(read_only=True)).value)
+            buffer = FallFrameBuffer(retention_s=settings.retention_s,
+                                     max_bytes=settings.buffer_bytes,
+                                     max_frames=settings.buffer_frames)
+            if self.flow:
+                self.monitor = FallFlowSensor(
+                    device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
+                    buffer=buffer, provider=provider, journal=journal, clock=clock,
+                    place_locator=self.place)
+            else:
+                self.monitor = CloudFallMonitor(
+                    device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
+                    buffer=buffer, provider=provider, journal=journal, clock=clock,
+                    place_locator=self.place, place_log=self.get_logger().info)
+                self.monitor.approach_enabled = bool(approach)
+                self.monitor.full_view_enabled = bool(full_view)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(
@@ -114,7 +126,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             from malbut_agent_server.application.fall_live_tracking import LiveDiscoveryTracking
             self.tracking = (LiveDiscoveryTracking(
                 self.monitor, tracker_factory, clock=clock, report=self.log_code)
-                if tracker_factory is not None else None)
+                if tracker_factory is not None and not self.flow else None)
             self._last_question_handoff = -float('inf')
             self._events = self.create_publisher(String, '/malbut/falls/runtime/events', 50)
             self._status = self.create_publisher(FallRuntimeStatus, '/malbut/falls/status', 10)
@@ -134,8 +146,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.create_subscription(String, '/malbut/falls/runtime/subject_observation',
                                      self.on_subject, 10)
             self.create_subscription(String, '/malbut/falls/runtime/decision',
-                                     lambda msg: self.guarded('decision_rejected', apply_decision,
-                                                              self.monitor, msg.data), 10)
+                                     self.on_decision, 10)
             # 처리 완료 in the app (cloud_sync, from each state upload's reply): the
             # robot stops checking those incidents. The same list repeats each second.
             self.create_subscription(String, GUARDIAN_CLOSED_TOPIC,
@@ -174,6 +185,13 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.monitor.set_running_missions(
                 mission.capability_id for mission in (*message.active_foreground_missions,
                                                       *message.active_background_missions))
+
+        def on_decision(self, message):
+            if self.flow:
+                self.guarded('decision_rejected', lambda: self.monitor.apply(
+                    bounded_object(message.data)))
+            else:
+                self.guarded('decision_rejected', apply_decision, self.monitor, message.data)
 
         def on_guardian_closed(self, data):
             ids = bounded_object(data).get('incident_ids')
@@ -288,12 +306,16 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                              source_now=self.source_now(), now=clock())
 
         def on_answer(self, message):
+            if self.flow:
+                return  # The Agent's fall rules ask and decide; no separate reply path.
             self.control.refresh()
             reply = self.guarded('agent_reply_invalid', parse_agent_reply, message.data)
             if reply is not None:
                 self.guarded('agent_reply_rejected', self.monitor.agent_reply, reply)
 
         def on_subject(self, message):
+            if self.flow:
+                return
             self.control.refresh()
             observation = self.guarded('subject_observation_invalid',
                                        parse_subject_observation, message.data)
@@ -318,6 +340,12 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
 
         def publish_events(self):
             self.monitor.flush_people()
+            if self.flow:
+                for message in self.monitor.drain_events():
+                    self._events.publish(String(data=json.dumps(
+                        dict(message, boot_id=self.monitor.boot_id, runtime_id=self.runtime_id),
+                        allow_nan=False)))
+                return
             events = list(self.monitor.drain_events())
             if clock() - self._last_question_handoff >= 1.0:
                 self._last_question_handoff = clock()

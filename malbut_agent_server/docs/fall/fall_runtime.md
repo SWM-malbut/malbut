@@ -521,6 +521,39 @@ ROS 처리 루프에서 업로드를 기다리지 않는다. 직접 `malbut-fall
 워커도 별도로 실행해야 한다. 설정 및 밀린 알림 주의 사항은 Bringup README의
 「사건 기록·클립 자동 업로드」를 따른다.
 
+### 하나로 합친 확인의 VLM ↔ 낙상 규칙 (2026-10-17, SWM25-261, Bringup `fall_flow`)
+
+`fall_flow`가 켜져 있으면 VLM은 `CloudFallMonitor` 대신 `application/fall_flow_sensor.py`
+(`FallFlowSensor`)를 쓴다. VLM은 본 것을 알리고, 낙상 규칙이 요청한 Cloud 확인을 하고, 낙상 규칙이 정한
+기록·알림을 장부에 웹 형식 그대로 적는다. 사건을 열거나 닫는 판단은 하지 않는다. 동의·연결 가드는 그대로라
+막혀 있으면 Cloud 확인에 `guard`로 답하고 낙상 규칙은 묻지 않는다. 남은 거름은 측정 하나뿐이다(Cloud가 찾은
+몸이 바닥에서 30 cm보다 높은 곳에 있으면 알리지 않음, 2026-10-09 침대). 길은 같은 두 토픽(`std_msgs/String`
+JSON)이고, VLM이 보내는 메시지에는 `boot_id`·`runtime_id`가 붙는다.
+
+VLM → 낙상 규칙(`/malbut/falls/runtime/events`)
+
+| kind | 필드 | 언제 |
+|---|---|---|
+| `fall_sighting` | `sighting`: `sighting_id`, `at`(단조 시계 초), `kind`(low·lying·motion·cloud·up·seen), `track`, `point`[x, y](지도), `box`[0~1], `view`(로봇이 멈춰 있던 구간 번호), `robot`[x, y], `on_floor`, `photo`, `fall_moment` | YOLO-Pose 후보, Cloud 정기 확인의 발견(넘어짐이면 그 12장이 `fall_moment`), 일어섬(`up`), 보이는 사람마다 2초에 한 번(`seen`) |
+| `fall_look_result` | `look_id`, `what`(filter·arrival·departure·posture), `sighting_id` 또는 `incident_id`, `verdict`, `earlier`(넘어지는 순간 사진을 같이 본 자세만), `reason` | 요청한 Cloud 확인의 답. Cloud 오류 `failed`, 가드 `guard`. 모델 설명은 VLM이 장부용으로 가짐 |
+| `flow_ready` | `flow`, `open_incidents`(`incident_id`, `first`, `check_round`, `fall_moments`), `recent`(최근 60초 의심 발견) | `flow_hello`에 대한 답(Agent 재시작 이어받기) |
+| `guardian_closed` | `incident_id` | 앱에서 처리 완료(10초에 한 번까지) |
+
+낙상 규칙 → VLM(`/malbut/falls/runtime/decision`)
+
+| action | 필드 | VLM이 하는 일 |
+|---|---|---|
+| `look` | `look_id`, `what`, `sighting_id`(filter) 또는 `incident_id`, `photo`·`before`, `box`, `track`, `fall_moments`, `ordinary_drops` | 처음 거르기는 예전 사건 확인 요청(`incident`), 도착 비교·떠난 것·자세는 #286의 새 요청. 사진이 없으면(재시작) 도착 비교는 사람만 확인, 떠난 것은 `not_seen`, 자세의 `earlier`는 `unknown` |
+| `record` | `event`, `incident_id`, `reason`, `state`, `fall_seen`, `answer`, `check_round`, `look_id`, `sighting_id` | 장부에 웹 사건 기록으로 적음(`checkRound` 포함). `incident_id`가 없으면(거른 후보) 업로드하지 않는 로컬 표에만 |
+| `notify` | `incident_id`, `reason`, `level`, `state`, `fall_seen`, `answer`, `check_round` | `notification_requested` |
+| `link` | `sighting_id`, `incident_id` | 사건에 붙은 의심 발견으로 클립 구간을 늘림 |
+| `flow_hello` | `flow` | `flow_ready`로 답함 |
+
+사진은 VLM 메모리에만 둔다: 의심 발견마다 1장(박스와 함께), 넘어지는 순간 5초 12장(YOLO-Pose는 앞 4초~뒤
+1초), 사건을 연 뒤 의심 지점이 화면 안일 때 1초에 1장(최대 10분, 120장까지 솎음). 사건이 닫히면 넘어지는 순간과
+가는 동안 사진을 지우고, 처음 사진은 30분 뒤 지운다. 열린 사건의 처음 발견은 장부의 로컬 표(`flow_incidents`)에
+남겨 VLM이 다시 켜져도 이어받게 한다. 기록마다 그 사건을 연 부팅의 `boot_id`를 쓴다.
+
 ## 남은 제한과 검증
 
 - Cloud 주기적 확인에서 사람별 위치를 받아 촬영 시각별 Pose 관측과 연결한다.

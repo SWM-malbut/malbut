@@ -80,6 +80,15 @@ class SqliteFallJournal:
                 next_attempt_at REAL NOT NULL DEFAULT 0,
                 last_error TEXT,
                 UNIQUE(incident_id, segment_index));
+            CREATE TABLE IF NOT EXISTS flow_incidents(
+                incident_id TEXT PRIMARY KEY,
+                boot_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                open INTEGER NOT NULL DEFAULT 1,
+                check_round INTEGER NOT NULL DEFAULT 1);
+            CREATE TABLE IF NOT EXISTS flow_notes(
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                payload TEXT NOT NULL);
         ''')
         try:
             self._db.execute('BEGIN IMMEDIATE')
@@ -147,6 +156,72 @@ class SqliteFallJournal:
         self._db.execute('UPDATE incident_events SET payload=? WHERE sequence=?',
                          (json.dumps(payload, separators=(',', ':'), ensure_ascii=False),
                           cursor.lastrowid))
+
+    # ------------------------------------------------------------ the one check (SWM25-261)
+
+    def append_flow_event(self, *, device_id, boot_id, event_id, incident_id, kind, state,
+                          fall_seen, assessment, answer, reason, notification_level=None,
+                          check_round=1, analysis=None):
+        """One record of the Agent's fall rules, in the web's words (fall_events.json)."""
+        if device_id != self.device_id:
+            raise ValueError('journal identity mismatch')
+        occurred = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(
+            timespec='milliseconds').replace('+00:00', 'Z')
+        payload = dict(
+            schemaVersion=1, eventId=event_id, incidentId=incident_id, bootId=boot_id,
+            sequence=0, evidenceRevision=check_round, occurredAt=occurred, eventKind=kind,
+            state=state, fallSeen=fall_seen, assessment=assessment, answer=answer,
+            reason=reason, notificationLevel=notification_level, checkRound=check_round)
+        if analysis is not None:
+            payload['analysis'] = analysis.metadata()
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                'INSERT INTO incident_events(event_id,incident_id,payload) VALUES(?,?,?)',
+                (event_id, incident_id, '{}'))
+            payload['sequence'] = cursor.lastrowid
+            self._db.execute('UPDATE incident_events SET payload=? WHERE sequence=?',
+                             (json.dumps(payload, separators=(',', ':'), ensure_ascii=False,
+                                         allow_nan=False), cursor.lastrowid))
+
+    def save_flow_incident(self, *, incident_id, boot_id, payload):
+        """What a restarted Agent needs to check an open incident again (flow_ready)."""
+        with self._lock, self._db:
+            self._db.execute(
+                'INSERT OR IGNORE INTO flow_incidents(incident_id,boot_id,payload) VALUES(?,?,?)',
+                (incident_id, boot_id, json.dumps(payload, separators=(',', ':'),
+                                                  allow_nan=False)))
+
+    def flow_incident(self, incident_id):
+        with self._lock:
+            row = self._db.execute(
+                'SELECT boot_id,payload,open,check_round FROM flow_incidents WHERE incident_id=?',
+                (incident_id,)).fetchone()
+        if row is None:
+            return None
+        return dict(boot_id=row['boot_id'], payload=json.loads(row['payload']),
+                    open=bool(row['open']), check_round=row['check_round'])
+
+    def mark_flow_incident(self, incident_id, *, open, check_round):
+        with self._lock, self._db:
+            self._db.execute('UPDATE flow_incidents SET open=?,check_round=? WHERE incident_id=?',
+                             (int(bool(open)), check_round, incident_id))
+
+    def open_flow_incidents(self, limit=64):
+        with self._lock:
+            rows = self._db.execute(
+                'SELECT incident_id,boot_id,payload,check_round FROM flow_incidents WHERE open=1 '
+                'ORDER BY rowid DESC LIMIT ?', (limit,)).fetchall()
+        return [dict(incident_id=r['incident_id'], boot_id=r['boot_id'],
+                     payload=json.loads(r['payload']), check_round=r['check_round'])
+                for r in reversed(rows)]
+
+    def append_flow_note(self, payload):
+        """Local only, never uploaded: what the fall rules dropped before an incident."""
+        with self._lock, self._db:
+            self._db.execute('INSERT INTO flow_notes(payload) VALUES(?)', (json.dumps(
+                dict(payload, at=self._clock()), separators=(',', ':'), allow_nan=False),))
+            self._db.execute('DELETE FROM flow_notes WHERE sequence <= '
+                             '(SELECT MAX(sequence) FROM flow_notes) - 4096')
 
     def pending(self):
         with self._lock:
