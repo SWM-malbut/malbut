@@ -8,8 +8,11 @@ from collections import OrderedDict
 from dataclasses import dataclass
 import math
 
-STANDOFF_M = 1.0
 APPROACH_LIMIT_S = 60.0
+# The approach stops on the circle around the spot on the side it was first seen
+# from, so the photos before and after show the same side (the user, 2026-10-17).
+# Looking again from where it was first seen asks for that whole distance.
+APPROACH_STANDOFF_MAX_M = 10.0
 RETURN_LIMIT_S = 60.0
 # Only part of the body was seen from 1 m (2026-10-11): move back to the
 # distance the fall rules ask for, within the user's one minute.
@@ -40,10 +43,6 @@ BACKUP_FACING_RAD = math.radians(30.0)
 BACKUP_MIN_M = 0.1
 # revisit: back from the spot after waiting, the guardian told what it saw (2026-10-12).
 RETURN_REASONS = ('not_a_person', 'off_floor', 'revisit')
-# No path to the spot itself (inside furniture or a keepout edge): try points
-# pulled back toward the robot, like the follower's goal pullback.
-PULLBACK_STEP_M = 0.5
-PULLBACK_TRIES = 2
 FACE_TOLERANCE_RAD = 0.10
 PHASES = ('approach', 'view', 'return', 'hold')
 # A fall check keeps a HIGH mission the whole time (the user, 2026-10-13): approach
@@ -65,19 +64,31 @@ def normalize_angle(angle):
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-def goal_error(phase, x, y, standoff_m, reason=''):
-    """Why a goal cannot be accepted, or None."""
+def goal_error(phase, x, y, standoff_m, reason='', from_x=math.nan, from_y=math.nan):
+    """Why a goal cannot be accepted, or None. ``from_x``/``from_y`` NaN mean unknown."""
     if phase not in PHASES:
         return 'phase must be approach, view, return or hold'
     values = (x, y, standoff_m)
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
            for v in values):
         return 'coordinates must be finite numbers'
-    if phase in ('approach', 'view') and not 0.3 <= standoff_m <= 3.0:
-        return 'standoff must be within 0.3-3.0 m'
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or math.isinf(v)
+           for v in (from_x, from_y)):
+        return 'the first-seen point must be finite numbers, or NaN when unknown'
+    if phase == 'approach' and not 0.3 <= standoff_m <= APPROACH_STANDOFF_MAX_M:
+        return f'standoff must be within 0.3-{APPROACH_STANDOFF_MAX_M:.0f} m'
+    if phase == 'view' and not 0.3 <= standoff_m <= VIEW_RADII_M[-1]:
+        return f'view distance must be within 0.3-{VIEW_RADII_M[-1]:.1f} m'
     if reason not in ('', *RETURN_REASONS) or (reason and phase != 'return'):
         return 'reason must be not_a_person, off_floor or revisit, on a return only'
     return None
+
+
+def first_seen(from_x, from_y, robot):
+    """Where the suspicion was first seen from, or the robot's position when unknown."""
+    if _number(from_x) and _number(from_y):
+        return (float(from_x), float(from_y))
+    return (robot.x, robot.y)
 
 
 @dataclass(frozen=True)
@@ -128,22 +139,38 @@ def sight_clear(grid, point, target):
     return True
 
 
-def view_places(robot, target, distance):
-    """Where the body may be seen from, nearest ring first, at most ``distance`` away.
-
-    Each ring starts straight back from the spot (seen from the robot's side)
-    and goes around it both ways.
-    """
-    base = math.atan2(robot[1] - target[1], robot[0] - target[0])
+def ring_places(reference, target, radius):
+    """Places on the circle around the spot: straight back toward ``reference``
+    first, then around it both ways, ending on the opposite side."""
+    base = math.atan2(reference[1] - target[1], reference[0] - target[0])
     steps = int(round(180.0 / VIEW_TURN_STEP_DEG))
     turns = [0.0]
     for k in range(1, steps):
         turns += [k * VIEW_TURN_STEP_DEG, -k * VIEW_TURN_STEP_DEG]
     turns.append(180.0)
     return [(target[0] + radius * math.cos(base + math.radians(turn)),
-             target[1] + radius * math.sin(base + math.radians(turn)))
-            for radius in VIEW_RADII_M if BODY_CLEAR_M < radius <= distance + 1e-9
-            for turn in turns]
+             target[1] + radius * math.sin(base + math.radians(turn))) for turn in turns]
+
+
+def view_places(robot, target, distance):
+    """Where the body may be seen from, nearest ring first, at most ``distance`` away.
+
+    Each ring starts straight back from the spot (seen from the robot's side)
+    and goes around it both ways.
+    """
+    return [place for radius in VIEW_RADII_M if BODY_CLEAR_M < radius <= distance + 1e-9
+            for place in ring_places(robot, target, radius)]
+
+
+def approach_places(reference, target, standoff_m):
+    """Where to stop: the standoff circle from the first-seen side, then wider circles.
+
+    The wider ones are where the whole body is looked for; with the standoff
+    circle blocked (furniture, a closed door) the robot looks from the nearest
+    of them it can reach (the user, 2026-10-17).
+    """
+    return [place for radius in (standoff_m, *(r for r in VIEW_RADII_M if r > standoff_m + 1e-9))
+            for place in ring_places(reference, target, radius)]
 
 
 def within_detour(robot, goal, length):
@@ -159,55 +186,6 @@ def backup_distance(robot, target, distance):
     off = normalize_angle(math.atan2(target[1] - robot.y, target[0] - robot.x) - robot.yaw)
     back = distance - gap
     return back if abs(off) <= BACKUP_FACING_RAD and back >= BACKUP_MIN_M else 0.0
-
-
-def plan_targets(robot, target):
-    """The spot first, then points pulled back toward the robot, never past it."""
-    targets = [target]
-    dx, dy = robot[0] - target[0], robot[1] - target[1]
-    gap = math.hypot(dx, dy)
-    for step in range(1, PULLBACK_TRIES + 1):
-        pulled = step * PULLBACK_STEP_M
-        if pulled >= gap - STANDOFF_M:
-            break
-        targets.append((target[0] + dx / gap * pulled, target[1] + dy / gap * pulled))
-    return targets
-
-
-def standoff_route(points, target, standoff_m):
-    """Nav2's route up to where it first comes within standoff_m of the spot.
-
-    The follower's path_to_standoff rule on plain (x, y) points, so this
-    package does not pull the tracking package (and its detectors) in.
-    """
-    if not points:
-        return []
-    route = [points[0]]
-    if math.dist(points[0], target) <= standoff_m:
-        return route
-    for start, end in zip(points, points[1:]):
-        fraction = _circle_entry(start, end, target, standoff_m)
-        if fraction is not None:
-            route.append((start[0] + fraction * (end[0] - start[0]),
-                          start[1] + fraction * (end[1] - start[1])))
-            return route
-        route.append(end)
-    return route
-
-
-def _circle_entry(start, end, centre, radius):
-    """First fraction of the segment on the circle, or None."""
-    dx, dy = end[0] - start[0], end[1] - start[1]
-    ox, oy = start[0] - centre[0], start[1] - centre[1]
-    a = dx * dx + dy * dy
-    b = 2.0 * (ox * dx + oy * dy)
-    c = ox * ox + oy * oy - radius * radius
-    discriminant = b * b - 4.0 * a * c
-    if a <= 1e-18 or discriminant < 0.0:
-        return None
-    root = math.sqrt(discriminant)
-    hits = [t for t in ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)) if 0.0 <= t <= 1.0]
-    return min(hits) if hits else None
 
 
 def route_length(points):
