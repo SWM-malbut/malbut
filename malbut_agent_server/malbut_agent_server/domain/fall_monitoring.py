@@ -567,10 +567,41 @@ class PersonCheckRequest:
 
 @dataclass(frozen=True)
 class PostureCheckRequest:
-    """Frames from where the robot sees the whole body; asks where the body rests."""
+    """Frames from where the robot sees the whole body; asks where the body rests.
+
+    ``fall_moments``: frames from when a fall was seen (YOLO-Pose or Cloud), at
+    most two, sent first so Cloud also says whether that was a fall (2026-10-17).
+    """
 
     request_id: str
     window: FrameWindow = field(repr=False)
+    fall_moments: Tuple[FrameWindow, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True)
+class ArrivalCheckRequest:
+    """The first sight of a suspicion and the robot's view on arriving there.
+
+    ``before_box`` marks what was suspected (normalized left, top, right,
+    bottom), None when it was not measured. The robot faces the spot in
+    ``after``, so it is near the image centre.
+    """
+
+    request_id: str
+    before: FrameWindow = field(repr=False)
+    before_box: Optional[Tuple[float, float, float, float]]
+    after: FrameWindow = field(repr=False)
+
+
+@dataclass(frozen=True)
+class DepartureCheckRequest:
+    """What was suspected is gone: the frames between first sight and arrival."""
+
+    request_id: str
+    before: FrameWindow = field(repr=False)
+    before_box: Optional[Tuple[float, float, float, float]]
+    middle: FrameWindow = field(repr=False)
+    after: FrameWindow = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -602,19 +633,58 @@ class SamePersonCheckReply:
             raise ValueError('invalid same person check reply')
 
 
+POSTURE_VERDICTS = ('furniture', 'standing', 'floor_active', 'floor', 'unclear')
+EARLIER_VERDICTS = ('fall', 'self', 'unknown')
+ARRIVAL_VERDICTS = ('same_person', 'person_unsure', 'different_person', 'same_object', 'gone',
+                    'not_visible')
+DEPARTURE_VERDICTS = ('animal_left', 'person_walked', 'person_crawled', 'not_seen')
+
+
+def _explanation(value):
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= 1000
+
+
 @dataclass(frozen=True)
 class PostureCheckReply:
     """furniture: on a bed, chair or sofa; standing; floor_active: sitting upright on the
-    floor, busy with something; floor: otherwise sitting, kneeling or lying on it."""
+    floor, busy with something; floor: otherwise sitting, kneeling or lying on it.
+
+    ``earlier``, only when fall moments were sent: fall, self (a controlled
+    movement) or unknown. Cloud reports both; the fall rules decide.
+    """
+
+    verdict: str
+    explanation: str
+    earlier: Optional[str] = None
+
+    def __post_init__(self):
+        if (self.verdict not in POSTURE_VERDICTS or not _explanation(self.explanation)
+                or (self.earlier is not None and self.earlier not in EARLIER_VERDICTS)):
+            raise ValueError('invalid posture check reply')
+
+
+@dataclass(frozen=True)
+class ArrivalCheckReply:
+    """What is at the spot on arrival compared with the first sight; never identity."""
 
     verdict: str
     explanation: str
 
     def __post_init__(self):
-        if (self.verdict not in ('furniture', 'standing', 'floor_active', 'floor', 'unclear')
-                or not isinstance(self.explanation, str) or not self.explanation.strip()
-                or len(self.explanation) > 1000):
-            raise ValueError('invalid posture check reply')
+        if self.verdict not in ARRIVAL_VERDICTS or not _explanation(self.explanation):
+            raise ValueError('invalid arrival check reply')
+
+
+@dataclass(frozen=True)
+class DepartureCheckReply:
+    """What was seen leaving the spot between first sight and arrival."""
+
+    verdict: str
+    explanation: str
+
+    def __post_init__(self):
+        if self.verdict not in DEPARTURE_VERDICTS or not _explanation(self.explanation):
+            raise ValueError('invalid departure check reply')
 
 
 @dataclass(frozen=True)
