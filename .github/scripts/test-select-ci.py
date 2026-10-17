@@ -225,6 +225,13 @@ class SpeechSelectionTests(unittest.TestCase):
         self.assertTrue({'malbut_yolo', 'malbut_tracking'}
                         <= set(result['ros_packages'].split()))
 
+    def test_fall_contract_selects_web_and_offline_fall_tests_only(self):
+        for prefix in ('', 'malbut_test/'):
+            with self.subTest(prefix=prefix):
+                result = SELECTOR.selection([f'{prefix}malbut_interfaces/contracts/fall_events.json'])
+                self.assertEqual((result['web'], result['fall_python'], result['ros']),
+                                 ('true', 'true', 'false'))
+
     def test_homecam_is_retested_for_its_new_settings_messages(self):
         for prefix in ('', 'malbut_test/'):
             for name in ('FallSettingsSnapshot', 'FallSettingsReport'):
