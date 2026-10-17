@@ -6,14 +6,22 @@
 이 노드는 요청받은 주행만 한다. 질문이나 알림은 하지 않는다.
 2026-10-11(SWM25-238)까지는 `malbut_fall_coordinator` 패키지 안에 있었고 동작은 그대로다.
 
-- Action `/malbut/falls/approach`(`FallApproach`): `phase` = `approach`(1 m 앞, 의심 장소를 바라봄),
+- Action `/malbut/falls/approach`(`FallApproach`): `phase` = `approach`(1 m 앞, 처음 본 쪽에서 의심 장소를 바라봄),
   `view`(요청한 거리로 물러남), `return`(질문 ID별로 기억한 시작 위치로), `hold`(움직이지 않고 HIGH만 쥠).
 - 낙상 확인 내내 Manager에 HIGH 미션을 둔다(2026-10-13 사용자). `approach`·`view`는 끝나면 결과를 feedback
   (`phase=HOLDING`, `outcome`, `detail`)으로 먼저 내고, 취소될 때까지 움직이지 않고 기다린다(최대 660초).
   낙상 규칙이 다음 단계를 보내면 Manager가 이 미션을 대신하고, 확인이 끝나면 낙상 규칙이 취소한다.
   `hold`는 바로 `HOLDING`으로 기다린다. 노드가 꺼질 때는 기다림을 바로 끝낸다.
-- ComputePathToPose(GridBased, 금지 구역 반영) → 1 m 원에서 경로를 자름(`standoff_route`) →
-  FollowPath → Spin으로 바라봄. 이동마다 60초 상한.
+- `approach`: 의심 장소 둘레 `standoff_m`(보통 1 m) 원 위 30°마다 12자리를, 낙상 의심을 처음 봤을 때 로봇이
+  있던 쪽(`from_x`·`from_y`)부터 양쪽으로 돌아가며 고른다(2026-10-17 사용자 결정). 같은 쪽에서 봐야 가기 전·후
+  사진을 비교할 수 있기 때문이다. 처음 본 자리를 모르면(NaN, Manager 기본값) 지금 로봇 위치 쪽부터.
+  - 설 수 있고(253 밖) 의심 장소가 보이는(254 없음) 자리만, 순서대로 ComputePathToPose(GridBased, 금지 구역 반영)
+    → FollowPath → Spin으로 바라봄. 가는 길은 장애물을 돌아가도 된다. 주행이 실패하면 다음 자리로 간다.
+  - `standoff_m` 원에 갈 자리가 없으면 몸 전체 보기의 더 넓은 원(1.5·2·2.5·3 m)에서 같은 순서로 찾고
+    (`arrived`, `detail`에 거리), 계획은 최대 24곳. 끝내 못 가면 지금 자리에서 의심 장소를 바라보고
+    `no_path`(경로 없음) 또는 `failed`(주행 실패). 그다음은 낙상 규칙이 정한다.
+  - 처음 본 자리에서 다시 볼 때는 `standoff_m`을 처음 자리까지의 거리로 보내 그 자리가 첫 후보가 된다
+    (`approach`는 최대 10 m, `view`는 최대 3 m). 이동마다 60초 상한.
 - 복귀는 저장한 출발 위치를 NavigateToPose에 전달해 Nav2의 재계획·복구를 사용하고,
   도착 후 Spin으로 출발 방향을 복원한다. 이동마다 60초 상한.
 - `view`: 자세 감지(`poses_topic`, 기본 `/homecam/person_poses`, 초당 약 5장, 움직이는 중에도 돈다)를 보면서

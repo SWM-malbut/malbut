@@ -1,13 +1,12 @@
 """Drive 1 m in front of an uncertain fall suspicion, facing it, or back.
 
-The Manager runs this as the NORMAL `fall_approach` mission holding BASE: it
-takes over a patrol or a drive, never 직접 움직이기 (HIGH).
-Nav2 plans around keepout zones (GridBased planner); the follower's path
-standoff rule stops the robot on the 1 m circle. No question or alert here: the
+The Manager runs this as the HIGH `fall_approach` mission holding BASE: it
+takes over a patrol or a drive, never 직접 움직이기 (URGENT).
+Nav2 plans around keepout zones (GridBased planner) to a place on the 1 m circle,
+on the side the suspicion was first seen from. No question or alert here: the
 Agent's fall rules ask the fall runtime to look once the robot has arrived.
 """
 
-from copy import deepcopy
 import json
 import math
 import signal
@@ -21,7 +20,6 @@ from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FallApproach
 from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin
 from nav2_msgs.msg import Costmap
-from nav_msgs.msg import Path
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -35,8 +33,8 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from malbut_fall_approach.fall_approach import (
     APPROACH_LIMIT_S, BACKUP_SPEED_MPS, CAMERA_HFOV_RAD,
     HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid,
-    Pose2D, StartPoses, TorsoWatch, backup_distance, can_stand, facing_turn, goal_error,
-    plan_targets, returning_turn, route_length, sight_clear, standoff_route, target_pose,
+    Pose2D, StartPoses, TorsoWatch, approach_places, backup_distance, can_stand, facing_turn,
+    first_seen, goal_error, returning_turn, route_length, sight_clear, target_pose,
     UNSEEN_VIEW_M, view_places, within_detour,
 )
 
@@ -53,6 +51,8 @@ BEST_RESERVE_S = 15.0
 BEST_NEAR_M = 0.3
 # Places planned at most, nearest by straight line first (each is one planner call).
 VIEW_PLANS = 12
+# An approach plans at most the 1 m circle and one wider circle, first-seen side first.
+APPROACH_PLANS = 24
 MAX_POSES_BYTES = 262144
 SEEN = object()  # A drive or turn stopped because the torso came into view.
 
@@ -71,19 +71,6 @@ class Seen(Exception):
 
 def _yaw(q):
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-
-
-def route_path(path, route, target):
-    """Nav2's poses along the route, the last one moved onto its end facing the spot."""
-    cut = Path()
-    cut.header = deepcopy(path.header)
-    cut.poses = [deepcopy(pose) for pose in path.poses[:len(route)]]
-    last = cut.poses[-1].pose
-    last.position.x, last.position.y = route[-1]
-    yaw = math.atan2(target[1] - route[-1][1], target[0] - route[-1][0])
-    last.orientation.x = last.orientation.y = 0.0
-    last.orientation.z, last.orientation.w = math.sin(yaw * 0.5), math.cos(yaw * 0.5)
-    return cut
 
 
 class FallApproachNode(Node):
@@ -139,7 +126,8 @@ class FallApproachNode(Node):
             callback_group=self.group)
 
     def _goal(self, request):
-        if goal_error(request.phase, request.x, request.y, request.standoff_m, request.reason):
+        if goal_error(request.phase, request.x, request.y, request.standoff_m, request.reason,
+                      request.from_x, request.from_y):
             return GoalResponse.REJECT
         if not request.request_id or len(request.request_id) > 200 or self.busy.locked():
             return GoalResponse.REJECT
@@ -188,31 +176,46 @@ class FallApproachNode(Node):
     # ------------------------------------------------------------ phases
 
     def _approach(self, handle, request, deadline):
+        """Stop on the circle around the spot, on the side it was first seen from.
+
+        The same side, so the photos before and after can be compared (the
+        user, 2026-10-17): places on the standoff circle go round from that
+        side, then the wider circles of the view. A place has to stand clear and
+        see the spot on the costmap; a failed drive moves on to the next one.
+        With none reached the robot faces the spot from where it is, and the
+        fall rules decide what to do there.
+        """
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
         self.starts.remember(request.request_id, robot)
         target = (request.x, request.y)
-        path = None
-        for goal in plan_targets((robot.x, robot.y), target):
-            path = self._plan(handle, robot, goal, deadline)
-            if path is not None:
-                break
-        if path is None:
-            return 'no_path', 'no path near the spot'
-        route = standoff_route([(p.pose.position.x, p.pose.position.y) for p in path.poses],
-                               target, request.standoff_m)
-        if len(route) >= 2 and route_length(route) > 0.05:
-            self._feedback(handle, 'DRIVING')
-            if not self._drive(handle, route_path(path, route, target), deadline):
-                return 'failed', 'Nav2 did not finish the path'
-        robot = self._pose() or robot
-        turn = facing_turn(robot, target)
-        if turn:
-            self._feedback(handle, 'TURNING')
-            if not self._spin(handle, turn, deadline):
+        places = approach_places(first_seen(request.from_x, request.from_y, robot), target,
+                                 request.standoff_m)
+        grid = self.grid
+        if grid is not None:
+            places = [p for p in places if can_stand(grid, p) and sight_clear(grid, p, target)]
+        planned = False
+        for place in places[:APPROACH_PLANS]:
+            path = self._plan(handle, robot, place, deadline,
+                              yaw=math.atan2(target[1] - place[1], target[0] - place[0]))
+            if path is None:
+                continue
+            planned = True
+            if len(path.poses) >= 2:
+                self._feedback(handle, 'DRIVING')
+                if not self._drive(handle, path, deadline):
+                    continue
+            radius = math.dist(place, target)
+            if self._turn_to(handle, target, deadline) is not True:
                 return 'arrived', 'could not turn to face the spot'
-        return 'arrived', ''
+            if abs(radius - request.standoff_m) < 0.01:
+                return 'arrived', ''
+            return 'arrived', f'{radius:.1f} m from the spot'
+        self._turn_to(handle, target, deadline)
+        if planned:
+            return 'failed', 'Nav2 did not reach a place around the spot; facing it from here'
+        return 'no_path', 'no place around the spot; facing it from here'
 
     def _view(self, handle, request, deadline):
         """Move until the person's torso is in view, at most standoff_m from the spot.

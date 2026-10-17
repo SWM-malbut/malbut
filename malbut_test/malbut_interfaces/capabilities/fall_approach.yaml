@@ -3,7 +3,7 @@ schema_version: 1
 capability:
   id: fall_approach
   title: 낙상 의심 장소 확인하러 가기
-  description: 사람인지 확실하지 않은 낙상 의심 장소 1 m 앞까지 금지 구역을 피해 가서 바라보거나, 몸 일부만 보이면 몸통이 보일 때까지 물러나거나 둘러보거나, 확인 뒤 원래 자리로 돌아간다.
+  description: 사람인지 확실하지 않은 낙상 의심 장소 1 m 앞(처음 본 쪽)까지 금지 구역을 피해 가서 바라보거나, 몸 일부만 보이면 몸통이 보일 때까지 물러나거나 둘러보거나, 확인 뒤 원래 자리로 돌아간다.
 
 command:
   kind: ACTION
@@ -28,8 +28,16 @@ input:
       default: 0.0
     standoff_m:
       type: float64
-      description: 의심 장소 앞에서 멈출 거리(m)
+      description: 의심 장소 앞에서 멈출 거리(m). approach는 최대 10 m(처음 본 자리에서 다시 보기), view는 최대 3 m
       default: 1.0
+    from_x:
+      type: float64
+      description: 낙상 의심을 처음 봤을 때 로봇이 있던 지도 x 좌표(m). approach에서 원 위 멈출 자리를 이쪽부터 고름. 모르면 NaN(로봇 지금 위치 기준)
+      default: .nan
+    from_y:
+      type: float64
+      description: 낙상 의심을 처음 봤을 때 로봇이 있던 지도 y 좌표(m). 모르면 NaN
+      default: .nan
     reason:
       type: string
       description: 돌아가는 이유(return만) — not_a_person, off_floor 또는 revisit(기다린 뒤 다시 가서 보고 알림만 보냄)

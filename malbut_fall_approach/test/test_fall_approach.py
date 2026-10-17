@@ -5,15 +5,9 @@ import math
 import pytest
 
 from malbut_fall_approach.fall_approach import (
-    PULLBACK_STEP_M, Pose2D, StartPoses, facing_turn, goal_error, plan_targets, returning_turn,
-    route_length, standoff_route,
+    Pose2D, StartPoses, approach_places, facing_turn, first_seen, goal_error, returning_turn,
+    ring_places,
 )
-
-
-def test_pullback_targets_never_pass_the_robot():
-    assert plan_targets((5.0, 0.0), (0.0, 0.0)) == [
-        (0.0, 0.0), (PULLBACK_STEP_M, 0.0), (2 * PULLBACK_STEP_M, 0.0)]
-    assert plan_targets((1.4, 0.0), (0.0, 0.0)) == [(0.0, 0.0)]
 
 
 def test_turns_face_the_spot_and_restore_the_start_heading():
@@ -39,14 +33,39 @@ def test_goal_validation_and_start_poses_are_bounded():
     assert starts.get('b') is None
 
 
-def test_the_route_stops_where_it_first_enters_the_standoff_circle():
-    route = standoff_route([(0.0, 0.0), (2.0, 0.0), (4.0, 0.0)], (4.0, 0.0), 1.0)
-    assert route == [(0.0, 0.0), (2.0, 0.0), pytest.approx((3.0, 0.0))]
-    assert route_length(route) == pytest.approx(3.0)
+def test_the_first_seen_point_is_optional_but_never_infinite():
+    assert goal_error('approach', 1.0, 2.0, 1.0, '', 4.0, 5.0) is None
+    assert goal_error('approach', 1.0, 2.0, 1.0, '', math.nan, math.nan) is None
+    assert goal_error('approach', 1.0, 2.0, 1.0, '', math.inf, 0.0)
+    assert goal_error('approach', 1.0, 2.0, 1.0, '', 0.0, True)
+    robot = Pose2D(7.0, 8.0, 0.0)
+    assert first_seen(4.0, 5.0, robot) == (4.0, 5.0)
+    assert first_seen(math.nan, math.nan, robot) == (7.0, 8.0)
+    assert first_seen(4.0, math.nan, robot) == (7.0, 8.0)
 
 
-def test_a_route_already_inside_or_never_inside_is_kept_as_is():
-    assert standoff_route([(3.5, 0.0), (5.0, 0.0)], (4.0, 0.0), 1.0) == [(3.5, 0.0)]
-    far = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
-    assert standoff_route(far, (2.0, 5.0), 1.0) == far
-    assert standoff_route([], (0.0, 0.0), 1.0) == []
+def test_looking_again_from_where_it_was_first_seen_may_ask_for_the_whole_distance():
+    assert goal_error('approach', 1.0, 2.0, 6.5) is None
+    assert goal_error('approach', 1.0, 2.0, 10.5)
+    assert goal_error('view', 1.0, 2.0, 3.5)  # The whole-body view stays within 3 m.
+
+
+def test_the_stop_goes_round_the_circle_from_the_first_seen_side():
+    # Seen from straight above the spot (4, 0): the first place is 1 m above it.
+    places = ring_places((4.0, 6.0), (4.0, 0.0), 1.0)
+    assert len(places) == 12
+    assert places[0] == pytest.approx((4.0, 1.0))
+    assert places[1] == pytest.approx((4.0 + math.cos(math.radians(120)),
+                                       math.sin(math.radians(120))))
+    assert places[2] == pytest.approx((4.0 + math.cos(math.radians(60)),
+                                       math.sin(math.radians(60))))
+    assert places[-1] == pytest.approx((4.0, -1.0))  # The far side last.
+
+
+def test_wider_circles_follow_the_standoff_circle():
+    places = approach_places((0.0, 0.0), (3.0, 0.0), 1.0)
+    radii = [round(math.dist(p, (3.0, 0.0)), 6) for p in places]
+    assert radii == [1.0] * 12 + [1.5] * 12 + [2.0] * 12 + [2.5] * 12 + [3.0] * 12
+    # Looking again from where it was first seen: that point itself comes first.
+    again = approach_places((0.0, 4.0), (3.0, 0.0), 5.0)
+    assert len(again) == 12 and again[0] == pytest.approx((0.0, 4.0))

@@ -61,9 +61,9 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 ```
 
 - 다가가기 노드 `fall_approach`([`malbut_fall_approach`](../../../malbut_fall_approach/README.md)): `/malbut/falls/approach` `FallApproach` 액션 서버.
-  ComputePathToPose(GridBased, keepout 반영) → 1 m 원에서 자름(사람 따라가기 `path_to_standoff`와 같은 규칙인
-  `standoff_route`. tracking 패키지에 의존하지 않아 Agent CI에 감지기 빌드가 끌려오지 않음) →
-  FollowPath → Spin으로 바라봄. 이동 60초 상한. 시작 위치를 질문 ID별로 저장해 return에서 돌아간다.
+  1 m 원 위 자리를 처음 본 쪽(`from_x`·`from_y`, 모르면 지금 로봇 위치 쪽)부터 골라 ComputePathToPose(GridBased,
+  keepout 반영) → FollowPath → Spin으로 바라봄. 갈 수 없으면 더 넓은 원, 그래도 안 되면 그 자리에서 바라봄.
+  이동 60초 상한. 시작 위치를 질문 ID별로 저장해 return에서 돌아간다.
   결과는 `/malbut/falls/approach/status`(래치 JSON)에도 낸다(웹 순찰 카드의 "낙상 확인으로 멈춤").
 - 능력 `fall_approach.yaml`: HIGH, `[BASE]`. 지도·위치·경로를 실제로 사용할 수 없으면
   하위 이동 기능이 실패하고 낙상 규칙은 그 자리에서 묻는다. 직접 움직이기 중이면 기다렸다가 다시 신청한다.

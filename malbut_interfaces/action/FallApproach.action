@@ -16,6 +16,11 @@ float64 x
 float64 y
 # Stop this far from the point, facing it (approach); at most this far (view).
 float64 standoff_m 1.0
+# Map frame point the robot first saw the suspicion from (approach): the stop on
+# the circle is picked from that side first, so the robot sees the spot as it did
+# then. NaN when unknown (the Manager's default): the robot's own position is used.
+float64 from_x
+float64 from_y
 # Why it goes back (return only): not_a_person or off_floor; shown on the patrol card.
 string reason
 ---
