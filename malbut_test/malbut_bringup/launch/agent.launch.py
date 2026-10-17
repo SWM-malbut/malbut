@@ -67,9 +67,12 @@ def _setup(context):
             raise RuntimeError('Fall rules need the fall runtime IDs from Bringup')
         arguments += ['--fall-rules', '--fall-runtime-id', ids[0],
                       '--fall-bridge-runtime-id', ids[1], '--fall-vlm-runtime-id', ids[2]]
+    # The fall rules live in this process: if it dies, fall checks would stop
+    # until Bringup restarts, so it comes back like STT (Agent owner, 2026-10-17).
     return [Node(
         package='malbut_agent_server', executable='agent_communication',
         prefix=prefix, output='screen', arguments=arguments,
+        respawn=True, respawn_delay=5.0,
     )]
 
 
