@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 import { fallHistoryLines } from "../fall-event-label";
-import type { FallHistoryEvent, FallRobotCheck } from "../fall-event-label";
+import type { FallCheckResult, FallHistoryEvent, FallRobotCheck } from "../fall-event-label";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
 // a list page and a detail page in one column. The automatic judgment (robot /
@@ -32,6 +32,10 @@ type IncidentSummary = {
   asked?: boolean;
   /** 말벗이 직접 확인하지 못함(목업 28번): 이유, 다시 가서 본 결과. */
   robotCheck?: FallRobotCheck | null;
+  /** 하나로 합친 확인의 결과(목업 29~31번). 예전 확인의 사건은 null. */
+  checkResult?: FallCheckResult | null;
+  /** 말벗이 닫은 마지막 이유. */
+  closeReason?: string | null;
 };
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
@@ -49,7 +53,7 @@ type IncidentDetail = IncidentSummary & {
   robotEvents: Array<FallHistoryEvent & { sequence: number; occurredAt: string;
     notificationLevel: string | null }>;
   notifications: Array<{ kind: "first" | "resend" | "reopen"; round: number; level: string; reason: string;
-    status: string; createdAt: string; acceptedAt: string | null }>;
+    status: string; createdAt: string; acceptedAt: string | null; checkRound?: number }>;
   opinions: Array<{ userId: string; userName: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
     updatedAt: string }>;
   linkedIncidentIds: string[];
@@ -105,6 +109,7 @@ const LOOKING: Record<string, string> = {
 };
 
 function looking(i: IncidentSummary) {
+  if (i.checkResult) return i.reviewState === "open" && i.category === "check" ? i.checkResult.looking : null;
   const a = i.approach;
   if (i.reviewState !== "open" || i.category !== "check" || !a || i.asked) return null;
   return LOOKING[a.kind] ?? LOOKING[`${a.kind}:${a.reason}`] ?? null;
@@ -112,6 +117,7 @@ function looking(i: IncidentSummary) {
 
 function title(i: IncidentSummary) {
   if (i.origin === "user_report") return "놓친 낙상 신고";
+  if (i.category === "off_floor" && i.closeReason === "left_the_spot") return "말벗이 확인: 그 자리를 떠남";
   if (i.category === "off_floor") {
     return i.approach?.reason === "standing" ? "말벗이 확인: 서 있음"
       : i.approach?.reason === "active_on_floor" ? "말벗이 확인: 바닥에 앉아 활동 중"
@@ -129,6 +135,7 @@ const POSTURE_TEXT: Record<string, string> = {
 
 /** 다가가 확인한 결과(목업 22·25번). 보는 중은 제목·배지로 보여 준다. */
 function approachText(i: IncidentSummary) {
+  if (i.checkResult) return i.checkResult.summary;
   if (i.category === "not_person") return "말벗이 가서 확인: 사람 아님";
   if (i.category === "off_floor") return "몸 일부만 보여 가서 확인 · 묻지 않음";
   const look = looking(i);
@@ -153,6 +160,11 @@ function subtitle(i: IncidentSummary) {
     : i.aiFailed ? "AI가 시간 안에 답하지 못함"
     : i.answer ? ANSWER_LABEL[i.answer] ?? null : i.foundDown ? "이미 쓰러진 모습 발견" : null;
   // 목업 28번: 1분째 확인 못 함 · 다시 가 보니 무엇이 있었는지.
+  if (i.checkResult) {
+    // 목업 29~31번: 회차 · 이번 회차의 결과.
+    const round = i.checkResult.round > 1 ? `${i.checkResult.round}회차` : null;
+    return [when(i.occurredAt), round, i.checkResult.summary].filter(Boolean).join(" · ");
+  }
   return [when(i.occurredAt), check?.waited ? "1분째 확인 못 함" : null, check?.revisit?.subtitle ?? approachText(i),
     reason].filter(Boolean).join(" · ");
 }
@@ -162,7 +174,10 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   if (i.unacknowledged) {
     list.push(["is-alert", "아무도 확인하지 않음"]);
     if (i.notification) list.push(["is-alert-soft", `알림: ${LEVEL_LABEL[i.notification.level]} · ${i.notification.sent}/${i.notification.total}회 발송`]);
-  } else if (looking(i)) list.push(["is-info", "말벗이 확인하는 중"]);
+  } else if (looking(i)) {
+    list.push(["is-info", "말벗이 확인하는 중"]);
+    if ((i.checkResult?.round ?? 1) > 1) list.push(["is-info", `다시 확인 · ${i.checkResult!.round}회차`]);
+  }
   else {
     // 말벗이 직접 확인하지 못하면 언제나 긴급 알림을 보낸다(목업 28번).
     if (i.reviewState === "open" && i.robotCheck) list.push(["is-alert-soft", "긴급 알림 보냄"]);
@@ -172,7 +187,8 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
   if (i.category === "not_person") list.push(["is-neutral", "처리 완료"], ["is-neutral", "사람 아님"]);
   if (i.category === "off_floor") {
-    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.approach?.reason === "standing" ? "서 있음"
+    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.closeReason === "left_the_spot" ? "그 자리를 떠남"
+      : i.approach?.reason === "standing" ? "서 있음"
       : i.approach?.reason === "active_on_floor" ? "바닥에서 활동 중" : "앉아 있음"]);
   }
   if (i.category === "report") list.push(["is-report", "사용자 신고"], ["is-neutral", "자동 감지 아님"]);
@@ -573,13 +589,20 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           ))}
         </header>
         {notice && <p className="fall-notice" role="status">{notice}</p>}
-        {detail.robotCheck && (
+        {detail.checkResult && (
+          <section className="fall-robot-check">
+            <span>말벗이 확인한 결과</span>
+            <strong>{detail.checkResult.title}</strong>
+            {detail.checkResult.note && <p>{detail.checkResult.note}</p>}
+          </section>
+        )}
+        {!detail.checkResult && detail.robotCheck && (
           <section className="fall-robot-check is-alert">
             <span>말벗이 직접 확인하지 못한 이유</span>
             <strong>{detail.robotCheck.reason}</strong>
           </section>
         )}
-        {detail.robotCheck?.revisit && (
+        {!detail.checkResult && detail.robotCheck?.revisit && (
           <section className="fall-robot-check">
             <span>말벗이 다시 가서 본 결과</span>
             <strong>{detail.robotCheck.revisit.title}</strong>
@@ -702,12 +725,15 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <p className="fall-hint">로봇과 AI의 판단이에요. 사용자 의견으로 바뀌지 않아요.</p>
           <p className="fall-hint">AI 이유는 모델이 작성한 설명이에요. 주기 확인의 이유는 장면 전체에 대한 설명이며, 실제 원인이 확인됐다는 뜻은 아니에요.</p>
           <div className="fall-log">
-            {fallHistoryLines(detail.robotEvents).map(({ event: e, label }) => (
-              <div key={e.sequence}>
-                <span>{clock(e.occurredAt, true)}</span>
-                <span title={e.analysis?.purpose === "crosscheck" ? "장면 전체 분석 이유" : undefined}>
-                  {label}</span>
-              </div>
+            {fallHistoryLines(detail.robotEvents).map(({ event: e, label, divider }) => (
+              <Fragment key={e.sequence}>
+                {divider && <div className="fall-log-round"><span /><span>— {divider} —</span></div>}
+                <div>
+                  <span>{clock(e.occurredAt, true)}</span>
+                  <span title={e.analysis?.purpose === "crosscheck" ? "장면 전체 분석 이유" : undefined}>
+                    {label}</span>
+                </div>
+              </Fragment>
             ))}
             {detail.robotEvents.length === 0 && <div><span /><span>자동 판정 기록이 없어요 (사용자 신고).</span></div>}
           </div>
@@ -717,12 +743,15 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <div className="fall-log">
             {detail.notifications.map((n) => {
               const total = n.level === "urgent" ? 3 : n.level === "check" ? 2 : 1;
+              // 목업 31번: the robot's check round, once the incident has more than one.
+              const rounds = detail.notifications.some((x) => (x.checkRound ?? 1) > 1);
               return (
                 <div key={`${n.kind}-${n.createdAt}-${n.round}`}>
                   <span>{clock(n.createdAt, true)}</span>
                   <span>{n.kind === "resend" ? `[재발신] ${LEVEL_LABEL[n.level] ?? n.level} · ${n.round}/${total}회`
                     : n.kind === "reopen" ? "다시 열림 · 확인 필요 알림 · 모든 사용자"
                       : `${LEVEL_LABEL[n.level] ?? n.level} 알림 · 모든 사용자`}
+                    {rounds && n.kind !== "reopen" ? ` · ${n.checkRound ?? 1}회차` : ""}
                     {n.status === "canceled" ? " (취소됨)" : n.status === "pending" ? " (보내는 중)" : ""}</span>
                 </div>
               );

@@ -3,7 +3,7 @@ import { getPostgresPool, type SqlExecutor } from "./postgres";
 import { quietRecordingEnd } from "./recording-end";
 import { labelFor, userLabels } from "./users";
 import type { FallClipInput } from "../app/fall-clip-contract";
-import { fallRobotCheck, type FallHistoryEvent } from "../app/fall-event-label";
+import { fallCheckResult, fallRobotCheck, type FallHistoryEvent } from "../app/fall-event-label";
 
 // Clip ranges, human review and [재발신] reminders. Robot events and their
 // first notifications stay in db/fall-incidents.ts; nothing here changes the
@@ -47,8 +47,9 @@ const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND ${ROB
 // of 전체, the voice agent and the timeline (2026-10-11). Sitting up busy on the
 // floor, seen twice with no fall seen, is closed the same way (2026-10-14).
 // NULL-safe: a resolved incident without a robot closure must stay in 전체.
+// A person seen walking away from the spot is closed the same way (SWM25-261, 목업 30번).
 export const ROBOT_OFF_FLOOR_SQL = `(i.origin='robot' AND i.state='resolved' AND
-  COALESCE(${ROBOT_CLOSE_REASON_SQL} IN ('off_floor_verified','floor_activity_verified'), FALSE))`;
+  COALESCE(${ROBOT_CLOSE_REASON_SQL} IN ('off_floor_verified','floor_activity_verified','left_the_spot'), FALSE))`;
 const ROBOT_CLOSED_SQL = `(${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL} OR ${ROBOT_OFF_FLOOR_SQL})`;
 /** Shown only under 처리 완료 until a member reopens it. */
 export const OFF_FLOOR_HIDDEN_SQL = `(${ROBOT_OFF_FLOOR_SQL} AND i.reopened_at IS NULL)`;
@@ -152,11 +153,12 @@ const SUMMARY_COLUMNS = `
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' IN ('voice_result','confirmation_completed','agent_check_failed',
         'notification_requested')) AS asked,
+  ${ROBOT_CLOSE_REASON_SQL} AS robot_close_reason,
   (SELECT jsonb_agg(jsonb_build_object('eventKind', e.payload_json::jsonb->>'eventKind',
-      'reason', e.payload_json::jsonb->>'reason', 'analysis', e.payload_json::jsonb->'analysis') ORDER BY e.sequence)
-    FROM fall_incident_events e WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
-      AND e.payload_json::jsonb->>'eventKind' IN ('check_not_confirmed','check_stopped','agent_check_failed','revisit_started',
-        'approach_completed','person_check_completed','posture_check_completed','same_person_compared')) AS check_events,
+      'reason', e.payload_json::jsonb->>'reason', 'answer', e.payload_json::jsonb->>'answer',
+      'analysis', e.payload_json::jsonb->'analysis',
+      'checkRound', (e.payload_json::jsonb->>'checkRound')::int) ORDER BY e.sequence)
+    FROM fall_incident_events e WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id) AS check_events,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' = ANY($2::text[])
@@ -175,7 +177,7 @@ type SummaryRow = {
   reported_by: string | null; reported_moment_at: unknown; report_memo: string | null; robot_normal: boolean;
   robot_not_person: boolean; robot_off_floor: boolean; asked: boolean;
   last_approach: { kind: string; reason: string | null } | null;
-  check_events: FallHistoryEvent[] | null;
+  check_events: FallHistoryEvent[] | null; robot_close_reason: string | null;
   last_analysis_kind: string | null; found_down: boolean; opinion_counts: Record<string, number> | null;
   merged_targets: string[] | null;
 };
@@ -209,6 +211,9 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
     asked: row.asked,
     // 목업 28번: why the robot could not check by itself, and what it saw when it went back.
     robotCheck: row.origin === "robot" ? fallRobotCheck(row.check_events ?? []) : null,
+    // 목업 29~31번: the one check's result in its latest round; null for the older check.
+    checkResult: row.origin === "robot" ? fallCheckResult(row.check_events ?? []) : null,
+    closeReason: row.robot_close_reason,
     foundDown: row.found_down,
     reportedBy: row.reported_by, reportedByName: labelFor(names, row.reported_by),
     reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
@@ -371,19 +376,21 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
     const p = JSON.parse(e.payload_json);
     return { sequence: e.sequence, eventKind: p.eventKind, occurredAt: p.occurredAt, state: p.state,
       assessment: p.assessment, answer: p.answer, reason: p.reason, notificationLevel: p.notificationLevel,
-      analysis: p.analysis ?? null };
+      analysis: p.analysis ?? null, checkRound: p.checkRound ?? null };
   });
   const notifications = [
     ...(await pool.query(
-      `SELECT level,reason,status,created_at,accepted_at FROM fall_push_outbox
+      `SELECT level,reason,status,created_at,accepted_at,check_round FROM fall_push_outbox
        WHERE device_id=$1 AND incident_id=$2`, [deviceId, incidentId],
     )).rows.map((n) => ({ kind: "first", round: 1, level: n.level, reason: n.reason, status: n.status,
-      createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at) })),
+      createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at), checkRound: n.check_round as number })),
     ...(await pool.query(
-      `SELECT kind,round,level,reason,status,created_at,accepted_at FROM fall_web_notices
-       WHERE device_id=$1 AND incident_id=$2`, [deviceId, incidentId],
+      `SELECT n.kind,n.round,n.level,n.reason,n.status,n.created_at,n.accepted_at,
+         COALESCE(o.check_round,1) AS check_round FROM fall_web_notices n
+       LEFT JOIN fall_push_outbox o ON o.device_id=n.device_id AND 'robot:'||o.notification_id=n.cycle_key
+       WHERE n.device_id=$1 AND n.incident_id=$2`, [deviceId, incidentId],
     )).rows.map((n) => ({ kind: n.kind, round: n.round, level: n.level, reason: n.reason, status: n.status,
-      createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at) })),
+      createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at), checkRound: n.check_round as number })),
   ].sort((a, b) => a.createdAt!.localeCompare(b.createdAt!));
   const opinions = (await pool.query(
     `SELECT o.user_id,o.label,o.memo,o.updated_at,m.role FROM fall_incident_opinions o
@@ -695,6 +702,8 @@ export async function scheduleFallReminders(now = Date.now()) {
 export type ClaimedFallNotice = {
   deviceId: string; noticeId: string; incidentId: string; kind: "resend" | "reopen";
   level: "check" | "urgent"; reason: string; occurredAt: string; leaseId: string;
+  /** The robot alert's check round for a [재발신] of it; 1 otherwise. */
+  checkRound: number;
   subscriptionResults: Record<string, number>;
 };
 
@@ -715,13 +724,14 @@ export async function claimFallNotice(deviceId?: string, noticeId?: string): Pro
      ) UPDATE fall_web_notices p SET lease_id=$3,lease_until=CURRENT_TIMESTAMP+INTERVAL '120 seconds',
        attempt_count=attempt_count+1
        FROM candidate c WHERE p.device_id=c.device_id AND p.notice_id=c.notice_id
-       RETURNING p.*`, [deviceId ?? null, noticeId ?? null, leaseId],
+       RETURNING p.*,(SELECT o.check_round FROM fall_push_outbox o WHERE o.device_id=p.device_id
+         AND 'robot:'||o.notification_id=p.cycle_key) AS robot_check_round`, [deviceId ?? null, noticeId ?? null, leaseId],
   );
   if (!result.rowCount) return null;
   const row = result.rows[0];
   return { deviceId: row.device_id, noticeId: row.notice_id, incidentId: row.incident_id, kind: row.kind,
     level: row.level, reason: row.reason, occurredAt: iso(row.occurred_at)!, leaseId,
-    subscriptionResults: row.subscription_results };
+    checkRound: row.robot_check_round ?? 1, subscriptionResults: row.subscription_results };
 }
 
 export async function recordFallNoticeResults(claim: ClaimedFallNotice,

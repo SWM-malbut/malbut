@@ -4231,6 +4231,8 @@ a:focus-visible {
 .fall-log > div { display: contents; }
 .fall-log > div > span:first-child { color: var(--ui-text-muted); }
 .fall-log > div > span:last-child { overflow-wrap: anywhere; }
+/* 목업 31번: 말벗이 다시 확인한 회차의 구분 줄. */
+.fall-log > .fall-log-round > span:last-child { color: var(--ui-accent-strong); font-size: 12px; font-weight: 700; }
 .fall-bottom { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-bottom .fall-button { width: 100%; }
 .fall-bottom p { margin: 0; font-size: 12px; color: var(--ui-text-muted); text-align: center; }

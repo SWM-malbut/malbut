@@ -13,7 +13,7 @@ export async function deliverPendingFallPush(input: { deviceId?: string; notific
     .filter(([, status]) => (status >= 200 && status < 300) || status === 404 || status === 410)
     .map(([id]) => id);
   try {
-    const outcome = await dispatchFallPush(claim, {
+    const outcome = await dispatchFallPush({ ...claim, ...(claim.checkRound > 1 ? { recheck: true as const } : {}) }, {
       excludeSubscriptionIds: excluded,
       beforeBatch: () => recordFallPushResults(claim, []),
       onResults: (results) => recordFallPushResults(claim, results),
@@ -44,8 +44,9 @@ export async function deliverPendingFallNotice(input: { deviceId?: string; notic
   try {
     const outcome = await dispatchFallPush({
       deviceId: claim.deviceId, notificationId: claim.noticeId, incidentId: claim.incidentId,
-      level: claim.level, reason: claim.reason as Parameters<typeof dispatchFallPush>[0]["reason"],
-      occurredAt: claim.occurredAt, ...(claim.kind === "resend" ? { resend: true as const } : {}),
+      level: claim.level, reason: claim.reason, occurredAt: claim.occurredAt,
+      ...(claim.kind === "resend" ? { resend: true as const } : {}),
+      ...(claim.checkRound > 1 ? { recheck: true as const } : {}),
     }, {
       excludeSubscriptionIds: excluded,
       beforeBatch: () => recordFallNoticeResults(claim, []),
