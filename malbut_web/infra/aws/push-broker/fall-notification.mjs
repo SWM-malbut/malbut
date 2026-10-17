@@ -24,6 +24,13 @@ const texts = {
   scene_answer_unconfirmed: "누군가 괜찮다고 답했지만, 쓰러진 분인지 확인하지 못했습니다. 상태를 확인해 주세요.",
   // "그만/멈춰" during the check stops it like 직접 움직이기, without a question (2026-10-13).
   check_stopped_by_user: "말벗이 확인하러 가던 중 '그만'이라는 말을 듣고 멈췄습니다. 상태를 확인해 주세요.",
+  // The one check for every suspicion (SWM25-261, 목업 29~31번).
+  person_may_differ: "말벗이 가 보니 처음 본 분과 다른 분이 있었습니다. 처음 본 분의 상태를 확인해 주세요.",
+  left_unseen: "말벗이 가 보니 그 자리에 아무도 없었지만, 떠나는 모습은 보지 못했습니다. 상태를 확인해 주세요.",
+  could_not_compare: "말벗이 낙상 의심 장소를 볼 수 없었습니다(어둡거나 가려짐). 상태를 확인해 주세요.",
+  person_crawled_away:
+    "말벗이 가 보니 그 자리에 아무도 없었고, 바닥을 기어서 옮긴 것으로 보입니다. 상태를 확인해 주세요.",
+  closed_after_alert: "앞서 긴급 알림을 보낸 상황을 말벗이 확인했습니다. 결과는 기록에서 확인해 주세요.",
   // Web-originated only; robots cannot request it (see app/fall-contract.ts).
   reopened_by_opinion: "처리 완료된 낙상 사건에 다른 의견이 달렸습니다. 다시 확인해 주세요.",
 };
@@ -38,7 +45,7 @@ export const PER_REASON_FALL_REASONS = FALL_CONTRACT.perReasonNotificationReason
 
 export function buildFallNotification(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const { deviceId, notificationId, incidentId, level, reason, occurredAt, resend } = input;
+  const { deviceId, notificationId, incidentId, level, reason, occurredAt, resend, recheck } = input;
   const entry = typeof reason === "string" && Object.hasOwn(messages, reason)
     ? messages[reason] : null;
   if (
@@ -48,15 +55,19 @@ export function buildFallNotification(input) {
     !entry || typeof entry[1] !== "string" || level !== entry[0] ||
     typeof occurredAt !== "string" || !Number.isFinite(Date.parse(occurredAt)) ||
     new Date(occurredAt).toISOString() !== occurredAt ||
-    !(resend === undefined || resend === true || resend === "true")
+    !(resend === undefined || resend === true || resend === "true") ||
+    !(recheck === undefined || recheck === true || recheck === "true")
   ) return null;
+  // [다시 확인]: the robot checking a closed incident again, from its second round (목업 31번).
+  const text = recheck ? `[다시 확인] ${entry[1]}` : entry[1];
   return {
     // [재발신]: same level and message as the first notification.
-    body: resend ? `[재발신] ${entry[1]}` : entry[1],
+    body: resend ? `[재발신] ${text}` : text,
     data: {
       kind: "fall", deviceId, notificationId, incidentId, level, reason, occurredAt,
       // Push data values are strings; round-trips through isFallNotification.
       ...(resend ? { resend: "true" } : {}),
+      ...(recheck ? { recheck: "true" } : {}),
       // Opens the incident screen (사건) for this device.
       url: `/?view=events&device=${encodeURIComponent(deviceId)}&incident=${encodeURIComponent(incidentId)}`,
     },

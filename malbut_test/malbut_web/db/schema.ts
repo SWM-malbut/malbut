@@ -83,8 +83,9 @@ export const fallPushOutbox = pgTable("fall_push_outbox", {
   subscriptionResults: jsonb("subscription_results").notNull().default({}),
   lastError: text("last_error"), acceptedAt: timestampText("accepted_at"),
   createdAt: timestampText("created_at").notNull().defaultNow(),
+  checkRound: integer("check_round").notNull().default(1),
 }, (t) => [primaryKey({ columns: [t.deviceId, t.notificationId] }),
-  uniqueIndex("fall_push_outbox_incident_reason_key").on(t.deviceId, t.incidentId, t.reason),
+  uniqueIndex("fall_push_outbox_incident_reason_round_key").on(t.deviceId, t.incidentId, t.reason, t.checkRound),
   index("fall_push_due_idx").on(t.status, t.nextAttemptAt),
   foreignKey({ columns: [t.deviceId, t.notificationId], foreignColumns: [fallIncidentEvents.deviceId, fallIncidentEvents.eventId] }).onDelete("cascade")]);
 

@@ -13,9 +13,9 @@ export async function ensureFallSchema() {
   if (!result.rowCount) throw new Error("FALL_MIGRATION_REQUIRED");
 }
 
-async function ensurePerReasonPush(client: SqlExecutor) {
+async function ensureRoundPush(client: SqlExecutor) {
   const result = await client.query(
-    "SELECT 1 FROM homecam_schema_migrations WHERE version = '0025_fall_push_per_reason'",
+    "SELECT 1 FROM homecam_schema_migrations WHERE version = '0027_fall_check_round'",
   );
   if (!result.rowCount) throw new Error("FALL_MIGRATION_REQUIRED");
 }
@@ -75,35 +75,37 @@ export async function storeFallEvent(deviceId: string, input: FallEventInput) {
         event.assessment, event.answer, event.occurredAt],
     );
     if (event.notificationLevel) {
-      await ensurePerReasonPush(client);
+      await ensureRoundPush(client);
+      // Counted per check round: a recheck of a closed incident alerts again (목업 31번).
+      const round = event.checkRound ?? 1;
       if (PER_REASON_FALL_REASONS.includes(event.reason as string)) {
         // Once per reason, whatever was sent before or after.
         await client.query(
-          `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status)
-           VALUES($1,$2,$3,$4,$5,$6,'pending') ON CONFLICT(device_id,incident_id,reason) DO NOTHING`,
-          [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt],
+          `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status,check_round)
+           VALUES($1,$2,$3,$4,$5,$6,'pending',$7) ON CONFLICT(device_id,incident_id,reason,check_round) DO NOTHING`,
+          [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt, round],
         );
       } else {
         // The older reasons: one per level, and only a higher level than any of them goes out.
         const sent = (await client.query(
           `SELECT COALESCE(MAX(${LEVEL_RANK_SQL}),0)::int AS rank,
              COALESCE(bool_or(level=$3),FALSE) AS same_level FROM fall_push_outbox
-           WHERE device_id=$1 AND incident_id=$2 AND NOT (reason = ANY($4::text[]))`,
-          [deviceId, event.incidentId, event.notificationLevel, PER_REASON_FALL_REASONS],
+           WHERE device_id=$1 AND incident_id=$2 AND NOT (reason = ANY($4::text[])) AND check_round=$5`,
+          [deviceId, event.incidentId, event.notificationLevel, PER_REASON_FALL_REASONS, round],
         )).rows[0];
         if (!sent.same_level) {
           await client.query(
-            `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status)
-             VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(device_id,incident_id,reason) DO NOTHING`,
+            `INSERT INTO fall_push_outbox(device_id,notification_id,incident_id,level,reason,occurred_at,status,check_round)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(device_id,incident_id,reason,check_round) DO NOTHING`,
             [deviceId, event.eventId, event.incidentId, event.notificationLevel, event.reason, event.occurredAt,
-              noticeRank < sent.rank ? "superseded" : "pending"],
+              noticeRank < sent.rank ? "superseded" : "pending", round],
           );
         }
         await client.query(
           `UPDATE fall_push_outbox SET status='superseded',lease_id=NULL,lease_until=NULL
            WHERE device_id=$1 AND incident_id=$2 AND status='pending' AND (${LEVEL_RANK_SQL})<$3
-             AND NOT (reason = ANY($4::text[]))`,
-          [deviceId, event.incidentId, Math.max(noticeRank, sent.rank), PER_REASON_FALL_REASONS],
+             AND NOT (reason = ANY($4::text[])) AND check_round=$5`,
+          [deviceId, event.incidentId, Math.max(noticeRank, sent.rank), PER_REASON_FALL_REASONS, round],
         );
       }
     }
@@ -118,10 +120,10 @@ export async function storeFallEvent(deviceId: string, input: FallEventInput) {
 export type ClaimedFallPush = {
   deviceId: string; notificationId: string; incidentId: string;
   level: "info" | "check" | "urgent";
-  reason: "fall_observed_person_okay" | "person_no_response" | "check_required_not_confirmed_fall" |
-    "help_requested" | "confirmation_help_required" | "robot_could_not_confirm" | "revisit_same_person_off_floor" |
-    "revisit_person_unclear_off_floor" | "revisit_nobody_there" | "scene_answer_unconfirmed" |
-    "check_stopped_by_user";
+  /** A robot reason from the contract; buildFallNotification refuses any other. */
+  reason: string;
+  /** The robot's check round; 2 and later read [다시 확인]. */
+  checkRound: number;
   occurredAt: string; leaseId: string; subscriptionResults: Record<string, number>;
 };
 
@@ -144,7 +146,7 @@ export async function claimFallPush(deviceId?: string, notificationId?: string):
   if (!result.rowCount) return null;
   const row = result.rows[0];
   return { deviceId: row.device_id, notificationId: row.notification_id, incidentId: row.incident_id,
-    level: row.level, reason: row.reason, occurredAt: row.occurred_at, leaseId,
+    level: row.level, reason: row.reason, checkRound: row.check_round, occurredAt: row.occurred_at, leaseId,
     subscriptionResults: row.subscription_results };
 }
 

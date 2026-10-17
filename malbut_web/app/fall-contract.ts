@@ -26,9 +26,12 @@ export type FallEventInput = {
   reason: string | null;
   notificationLevel: "info" | "check" | "urgent" | null;
   mergedIntoIncidentIds?: string[];
+  /** The robot's check round; absent means 1. recheck_started starts the next (목업 31번). */
+  checkRound?: number;
   analysis?: {
     requestId: string;
-    purpose: "incident" | "crosscheck" | "person_check" | "posture_check" | "same_person_check";
+    purpose: "incident" | "crosscheck" | "person_check" | "posture_check" | "same_person_check" |
+      "arrival_check" | "departure_check";
     assessment: string;
     explanation: string;
   };
@@ -41,6 +44,13 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     "evidenceRevision", "occurredAt", "eventKind", "state", "fallSeen", "assessment",
     "answer", "reason", "notificationLevel"];
   if (v.eventKind === "incident_merged") keys.push("mergedIntoIncidentIds");
+  if (Object.hasOwn(v, "checkRound")) {
+    if (!Number.isSafeInteger(v.checkRound) || (v.checkRound as number) < 1 ||
+        (v.checkRound as number) > 10000) return null;
+    keys.push("checkRound");
+  }
+  // A recheck is the next round of an incident the robot checks again.
+  if (v.eventKind === "recheck_started" && (v.state !== "verifying" || !((v.checkRound as number) >= 2))) return null;
   if (Object.hasOwn(v, "analysis")) {
     if (!Object.hasOwn(analysisPurposes, v.eventKind as string)) return null;
     const a = v.analysis;
