@@ -7,9 +7,11 @@ import json
 import pytest
 
 from malbut_agent_server.adapters.outbound.ollama_cloud_fall import (
-    CROSSCHECK_NATIVE_SYSTEM_PROMPT, LEGACY_BOX_FORMAT, LIVE_RULES, NATIVE_BOX_FORMAT,
-    SYSTEM_PROMPT, TARGET_SYSTEM_PROMPT, OllamaCloudFallProvider, build_payload, parse_reply,
+    CROSSCHECK_NATIVE_SYSTEM_PROMPT, LEGACY_BOX_FORMAT, NATIVE_BOX_FORMAT,
+    SYSTEM_PROMPT, TARGET_SYSTEM_PROMPT, OllamaCloudFallProvider, build_payload, live_criteria,
+    parse_reply,
 )
+from malbut_agent_server.fall_contract import fall_contract
 from malbut_agent_server.domain.fall_monitoring import VideoAssessment
 from malbut_agent_server.ports.cloud_fall import CloudFallProviderError
 from test_fall_cloud_association import cross_request
@@ -39,7 +41,8 @@ def test_live_provider_requests_native_and_returns_existing_domain_contract():
 
         provider._post = post
         result = await provider.analyze(cross_request())
-        assert sent[0]['messages'][0]['content'] == CROSSCHECK_NATIVE_SYSTEM_PROMPT + LIVE_RULES
+        assert sent[0]['messages'][0]['content'] == (
+            CROSSCHECK_NATIVE_SYSTEM_PROMPT + live_criteria('crosscheck'))
         assert result.findings[0].regions[0].box == (.1, .2, .6, .8)
         assert not result.localization_failed
         assert 'box_2d' not in repr(result)
@@ -134,7 +137,7 @@ def test_incident_payload_and_legacy_replay_defaults_are_unchanged():
         OllamaCloudFallProvider(model='gemma4:31b', api_key='test-only', box_format='auto')
 
 
-def test_live_rules_reach_every_live_request_but_never_evaluation_payloads():
+def test_live_criteria_reach_every_live_request_but_never_evaluation_payloads():
     async def run():
         provider = OllamaCloudFallProvider(model='gemma4:31b', api_key='test-only')
         sent = []
@@ -145,22 +148,30 @@ def test_live_rules_reach_every_live_request_but_never_evaluation_payloads():
 
         provider._post = post
         await provider.analyze(request())
-        assert sent[0]['messages'][0]['content'] == SYSTEM_PROMPT + LIVE_RULES
+        assert sent[0]['messages'][0]['content'] == SYSTEM_PROMPT + live_criteria('incident')
 
     asyncio.run(run())
+    criteria = fall_contract()['cloudCriteria']
     for value in (request(), cross_request()):
         for box_format in (LEGACY_BOX_FORMAT, NATIVE_BOX_FORMAT):
             system = json.loads(build_payload(value, model='gemma4:31b', box_format=box_format))[
                 'messages'][0]['content']
-            assert LIVE_RULES not in system
-    assert LIVE_RULES not in TARGET_SYSTEM_PROMPT + CROSSCHECK_NATIVE_SYSTEM_PROMPT
-    # The rules that drove this change must stay in the live wording.
-    for phrase in ('Controlled sitting or lying down is normal_activity',
-                   'even if the person ends up sitting',
-                   'already sitting upright on the floor',
-                   'Lying still, slumping or struggling to get up remains suspected_fall',
-                   'Bags, clothes, bedding',
-                   'Mirrors and screens: a mirror',
-                   'directly visible outside the frame is judged as usual'):
-        assert phrase in LIVE_RULES
-    assert '음슴체' not in LIVE_RULES  # Style rules changed the judgement; display converts.
+            assert criteria not in system
+    assert criteria not in TARGET_SYSTEM_PROMPT + CROSSCHECK_NATIVE_SYSTEM_PROMPT
+
+
+def test_the_live_criteria_are_the_shared_questions_not_named_objects():
+    criteria = fall_contract()['cloudCriteria']
+    for purpose in ('crosscheck', 'incident'):
+        assert criteria in live_criteria(purpose)
+    for phrase in ('the same three questions', 'never by the kind of object',
+                   'A flat surface that shows an image', 'Controlled sitting or lying down is ordinary',
+                   'even if the person ends up sitting', 'already sitting upright on the floor',
+                   'Lying still on the floor, slumping or struggling to get up is not ordinary'):
+        assert phrase in criteria
+    for named in ('Bags', 'mirror', 'TV', 'cushions'):
+        assert named not in criteria
+    # Only a crosscheck answer has findings (an incident reply with findings is rejected).
+    assert 'findings []' in live_criteria('crosscheck')
+    assert 'finding' not in live_criteria('incident')
+    assert '음슴체' not in live_criteria('crosscheck')  # Style rules changed the judgement.

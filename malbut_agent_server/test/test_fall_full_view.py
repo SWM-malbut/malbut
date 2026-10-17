@@ -11,7 +11,7 @@ import json
 import pytest
 
 from malbut_agent_server.adapters.outbound.ollama_cloud_fall import (
-    POSTURE_CHECK_PROMPT, build_posture_check_payload, parse_posture_check,
+    build_posture_check_payload, parse_posture_check, posture_prompt,
 )
 from malbut_agent_server.domain.fall_monitoring import (
     FrameWindow, IncidentState, PersonCheckReply, PostureCheckReply, PostureCheckRequest,
@@ -252,9 +252,10 @@ def test_posture_check_wire_is_the_narrow_prompt_and_a_strict_reply():
     window = FrameWindow((RgbFrame(10.0, jpeg()), RgbFrame(10.5, jpeg())), 10.0, 10.5, False)
     body = json.loads(build_posture_check_payload(PostureCheckRequest('posture-1', window),
                                                   model='gemma'))
-    assert body['messages'][0]['content'] == POSTURE_CHECK_PROMPT
+    assert body['messages'][0]['content'] == posture_prompt()
     assert len(body['messages'][1]['images']) == 2
-    assert 'floor_active: the person sits upright on the floor' in POSTURE_CHECK_PROMPT
+    assert 'floor_active: the person sits upright on the floor' in posture_prompt()
+    assert 'earlier' not in posture_prompt()
     for verdict in ('furniture', 'standing', 'floor_active', 'floor', 'unclear'):
         assert parse_posture_check(response(json.dumps(
             dict(verdict=verdict, explanation='설명')))).verdict == verdict
