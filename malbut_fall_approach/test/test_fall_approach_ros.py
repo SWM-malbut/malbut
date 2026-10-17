@@ -264,6 +264,60 @@ def test_no_path_is_reported_and_a_return_without_a_start_fails(ros):
     assert send(request_id='q3', phase='drive', x=3.0, y=0.0, standoff_m=1.0) is None
 
 
+def test_the_stop_is_on_the_side_the_spot_was_first_seen_from(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    # Seen from above the spot (3, 0) while the robot now stands at the origin.
+    result = send(request_id='side', phase='approach', x=3.0, y=0.0, standoff_m=1.0,
+                  from_x=3.0, from_y=2.0)
+    assert (result.outcome, result.detail) == ('arrived', '')
+    assert _end(nav) == pytest.approx((3.0, 1.0), abs=0.01)
+    planned = nav.planned[0].goal.pose
+    assert math.atan2(planned.orientation.z, planned.orientation.w) * 2 == pytest.approx(
+        -math.pi / 2)  # Facing the spot from there.
+
+
+def test_without_a_first_seen_point_the_robot_side_comes_first(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    result = send(request_id='unknown-side', phase='approach', x=3.0, y=0.0, standoff_m=1.0,
+                  from_x=math.nan, from_y=math.nan)
+    assert result.outcome == 'arrived'
+    assert _end(nav) == pytest.approx((2.0, 0.0), abs=0.01)
+
+
+def test_a_failed_drive_moves_on_round_the_circle(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake, follow=[False])
+    result = send(request_id='round', phase='approach', x=3.0, y=0.0, standoff_m=1.0)
+    assert result.outcome == 'arrived'
+    assert len(nav.driven) == 2
+    side = math.radians(210)  # 30 degrees round from the robot's side.
+    assert _end(nav) == pytest.approx((3.0 + math.cos(side), math.sin(side)), abs=0.01)
+
+
+def test_a_blocked_standoff_circle_looks_from_the_nearest_wider_one(ros):
+    from malbut_fall_approach.fall_approach import INSCRIBED_COST, ring_places
+    _, fake, send, _, costmap = ros
+    nav = FakeNav2(fake)
+    # A patch around each place: the message's float32 resolution moves cell edges.
+    steps = [i * 0.05 for i in range(-3, 4)]
+    costmap({(x + dx, y + dy): INSCRIBED_COST
+             for x, y in ring_places((0.0, 0.0), (3.0, 0.0), 1.0)
+             for dx in steps for dy in steps})
+    result = send(request_id='wider', phase='approach', x=3.0, y=0.0, standoff_m=1.0)
+    assert (result.outcome, result.detail) == ('arrived', '1.5 m from the spot')
+    assert _end(nav) == pytest.approx((1.5, 0.0), abs=0.01)
+
+
+def test_with_no_place_reached_it_faces_the_spot_from_where_it_is(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake, follow=[False] * 24)
+    result = send(request_id='stuck', phase='approach', x=0.0, y=3.0, standoff_m=1.0)
+    assert result.outcome == 'failed' and 'facing it from here' in result.detail
+    assert nav.turns[-1] == pytest.approx(math.pi / 2, abs=1e-3)
+
+
 NAMES = ('nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_shoulder',
          'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist', 'left_hip',
          'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle')
