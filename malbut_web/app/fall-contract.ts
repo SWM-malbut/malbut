@@ -1,56 +1,14 @@
+import { FALL_CONTRACT } from "../infra/aws/push-broker/fall-contract.mjs";
 import { buildFallNotification, WEB_ONLY_FALL_REASONS } from "../infra/aws/push-broker/fall-notification.mjs";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const states = ["verifying", "recheck_required", "help_required", "resolved"];
-const assessments = ["observed_fall", "suspected_fall", "normal_activity", "unobservable"];
-const answers = ["help_request", "okay", "unclear", "no_response", "failed"];
-const kinds = [
-  "incident_opened", "incident_updated", "question_requested", "voice_result", "decision_required",
-  "notification_requested", "agent_check_failed", "analysis_completed",
-  "analysis_unavailable", "stale_analysis_result", "recheck_unavailable", "incident_resolved",
-  "confirmation_completed", "incident_merged",
-  // The robot drives near an uncertain suspicion and checks for a person first.
-  "approach_started", "approach_completed", "person_check_completed", "approach_returned",
-  // Only part of the body seen: it moves to see the whole body, then checks the posture.
-  "view_completed", "posture_check_completed",
-  // Could not ask yet (직접 움직이기 or another job), a minute of that, going back to the
-  // spot before asking, and comparing the person with the first scene (목업 28번).
-  "check_waiting", "check_not_confirmed", "revisit_started", "same_person_compared",
-  // "그만/멈춰" during the check: stopped without a question (2026-10-13).
-  "check_stopped",
-];
-// Allowed reasons per approach event; null is never a reason for these except a start
-// that interrupted nothing.
-const approachReasons: Record<string, Array<string | null>> = {
-  approach_started: ["patrol_stopped", "follow_stopped", null],
-  approach_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
-  // nobody_there: went back after waiting and found no one. Not a closure.
-  person_check_completed: ["person", "not_a_person", "partial_body", "whole_body", "nobody_there"],
-  approach_returned: ["returned", "return_failed"],
-  view_completed: ["arrived", "no_map", "no_path", "timeout", "failed", "rejected"],
-  // Off the floor only when the robot's measurement and Cloud agree; anything else asks.
-  // active_on_floor: sitting up busy on the floor, seen twice, no fall seen (2026-10-14).
-  posture_check_completed: ["sitting_off_floor", "standing", "active_on_floor", "on_floor", "body_unseen",
-    "judgements_differ", "posture_unconfirmed"],
-  check_waiting: ["manual_drive", "busy"],
-  check_not_confirmed: ["waited_manual_drive", "waited_busy"],
-  revisit_started: ["manual_drive", "busy"],
-  check_stopped: ["user_stop"],
-  // Clothing only, for reference; it never changes what the robot does.
-  same_person_compared: ["same", "different", "unclear"],
-};
-// A robot-side closure after its own check. Never a normal-activity judgment.
-const resolvedReasons = ["normal_verified", "risk_cleared", "response_completed", "not_a_person",
-  "off_floor_verified", "floor_activity_verified",
-  // A member pressed 처리 완료 and the robot stopped trying (state response closedFallIncidents).
-  "guardian_closed"];
+// One source with the robot: malbut_interfaces/contracts/fall_events.json (what each
+// kind and reason means is in its notes).
+const { states, assessments, answers, eventKinds: kinds, resolvedReasons } = FALL_CONTRACT;
+const reasonsByKind: Record<string, Array<string | null>> = FALL_CONTRACT.reasonsByKind;
 // The Cloud explanation each event may carry.
-const analysisPurposes: Record<string, string[]> = {
-  analysis_completed: ["incident", "crosscheck"],
-  person_check_completed: ["person_check"],
-  posture_check_completed: ["posture_check"],
-  same_person_compared: ["same_person_check"],
-};
+const analysisPurposes: Record<string, string[]> = FALL_CONTRACT.analysisPurposes;
+const explanationMaxChars = FALL_CONTRACT.analysisExplanationMaxChars;
 
 export type FallEventInput = {
   schemaVersion: 1;
@@ -93,7 +51,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
         !analysisPurposes[v.eventKind as string].includes(record.purpose as string) ||
         !assessments.includes(record.assessment as string) ||
         typeof record.explanation !== "string" || !record.explanation.trim() ||
-        [...record.explanation].length > 1000) return null;
+        [...record.explanation].length > explanationMaxChars) return null;
     keys.push("analysis");
   }
   if (Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) return null;
@@ -112,8 +70,8 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
       !(v.answer === null || (typeof v.answer === "string" && answers.includes(v.answer))) ||
       !(v.reason === null || (typeof v.reason === "string" && /^[a-z_]{1,80}$/.test(v.reason)))) return null;
   if (WEB_ONLY_FALL_REASONS.includes(v.reason as string)) return null;
-  if (Object.hasOwn(approachReasons, v.eventKind as string) &&
-      !approachReasons[v.eventKind as string].includes(v.reason as string | null)) return null;
+  if (Object.hasOwn(reasonsByKind, v.eventKind as string) &&
+      !reasonsByKind[v.eventKind as string].includes(v.reason as string | null)) return null;
   if (v.eventKind === "incident_merged") {
     const targets = v.mergedIntoIncidentIds;
     if (v.state !== "resolved" || v.reason !== "findings_associated" || v.answer === "help_request" ||
@@ -136,8 +94,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     // The actual situation and help decision are independent. For example,
     // normal lying down may still require help getting up, while a user may
     // decline help without explaining what happened.
-    if (!["confirmed_incident", "resolved", "unknown"].includes(v.reason as string) ||
-        !((v.state === "help_required" && v.answer === "help_request") ||
+    if (!((v.state === "help_required" && v.answer === "help_request") ||
           (v.state === "resolved" && v.answer === "okay"))) return null;
   }
   if (v.state === "resolved") {

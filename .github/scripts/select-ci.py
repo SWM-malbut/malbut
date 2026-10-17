@@ -174,6 +174,11 @@ def selection(paths, full=False, base=None):
                 selected.add('malbut_bringup')
             if path.startswith('malbut_patrol/'):
                 path = 'malbut_autonomy/' + path
+        if path.startswith('malbut_interfaces/contracts/'):
+            # Robot-to-web contract data, not a ROS interface: only the web copy
+            # test and the robot's offline contract test read it.
+            flags.update(web=True, fall_python=True)
+            continue
         if path.startswith('malbut_interfaces/'):
             interface = path.removeprefix('malbut_interfaces/')
             if interface in {'msg/FallSettingsSnapshot.msg', 'msg/FallSettingsReport.msg'}:
