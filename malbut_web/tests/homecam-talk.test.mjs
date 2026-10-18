@@ -131,10 +131,10 @@ test("the microphone is a switch that turns itself off, not push-to-talk", async
 
 test("the home summary and the 현재 상태 caption say which microphone is which", async () => {
   const dashboard = await readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8");
-  assert.match(dashboard, /microphoneEnabled \? "말벗 마이크 켜짐" : "말벗 마이크 꺼짐"/);
+  assert.match(dashboard, /microphoneEnabled \? "영상 소리 켜짐" : "영상 소리 꺼짐"/);
   assert.doesNotMatch(dashboard, /"마이크 켜짐"|"마이크 꺼짐"/);
   assert.match(dashboard, /마이크를 켜면 스피커도 같이 켜져 통화처럼 서로 말할 수 있어요/);
-  assert.match(dashboard, /설정 › 홈캠 설정 › 말벗 마이크에서 정해요\(소유자\)/);
+  assert.match(dashboard, /영상에 집 안 소리를 보낼지는 설정 › 홈캠 설정 › 영상 소리에서 정해요\(소유자\)/);
 });
 
 test("the first microphone joins the live connection instead of reconnecting", async () => {

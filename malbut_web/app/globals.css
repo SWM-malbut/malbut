@@ -5023,7 +5023,6 @@ a.ui-back { text-decoration: none; }
 .ui-key-notice > p { margin: 0; font-size: 0.875rem; line-height: 1.6; }
 .ui-key-notice > small { font-size: 0.8125rem; line-height: 1.6; color: var(--ui-text-muted); }
 
-/* 홈캠 설정 › 음성으로 홈캠 쓰기: 위 줄들과 같은 스위치 줄(목업 49번). */
-.fall-voice-settings { margin-top: 12px; }
-.fall-voice-note { margin: 0; padding: 0 14px 14px; font-size: 12px; line-height: 1.6; color: var(--ui-text-muted); }
-.fall-voice-note.is-danger { color: var(--ui-danger); }
+/* 홈캠 설정 › 음성으로 홈캠 사용: 스위치 목록 마지막 줄의 안내(목업 51번). */
+.fall-settings-row small.fall-voice-note { line-height: 1.6; }
+.fall-settings-row small.fall-voice-note.is-danger { color: var(--ui-danger); }

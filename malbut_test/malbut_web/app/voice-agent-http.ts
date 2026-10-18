@@ -27,8 +27,8 @@ export function sameOriginVoiceRequest(request: Request) {
 export function voiceApiFailure(error: unknown) {
   const code = error instanceof Error ? error.message : "VOICE_OPERATION_FAILED";
   const known: Record<string, [number, string]> = {
-    VOICE_FORBIDDEN: [403, "소유자만 음성으로 홈캠 쓰기를 바꿀 수 있어요."],
-    VOICE_MIGRATION_REQUIRED: [503, "음성으로 홈캠 쓰기 DB 준비가 필요해요."],
+    VOICE_FORBIDDEN: [403, "소유자만 음성으로 홈캠 사용을 바꿀 수 있어요."],
+    VOICE_MIGRATION_REQUIRED: [503, "음성으로 홈캠 사용 DB 준비가 필요해요."],
     VOICE_REQUEST_CONFLICT: [409, "같은 요청 ID에 다른 내용을 보낼 수 없습니다."],
     VOICE_INVALID_REQUEST: [400, "음성 요청 형식을 확인해 주세요."],
   };
