@@ -390,3 +390,8 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 직접 실행할 때는 `tts_node --ros-args --params-file /absolute/path/tts.yaml`을
 사용합니다. 저장된 알림 WAV(`audio_id`)도 같은 정규화 Piper로 미리 생성되어 있습니다.
 발음 사전은 패키지의 `config/korean_pronunciation_lexicon.json`에 있습니다.
+
+개인 파인튜닝 모델로 대화와 안내 음성을 함께 바꾸려면
+[사용자 Piper 음성 설치](docs/custom_piper_voice.md)를 따릅니다.
+`prepare_notices --piper-model-sha256`는 명시한 해시와 일치하는 로컬 모델만
+허용하며, 옵션을 생략하면 기존 KSS 모델 검증을 유지합니다.

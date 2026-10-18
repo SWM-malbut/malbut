@@ -106,6 +106,8 @@ def main(argv=None):
     parser.add_argument('--backend', choices=('openai', 'piper'), default='piper')
     parser.add_argument('--model-path', type=Path, help='Local Piper ONNX file')
     parser.add_argument('--piper-threads', type=int, default=6)
+    parser.add_argument('--piper-model-sha256',
+                        help='Expected SHA-256 of a custom local Piper model; omit for KSS')
     parser.add_argument('--model', default='gpt-4o-mini-tts')
     parser.add_argument('--voice', default='nova')
     parser.add_argument('--instructions', default=VOICE_INSTRUCTIONS)
@@ -120,7 +122,12 @@ def main(argv=None):
             from malbut_tts.backends import default_piper_model
             from malbut_tts.piper_notices import PiperNotices, notice_settings
             args.model_path = args.model_path or default_piper_model()
-            settings = notice_settings(args.model_path, threads=args.piper_threads)
+            if args.piper_model_sha256 is None:
+                settings = notice_settings(args.model_path, threads=args.piper_threads)
+            else:
+                from malbut_tts.custom_piper_notices import custom_notice_settings
+                settings = custom_notice_settings(
+                    args.model_path, args.piper_model_sha256, threads=args.piper_threads)
             if not args.check:
                 synthesizer = PiperNotices(args.model_path, threads=args.piper_threads)
         elif not args.check:
