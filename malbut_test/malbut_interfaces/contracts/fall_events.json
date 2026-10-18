@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "notes": {
     "about": "Robot-to-web fall incident event contract. The robot journal writes these values and the web accepts only these. Change this file, then run `node scripts/sync-fall-contract.mjs` in malbut_web; CI fails while the web copy differs.",
-    "eventKinds": "approach_*/person_check_completed: the robot drives near an uncertain suspicion and checks for a person first. view_completed/posture_check_completed: only part of the body seen, it moves to see the whole body, then checks the posture. check_waiting/check_not_confirmed/revisit_started/same_person_compared: could not ask yet (manual drive or another job), a minute of that, going back to the spot before asking, and comparing the person with the first scene (mockup 28). check_stopped: 'stop' during the check, stopped without a question (2026-10-13). arrival_compared/reverify_completed/departure_reviewed/fall_moment_reviewed/recheck_started: the one check for every suspicion (SWM25-261, mockups 29-31): compare the first sight with the arrival, look again from where it was first seen, what left the spot, whether the fall moment was a fall, and the robot checking a closed or left-open incident again (a new round).",
-    "reasonsByKind": "Allowed reasons per event kind; null means no reason (only an approach start that interrupted nothing). Kinds not listed accept any reason matching ^[a-z_]{1,80}$. person_check_completed nobody_there: went back after waiting and found no one, not a closure. posture_check_completed: off the floor only when the robot's measurement and Cloud agree, anything else asks; active_on_floor is sitting up busy on the floor, seen twice, no fall seen (2026-10-14). same_person_compared: clothing only, for reference, never changes what the robot does. recheck_started: stood_up, floor_recheck (30 minutes after a close on the floor), person_seen_again (someone at a spot left open with nobody there), agent_restart.",
+    "eventKinds": "approach_*/person_check_completed: the robot drives near an uncertain suspicion and checks for a person first. view_completed/posture_check_completed: only part of the body seen, it moves to see the whole body, then checks the posture. check_waiting/check_not_confirmed/revisit_started/same_person_compared: could not ask yet (manual drive or another job), a minute of that, going back to the spot before asking, and comparing the person with the first scene (mockup 28). check_stopped: 'stop' during the check, stopped without a question (2026-10-13). arrival_compared/reverify_completed/departure_reviewed/fall_moment_reviewed/recheck_started: the one check for every suspicion (SWM25-261, mockups 29-31): compare the first sight with the arrival, look again from where it was first seen, what left the spot, whether the fall moment was a fall, and the robot checking a closed or left-open incident again (a new round). notification_grouped: an alert the robot did not send because one of the same level went out from the same place (1 m) within 10 minutes; written on the incident that sent it and on this one (SWM25-267, mockup 55).",
+    "reasonsByKind": "Allowed reasons per event kind; null means no reason (only an approach start that interrupted nothing). Kinds not listed accept any reason matching ^[a-z_]{1,80}$. person_check_completed nobody_there: went back after waiting and found no one, not a closure. posture_check_completed: off the floor only when the robot's measurement and Cloud agree, anything else asks; active_on_floor is sitting up busy on the floor, seen twice, no fall seen (2026-10-14). same_person_compared: clothing only, for reference, never changes what the robot does. recheck_started: stood_up, floor_recheck (30 minutes after a close on the floor), person_seen_again (someone at a spot left open with nobody there), agent_restart. notification_grouped: the reason of the alert not sent; it may come on an incident already closed (resolved).",
     "resolvedReasons": "A robot-side closure after its own check, never a normal-activity judgment. guardian_closed: a member pressed 처리 완료 and the robot stopped trying. left_the_spot: a person was seen walking away from the spot.",
     "notificationReasons": "Reason -> notification level. Web-only reasons are never accepted from a robot. Per-reason ones are sent once per reason per incident, outside the 'only a higher level' rule. checkRound: every event may carry the robot's check round (1 when absent); recheck_started starts the next. Notifications are counted per round, so a recheck can alert again (2026-10-17).",
     "cloudCriteria": "Shared judgment criteria for every Cloud request, on the robot and in the web AI review (the user, 2026-10-17): the same three questions instead of named objects. Each request adds only its own question and answer format. cloudAnswers lists the answer values of the robot's Cloud looks."
@@ -57,7 +57,8 @@
     "reverify_completed",
     "departure_reviewed",
     "fall_moment_reviewed",
-    "recheck_started"
+    "recheck_started",
+    "notification_grouped"
   ],
   "reasonsByKind": {
     "approach_started": [
@@ -160,6 +161,24 @@
       "floor_recheck",
       "person_seen_again",
       "agent_restart"
+    ],
+    "notification_grouped": [
+      "fall_observed_person_okay",
+      "person_no_response",
+      "check_required_not_confirmed_fall",
+      "help_requested",
+      "confirmation_help_required",
+      "robot_could_not_confirm",
+      "revisit_same_person_off_floor",
+      "revisit_person_unclear_off_floor",
+      "revisit_nobody_there",
+      "scene_answer_unconfirmed",
+      "check_stopped_by_user",
+      "person_may_differ",
+      "left_unseen",
+      "could_not_compare",
+      "person_crawled_away",
+      "closed_after_alert"
     ]
   },
   "resolvedReasons": [

@@ -325,3 +325,24 @@ test("approach events and the not-a-person closure are strict contracts", () => 
   bad({ eventKind: "approach_started", state: "resolved", reason: null });
   bad({ eventKind: "incident_resolved", state: "resolved", reason: "nobody_there" });
 });
+
+test("an alert not sent because one went out from the same place reads two lines (SWM25-267, mockup 55 ③)", () => {
+  const grouped = (reason, change = {}) => fallEventLabel(event({ eventKind: "notification_grouped", reason, ...change }));
+  assert.equal(grouped("confirmation_help_required", { answer: "help_request", state: "help_required" }),
+    "말벗: 같은 자리에서 다시 확인함 · 도움 요청 / 알림: 10분 안 같은 단계라 다시 보내지 않음");
+  assert.equal(grouped("person_no_response"),
+    "말벗: 같은 자리에서 다시 확인함 · 물어봤지만 대답이 없음 / 알림: 10분 안 같은 단계라 다시 보내지 않음");
+  assert.equal(grouped("unknown_future_reason"),
+    "말벗: 같은 자리에서 다시 확인함 / 알림: 10분 안 같은 단계라 다시 보내지 않음");
+  const ok = (change) => assert.ok(parseFallEvent(event(change)), JSON.stringify(change));
+  const bad = (change) => assert.equal(parseFallEvent(event(change)), null, JSON.stringify(change));
+  ok({ eventKind: "notification_grouped", reason: "confirmation_help_required", state: "help_required",
+    answer: "help_request" });
+  // The incident that sent the first alert may be closed already.
+  ok({ eventKind: "notification_grouped", reason: "help_requested", state: "resolved" });
+  ok({ eventKind: "notification_grouped", reason: "left_unseen", checkRound: 2 });
+  bad({ eventKind: "notification_grouped", reason: null });
+  bad({ eventKind: "notification_grouped", reason: "reopened_by_opinion" });  // Web-only.
+  bad({ eventKind: "notification_grouped", reason: "made_up" });
+  bad({ eventKind: "notification_grouped", reason: "help_requested", notificationLevel: "urgent" });
+});
