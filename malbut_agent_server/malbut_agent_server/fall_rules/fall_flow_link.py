@@ -210,6 +210,13 @@ class FallFlowLink:
             self.flow.people(parse_people(data), now)
         elif kind == 'fall_sighting':
             self.flow.sighted(parse_sighting(data.get('sighting')), now)
+        elif kind == 'fall_appearance':
+            similarity = data.get('similarity')
+            if similarity is not None and (isinstance(similarity, bool)
+                                           or not isinstance(similarity, (int, float))
+                                           or not -1.0 <= similarity <= 1.0):
+                raise ValueError('invalid appearance similarity')
+            self.flow.appearance(_text(data.get('request_id')), similarity, now)
         elif kind == 'fall_look_result':
             look_id = _text(data.get('look_id'))
             sent = self.looks.pop(look_id, None)
@@ -320,7 +327,7 @@ class FallFlowLink:
             self.looks[fields['look_id']] = (fields['what'], key, self.clock())
             self._decide(dict(action='look', **{
                 k: (list(v) if isinstance(v, tuple) else v) for k, v in fields.items()}))
-        elif kind in ('record', 'notify', 'link', 'clip', 'people'):
+        elif kind in ('record', 'notify', 'link', 'clip', 'people', 'compare'):
             self._decide(dict(action=kind, **fields))
         elif kind in ('drive', 'ask'):
             self._replace(dict(command))

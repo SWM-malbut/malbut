@@ -252,3 +252,18 @@ def test_a_malformed_pose_frame_is_refused():
             parse_people(bad)
     with pytest.raises(ValueError):
         parse_sighting(dict(sighting_id='s1', at=1.0, kind='seen'))  # Frames carry this now.
+
+
+def test_reid_questions_go_to_the_vlm_and_answers_back_to_the_rules(rig):
+    frame = dict(kind='fall_people', view=0, stationary=True, robot=[0.0, 0.0])
+    event(rig.link, **frame, at=99.0, people=[dict(track='a', box=None, point=[3.0, 1.0],
+                                                   state='unknown')])
+    first = rig.link.flow.tracker.person_of('a')
+    event(rig.link, **frame, at=700.0, people=[dict(track='z', box=None, point=[3.2, 1.0],
+                                                    state='unknown')])
+    compare, = decisions(rig.link, 'compare')
+    assert (compare['a']['track'], compare['b']['track']) == ('a', 'z')
+    assert rig.link.flow.tracker.person_of('z') == first
+    event(rig.link, kind='fall_appearance', request_id=compare['request_id'], similarity=0.3)
+    assert rig.link.flow.tracker.person_of('z') != first  # Split off: someone else.
+    event(rig.link, kind='fall_appearance', request_id='x', similarity=2.0)  # Refused, logged.
