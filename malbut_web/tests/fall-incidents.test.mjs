@@ -158,6 +158,27 @@ test("higher grades suppress pending lower notices; repeated same grade queues o
   }); } finally { await h.db.close(); }
 });
 
+test("an alert grouped with one from the same place is stored but never pushed (SWM25-267)", async () => {
+  const h = await fallDatabase(), load = moduleLoader();
+  const pg = load("db/postgres.ts"), repo = load("db/fall-incidents.ts");
+  try { await pg.withPostgresPoolForTest(h.pool, async () => {
+    const first = notice();
+    await repo.storeFallEvent("robot-a", first);
+    await repo.storeFallEvent("robot-a", event({ incidentId: first.incidentId, sequence: 2,
+      eventKind: "incident_resolved", state: "resolved", reason: "response_completed", answer: "okay" }));
+    await repo.storeFallEvent("robot-a", event({ incidentId: first.incidentId, sequence: 3,
+      eventKind: "notification_grouped", state: "resolved", reason: "help_requested", answer: "okay" }));
+    const other = event({ eventKind: "notification_grouped", state: "help_required", answer: "help_request",
+      reason: "help_requested" });
+    await repo.storeFallEvent("robot-a", other);
+    const pushes = (await h.db.query("SELECT incident_id FROM fall_push_outbox")).rows;
+    assert.deepEqual(pushes.map((r) => r.incident_id), [first.incidentId]);
+    const states = (await h.db.query("SELECT incident_id,state FROM fall_incidents ORDER BY incident_id")).rows;
+    assert.deepEqual(Object.fromEntries(states.map((r) => [r.incident_id, r.state])),
+      { [first.incidentId]: "resolved", [other.incidentId]: "help_required" });
+  }); } finally { await h.db.close(); }
+});
+
 test("authenticated ingestion acknowledges durable storage even when push is offline", async () => {
   const h = await fallDatabase();
   const overrides = {
