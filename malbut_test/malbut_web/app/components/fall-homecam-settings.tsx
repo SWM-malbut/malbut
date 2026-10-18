@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 
 // 홈캠 설정 block from the reviewed mockup (Settings.dc.html). Only the owner
@@ -22,7 +23,7 @@ function Switch({ checked, disabled, label, onChange }: {
 }
 
 export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordingEnabled, microphoneEnabled,
-  settingBusy, onUpdateSetting, demo = false }: {
+  settingBusy, onUpdateSetting, demo = false, lastRow = null }: {
   deviceId: string;
   isOwner: boolean;
   cameraEnabled: boolean;
@@ -31,6 +32,8 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
   settingBusy: boolean;
   onUpdateSetting: (key: "cameraEnabled" | "monitoringEnabled" | "microphoneEnabled", value: boolean) => void;
   demo?: boolean;
+  /** 목록 마지막 줄(음성으로 홈캠 사용, 목업 51번). */
+  lastRow?: ReactNode;
 }) {
   const base = `/api/devices/${encodeURIComponent(deviceId)}`;
   const request = useCallback<Request>((url, init) =>
@@ -111,6 +114,7 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
               </div>
             );
           })}
+          {lastRow}
         </div>
 
         <div className="fall-card is-flat">

@@ -44,27 +44,25 @@ export function VoiceAgentPanel({ deviceId, isOwner = false, settings = false }:
       const response = await fetch(url, { method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }) });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "음성으로 홈캠 쓰기를 저장하지 못했어요.");
+      if (!response.ok) throw new Error(body.error || "음성으로 홈캠 사용을 저장하지 못했어요.");
       setView((current) => current ? { ...current, delegation: body.delegation } : current);
       setError("");
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "음성으로 홈캠 쓰기를 저장하지 못했어요."); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "음성으로 홈캠 사용을 저장하지 못했어요."); }
     finally { setBusy(false); }
   }
-  // 홈캠 설정: 위 줄들(카메라 사용·연속 녹화…)과 같은 모양의 스위치 줄(목업 49번).
+  // 홈캠 설정 스위치 목록의 마지막 줄(목업 51번): 말벗 마이크 아래, 같은 모양.
   if (settings) {
     const enabled = view?.delegation.enabled ?? false;
-    return <div className="fall-card fall-settings-list fall-voice-settings">
-      <div className={`fall-settings-row ${!isOwner ? "is-dim" : ""}`}>
-        <span>
-          <strong>음성으로 홈캠 쓰기</strong>
-          <small>말벗 가까이에서 말하면 홈캠 상태와 기록을 듣고, 카메라·말벗 마이크·연속 녹화·낙상 감지를 켜고 끌 수 있어요.</small>
-        </span>
-        {/* 홈캠 설정의 다른 줄과 같은 스위치 모양(fall-switch). */}
-        <button type="button" role="switch" aria-checked={enabled} aria-label="음성으로 홈캠 쓰기" disabled={!view || !isOwner || busy}
-          className={`fall-switch ${enabled ? "is-on" : ""}`} onClick={() => void update(!enabled)}><span /></button>
-      </div>
-      <p className="fall-voice-note ui-lines">{"끄면 기다리던 음성 요청도 취소돼요.\n보호자 관리와 클라우드 AI 확인 동의는 웹에서만 바꿀 수 있어요.\n말벗 마이크를 꺼도 말벗은 계속 말을 알아들어요."}</p>
-      {error && <p className="fall-voice-note is-danger" role="alert">{error}</p>}
+    return <div className={`fall-settings-row ${!isOwner ? "is-dim" : ""}`}>
+      <span>
+        <strong>음성으로 홈캠 사용</strong>
+        <small>말벗 가까이에서 말하면 홈캠 상태와 기록을 듣고, 카메라·말벗 마이크·연속 녹화·낙상 감지를 켜고 끌 수 있어요.</small>
+        <small className="fall-voice-note ui-lines">{"끄면 기다리던 음성 요청도 취소돼요.\n보호자 관리와 클라우드 AI 확인 동의는 웹에서만 바꿀 수 있어요.\n말벗 마이크를 꺼도 말벗은 계속 말을 알아들어요."}</small>
+        {error && <small className="fall-voice-note is-danger" role="alert">{error}</small>}
+      </span>
+      {/* 홈캠 설정의 다른 줄과 같은 스위치 모양(fall-switch). */}
+      <button type="button" role="switch" aria-checked={enabled} aria-label="음성으로 홈캠 사용" disabled={!view || !isOwner || busy}
+        className={`fall-switch ${enabled ? "is-on" : ""}`} onClick={() => void update(!enabled)}><span /></button>
     </div>;
   }
   return <section className="robot-map-panel-card">

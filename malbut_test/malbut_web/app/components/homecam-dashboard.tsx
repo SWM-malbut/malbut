@@ -1627,11 +1627,10 @@ export function HomecamDashboard({
                 microphoneEnabled={selectedDevice.microphoneEnabled}
                 settingBusy={Boolean(busy)}
                 onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
+                lastRow={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID ? null
+                  : <VoiceAgentPanel key={`voice-${selectedDevice.id}`} deviceId={selectedDevice.id} isOwner={isOwner} settings />}
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
-            {selectedDevice && !(LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) && (
-              <VoiceAgentPanel key={`voice-${selectedDevice.id}`} deviceId={selectedDevice.id} isOwner={isOwner} settings />
-            )}
           </section>
         )}
 

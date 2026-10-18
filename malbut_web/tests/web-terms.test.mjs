@@ -54,8 +54,26 @@ test("status names follow the agreed terms", async () => {
   assert.match(panel, /<dd className=\{snapshot\?\.online \? "is-ok" : ""\}>\{snapshot\?\.online \? "온라인" : "오프라인"\}<\/dd>/);
   // 한국어 낱말 중간에서 줄이 바뀌지 않게(웹 용어 6번).
   assert.match(styles, /body \{[\s\S]*word-break: keep-all;/);
-  // 음성으로 홈캠 쓰기는 다른 설정 줄과 같은 스위치, 말벗 마이크는 카메라가 꺼지면 막힘(목업 49번).
-  assert.match(voice, /role="switch" aria-checked=\{enabled\} aria-label="음성으로 홈캠 쓰기"/);
+  // 음성으로 홈캠 사용은 다른 설정 줄과 같은 스위치, 말벗 마이크는 카메라가 꺼지면 막힘(목업 49번).
+  assert.match(voice, /role="switch" aria-checked=\{enabled\} aria-label="음성으로 홈캠 사용"/);
   assert.doesNotMatch(voice, /type="checkbox"/);
   assert.match(settings, /title: "말벗 마이크"[\s\S]*?needsCamera: true/);
+});
+
+test("음성으로 홈캠 사용 is the last row of the homecam settings list, not a card under 저장된 영상 (목업 51번)", async () => {
+  const [dashboard, voice, settings, http] = await Promise.all([
+    readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/voice-agent-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/fall-homecam-settings.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/voice-agent-http.ts", import.meta.url), "utf8"),
+  ]);
+  // The list renders the voice row right after its own rows, before 저장된 영상.
+  assert.match(settings, /\}\)\}\s*\{lastRow\}\s*<\/div>\s*<div className="fall-card is-flat">\s*<h2>저장된 영상<\/h2>/);
+  assert.match(dashboard, /lastRow=\{LOCAL_HOME_CAM_DEMO && selectedDevice\.id === LOCAL_DEMO_DEVICE_ID \? null\s*: <VoiceAgentPanel [^>]*settings \/>\}/);
+  assert.equal(dashboard.match(/<VoiceAgentPanel /g).length, 1);
+  // A row, not a card of its own.
+  assert.match(voice, /if \(settings\) \{[\s\S]*?return <div className=\{`fall-settings-row /);
+  assert.doesNotMatch(voice, /fall-voice-settings/);
+  for (const text of [voice, http]) assert.doesNotMatch(text, /홈캠 쓰기/);
+  assert.ok(http.includes("소유자만 음성으로 홈캠 사용을 바꿀 수 있어요."));
 });
