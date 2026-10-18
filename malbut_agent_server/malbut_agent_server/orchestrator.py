@@ -50,6 +50,7 @@ from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, validate_tool_arguments
 from malbut_agent_server.schemas import (
+    copy_request,
     AgentDecision,
     AgentRequest,
     ContextMetrics,
@@ -874,8 +875,8 @@ class AgentOrchestrator:
                 name for name in effective_value['available_tools']
                 if name != 'set_weather_location'
             ]
-        safety_request = type(effective_request).from_dict(effective_value)
-        model_request = type(effective_request).from_dict(effective_value)
+        safety_request = copy_request(effective_request, effective_value)
+        model_request = copy_request(effective_request, effective_value)
         local_memory = self.personal_memory.local_decision(
             request, memory_snapshot,
         )
@@ -1116,7 +1117,7 @@ class AgentOrchestrator:
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(
-            type(request).from_dict(value), list(memories), copy.deepcopy(list(turns)), [],
+            copy_request(request, value), list(memories), copy.deepcopy(list(turns)), [],
             conversation_summary=copy.deepcopy(summary), memory_context=context,
         )
         answer.validate()
@@ -1208,7 +1209,7 @@ class AgentOrchestrator:
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(
-            type(request).from_dict(value), list(memories),
+            copy_request(request, value), list(memories),
             copy.deepcopy(list(conversation_turns)), [],
             conversation_summary=copy.deepcopy(conversation_summary),
             weather_context=weather,
@@ -1270,7 +1271,7 @@ class AgentOrchestrator:
             raise TypeError('utterance_resolver must return str or None')
         value = request.to_dict()
         value['utterance'] = resolved
-        return type(request).from_dict(value)
+        return copy_request(request, value)
 
     def _fresh_safety_request(
         self,
@@ -1304,7 +1305,7 @@ class AgentOrchestrator:
         value = request.to_dict()
         value['robot_state'] = state.to_dict()
         return (
-            type(request).from_dict(value),
+            copy_request(request, value),
             trusted,
             evidence_id,
             observed_at,

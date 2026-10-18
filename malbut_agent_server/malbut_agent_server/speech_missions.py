@@ -14,6 +14,9 @@ from malbut_agent_server.mission_audio_cases import NOTICE_TEXTS
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.speech_navigation import NavigationTargets
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
+from malbut_agent_server.speech_nav2 import (
+    MAP_TOOLS, NAV2_CAPABILITIES, map_arguments, motion_arguments,
+)
 
 
 _CAPABILITIES = {
@@ -24,12 +27,14 @@ _CAPABILITIES = {
     'request_relocalization': 'relocalize',
     'request_manual_control': 'manual_drive',
     'request_recovery': 'recovery',
+    **NAV2_CAPABILITIES,
 }
 # Moves the app also locks while a fall check runs (2026-10-12); 직접 움직이기 and
 # recovery stay available, as in the app.
 _FALL_CHECK_LOCKED = frozenset({
     'request_navigation', 'request_follow_person', 'request_patrol',
     'request_mapping', 'request_relocalization',
+    *NAV2_CAPABILITIES,
 })
 _TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELED', 'REJECTED', 'UNAVAILABLE'}
 _MAP_UNAVAILABLE = '사용 중인 저장 지도를 확인할 수 없어 이동하지 않았어요.'
@@ -51,6 +56,7 @@ class SpeechMissionProposal:
     map_path: str = ''
     map_generation: int = 0
     target_digest: str = ''
+    map_revision: str = ''
     blocked: bool = False
     _issuer: object = field(default=None, repr=False, compare=False)
 
@@ -135,6 +141,19 @@ class SpeechMissions:
             except (OSError, ValueError):
                 return ()
 
+    def map_context(self):
+        """Read one bounded active-map description for a new dialogue turn."""
+        with self._lock:
+            try:
+                return self._targets.scene(self._active_map)
+            except (OSError, ValueError):
+                return None
+
+    def map_matches(self, revision):
+        """Reject a plan bound to another map/catalog revision."""
+        current = self.map_context()
+        return current is not None and current['revision'] == revision
+
     def navigation_matches(self, proposal):
         """Recheck a prepared destination without submitting a Manager Goal."""
         with self._lock:
@@ -157,6 +176,10 @@ class SpeechMissions:
             raise ValueError('unsupported voice mission tool')
         if not isinstance(arguments, dict):
             raise ValueError('tool arguments must be an object')
+        if tool_name in NAV2_CAPABILITIES:
+            from malbut_agent_server.tools import validate_tool_arguments
+
+            validate_tool_arguments(tool_name, arguments)
         location = ''
         if tool_name == 'request_navigation':
             if set(arguments) != {'location'} or not isinstance(
@@ -187,6 +210,10 @@ class SpeechMissions:
                     or method not in methods):
                 raise ValueError('unsupported relocalization method')
             manager_arguments = {'method': methods[method]}
+        elif tool_name in {'request_rotation', 'request_backup'}:
+            manager_arguments = motion_arguments(tool_name, arguments)
+        elif tool_name in MAP_TOOLS:
+            manager_arguments = {}
         else:
             if arguments:
                 raise ValueError('this voice mission takes no arguments')
@@ -206,6 +233,15 @@ class SpeechMissions:
             if refusal is not None:
                 # Said instead of "네, …시작하겠습니다": nothing will start.
                 return self._blocked(fields, refusal)
+            if tool_name in MAP_TOOLS:
+                try:
+                    manager_arguments, revision = map_arguments(
+                        tool_name, arguments, self._targets, self._active_map)
+                    fields.update(map_path=self._active_map or '',
+                                  map_generation=self._map_generation, map_revision=revision)
+                except (OSError, ValueError):
+                    return self._blocked(fields, '현재 지도에서 이동 지점을 확인하지 못했어요. '
+                                         '좌표나 등록된 목적지를 다시 확인해 주세요.')
             if tool_name == 'request_navigation':
                 fields.update(
                     location=location, map_path=self._active_map or '',
@@ -277,6 +313,10 @@ class SpeechMissions:
             return self._cancel(guard)
         if (proposal.tool_name == 'request_navigation'
                 and not self.navigation_matches(proposal)):
+            return _NAV_CHANGED
+        if proposal.tool_name in MAP_TOOLS and (
+                proposal.map_generation != self._map_generation
+                or not self.map_matches(proposal.map_revision)):
             return _NAV_CHANGED
         capability = _CAPABILITIES[proposal.tool_name]
         manager_id = 'speech-mission:' + hashlib.sha256(

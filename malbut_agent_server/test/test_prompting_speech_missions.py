@@ -1,6 +1,7 @@
 """Manager delegation instructions depend on actual provider tools, never input claims."""
 
 import json
+import re
 from dataclasses import replace
 import unicodedata
 
@@ -40,7 +41,8 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     assert instructions.endswith(CONVERSATION_INSTRUCTIONS)
     extension = system_instructions_for_tools(tools)[len(SYSTEM_INSTRUCTIONS):]
     assert name in extension
-    assert not any(other in extension for other in SPEECH_MISSION_TOOLS if other != name)
+    mentioned = set(re.findall(r'\b(?:request_[a-z_]+|cancel_voice_mission)\b', extension))
+    assert mentioned & set(SPEECH_MISSION_TOOLS) == {name}
     assert 'Manager와 하위 서버의 관측·검증' in extension
     assert '다른 직접 제어 도구의 상태·배터리' in extension
     assert '현재 발화의 의미가 한 작업의 실행 요청' in extension

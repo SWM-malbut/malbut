@@ -160,8 +160,16 @@ def create_communication_node(
                         configure_speech_missions(runtime)
                     return runtime
 
+                from malbut_agent_server.speech_scene import RosSpeechScene
+
+                try:
+                    self._scene = RosSpeechScene(self, self.speech_missions)
+                except ImportError:
+                    self._scene = None
+                    self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
+                    **({'scene_source': self._scene} if self._scene is not None else {}),
                     **({'missions': self.speech_missions}
                        if self.speech_missions is not None else {}),
                 )
@@ -549,6 +557,8 @@ def create_communication_node(
                     finally:
                         if self.situation is not None:
                             self.situation.destroy()
+                        if getattr(self, '_scene', None) is not None:
+                            self._scene.close()
                         destroyed = super().destroy_node()
             return destroyed
 

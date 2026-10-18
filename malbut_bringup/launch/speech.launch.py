@@ -44,6 +44,9 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
+    scene_parameters = {'scene_rgb_topic': value('rgb_topic'),
+                        'scene_robot_frame': value('robot_frame'),
+                        'scene_images_enabled': value('scene_images_enabled') == 'true'}
     start_manager = value('start_manager') == 'true'
     prerecorded_audio = value('prerecorded_audio') == 'true'
     audio_directory = value('audio_directory')
@@ -118,6 +121,7 @@ def _setup(context):
             mission_arguments.append('--enable-manager-commands')
         agents = [Node(
             package='malbut_agent_server', executable='agent_communication',
+            parameters=[scene_parameters],
             prefix=prefix, output='screen', arguments=[
                 '--provider', agent_provider, '--user-id', agent_user_id,
                 '--conversation-db', agent_conversation_db,
@@ -190,6 +194,8 @@ def generate_launch_description():
         'manager_commands': 'true', 'start_manager': 'false',
         'prerecorded_audio': 'true', 'audio_directory': '',
         'tts_config': '',
+        'scene_images_enabled': 'true', 'rgb_topic': '/depth_cam/rgb0/image_raw',
+        'robot_frame': 'base_footprint',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
@@ -198,6 +204,7 @@ def generate_launch_description():
         'manager_commands': ['true', 'false'],
         'start_manager': ['true', 'false'],
         'prerecorded_audio': ['true', 'false'],
+        'scene_images_enabled': ['true', 'false'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

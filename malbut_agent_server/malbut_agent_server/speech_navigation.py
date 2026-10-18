@@ -243,6 +243,74 @@ class NavigationTargets:
         _, poses, _ = self._catalog(active_map)
         return tuple(poses)
 
+    def scene(self, active_map):
+        """Expose bounded map metadata/landmarks, never the occupancy raster or file paths."""
+        if not active_map:
+            raise NavigationTargetError('map_unavailable')
+        path = _absolute_map(active_map, 'map_unavailable')
+        raw, image_digest, occupancy_revision = self._map_binding(path)
+        metadata = _document(raw)
+        image = cv2.imdecode(np.frombuffer(_read(
+            (path.parent / metadata['image']).resolve(), MAX_MAP_IMAGE_BYTES,
+            'map_unavailable'), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise NavigationTargetError('map_unavailable')
+        user_path = path.with_suffix('.user-map.geojson')
+        user_raw = _read(user_path, MAX_USER_MAP_BYTES, 'catalog_invalid') if user_path.is_file() else b''
+        try:
+            _, poses, binding = self._catalog(active_map)
+            if binding[1] != raw or binding[2] != image_digest:
+                raise NavigationTargetError('map_changed')
+        except NavigationTargetError as error:
+            if error.code == 'map_changed':
+                raise
+            poses = {}
+        revision = hashlib.sha256(raw + image_digest + user_raw).hexdigest()
+        return {
+            'id': path.name, 'revision': revision, 'frame_id': 'map',
+            'occupancy_revision': occupancy_revision,
+            'resolution_m': metadata['resolution'],
+            'origin': metadata['origin'],
+            'width_cells': int(image.shape[1]), 'height_cells': int(image.shape[0]),
+            'landmarks': [{'location': name, 'x': point[0], 'y': point[1]}
+                          for name, point in list(poses.items())[:32]],
+        }
+
+    def resolve_point(self, x, y, yaw_deg, active_map):
+        """Validate a map-frame goal; Nav2 remains the only path/motion planner."""
+        x, y = (_coordinate(value, MAX_ABS_COORDINATE_M) for value in (x, y))
+        yaw = 0.0 if yaw_deg is None else math.radians(_coordinate(yaw_deg, 180.0))
+        scene = self.scene(active_map)
+        path = _absolute_map(active_map, 'map_unavailable')
+        metadata = _document(_read(path, MAX_MAP_BYTES, 'map_unavailable'))
+        raster = cv2.imdecode(np.frombuffer(_read(
+            (path.parent / metadata['image']).resolve(), MAX_MAP_IMAGE_BYTES,
+            'map_unavailable'), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if raster is None:
+            raise NavigationTargetError('map_unavailable')
+        ox, oy, angle = scene['origin']
+        dx, dy = x - ox, y - oy
+        resolution = scene['resolution_m']
+        gx = math.floor((math.cos(angle) * dx + math.sin(angle) * dy) / resolution)
+        gy = math.floor((-math.sin(angle) * dx + math.cos(angle) * dy) / resolution)
+        row = raster.shape[0] - 1 - gy
+        # Reject known blocked/unknown cells, including a modest footprint margin.
+        radius = math.ceil(0.22 / resolution)
+        if (gx - radius < 0 or row - radius < 0
+                or gx + radius >= raster.shape[1] or row + radius >= raster.shape[0]):
+            raise NavigationTargetError('target_outside_map')
+        patch = raster[row - radius:row + radius + 1, gx - radius:gx + radius + 1]
+        occupancy = patch.astype(float) / 255.0
+        if not metadata.get('negate', 0):
+            occupancy = 1.0 - occupancy
+        yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+        if np.any(occupancy[xx * xx + yy * yy <= radius * radius]
+                  >= metadata.get('free_thresh', 0.196)):
+            raise NavigationTargetError('target_not_free')
+        if self.scene(active_map)['revision'] != scene['revision']:
+            raise NavigationTargetError('map_changed')
+        return NavigationTarget('', str(path), 'map', x, y, yaw, scene['revision'])
+
     def _catalog(self, active_map):
         if not active_map:
             raise NavigationTargetError('map_unavailable')

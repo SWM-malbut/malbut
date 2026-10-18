@@ -35,6 +35,26 @@ from navigation_user_map import rewrite, room, rooms, write_user_map  # noqa: E4
 
 TIMEOUT_S = 10.0
 MANIFESTS = Path(__file__).resolve().parents[2] / 'malbut_interfaces/capabilities'
+
+
+def test_new_nav2_manifests_resolve_real_humble_goal_types():
+    """Exercise registrations in the ROS CI job without any robot motion."""
+    from malbut_system_manager.manifest_registry import ManifestRegistry
+
+    registry = ManifestRegistry(MANIFESTS)
+    examples = {
+        'spin': {'target_yaw': 1.0, 'time_allowance': {'sec': 10, 'nanosec': 0}},
+        'backup': {'target': {'x': 0.2}, 'speed': 0.1,
+                   'time_allowance': {'sec': 10, 'nanosec': 0}},
+        'follow_waypoints': {'poses': [{'header': {'frame_id': 'map'},
+                                      'pose': {'orientation': {'w': 1.0}}}]},
+    }
+    for name, arguments in examples.items():
+        manifest = registry.get(name)
+        _, message = registry.parse_arguments(manifest, yaml.safe_dump(arguments))
+        assert isinstance(message, manifest.interface_type.Goal)
+
+
 ACTION_TYPES = {
     'follow_person': FollowPerson, 'patrol': Patrol,
     'navigate_to_pose': NavigateToPose,

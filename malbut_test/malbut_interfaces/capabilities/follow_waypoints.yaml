@@ -1,0 +1,18 @@
+schema_version: 1
+capability:
+  id: follow_waypoints
+  title: 여러 목적지 방문
+  description: 기존 Nav2 FollowWaypoints로 순서대로 한 번 방문하며 중간 실패 시 중단한다.
+command:
+  kind: ACTION
+  name: /follow_waypoints
+  type: nav2_msgs/action/FollowWaypoints
+input:
+  fields:
+    poses:
+      type: geometry_msgs/PoseStamped[]
+      description: 순서 있는 지도 좌표 목록
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]

@@ -21,6 +21,7 @@ ARGUMENTS = [
     'speech_python_executable', 'speech_agent_provider', 'speech_agent_user_id',
     'speech_agent_conversation_db', 'speech_manager_commands', 'speech_prerecorded_audio',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id', 'fall_flow',
+    'rgb_topic', 'robot_frame', 'speech_scene_images_enabled',
 ]
 PARTS = {'agent_speech': 'speech', 'agent_fall_rules': 'fall'}
 
@@ -75,6 +76,10 @@ def _setup(context):
     return [Node(
         package='malbut_agent_server', executable='agent_communication',
         prefix=prefix, output='screen', arguments=arguments,
+        parameters=[{'scene_rgb_topic': value('rgb_topic'),
+                     'scene_robot_frame': value('robot_frame'),
+                     'scene_images_enabled': value('speech_scene_images_enabled') == 'true'}]
+        if speech else [],
         respawn=True, respawn_delay=5.0,
     )]
 
