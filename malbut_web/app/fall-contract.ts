@@ -108,9 +108,10 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
           (v.state === "resolved" && v.answer === "okay"))) return null;
   }
   if (v.state === "resolved") {
-    // A return trip ends after the robot's own closure (no person, or off the floor).
+    // A return trip ends after the robot's own closure (no person, or off the floor). An alert
+    // the robot did not send may be noted on the incident that sent one, already closed (SWM25-267).
     if (v.eventKind !== "incident_merged" && v.eventKind !== "confirmation_completed" &&
-        v.eventKind !== "approach_returned" &&
+        v.eventKind !== "approach_returned" && v.eventKind !== "notification_grouped" &&
         (v.eventKind !== "incident_resolved" || !resolvedReasons.includes(v.reason as string))) return null;
     if (v.reason === "normal_verified" && (v.fallSeen || v.answer !== "okay" || v.assessment !== "normal_activity")) return null;
   }

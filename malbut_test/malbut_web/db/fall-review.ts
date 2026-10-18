@@ -342,9 +342,20 @@ async function peopleSegments(deviceId: string, incidentId: string) {
   )).rows.map((r) => r.segment_index as number));
 }
 
+/** A check or recheck range's round from the stored robot payload (SWM25-268), else null. */
+function clipCheckRound(payload: unknown): number | null {
+  if (typeof payload !== "string") return null;
+  try {
+    const round = (JSON.parse(payload) as { checkRound?: unknown }).checkRound;
+    return Number.isSafeInteger(round) && (round as number) >= 1 ? round as number : null;
+  } catch {
+    return null;
+  }
+}
+
 async function clipsWithState(deviceId: string, incidentId: string, check?: ClipCheck) {
   const rows = (await getPostgresPool().query(
-    `SELECT segment_index,revision,start_at,end_at,anchor_kinds,found_down,clock_stepped
+    `SELECT segment_index,revision,start_at,end_at,anchor_kinds,found_down,clock_stepped,payload_json
      FROM fall_incident_clips WHERE device_id=$1 AND incident_id=$2 ORDER BY segment_index`,
     [deviceId, incidentId],
   )).rows;
@@ -355,6 +366,7 @@ async function clipsWithState(deviceId: string, incidentId: string, check?: Clip
     const startAt = iso(row.start_at)!, endAt = iso(row.end_at)!;
     return { segmentIndex: row.segment_index, revision: row.revision, startAt, endAt,
       anchorKinds: row.anchor_kinds, foundDown: row.found_down, clockStepped: row.clock_stepped,
+      checkRound: clipCheckRound(row.payload_json),
       playbackState: await checkedState(startAt, endAt, spans, check),
       hasPeople: people.has(row.segment_index) };
   });

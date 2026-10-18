@@ -32,7 +32,8 @@ export async function GET(request: Request, context: Context) {
     return noStore({ error: "이 시간의 녹화 영상이 없습니다." }, 404);
   }
   if (!(await consumeRequestRateLimit({ userId: member.userId, roomCode: incidentId,
-    scope: "fall-clip-still", limit: 30 }))) {
+    // 재감지 photos (SWM25-268): up to 32 stills of one incident open at once.
+    scope: "fall-clip-still", limit: 90 }))) {
     return noStore({ error: "사진 요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요." }, 429, { "retry-after": "60" });
   }
   try {

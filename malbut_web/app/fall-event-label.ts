@@ -274,6 +274,12 @@ function approachLines(event: FallHistoryEvent): string[] | null {
     // 예전 이유(confirmation_transport_failed, agent_failed)도 질문 중 오류다.
     return [line("말벗", Object.hasOwn(CHECK_FAILED, reason) ? CHECK_FAILED[reason] : CHECK_FAILED.question_error)];
   }
+  if (kind === "notification_grouped") {
+    // 목업 55번 ③: 같은 자리(1 m)·10분 안·같은 단계 알림은 보내지 않고 두 줄로 남긴다(SWM25-267).
+    const what = reason === "confirmation_help_required" ? ANSWER.help_request : NOTICE[reason]?.[1];
+    return [line("말벗", `같은 자리에서 다시 확인함${what ? ` · ${what}` : ""}`),
+      line("알림", "10분 안 같은 단계라 다시 보내지 않음")];
+  }
   if (kind === "notification_requested" && Object.hasOwn(REVISIT_NOTICE, reason)) {
     return [line("알림", `${LEVEL[REVISIT_NOTICE[reason]]} · 묻지 않음 · 사건은 열어 둠`)];
   }

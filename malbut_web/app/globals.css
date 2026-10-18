@@ -4159,6 +4159,29 @@ a:focus-visible {
   position: relative; width: 100%; aspect-ratio: 358 / 224; border-radius: 10px; overflow: hidden; background: var(--ui-media);
 }
 .fall-scene video { width: 100%; height: 100%; object-fit: contain; background: var(--ui-media-black); }
+/* 장면 구간 (SWM25-268): 재감지 사진, 기다림 건너뜀 안내, 재생 중 몇 번째인지. */
+.fall-redetect { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.fall-redetect button {
+  display: flex; flex-direction: column; gap: 3px; padding: 0; border: 0; background: none; font: inherit;
+  color: var(--ui-text-muted); text-align: left; cursor: pointer;
+}
+.fall-redetect img, .fall-redetect-empty {
+  display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 6px; object-fit: cover; background: var(--ui-media);
+}
+.fall-redetect button.is-on img, .fall-redetect button.is-on .fall-redetect-empty {
+  outline: 3px solid var(--ui-strong); outline-offset: 1px;
+}
+.fall-redetect button.is-on span { color: var(--ui-text); font-weight: 700; }
+.fall-redetect span { font-size: 11px; }
+.fall-scene-skip {
+  width: 100%; aspect-ratio: 358 / 224; border-radius: 10px; background: var(--ui-media-black); color: var(--ui-on-strong);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center;
+}
+.fall-scene-skip span { font-size: 12px; opacity: .8; }
+.fall-scene-badge {
+  position: absolute; left: 10px; top: 10px; z-index: 2; padding: 3px 8px; border-radius: 6px; pointer-events: none;
+  background: var(--ui-overlay); color: var(--ui-on-strong); font-size: 12px;
+}
 .fall-scene-hint, .fall-scene-message { position: absolute; left: 12px; top: 10px; right: 12px; font-size: 12px; color: var(--ui-border); }
 .fall-scene-bar {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; display: flex; justify-content: space-between;

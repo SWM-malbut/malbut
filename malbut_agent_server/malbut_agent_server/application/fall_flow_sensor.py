@@ -9,6 +9,11 @@ records and notifications in the journal for the web, as they say. It keeps the
 photos those looks need, in memory only: the first sight of each suspicion, the
 moment of a fall, and frames of the spot while the robot waits and drives there.
 
+Every YOLO-Pose frame also goes to the Agent as numbers only (``fall_people``,
+SWM25-267): each person's YOLO track, box, posture and map place by depth, where
+the robot was and whether it stood still. Who is the same person is decided by
+the Agent's person tracking, not here (input, judgment and action, 2026-10-19).
+
 The only filtering left here is a measurement, as in the detector: a Cloud find
 whose body rests higher than its floor height (a bed or sofa) is not reported
 (2026-10-09). Consent and connection still stop Cloud here; a look asked while
@@ -74,6 +79,12 @@ RECORD_PURPOSE = {'analysis_completed': ('incident', 'crosscheck'),
                   'posture_check_completed': ('posture_check',)}
 # 처리 완료 arrives every second while the app lists it; tell the rules now and then.
 GUARDIAN_AGAIN_S = 10.0
+# The robot's check as the incident's video (SWM25-268, 목업 53번): from when the robot
+# gets to work on a round until 5 s after the judgment, without its waits. The range
+# grows every few seconds meanwhile (people boxes keep only 30 s of history) and stops
+# growing after ten minutes.
+CLIP_MARKS = ('start', 'pause', 'end')
+CHECK_CLIP_AFTER_S, CHECK_CLIP_EVERY_S, CHECK_CLIP_MAX_S = 5.0, 5.0, 600.0
 # The web's assessment shown beside a look's explanation (display only).
 SHOWN = {'same_person': VideoAssessment.SUSPECTED_FALL,
          'person_unsure': VideoAssessment.SUSPECTED_FALL,
@@ -118,6 +129,8 @@ class FlowIncident:
     check_round: int = 1
     middle: list = field(default_factory=list)
     middle_at: float = -math.inf
+    # While the robot works on a round: [check round, since, last grown] (SWM25-268).
+    check_clip: Optional[list] = None
 
 
 @dataclass
@@ -323,6 +336,7 @@ class FallFlowSensor:
         self._moving = moving
         self._people_call(self._people.observe, frame.observed_at, tuple(
             (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
+        self._messages.append(self._people_frame(frame))
         for pose in frame.subjects:
             before = self._postures.get(pose.subject_key)
             self._postures[pose.subject_key] = pose.state
@@ -340,6 +354,31 @@ class FallFlowSensor:
         while len(self._seen_at) > 256:
             self._seen_at.pop(next(iter(self._seen_at)))
         return True
+
+    def _people_frame(self, frame):
+        """One frame for the Agent's person tracking; a frame with nobody is sent too."""
+        at = frame.observed_at
+        robot = None
+        if self._place is not None:
+            try:
+                camera = self._place.camera_near(at)
+            except Exception:
+                camera = None
+            robot = camera[0] if camera is not None else None
+        people = []
+        for pose in frame.subjects:
+            if pose.box is None:
+                continue
+            point = None
+            if self._place is not None:
+                try:
+                    point = self._place.locate_near(at, pose.box)
+                except Exception:
+                    point = None  # No depth (under a table, too close): no map place.
+            people.append(dict(track=pose.subject_key, box=[round(v, 4) for v in pose.box],
+                               point=_point(point), state=pose.state.value))
+        return dict(kind='fall_people', at=at, view=self._view,
+                    stationary=frame.camera_stationary, robot=_point(robot), people=people)
 
     def candidate(self, candidate: FallCandidate) -> Optional[str]:
         """A YOLO-Pose suspicion, reported as it is; the rules filter it with Cloud."""
@@ -395,6 +434,14 @@ class FallFlowSensor:
                 if frames:
                     self._moments[moment] = Photo(frames, None, at)
         self._collect_middle(now)
+        for incident in self._incidents.values():
+            clip = incident.check_clip
+            if clip is None or now - clip[2] < CHECK_CLIP_EVERY_S:
+                continue
+            if now - clip[1] >= CHECK_CLIP_MAX_S:
+                incident.check_clip = None  # A round stuck for ten minutes: stop growing.
+            else:
+                self._extend_check(incident, now, after=CHECK_CLIP_EVERY_S)
         for store in (self._photos, self._moments):
             kept = self._kept_photos()
             for key, photo in tuple(store.items()):
@@ -462,6 +509,11 @@ class FallFlowSensor:
             incident = self._incidents.get(_id(data.get('incident_id'), optional=False))
             if sighting is not None and incident is not None:
                 self._clip_from(incident, sighting)
+        elif action == 'clip':
+            incident = self._incident(_id(data.get('incident_id'), optional=False))
+            if incident is None or data.get('mark') not in CLIP_MARKS:
+                raise ValueError('invalid clip mark')
+            self._check_clip(incident, data['mark'], self._round(data))
         else:
             raise ValueError('unsupported decision')
 
@@ -538,6 +590,8 @@ class FallFlowSensor:
             incident.open = False
             incident.middle.clear()
             self._mark(incident, round_)
+            if incident.check_clip is not None:  # The judgment, even without an end mark.
+                self._check_clip(incident, 'end', round_)
         elif event == 'recheck_started':
             incident.open = True
             incident.middle.clear()
@@ -690,10 +744,33 @@ class FallFlowSensor:
         self._record_clip(incident, start, end, anchor_kind=anchor,
                           found_down=message['kind'] != 'motion')
 
-    def _record_clip(self, incident, start, end, *, anchor_kind, found_down=False):
+    def _check_clip(self, incident, mark, round_):
+        """A mark of the robot's check: a range starts now, or ends (at a wait as it
+        begins, 5 s after the judgment)."""
+        now = self._now()
+        if incident.check_clip is not None:
+            self._extend_check(incident, now,
+                               after=0.0 if mark == 'pause' else CHECK_CLIP_AFTER_S)
+            incident.check_clip = None
+        if mark == 'start':
+            # Started soon after the first suspicion, it joins that range (-10 s): one
+            # 확인. After a wait it is its own range, and the first one stays 발견.
+            incident.check_clip = [round_, now, now]
+            self._extend_check(incident, now, after=CHECK_CLIP_EVERY_S)
+
+    def _extend_check(self, incident, now, *, after):
+        round_, since, _ = incident.check_clip
+        incident.check_clip[2] = now
+        self._record_clip(incident, since, min(now, since + CHECK_CLIP_MAX_S),
+                          anchor_kind='check' if round_ == 1 else 'recheck',
+                          check_round=round_, pre_s=0.0, post_s=after)
+
+    def _record_clip(self, incident, start, end, *, anchor_kind, found_down=False,
+                     check_round=None, pre_s=None, post_s=None):
         try:
             changed = self._clips.observe(incident.incident_id, start, end,
-                                          anchor_kind=anchor_kind, found_down=found_down)
+                                          anchor_kind=anchor_kind, found_down=found_down,
+                                          pre_s=pre_s, post_s=post_s, check_round=check_round)
         except ValueError:
             self.clip_storage_failures += 1
             return
@@ -711,7 +788,7 @@ class FallFlowSensor:
             clip = RecordedClip(
                 incident.incident_id, incident.boot_id, segment.segment_index, segment.revision,
                 segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
-                segment.found_down, stepped)
+                segment.found_down, stepped, segment.check_round)
             if self._journal is not None and hasattr(self._journal, 'append_clip'):
                 try:
                     self._journal.append_clip(device_id=self.device_id, clip=clip)

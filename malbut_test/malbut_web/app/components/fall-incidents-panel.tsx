@@ -3,7 +3,10 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
+import { clipGroups, groupLabel, groupNote, skippedText } from "../fall-clip-groups";
+import type { ClipGroup } from "../fall-clip-groups";
 import { fallHistoryLines, plainLabels } from "../fall-event-label";
+import { josa } from "../korean-particle";
 import type { FallHistoryEvent } from "../fall-event-label";
 import { clock, dayLabel, incidentBadges, incidentExtras, incidentSubtitle, incidentTitle, when } from "../fall-incident-view";
 import type { BadgeTone, IncidentSummary, OpinionLabel, SceneState } from "../fall-incident-view";
@@ -16,6 +19,8 @@ export type IncidentFilter = "all" | "check" | "closed" | "normal" | "report";
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
   clockStepped: boolean; playbackState: SceneState; hasPeople?: boolean;
+  /** The round of a check or recheck range (SWM25-268). */
+  checkRound?: number | null;
 };
 /** [ms from the clip start, left, top, right, bottom] in 1/1000 of the frame. */
 type PeopleSample = [number, number, number, number, number];
@@ -130,15 +135,22 @@ function PeopleOverlay({ scene, now }: { scene: ScenePeople; now: number }) {
   );
 }
 
-function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable, onStart }: {
+function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable, onStart, autoPlay = false,
+  onEnded, badge }: {
   deviceId: string; incidentId: string; clip: Clip; request: Request;
+  /** Play at once (the next range of a group, or a 재감지 photo pressed); then report the end. */
+  autoPlay?: boolean; onEnded?: () => void;
+  /** Over the video while it plays, as 재감지 3/10 · 21:41:25. */
+  badge?: string;
   /** Boxes to draw, or null when 사람 표시 is off or has nothing. */
   scene: ScenePeople | null; demo: boolean;
   /** Whether the scene video can be played; the whole scene is its play button. */
   playable: boolean; onStart: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(autoPlay && playable);
+  const onEndedRef = useRef(onEnded);
+  useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
   // 정지 사진 of the suspected moment, before playing. The demo has no archive: its drawn still.
   const stillUrl = playable && !demo
     ? `/api/devices/${encodeURIComponent(deviceId)}/fall-incidents/${encodeURIComponent(incidentId)}` +
@@ -171,11 +183,17 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, play
     const video = videoRef.current;
     const controller = new AbortController();
     let dispose = () => undefined as void;
-    let start = 0, end = Number.POSITIVE_INFINITY;
+    let start = 0, end = Number.POSITIVE_INFINITY, finished = false;
     if (!video) return;
-    const stopAtEnd = () => { if (video.currentTime >= end) video.pause(); };
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      onEndedRef.current?.();  // A group goes on to its next range.
+    };
+    const stopAtEnd = () => { if (video.currentTime >= end) { video.pause(); finish(); } };
     const ready = () => { video.currentTime = start; setMessage(""); void video.play().catch(() => undefined); };
     video.addEventListener("timeupdate", stopAtEnd);
+    video.addEventListener("ended", finish);
     video.addEventListener("loadedmetadata", ready);
     const run = async () => {
       const url = `/api/devices/${encodeURIComponent(deviceId)}/fall-incidents/${encodeURIComponent(incidentId)}` +
@@ -212,6 +230,7 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, play
       controller.abort();
       dispose();
       video.removeEventListener("timeupdate", stopAtEnd);
+      video.removeEventListener("ended", finish);
       video.removeEventListener("loadedmetadata", ready);
       video.pause();
       video.removeAttribute("src");
@@ -224,6 +243,7 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, play
       <video ref={videoRef} controls={playing} playsInline hidden={!playing || demo} />
       {playing && demo && <div className="fall-scene-still" />}
       {playing && scene && now !== null && <PeopleOverlay scene={scene} now={now} />}
+      {playing && badge && <span className="fall-scene-badge">{badge}</span>}
       {!playing && (
         <button type="button" className={`fall-scene-start ${still === "shown" ? "has-photo" : ""}`}
           aria-label="장면 영상 보기" disabled={!playable} onClick={onStart}>
@@ -255,14 +275,17 @@ function readOverlayPreference() {
   try { return window.localStorage.getItem(OVERLAY_KEY) !== "off"; } catch { return true; }
 }
 
-function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
+function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive, autoPlay = false, onEnded, badge, note }: {
   deviceId: string; incidentId: string; clip: Clip; request: Request; demo: boolean;
   onOpenLive?: () => void;
+  autoPlay?: boolean; onEnded?: () => void; badge?: string;
+  /** What part of the incident this is (SWM25-268); older ranges keep the fixed wording. */
+  note?: string;
 }) {
   // Scene mounts only after the detail loads on the client, so storage is readable here.
   const [showPeople, setShowPeople] = useState(readOverlayPreference);
   const [loaded, setLoaded] = useState<ScenePeople | null>(null);
-  const [wanted, setWanted] = useState(false);
+  const [wanted, setWanted] = useState(autoPlay);
   const toggle = (on: boolean) => {
     setShowPeople(on);
     try { window.localStorage.setItem(OVERLAY_KEY, on ? "on" : "off"); } catch { /* preference only */ }
@@ -280,13 +303,13 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
   }, [wanted, showPeople, clip.hasPeople, clip.segmentIndex, loaded, deviceId, incidentId, request]);
   const scene = showPeople ? loaded : null;
   const playable = ["available", "partial", "preparing"].includes(clip.playbackState);
-  const player = useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable,
-    onStart: () => { setWanted(true); player.setPlaying(true); } });
+  const player = useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable, autoPlay, onEnded,
+    badge, onStart: () => { setWanted(true); player.setPlaying(true); } });
   return (
     <>
       {player.view}
       <div className="fall-scene-note">
-        <span>{clip.anchorKinds.includes("user_report") ? "신고한 순간 10초 전 ~ 20초 후" : "의심 시점 10초 전 ~ 20초 후"}</span>
+        <span>{note ?? (clip.anchorKinds.includes("user_report") ? "신고한 순간 10초 전 ~ 20초 후" : "의심 시점 10초 전 ~ 20초 후")}</span>
         {clip.hasPeople && (
           <label className="fall-people-toggle">
             <input type="checkbox" checked={showPeople} onChange={(e) => toggle(e.target.checked)} /> 사람 표시
@@ -308,6 +331,101 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
       <button type="button" className="fall-button fall-wide-button" disabled={!onOpenLive} onClick={onOpenLive}>
         지금 실시간으로 보기
       </button>
+    </>
+  );
+}
+
+const SKIP_CARD_MS = 2_000;
+
+/**
+ * 장면 구간 버튼 by kind (SWM25-268, 목업 53번): 확인 · 발견 · 재감지 N회 · 재확인 · N회차.
+ * A group of back-to-back ranges plays on by itself; 발견 goes on to 확인 after a card for the
+ * skipped wait; 재감지 is the photos of those moments, and a pressed photo plays its range.
+ */
+function GroupedScenes({ groups, deviceId, incidentId, request, demo, onOpenLive, waited }: {
+  groups: ClipGroup<Clip>[]; deviceId: string; incidentId: string; request: Request; demo: boolean;
+  onOpenLive?: () => void;
+  /** 수동 조작을 기다린 / 다른 일을 기다린: what the robot waited for before 확인. */
+  waited: string;
+}) {
+  const startAt = Math.max(0, groups.findIndex((g) => g.kind === "found" || g.kind === "check"));
+  const [at, setAt] = useState({ group: startAt, clip: 0, auto: false, picked: false });
+  const [skipping, setSkipping] = useState(false);
+  const [noStill, setNoStill] = useState<ReadonlySet<number>>(new Set());
+  const group = groups[Math.min(at.group, groups.length - 1)];
+  const found = groups.find((g) => g.kind === "found");
+  const checkIndex = groups.findIndex((g) => g.kind === "check");
+  const check = checkIndex < 0 ? undefined : groups[checkIndex];
+  const skipped = found && check ? josa(skippedText(found, check), "는") : "";
+  useEffect(() => {
+    // By index: the detail refreshes every 15 s with new objects, which must not restart the card.
+    if (!skipping || checkIndex < 0) return;
+    const timer = window.setTimeout(() => {
+      setSkipping(false);
+      setAt({ group: checkIndex, clip: 0, auto: true, picked: false });
+    }, SKIP_CARD_MS);
+    return () => window.clearTimeout(timer);
+  }, [skipping, checkIndex]);
+  const choose = (index: number) => {
+    setSkipping(false);
+    setAt({ group: index, clip: 0, auto: false, picked: false });
+  };
+  const ended = () => {
+    if (group.kind === "redetect") return;
+    if (at.clip < group.clips.length - 1) setAt({ ...at, clip: at.clip + 1, auto: true });
+    else if (group.kind === "found" && check) setSkipping(true);
+  };
+  const base = `/api/devices/${encodeURIComponent(deviceId)}/fall-incidents/${encodeURIComponent(incidentId)}`;
+  const current = group.clips[Math.min(at.clip, group.clips.length - 1)];
+  const note = groupNote(group, groups);
+  return (
+    <>
+      <div className="fall-segments" role="group" aria-label="장면 구간">
+        {groups.map((g, index) => (
+          <button type="button" key={`${g.kind}-${g.clips[0].segmentIndex}`} aria-pressed={index === at.group}
+            className={index === at.group ? "is-on" : ""} onClick={() => choose(index)}>
+            {groupLabel(g)}
+          </button>
+        ))}
+      </div>
+      {group.kind === "redetect" && (
+        <div className="fall-redetect" role="group" aria-label="재감지 사진">
+          {group.clips.map((c, index) => (
+            <button type="button" key={c.segmentIndex} aria-pressed={at.picked && index === at.clip}
+              className={at.picked && index === at.clip ? "is-on" : ""}
+              aria-label={`재감지 ${index + 1}번째 ${clock(c.startAt, true)} 재생`}
+              onClick={() => setAt({ group: at.group, clip: index, auto: true, picked: true })}>
+              {demo || c.playbackState === "expired" || c.playbackState === "unavailable" || noStill.has(c.segmentIndex)
+                ? <span className="fall-redetect-empty" aria-hidden="true" />
+                // eslint-disable-next-line @next/next/no-img-element -- a private, per-user API image
+                : <img src={`${base}/clips/${c.segmentIndex}/still`} alt="" loading="lazy"
+                  onError={() => setNoStill((old) => new Set(old).add(c.segmentIndex))} />}
+              <span>{clock(c.startAt)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {skipping && found && check ? (
+        <div className="fall-scene-skip" role="status">
+          <strong>{waited} {skipped} 건너뛰어요</strong>
+          <span>{clock(found.clips[found.clips.length - 1].endAt, true)} → {clock(check.clips[0].startAt, true)}</span>
+        </div>
+      ) : group.kind !== "redetect" || at.picked ? (
+        <Scene key={`${incidentId}-${current.segmentIndex}`} deviceId={deviceId} incidentId={incidentId}
+          clip={current} request={request} demo={demo} onOpenLive={onOpenLive} autoPlay={at.auto} onEnded={ended}
+          note={note} badge={group.kind === "redetect"
+            ? `재감지 ${at.clip + 1}/${group.clips.length} · ${clock(current.startAt, true)}` : undefined} />
+      ) : (
+        <>
+          <p className="fall-hint">{note}</p>
+          <button type="button" className="fall-button fall-wide-button" disabled={!onOpenLive} onClick={onOpenLive}>
+            지금 실시간으로 보기
+          </button>
+        </>
+      )}
+      {group.kind === "check" && found && check && !skipping && (
+        <p className="fall-hint">{waited} {skipped} 영상에서 뺐어요. 그동안 일은 아래 자동 판정 기록에 있어요.</p>
+      )}
     </>
   );
 }
@@ -426,6 +544,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     const changed = (mine?.label ?? null) !== draftLabel || (draftLabel !== null && (mine?.memo ?? "") !== draftMemo);
     const latest = detail.aiReviews.at(-1) ?? null;
     const clip = detail.clips[Math.min(segment, Math.max(0, detail.clips.length - 1))];
+    const groups = clipGroups(detail.clips);  // null: ranges from a robot before SWM25-268
     const moment = detail.origin === "user_report" ? detail.reportedMomentAt ?? detail.occurredAt : detail.occurredAt;
     const who = (o: IncidentDetail["opinions"][number]) =>
       `${o.role === "owner" ? "소유자" : o.role === "family" ? "보호자" : o.userName}${o.userId === detail.viewerUserId ? " (나)" : ""}`;
@@ -472,6 +591,12 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
         {notice && <p className="fall-notice" role="status">{notice}</p>}
 
         <section className="fall-scene-section">
+          {groups ? (
+            <GroupedScenes key={detail.incidentId} groups={groups} deviceId={deviceId}
+              incidentId={detail.incidentId} request={request} demo={demo} onOpenLive={onOpenLive}
+              waited={detail.robotEvents.some((e) => e.eventKind === "check_waiting" && e.reason === "manual_drive")
+                ? "수동 조작을 기다린" : "다른 일을 기다린"} />
+          ) : (<>
           {detail.clips.length > 1 && (
             <div className="fall-segments" role="group" aria-label="장면 구간">
               {detail.clips.map((c, index) => (
@@ -486,6 +611,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
             <Scene key={`${detail.incidentId}-${clip.segmentIndex}`} deviceId={deviceId} incidentId={detail.incidentId}
               clip={clip} request={request} demo={demo} onOpenLive={onOpenLive} />
           ) : <p className="fall-hint">아직 장면 구간이 도착하지 않았어요.</p>}
+          </>)}
         </section>
 
         <section className="fall-card">

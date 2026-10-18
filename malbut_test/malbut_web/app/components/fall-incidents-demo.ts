@@ -72,6 +72,9 @@ const incidents: Row[] = [
   summary("demo-8", { category: "off_floor", state: "resolved", needsCheck: false, notificationRank: 0,
     occurredAt: minutes(300), sceneState: "available", linkedCount: 0, notification: null,
     approach: { kind: "posture_check_completed", reason: "sitting_off_floor" } }),
+  // 목업 53번: 수동 조작을 기다린 뒤 확인, 재감지 3회, 30분 뒤 2회차 재확인.
+  summary("demo-9", { answer: "okay", needsCheck: true, notificationRank: 0, occurredAt: minutes(75),
+    sceneState: "available", linkedCount: 0, notification: null }),
   summary("demo-5", { origin: "user_report", category: "report", state: null, assessment: null, needsCheck: false,
     notificationRank: 0, reportedBy: "demo-user-family", reportedByName: "지민", reportedMomentAt: minutes(60 * 30), occurredAt: minutes(60 * 30),
     sceneState: "expired", linkedCount: 0, notification: null }),
@@ -97,6 +100,27 @@ const details: Record<string, Record<string, unknown>> = {
       { kind: "resend", round: 3, level: "urgent", reason: "help_requested", status: "accepted", createdAt: minutes(13.5), acceptedAt: minutes(13.5) },
     ],
     opinions: [], linkedIncidentIds: ["demo-2"], aiReviews: [],
+  },
+  "demo-9": {
+    clips: [
+      { segmentIndex: 0, ...range(75), anchorKinds: ["pose_found_down"] },
+      { segmentIndex: 1, startAt: minutes(73.5), endAt: minutes(71.8), anchorKinds: ["check", "cloud_window"], checkRound: 1 },
+      { segmentIndex: 2, ...range(65), anchorKinds: ["pose_found_down"] },
+      { segmentIndex: 3, ...range(58), anchorKinds: ["pose_found_down"] },
+      { segmentIndex: 4, ...range(50), anchorKinds: ["pose_found_down"] },
+      { segmentIndex: 5, startAt: minutes(44.5), endAt: minutes(43.6), anchorKinds: ["recheck"], checkRound: 2 },
+    ].map((c) => ({ foundDown: true, clockStepped: false, playbackState: "available", ...c })),
+    robotEvents: [
+      { sequence: 1, eventKind: "incident_opened", occurredAt: minutes(75), assessment: "suspected_fall", answer: null,
+        reason: "pose_found_down" },
+      { sequence: 2, eventKind: "check_waiting", occurredAt: minutes(74.9), assessment: null, answer: null,
+        reason: "manual_drive" },
+      { sequence: 3, eventKind: "revisit_started", occurredAt: minutes(73.4), assessment: null, answer: null,
+        reason: "manual_drive" },
+      { sequence: 4, eventKind: "question_requested", occurredAt: minutes(72.5), assessment: "suspected_fall", answer: null },
+      { sequence: 5, eventKind: "voice_result", occurredAt: minutes(72), assessment: null, answer: "okay" },
+    ],
+    notifications: [], opinions: [], linkedIncidentIds: [], aiReviews: [],
   },
   "demo-2": {
     clips: [{ segmentIndex: 0, ...range(18), anchorKinds: ["pose_motion", "cloud_window"], foundDown: false,
