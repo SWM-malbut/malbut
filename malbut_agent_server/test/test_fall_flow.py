@@ -745,3 +745,61 @@ def test_a_person_filtered_on_the_floor_is_filtered_again_with_a_new_sighting():
     assert look['sighting_id'] == fresh.sighting_id and '+' not in look['sighting_id']
     robot.filter(fresh, 'suspect')
     assert robot.only().first == fresh and drives(robot.log, 'approach')
+
+
+# ------------------------------------------------------------ the check's video (SWM25-268)
+
+
+def clips(commands):
+    return [(c['mark'], c['check_round']) for c in kinds(commands, 'clip')]
+
+
+def test_the_video_starts_when_the_robot_gets_to_work_and_ends_at_the_judgment():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    assert clips(robot.log) == []  # Opened and sent, not started yet.
+    robot.flow.resumed(incident, robot.now)  # The Manager took the drive.
+    assert clips(robot.take()) == [('start', 1)]
+    robot.to_posture()
+    robot.posture(('standing', None), ('standing', None))
+    assert clips(robot.log) == [('start', 1), ('end', 1)]
+
+
+def test_waits_are_left_out_of_the_video():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.flow.blocked(incident, 'manual_drive', robot.now)  # Before any work: nothing yet.
+    robot.wait(WAIT_ALERT_S)
+    robot.flow.resumed(incident, robot.now)  # 직접 움직이기 ended: 발견 stays its own range.
+    robot.drive('approach')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    robot.wait(20)
+    robot.flow.resumed(incident, robot.now)
+    robot.arrival('same_person')
+    robot.drive('view')
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('help')
+    assert clips(robot.log) == [('start', 1), ('pause', 1), ('start', 1), ('end', 1)]
+
+
+def test_without_a_map_place_the_video_starts_with_the_first_look():
+    robot = Robot()
+    robot.open(track='t1', point=None)
+    assert clips(robot.log) == [('start', 1)]
+
+
+def test_a_later_round_has_its_own_video():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.wait(RECHECK_S - 60)
+    robot.see('seen', track='t1')
+    robot.wait(60)
+    assert robot.active() == incident
+    robot.flow.resumed(incident, robot.now)
+    robot.take()
+    assert clips(robot.log) == [('start', 1), ('end', 1), ('start', 2)]

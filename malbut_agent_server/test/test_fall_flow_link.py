@@ -218,3 +218,13 @@ def test_a_malformed_sighting_is_refused():
                 dict(sighting(), sighting_id=None), dict(sighting(), box=[0, 0, 2, 1])):
         with pytest.raises(ValueError):
             parse_sighting(bad)
+
+
+def test_the_marks_of_the_check_video_go_to_the_vlm(rig):
+    incident = open_incident(rig)
+    assert not decisions(rig.link, 'clip')
+    drive = rig.goals[-1]
+    accept(rig, drive)
+    drive.feedback(SimpleNamespace(feedback=SimpleNamespace(state='RUNNING', feedback_yaml='')))
+    mark, = decisions(rig.link, 'clip')
+    assert mark == dict(action='clip', incident_id=incident, mark='start', check_round=1)

@@ -272,6 +272,8 @@ class SqliteFallJournal:
             startAt=iso(clip.start_at), endAt=iso(clip.end_at),
             anchorKinds=list(clip.anchor_kinds), foundDown=clip.found_down,
             clockSource='wall', clockStepped=clip.clock_stepped,
+            # The round of a check range (SWM25-268): 재확인 · N회차 on the web.
+            **({} if clip.check_round is None else dict(checkRound=clip.check_round)),
         ), separators=(',', ':'), allow_nan=False)
         self._put_segment('incident_clips', clip.incident_id, clip.segment_index,
                           clip.revision, payload)

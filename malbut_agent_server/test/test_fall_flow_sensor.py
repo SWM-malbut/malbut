@@ -435,3 +435,97 @@ def test_what_goes_to_and_comes_from_the_rules_is_logged_with_the_torso_height(t
     decision = dict(action='link', sighting_id=sighting_id, incident_id='i-1')
     sensor.apply(decision)
     assert ('from_rules', decision) in log.rows
+
+
+# ------------------------------------------------------------ the check's video (SWM25-268)
+
+WALL = 1_760_000_000.0
+
+
+@pytest.fixture
+def filmed(robot):
+    sensor, clock, _, journal = robot
+    sensor._wall_clock = lambda: clock.value + WALL  # Wall time = clock + WALL, exactly.
+    return sensor, clock, journal
+
+
+def ranges(journal):
+    """The clips as the web gets them: seconds on the sensor clock, kinds, round."""
+    from datetime import datetime
+    out = []
+    for row in journal._db.execute('SELECT payload FROM incident_clips ORDER BY segment_index'):
+        clip = json.loads(row['payload'])
+        at = [datetime.fromisoformat(clip[k].replace('Z', '+00:00')).timestamp() - WALL
+              for k in ('startAt', 'endAt')]
+        out.append((round(at[0], 3), round(at[1], 3), clip['anchorKinds'], clip.get('checkRound')))
+    return out
+
+
+def opened(sensor, clock):
+    advance(sensor, clock, 4)
+    sensor._sight('low', clock.value, box=BOX, point=SPOT, photo=True)
+    sighting = messages(sensor, 'fall_sighting')[0]['sighting']
+    record(sensor, 'incident_opened', 'pose_sustained_low_posture',
+           sighting_id=sighting['sighting_id'])
+    return sighting['at']
+
+
+def mark(sensor, which, check_round=1):
+    sensor.apply(dict(action='clip', incident_id='i1', mark=which, check_round=check_round))
+
+
+def test_a_check_soon_after_the_suspicion_is_one_range_until_5_s_after_the_judgment(filmed):
+    sensor, clock, journal = filmed
+    at = opened(sensor, clock)
+    advance(sensor, clock, 3)
+    mark(sensor, 'start')
+    advance(sensor, clock, 40)  # It grows while the robot works.
+    assert ranges(journal)[0][1] >= clock.value
+    mark(sensor, 'end')
+    assert ranges(journal) == [(at - 10, clock.value + 5, ['pose_found_down', 'check'], 1)]
+
+
+def test_after_a_wait_the_check_is_its_own_range_and_waits_are_left_out(filmed):
+    sensor, clock, journal = filmed
+    at = opened(sensor, clock)
+    advance(sensor, clock, 80)  # 직접 움직이기 first: 발견 stays as it was.
+    started = clock.value
+    mark(sensor, 'start')
+    advance(sensor, clock, 12)
+    mark(sensor, 'pause')
+    paused = clock.value
+    advance(sensor, clock, 30)
+    again = clock.value
+    mark(sensor, 'start')
+    advance(sensor, clock, 10)
+    record(sensor, 'incident_resolved', 'off_floor_verified', state='resolved')  # No end mark.
+    mark(sensor, 'end')
+    first, check, rest = ranges(journal)
+    assert first == (at - 10, at + 20, ['pose_found_down'], None)
+    assert check[0] == started and paused <= check[1] <= paused + 5
+    assert check[2:] == (['check'], 1)
+    assert rest == (again, clock.value + 5, ['check'], 1)
+
+
+def test_a_later_round_is_a_recheck_range_with_its_round(filmed):
+    sensor, clock, journal = filmed
+    opened(sensor, clock)
+    mark(sensor, 'start')
+    record(sensor, 'incident_resolved', 'off_floor_verified', state='resolved')
+    advance(sensor, clock, 60)
+    record(sensor, 'recheck_started', 'floor_recheck', check_round=2)
+    mark(sensor, 'start', 2)
+    advance(sensor, clock, 20)
+    mark(sensor, 'end', 2)
+    assert ranges(journal)[-1] == (clock.value - 20, clock.value + 5, ['recheck'], 2)
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='clip', incident_id='i1', mark='later', check_round=2))
+
+
+def test_a_stuck_round_stops_growing_after_ten_minutes(filmed):
+    sensor, clock, journal = filmed
+    opened(sensor, clock)
+    started = clock.value
+    mark(sensor, 'start')
+    advance(sensor, clock, 900, step=5)
+    assert ranges(journal)[-1][1] <= started + 600 + 5
