@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
-import { fallHistoryLines } from "../fall-event-label";
+import { fallHistoryLines, plainLabels } from "../fall-event-label";
 import type { FallHistoryEvent } from "../fall-event-label";
 import { clock, dayLabel, incidentBadges, incidentExtras, incidentSubtitle, incidentTitle, when } from "../fall-incident-view";
 import type { BadgeTone, IncidentSummary, OpinionLabel, SceneState } from "../fall-incident-view";
@@ -534,7 +534,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
                   : latest.errorCode
                     ? `다시 시도 중 · ${AI_ERROR_LABEL[latest.errorCode] ?? latest.errorCode}` : "AI가 확인하는 중"}</span>}
               <span className="fall-sub">사진만으로 받은 판정 · {clock(latest.completedAt ?? latest.createdAt, true)}</span>
-              {latest.explanation && <p>{latest.explanation}</p>}
+              {latest.explanation && <p>{plainLabels(latest.explanation)}</p>}
             </div>
           ) : <p className="fall-hint">아직 AI 확인을 받지 않았어요.</p>}
           {onOpenTimeline && (
