@@ -5,7 +5,7 @@ import { moduleLoader } from "./helpers/fall-db-harness.mjs";
 
 // 웹 용어·문구 통일(SWM25-262, 목업 33~50번).
 const load = moduleLoader();
-const { withRo } = load("app/korean-particle.ts");
+const { withRo, josa } = load("app/korean-particle.ts");
 
 test("room buttons read 로/으로 by the last sound (목업 40번)", () => {
   assert.equal(withRo("거실"), "거실로");
@@ -16,6 +16,17 @@ test("room buttons read 로/으로 by the last sound (목업 40번)", () => {
   assert.equal(withRo("공간 1"), "공간 1로");
   assert.equal(withRo("공간 3"), "공간 3으로");
   assert.equal(withRo("Office"), "Office(으)로");
+});
+
+test("particles follow the last sound: 로/으로, 가/이, 는/은, 를/을, 와/과", () => {
+  assert.deepEqual(["로", "으로", "가", "이", "는", "을", "와"].map((p) => josa("바닥", p)),
+    ["바닥으로", "바닥으로", "바닥이", "바닥이", "바닥은", "바닥을", "바닥과"]);
+  assert.deepEqual(["으로", "이", "은", "을", "과"].map((p) => josa("침대·의자", p)),
+    ["침대·의자로", "침대·의자가", "침대·의자는", "침대·의자를", "침대·의자와"]);
+  // ㄹ 받침은 "로"만 받침 없을 때와 같음.
+  assert.deepEqual([josa("거실", "으로"), josa("거실", "가")], ["거실로", "거실이"]);
+  assert.equal(josa("Office", "로"), "Office로");
+  assert.equal(josa("바닥", "도"), "바닥도");
 });
 
 test("status names follow the agreed terms", async () => {

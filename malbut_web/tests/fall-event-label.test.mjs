@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { moduleLoader } from "./helpers/fall-db-harness.mjs";
 
 const load = moduleLoader();
-const { fallEventLabel, nounEnding } = load("app/fall-event-label.ts");
+const { fallEventLabel, nounEnding, plainLabels } = load("app/fall-event-label.ts");
 const { parseFallEvent, readFallEvent } = load("app/fall-contract.ts");
 const analysis = (changes = {}) => ({ requestId: randomUUID(), purpose: "crosscheck",
   assessment: "suspected_fall", explanation: "바닥 가까이 누운 것으로 보이는 형상이 있습니다.", ...changes });
@@ -146,6 +146,29 @@ test("history shows AI explanations with short noun endings, keeping the stored 
   ]) assert.equal(nounEnding(input), expected);
   const label = fallEventLabel(event({ analysis: analysis() }));
   assert.equal(label, "클라우드 AI: 낙상 의심 (바닥 가까이 누운 것으로 보이는 형상이 있음)");
+});
+
+// 웹 용어 10번: 실기 10-17 22:19 "…활동 중이므로 floor_active로 판단됩니다."
+test("English posture labels in AI explanations read as Korean with matching particles", () => {
+  for (const [input, expected] of [
+    ["활동 중이므로 floor_active로 판단됩니다.", "활동 중이므로 바닥에서 활동으로 판단됩니다."],
+    ["엉덩이가 닿아 있어 floor로 판단됩니다.", "엉덩이가 닿아 있어 바닥으로 판단됩니다."],
+    ["'furniture'로 분류합니다.", "침대·의자로 분류합니다."],
+    ["standing이 아니라 floor입니다.", "서 있음이 아니라 바닥입니다."],
+    ["어두워 unclear를 고릅니다.", "어두워 알 수 없음을 고릅니다."],
+    ["\"floor_active\"와 다릅니다.", "바닥에서 활동과 다릅니다."],
+    // 이며·이다 is not the subject particle: the label changes, the ending stays.
+    ["floor_active이며 손이 움직입니다.", "바닥에서 활동이며 손이 움직입니다."],
+    ["Floor 상태", "바닥 상태"],
+    // Not a label: left as written.
+    ["floorboard 위, outstanding 없음", "floorboard 위, outstanding 없음"],
+  ]) assert.equal(plainLabels(input), expected);
+  const label = fallEventLabel(event({ eventKind: "posture_check_completed", reason: "active_on_floor",
+    analysis: analysis({ purpose: "posture_check", assessment: "normal_activity",
+      explanation: "상체가 세워져 있어 floor_active로 판단됩니다." }) }));
+  assert.equal(label, "클라우드 AI: 몸 전체를 보니 바닥에 앉아 활동 중 (상체가 세워져 있어 바닥에서 활동으로 판단됨)");
+  const panel = readFileSync(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
+  assert.ok(panel.includes("<p>{plainLabels(latest.explanation)}</p>"));
 });
 
 

@@ -1,3 +1,5 @@
+import { josa } from "./korean-particle";
+
 /** Human-readable history only: never used to decide or merge incidents. */
 export type FallHistoryEvent = {
   eventKind: string;
@@ -55,6 +57,24 @@ export function nounEnding(text: string): string {
     })
     .replace(/[.]\s*$/, "");
 }
+
+// 설명에 섞여 온 몸 전체 확인 분류 이름(웹 용어 10번; 실기 10-17 22:19 "floor_active로 판단됩니다").
+const LABEL_WORD: Record<string, string> = {
+  floor_active: "바닥에서 활동", floor: "바닥", furniture: "침대·의자", standing: "서 있음", unclear: "알 수 없음",
+};
+const LABEL_IN_TEXT =
+  /["'`]?\b(floor_active|floor|furniture|standing|unclear)\b["'`]?(?:(으로|로|이|가|은|는|을|를|과|와)(?![가-힣]))?/gi;
+
+/** AI 설명 속 영어 분류 이름을 한국어로, 뒤 조사도 받침에 맞게. Display only: 저장된 글은 그대로. */
+export function plainLabels(text: string): string {
+  return text.replace(LABEL_IN_TEXT, (_match, label: string, particle?: string) => {
+    const word = LABEL_WORD[label.toLowerCase()];
+    return particle ? josa(word, particle) : word;
+  });
+}
+
+/** 기록에 보이는 AI 설명: 분류 이름을 풀고 끝을 짧게. */
+export const aiText = (text: string) => nounEnding(plainLabels(text));
 
 const APPROACH_START: Record<string, string> = {
   patrol_stopped: "순찰을 멈추고 확인하러 감", follow_stopped: "사람 따라가기를 멈추고 확인하러 감",
@@ -146,7 +166,7 @@ const ASKS = new Set(["on_floor", "posture_unconfirmed"]);
 export const isFlowIncident = (events: FallHistoryEvent[]) => events.some((e) => e.checkRound != null);
 const roundOf = (e: FallHistoryEvent) => e.checkRound ?? 1;
 /** AI가 쓴 이유는 괄호 안에(사건 상세 안내: "괄호 안 이유는 AI가 쓴 설명"). */
-const aiWhy = (e: FallHistoryEvent) => e.analysis?.explanation ? ` (${nounEnding(e.analysis.explanation)})` : "";
+const aiWhy = (e: FallHistoryEvent) => e.analysis?.explanation ? ` (${aiText(e.analysis.explanation)})` : "";
 
 /** What came before in the same round, for the one check's labels. Display only. */
 type RoundContext = {
@@ -318,7 +338,7 @@ function genericLine(event: FallHistoryEvent): string {
   // classification beside its explanation, not that retained judgment.
   if (event.eventKind === "analysis_completed") {
     const assessment = event.analysis?.assessment ?? event.assessment ?? "";
-    const why = event.analysis?.explanation ? nounEnding(event.analysis.explanation) : "AI 이유 없음";
+    const why = event.analysis?.explanation ? aiText(event.analysis.explanation) : "AI 이유 없음";
     return line("클라우드 AI", `${ASSESSMENT[assessment] ?? (assessment || "판정")} (${why})`);
   }
   if (Object.hasOwn(CLOUD_EVENT, event.eventKind)) return line("클라우드 AI", CLOUD_EVENT[event.eventKind]);
@@ -358,7 +378,7 @@ export function fallHistoryLines<T extends FallHistoryEvent>(events: T[]):
     if (event.eventKind === "analysis_completed" && previous && cloudOpening(previous.event) &&
         previous.event.eventKind === "incident_opened" && event.analysis?.explanation &&
         (event.analysis.assessment ?? event.assessment) === (previous.event.assessment ?? event.analysis.assessment)) {
-      previous.label += ` (${nounEnding(event.analysis.explanation)})`;
+      previous.label += ` (${aiText(event.analysis.explanation)})`;
       continue;
     }
     if (event.eventKind === "notification_requested" && event.reason === "robot_could_not_confirm" && previous) {
@@ -449,7 +469,7 @@ function revisitResult(events: FallHistoryEvent[]): FallRobotCheck["revisit"] {
     subtitle: reason === "same" ? `다시 가 보니 같은 분으로 보이는 분이 ${posture}`
       : `다시 가 보니 ${who} 분이 있음 · ${reason === "different" ? "다른 분으로 보임" : "같은 분인지 모름"}`,
     note: !compared ? "AI가 처음 장면과 옷차림을 비교하고 있어요(참고)."
-      : `${explanation ? `AI가 처음 장면과 옷차림을 비교했어요(참고): ${nounEnding(explanation)}.`
+      : `${explanation ? `AI가 처음 장면과 옷차림을 비교했어요(참고): ${aiText(explanation)}.`
         : "AI가 처음 장면과 옷차림을 비교하지 못했어요."}${reason === "unclear" && explanation ? ""
         : " 같은 분인지는 직접 확인해 주세요."}`,
   };
