@@ -877,3 +877,48 @@ def test_a_later_round_has_its_own_video():
     robot.flow.resumed(incident, robot.now)
     robot.take()
     assert clips(robot.log) == [('start', 1), ('end', 1), ('start', 2)]
+
+
+# ------------------------------------------------------------ alert grouping (SWM25-267)
+
+
+def grouping(minutes, reason='confirmation_help_required', place=(3.5, 0.0), same=False):
+    """Two alerts: an urgent one at SPOT, then another `minutes` later from `place`."""
+    flow = FallFlow()
+    s = Sighting('s1', 0.0, 'low', point=SPOT)
+    first = Incident('first', s, 'P1', 0.0, place=SPOT)
+    second = first if same else Incident('second', s, 'P2', 0.0, place=place)
+    flow.incidents = {i.incident_id: i for i in (first, second)}
+    flow._notify(first, 'confirmation_help_required')
+    flow.now = minutes * 60.0
+    flow._notify(second, reason)
+    out = flow.drain()
+    return ([c['reason'] for c in kinds(out, 'notify')],
+            [(c['incident_id'], c['reason']) for c in kinds(out, 'record')
+             if c['event'] == 'notification_grouped'])
+
+
+def test_the_same_level_from_the_same_place_within_10_minutes_is_noted_not_sent():
+    sent, noted = grouping(6)
+    assert sent == ['confirmation_help_required']  # Only the first one.
+    assert noted == [('first', 'confirmation_help_required'),
+                     ('second', 'confirmation_help_required')]
+    assert grouping(6, same=True)[1] == [('first', 'confirmation_help_required')]
+
+
+def test_later_higher_further_or_placeless_alerts_are_sent():
+    assert grouping(11) == (['confirmation_help_required'] * 2, [])
+    assert grouping(6, reason='person_may_differ') == (
+        ['confirmation_help_required', 'person_may_differ'], [])  # Another level.
+    assert grouping(6, place=(5.0, 0.0)) == (['confirmation_help_required'] * 2, [])  # 2 m.
+    assert grouping(6, place=None) == (['confirmation_help_required'] * 2, [])
+
+
+def test_a_grouped_alert_does_not_count_as_urgent_sent():
+    flow = FallFlow()
+    s = Sighting('s1', 0.0, 'low', point=SPOT)
+    first, second = (Incident(n, s, p, 0.0, place=SPOT) for n, p in (('a', 'P1'), ('b', 'P2')))
+    flow.incidents = {'a': first, 'b': second}
+    flow._notify(first, 'help_requested')
+    flow._notify(second, 'help_requested')
+    assert first.urgent_sent and not second.urgent_sent  # No closed_after_alert for b later.
