@@ -157,8 +157,9 @@ def web_accepts(payload):
     if kind == 'notification_requested':
         assert CONTRACT['notificationReasons'][reason] == payload['notificationLevel']
         assert payload['state'] != 'resolved'
-    if payload['state'] == 'resolved':
-        assert kind in ('incident_resolved', 'confirmation_completed', 'approach_returned')
+    if payload['state'] == 'resolved':  # A grouped alert may note an incident already closed.
+        assert kind in ('incident_resolved', 'confirmation_completed', 'approach_returned',
+                        'notification_grouped')
     assert payload['checkRound'] >= 1 and payload['evidenceRevision'] == payload['checkRound']
 
 
@@ -399,6 +400,18 @@ def test_a_recheck_reopens_and_the_round_goes_on_the_record(robot):
     open_, = journal.open_flow_incidents()
     assert open_['check_round'] == 2
     assert stored(journal)[-1]['checkRound'] == 2
+
+
+def test_a_grouped_alert_is_written_as_the_web_takes_it(robot):
+    """SWM25-267: an alert not sent because one of the same level just went from there."""
+    sensor, _, _, journal = robot
+    record(sensor, 'incident_opened', 'cloud_crosscheck', sighting_id='unknown')
+    record(sensor, 'incident_resolved', 'response_completed', state='resolved', answer='okay')
+    record(sensor, 'notification_grouped', 'confirmation_help_required', state='resolved',
+           answer='okay')
+    grouped = stored(journal)[-1]
+    web_accepts(grouped)
+    assert (grouped['eventKind'], grouped['notificationLevel']) == ('notification_grouped', None)
 
 
 def test_a_dropped_candidate_stays_local(robot):

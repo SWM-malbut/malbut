@@ -51,6 +51,9 @@ WAIT_LIMIT_S = 600.0
 # After a close (design 8): forget someone unseen for 30 minutes (FORGET_S, the same
 # as the person tracking); recheck someone closed on the floor every 30 minutes (G).
 RECHECK_S = 1800.0
+# One alert per place and level (decision 6, mockup 55 ③): the same level from the same
+# place (1 m) within 10 minutes is noted on the incident that sent it instead.
+GROUP_S, GROUP_M = 600.0, 1.0
 
 FLOOR, OFF_FLOOR = 'floor', 'off_floor'
 POSTURE_PLACE = {'floor': FLOOR, 'floor_active': FLOOR, 'unclear': FLOOR,
@@ -180,6 +183,9 @@ class FallFlow:
     def __init__(self, tracker=None):
         self.commands = []
         self.tracker = tracker or PersonTracker()
+        self.now = 0.0
+        # Alerts sent lately: (when, level, place, incident) for grouping (decision 6).
+        self.sent: List[tuple] = []
         self.incidents: Dict[str, Incident] = {}
         self.candidates: Dict[str, Candidate] = {}
         self.memory: List[Memory] = []
@@ -208,6 +214,7 @@ class FallFlow:
 
     def people(self, frame, now):
         """A pose frame (VLM ``fall_people``): who is who, then what follows from it."""
+        self.now = now  # For the alert grouping (10 minutes).
         result = self.tracker.update(frame)
         if result.changed:  # For the people boxes on the incident's video.
             self.commands.append(dict(kind='people', at=frame.at, tracks=dict(result.changed)))
@@ -227,6 +234,7 @@ class FallFlow:
 
     def sighted(self, s, now):
         """A suspicion: whose it is, then that person's incident, filter or memory."""
+        self.now = now  # For the alert grouping (10 minutes).
         person, uncertain = self.tracker.assign(Observation(s.track, s.box, s.point), s.at, s.view)
         s = replace(s, person=person, uncertain=uncertain)
         checking = self.incidents.get(self.active)
@@ -260,6 +268,7 @@ class FallFlow:
 
     def filter_answered(self, sighting_id, verdict, now, *, look_id=None, reason=None):
         """Cloud's first filter: suspect, not_person, reflection, ordinary, failed or guard."""
+        self.now = now  # For the alert grouping (10 minutes).
         candidate = self.candidates.get(sighting_id)
         if candidate is None or (look_id is not None and look_id != candidate.look_id):
             return
@@ -282,6 +291,7 @@ class FallFlow:
 
     def arrival_answered(self, incident_id, verdict, now, *, look_id=None, reason=None):
         """First sight vs arrival (design 6)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'compare', look_id)
         if incident is None:
             return
@@ -321,6 +331,7 @@ class FallFlow:
 
     def departure_answered(self, incident_id, verdict, now, *, look_id=None, reason=None):
         """What left the spot, from the frames between first sight and arrival."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'departure', look_id)
         if incident is None:
             return
@@ -339,6 +350,7 @@ class FallFlow:
 
     def posture_answered(self, incident_id, verdict, earlier, now, *, look_id=None, reason=None):
         """Where the body rests now, and (fall seen) whether the earlier moment was a fall."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'posture', look_id)
         if incident is None:
             return
@@ -373,6 +385,7 @@ class FallFlow:
     # ------------------------------------------------------------ inputs: the link
 
     def drive_done(self, incident_id, purpose, outcome, now):
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if purpose == 'return':
             # The way back after a close without a question; the check is already over.
@@ -411,6 +424,7 @@ class FallFlow:
         ``assessment``: the Agent's situation (confirmed_incident, resolved, unknown);
         ``reason``: why it failed (speech_unavailable, question_error, time_limit).
         """
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None or incident_id != self.active or incident.step != 'ask':
             return
@@ -443,6 +457,7 @@ class FallFlow:
 
     def blocked(self, incident_id, reason, now):
         """The Manager refused or interrupted the step; the link sends it again."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None or incident_id != self.active:
             return
@@ -457,12 +472,14 @@ class FallFlow:
 
     def resumed(self, incident_id, now):
         """The Manager took the step: the waiting (if any) is over."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is not None and incident_id == self.active:
             self._resume(incident, now)
 
     def voice(self, kind, now):
         """"도와줘" or "그만" heard during a check (2026-10-13)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(self.active)
         if incident is None:
             return
@@ -478,6 +495,7 @@ class FallFlow:
 
     def guardian_closed(self, incident_id, now):
         """처리 완료: stop, and never check this incident again (목업 31번)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None:
             return
@@ -493,6 +511,7 @@ class FallFlow:
         self._close(incident, 'guardian_closed', now, memory=None, quiet=True)
 
     def tick(self, now):
+        self.now = now  # For the alert grouping (10 minutes).
         for candidate in list(self.candidates.values()):
             if candidate.next_look_at is not None and now >= candidate.next_look_at:
                 candidate.next_look_at = None
@@ -534,6 +553,7 @@ class FallFlow:
 
     def restore(self, incidents, now):
         """After a restart: every open incident is checked again from the start."""
+        self.now = now  # For the alert grouping (10 minutes).
         for incident in incidents:
             if incident.state != 'open' or incident.incident_id in self.incidents:
                 continue
@@ -867,7 +887,18 @@ class FallFlow:
 
     def _notify(self, incident, reason, *, state=None):
         level = NOTICES[reason]
+        place = self._target(incident)
+        self.sent = [n for n in self.sent if self.now - n[0] <= GROUP_S]
+        earlier = next((n for n in reversed(self.sent) if n[1] == level and place and n[2]
+                        and math.dist(place, n[2]) <= GROUP_M), None)
+        if earlier is not None:
+            # Not sent: "다시 확인함" on the incident that sent it, and on this one.
+            for target in dict.fromkeys((earlier[3], incident.incident_id)):
+                if target in self.incidents:
+                    self._record('notification_grouped', self.incidents[target], reason)
+            return
         if level == URGENT:
             incident.urgent_sent = True
+        self.sent.append((self.now, level, place, incident.incident_id))
         self._command('notify', incident, reason=reason, level=level,
                       **self._web(incident, state))

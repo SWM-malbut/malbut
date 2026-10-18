@@ -101,7 +101,7 @@ RECORD_KINDS = frozenset({
     'view_completed', 'posture_check_completed', 'fall_moment_reviewed', 'question_requested',
     'confirmation_completed', 'voice_result', 'agent_check_failed', 'check_waiting',
     'check_not_confirmed', 'revisit_started', 'check_stopped', 'incident_resolved',
-    'recheck_started', 'approach_returned', 'candidate_dropped',
+    'recheck_started', 'approach_returned', 'candidate_dropped', 'notification_grouped',
 })
 STATES = ('verifying', 'recheck_required', 'help_required', 'resolved')
 ANSWERS = ('help_request', 'okay', 'unclear', 'no_response', 'failed')
