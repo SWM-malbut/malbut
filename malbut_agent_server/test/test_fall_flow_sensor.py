@@ -14,7 +14,7 @@ from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.domain.fall_monitoring import (
     ArrivalCheckReply, CandidateKind, CloudFallReply, CloudPersonFinding, CloudPersonRegion,
     DepartureCheckReply, FallCandidate, FallRuntimePolicy, PersonCheckReply, PostureCheckReply,
-    RgbFrame, SubjectCheckState, SubjectFrame, SubjectPose, VideoAssessment,
+    RgbFrame, SensorSummary, SubjectCheckState, SubjectFrame, SubjectPose, VideoAssessment,
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProviderError
 
@@ -396,3 +396,42 @@ def test_a_guardian_close_is_passed_on_now_and_then(robot):
     clock.value += 11
     sensor.close_by_guardian('i1')
     assert messages(sensor, 'guardian_closed')
+
+
+# ------------------------------------------------------------ the local log (2026-10-18)
+
+
+class Log:
+    def __init__(self):
+        self.rows = []
+
+    def write(self, direction, data):
+        self.rows.append((direction, data))
+
+
+def test_what_goes_to_and_comes_from_the_rules_is_logged_with_the_torso_height(tmp_path):
+    clock, cloud, log = Clock(), Cloud(), Log()
+    sensor = FallFlowSensor(
+        device_id='robot', boot_id='boot-1', policy=policy(),
+        buffer=FallFrameBuffer(retention_s=30, max_bytes=100000, max_frames=200),
+        provider=cloud, clock=clock, place_locator=Places(), flow_log=log)
+    sensor.configure(enabled=True, camera_enabled=True, cloud_consent=True, connected=True)
+    advance(sensor, clock, 2)
+    poses(sensor, clock)
+    messages(sensor)
+    found = candidate(clock)
+    height = SensorSummary(clock.value, floor_distance_m=0.214)  # Depth-measured torso.
+    found = FallCandidate(found.candidate_id, found.subject_key, found.source, found.kind,
+                          found.observed_at, sensors=height,
+                          evidence_started_at=found.evidence_started_at,
+                          pose_reason=found.pose_reason)
+    sighting_id = sensor.candidate(found)
+    sent, = (m['sighting'] for m in messages(sensor, 'fall_sighting'))
+    assert sent['floor'] == 0.214 and sent['point'] == list(SPOT)
+    logged = [data for direction, data in log.rows
+              if direction == 'to_rules' and data['kind'] == 'fall_sighting'
+              and data['sighting']['sighting_id'] == sighting_id]
+    assert logged and logged[0]['sighting']['floor'] == 0.214
+    decision = dict(action='link', sighting_id=sighting_id, incident_id='i-1')
+    sensor.apply(decision)
+    assert ('from_rules', decision) in log.rows
