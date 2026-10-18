@@ -414,6 +414,51 @@ def test_a_grouped_alert_is_written_as_the_web_takes_it(robot):
     assert (grouped['eventKind'], grouped['notificationLevel']) == ('notification_grouped', None)
 
 
+class Looks:
+    """A fake appearance store: what was described, and a fixed similarity."""
+
+    def __init__(self):
+        self.observed, self.compared, self.paired = [], [], False
+
+    def due(self, track, at):
+        return True
+
+    def ready(self, after):
+        return self.paired
+
+    def observe(self, at, jpeg, people):
+        self.observed.append((at, people))
+
+    def compare(self, before, after):
+        self.compared.append((before, after))
+        return 0.512345
+
+
+def test_people_in_view_are_described_and_comparisons_answered(robot):
+    """SWM25-267 decision 10: numbers for the Agent's ReID split, nothing decided here."""
+    sensor, clock, _, _ = robot
+    sensor._appearance = looks = Looks()
+    advance(sensor, clock, 1)
+    poses(sensor, clock)
+    assert looks.observed == [(clock.value, [('pose:1:a', BOX)])]
+    messages(sensor)
+    sensor.apply(dict(action='compare', request_id='r1', a=dict(track='pose:1:a', at=90.0),
+                      b=dict(track='pose:1:b', at=clock.value)))
+    assert messages(sensor, 'fall_appearance') == []  # Waits for its second look.
+    looks.paired = True
+    sensor.maintain_associations()
+    answer, = messages(sensor, 'fall_appearance')
+    assert answer == dict(kind='fall_appearance', request_id='r1', similarity=0.5123)
+    assert looks.compared == [(('pose:1:a', 90.0), ('pose:1:b', clock.value))]
+    sensor.apply(dict(action='compare', request_id='r3', a=dict(track='x', at=1.0),
+                      b=dict(track='y', at=clock.value)))
+    looks.paired = False
+    advance(sensor, clock, 3.5)  # No second look in 3 s: answered with what there is.
+    assert [m['request_id'] for m in messages(sensor, 'fall_appearance')] == ['r3']
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='compare', request_id='r2', a=dict(track='a'), b=None))
+
+
 def test_a_dropped_candidate_stays_local(robot):
     sensor, _, _, journal = robot
     sensor.apply(dict(action='record', event='candidate_dropped', incident_id=None,

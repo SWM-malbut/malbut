@@ -18,6 +18,10 @@ It clears when one of them stayed put while the other came and left, or when the
 is forgotten (30 minutes unseen). Nothing else clears it; Cloud's "same person" does not
 (it told different people apart 1 of 8 times on 10-18).
 
+ReID only splits (decision 10): someone reappearing where one unseen person was is that
+person, uncertain until the VLM says how alike the two looked (two looks against two);
+clearly unlike (below REID_SPLIT) is someone else. It never joins anyone.
+
 Pure: no ROS, transport or clock. Starting values, to be tuned on recorded days:
 ~/fall-person-tracking-design-20261019.md (decisions 3-5).
 """
@@ -42,6 +46,10 @@ MERGE_M = 0.5           # two people this close: who is who becomes uncertain
 MERGE_IOU = 0.5         # the same without map places
 STAY_S, STAY_M = 10.0, 0.3   # stayed put before the encounter: within STAY_M for STAY_S
 RESOLVE_M = 0.5         # after they part, the one observation near that place is that person
+# Appearance similarity below this: someone else. The robot's encoder on the Jetson,
+# two against two, 10-17 pairs (10-19): 5 of 8 others split, 0 of 9 same people.
+REID_SPLIT = 0.62
+REID_WAIT_S = 5.0       # no answer by then: by place alone
 
 
 @dataclass(frozen=True)
@@ -109,11 +117,20 @@ class PersonTracker:
         self.groups: List[Group] = []
         self._count = 0
         self._sent: Dict[str, str] = {}   # track -> person last reported
+        self.reid = True
+        self.pending: Dict[str, dict] = {}   # ReID request -> who reappeared, and as what
+        self._requests: List[dict] = []
 
     # ------------------------------------------------------------ queries
 
     def uncertain(self, person_id):
-        return any(person_id in g.members for g in self.groups)
+        return (any(person_id in g.members for g in self.groups)
+                or any(p['person'] == person_id for p in self.pending.values()))
+
+    def take_requests(self):
+        """ReID comparisons to ask the VLM: request_id, a (before) and b (after)."""
+        out, self._requests = self._requests, []
+        return out
 
     def person_of(self, track):
         return self._sent.get(track)
@@ -124,6 +141,7 @@ class PersonTracker:
         """One pose frame: who each observation is, and what changed."""
         t = frame.at
         self._forget(t)
+        self.expire(t)
         taken = {}
         stood_up = []
         for obs, person in self._match(frame.people, t, frame.view):
@@ -139,9 +157,16 @@ class PersonTracker:
         self._sent.update(changed)
         return FrameResult(assignments, changed, stood_up)
 
+    def expire(self, t):
+        """ReID questions unanswered for REID_WAIT_S: by place alone."""
+        for request_id, wait in list(self.pending.items()):
+            if t - wait['since'] > REID_WAIT_S:
+                del self.pending[request_id]
+
     def assign(self, obs, at, view):
         """A suspicion, which the VLM sends before its frame: (person, uncertain)."""
         self._forget(at)
+        self.expire(at)
         (_, person), = self._match((obs,), at, view)
         self._apply(person, obs, at, view)
         # Its track's number goes to the VLM with the next frame, which follows at once.
@@ -220,6 +245,8 @@ class PersonTracker:
             rivals = [p for d, p in near[1:] if d - near[0][0] < AMBIGUOUS_M]
             if rivals:
                 self._group([person, *rivals], t)
+            elif self.reid and person.track and obs.track:
+                self._ask_appearance(person, obs, t)
             return person
         # No map place: anyone who could be this one makes it uncertain (exception "else
         # decision 4"); only when nobody could be is it simply a new person.
@@ -229,6 +256,33 @@ class PersonTracker:
         if plausible:
             self._group([person, *plausible], t)
         return person
+
+    def _ask_appearance(self, person, obs, t):
+        request_id = uuid4().hex
+        self.pending[request_id] = dict(
+            person=person.person_id, since=t,
+            before={k: getattr(person, k) for k in (
+                'track', 'point', 'point_at', 'box', 'view', 'last_seen', 'posture')})
+        self._requests.append(dict(request_id=request_id,
+                                   a=dict(track=person.track, at=person.last_seen),
+                                   b=dict(track=obs.track, at=t)))
+
+    def answer(self, request_id, similarity):
+        """The VLM's appearance similarity; a split returns (old, new person, since)."""
+        wait = self.pending.pop(request_id, None)
+        person = self.people.get(wait['person']) if wait else None
+        if person is None or similarity is None or similarity >= REID_SPLIT:
+            return None  # Alike enough, or unknown: by place.
+        new = self._new(Observation(None, None, None), wait['since'])
+        new.first_seen = wait['since']
+        for name in ('track', 'point', 'point_at', 'box', 'view', 'last_seen', 'posture'):
+            setattr(new, name, getattr(person, name))
+            setattr(person, name, wait['before'][name])
+        new.places = deque((p for p in person.places if p[0] >= wait['since']), maxlen=64)
+        person.places = deque((p for p in person.places if p[0] < wait['since']), maxlen=64)
+        if new.track:
+            self._sent[new.track] = new.person_id
+        return person.person_id, new.person_id, wait['since']
 
     def _new(self, obs, t):
         self._count += 1

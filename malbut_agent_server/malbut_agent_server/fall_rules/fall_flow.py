@@ -216,6 +216,7 @@ class FallFlow:
         """A pose frame (VLM ``fall_people``): who is who, then what follows from it."""
         self.now = now  # For the alert grouping (10 minutes).
         result = self.tracker.update(frame)
+        self._ask_appearance()
         if result.changed:  # For the people boxes on the incident's video.
             self.commands.append(dict(kind='people', at=frame.at, tracks=dict(result.changed)))
         for person in result.stood_up:
@@ -232,10 +233,29 @@ class FallFlow:
                 if here:
                     self._bind(incident, here[0].person_id)
 
+    def appearance(self, request_id, similarity, now):
+        """The VLM's ReID answer (decision 10): clearly unlike splits off someone else."""
+        self.now = now  # For the alert grouping (10 minutes).
+        split = self.tracker.answer(request_id, similarity)
+        if split is None:
+            return
+        old, new, since = split
+        track = self.tracker.people[new].track
+        if track:
+            self.commands.append(dict(kind='people', at=since, tracks={track: new}))
+        # What was taken for the one who reappeared since then was this other person.
+        for incident in self.incidents.values():
+            if incident.person == old and incident.uncertain and incident.first.at >= since:
+                self._bind(incident, new)
+        for candidate in self.candidates.values():
+            if candidate.person == old and candidate.sighting.at >= since:
+                candidate.person = new
+
     def sighted(self, s, now):
         """A suspicion: whose it is, then that person's incident, filter or memory."""
         self.now = now  # For the alert grouping (10 minutes).
         person, uncertain = self.tracker.assign(Observation(s.track, s.box, s.point), s.at, s.view)
+        self._ask_appearance()
         s = replace(s, person=person, uncertain=uncertain)
         checking = self.incidents.get(self.active)
         if (s.fall_seen and checking is not None and checking.person == person
@@ -510,8 +530,13 @@ class FallFlow:
             self._command('stop', incident)
         self._close(incident, 'guardian_closed', now, memory=None, quiet=True)
 
+    def _ask_appearance(self):
+        for request in self.tracker.take_requests():
+            self.commands.append(dict(kind='compare', **request))
+
     def tick(self, now):
         self.now = now  # For the alert grouping (10 minutes).
+        self.tracker.expire(now)
         for candidate in list(self.candidates.values()):
             if candidate.next_look_at is not None and now >= candidate.next_look_at:
                 candidate.next_look_at = None
