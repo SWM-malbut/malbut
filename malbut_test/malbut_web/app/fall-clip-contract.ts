@@ -1,5 +1,7 @@
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const CLIP_ANCHOR_KINDS = ["pose_motion", "pose_found_down", "cloud_window"] as const;
+// check: the robot's check from the first suspicion to its judgment (SWM25-268, 목업 53번);
+// recheck: one later round of checking (checkRound says which).
+export const CLIP_ANCHOR_KINDS = ["pose_motion", "pose_found_down", "cloud_window", "check", "recheck"] as const;
 export const CLIP_MAX_SEGMENT_MS = 125_000;
 
 export type FallClipInput = {
@@ -14,6 +16,8 @@ export type FallClipInput = {
   foundDown: boolean;
   clockSource: "wall";
   clockStepped: boolean;
+  /** The check round of a check or recheck range (SWM25-268); absent from older robots. */
+  checkRound?: number;
 };
 
 const keys = ["schemaVersion", "incidentId", "bootId", "segmentIndex", "revision", "startAt",
@@ -28,7 +32,12 @@ function isoMs(value: unknown): value is string {
 export function parseFallClip(value: unknown): FallClipInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) return null;
+  const withRound = Object.hasOwn(v, "checkRound");
+  if (Object.keys(v).length !== keys.length + (withRound ? 1 : 0) || !keys.every((k) => Object.hasOwn(v, k))) {
+    return null;
+  }
+  if (withRound && (!Number.isSafeInteger(v.checkRound) || (v.checkRound as number) < 1 ||
+      (v.checkRound as number) > 10000)) return null;
   if (v.schemaVersion !== 1 || typeof v.incidentId !== "string" || !uuid.test(v.incidentId) ||
       typeof v.bootId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(v.bootId) ||
       !Number.isSafeInteger(v.segmentIndex) || (v.segmentIndex as number) < 0 ||
@@ -44,5 +53,7 @@ export function parseFallClip(value: unknown): FallClipInput | null {
   if (!Array.isArray(kinds) || kinds.length < 1 || kinds.length > CLIP_ANCHOR_KINDS.length ||
       new Set(kinds).size !== kinds.length ||
       !kinds.every((k) => (CLIP_ANCHOR_KINDS as readonly unknown[]).includes(k))) return null;
-  return Object.fromEntries(keys.map((k) => [k, k === "anchorKinds" ? [...kinds] : v[k]])) as FallClipInput;
+  const clip = Object.fromEntries(keys.map((k) => [k, k === "anchorKinds" ? [...kinds] : v[k]])) as FallClipInput;
+  if (withRound) clip.checkRound = v.checkRound as number;
+  return clip;
 }
