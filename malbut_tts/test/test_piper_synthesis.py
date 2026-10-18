@@ -89,6 +89,30 @@ def test_normalization_and_stop_between_sentences():
     assert closed == [True]
 
 
+def test_model_names_reach_piper_without_markdown_stars():
+    from malbut_tts.korean_normalization import KoreanNormalizer
+
+    seen = []
+
+    def synthesize(text, _):
+        seen.append(text)
+        yield SimpleNamespace(audio_float_array=np.ones(100))
+
+    engine = prepared(SimpleNamespace(synthesize=synthesize))
+    engine._normalizer = KoreanNormalizer()
+    text = (
+        '네, 있어요. 국내 모델로는 네이버 **HyperCLOVA X**, '
+        'LG AI연구원의 **EXAONE**, SK텔레콤의 **A.X** 계열이 있고, '
+        '카카오의 **Kanana**도 공개 범위가 확대되고 있습니다.'
+    )
+    chunks = list(engine.generate(text, Event()))
+
+    assert len(chunks) == 1
+    assert seen == [engine._normalizer(text.replace('**', ''))]
+    assert '*' not in seen[0]
+    assert '**HyperCLOVA X**' in text  # The original dialogue remains unchanged.
+
+
 @pytest.mark.parametrize('audio', [[], [float('nan')], [[1., 2.]]])
 def test_invalid_audio_is_rejected(audio):
     engine = prepared(SimpleNamespace(synthesize=lambda *_: iter([

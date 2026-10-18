@@ -10,14 +10,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -25,7 +25,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "0482365f50fb3b3020d1ae68d3d857c1b3445fbe1f816ee89c0fcfafe8f8ff16",
+    "sha256": "e42ac4cc066502242eacb8f67b384bd73ff8f791115255ca9d756eca6ce4e28b",
     "text": "진행 중인 작업이 없어요.",
     "voice": "kss"
   },
@@ -40,14 +40,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -55,7 +55,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f9d14f3cf8a5da25413d3219198533f84d2833755069b45a299d8eda4f9b7898",
+    "sha256": "7fbb9bea8077d6724049e424a90427fe83d572af09ff1480b9836643b00bf67e",
     "text": "취소 요청을 처리하지 못했어요.",
     "voice": "kss"
   },
@@ -70,14 +70,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -85,7 +85,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f6102aa41681500fcdd3f7f9f1cf246d1e5f97cf6d96399b10424eece7982e49",
+    "sha256": "92637a7e7066d4f822aa2c260ad02b90deb5df4969950dd9528fe25ce5cb3a10",
     "text": "취소를 요청했어요.",
     "voice": "kss"
   },
@@ -100,14 +100,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -115,7 +115,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "363a0490219c0481ce2a45b6335c5931dd0bbf8d1ce9a56b8fb876edbddb75d7",
+    "sha256": "256e36a0b9ca5828c125b55cc32155670cf2b2aeac9db55f36d184e37a309ae8",
     "text": "취소 여부를 확인하지 못했어요.",
     "voice": "kss"
   },
@@ -130,14 +130,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -145,7 +145,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "d824d80eb1b8864f8f6f507d7aea703e40b7811e7a5719d94d660907d5f8c83a",
+    "sha256": "8955c7a94170a80694117dafc8b72d13fc69bbfae12370705d0fa9ed162f9d7b",
     "text": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -160,14 +160,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -175,7 +175,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "e49e0897b9469f37e6daf2db444f1e112624af1c4471e11a326943c01aef78dd",
+    "sha256": "048e3fac0fca63917aa12def4da46a81b9003ab3a46b9bc53368cad8e14c0ef4",
     "text": "앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -190,14 +190,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -205,7 +205,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "88cbebd687f7be905a2b26bee0eaf1d10fd994b78cef52292cb3eac4bc6068e3",
+    "sha256": "c17f0774735c3459ed7031f3249db17517a92e6c3d8b07daad7c348fc4dc950c",
     "text": "대화 내용이 한 번에 읽을 수 있는 분량을 넘었어요. 내용을 임의로 빼지는 않았어요. 잠시 후 다시 시도하거나 이번 요청을 나눠서 말해 주세요.",
     "voice": "kss"
   },
@@ -220,14 +220,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -235,7 +235,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ecfa8899486771f9002670eb7ff2aa0acf7aa287fffd7c4511738a1abf334d50",
+    "sha256": "4b712f9b777bda4d62185afd6ad8f97d2de2106b3916eb12142ab2da236b594d",
     "text": "답변을 준비하는 데 조금 시간이 걸리고 있어요.",
     "voice": "kss"
   },
@@ -250,14 +250,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -265,7 +265,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ed0e8f684cba5e6fff0fea1f3722bf6fb8638aa554f5a466772099b194346066",
+    "sha256": "7812981cb25d9501a461b56167aef2c5a2bc3984af09eb9ad818e7f115ce23db",
     "text": "한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.",
     "voice": "kss"
   },
@@ -280,14 +280,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -295,7 +295,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "82ad8f89f785e3bfc000bfafe44295433a439f6ab8859758340b34226dad976a",
+    "sha256": "123a49f8736f940aa4aa97ceca588a823ba8885a893230d7da1be1d8c92df923",
     "text": "잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.",
     "voice": "kss"
   },
@@ -310,14 +310,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -325,7 +325,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "35e051d53199a8fc5e31a3964ae90a2c800d54355b532d3526db54480132153e",
+    "sha256": "6e111906052f0680087b880350ff3bd99e9c03ebc90e4cb528fa1d9e270f1c16",
     "text": "기억 정보가 변경되어 이전 답변을 전달하지 않았어요. 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -340,14 +340,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -355,7 +355,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ce960d93661dcb6b182e2144545a421568a188285a427713846ddfda18e02524",
+    "sha256": "5330266012300e43f354a15526750c74b6cd2a8b0c09111d0166a882827e1529",
     "text": "답변 생성을 한 번 다시 시도할게요.",
     "voice": "kss"
   },
@@ -370,14 +370,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -385,7 +385,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "3981d5978b91d602a0d2fcaab88409020f14651c4c5b07d933095178cd5e2dd9",
+    "sha256": "e8c092c87ccf78aebafe30cd140ef02b6202958e50d3ab693b90d49249439d10",
     "text": "대화를 처리하지 못했어요. 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -400,14 +400,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -415,7 +415,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "219291bad58cb724e0674d09fdc01e0b106a35d87554aac56c878b0419cecfee",
+    "sha256": "e8b5a35349122dd0ba543503e2e4e5643ae3eb1577fe8c97d55c83affaa8399b",
     "text": "대화를 접수하지 못했어요. 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -430,14 +430,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -445,7 +445,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "57846b7fa1adf1ec0ba5d9b0d98209578307f5c7aedab0fce7717159b5c9adc2",
+    "sha256": "c59c3117be7717782c2cf530baf4e53de06771fa624f3e0df4eaf160ad41de97",
     "text": "대화 세션을 사용할 수 없어요. Agent 대화 모드를 다시 시작해 주세요.",
     "voice": "kss"
   },
@@ -460,14 +460,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -475,7 +475,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "0a6d45d9ece771a64b879a230a13bd483c287d928e6d6dfb72b2ee6fa5e955af",
+    "sha256": "f0df12fb760870ade864e457ff0e25404adc077e01ce91826fdbb9d2a75961b5",
     "text": "대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.",
     "voice": "kss"
   },
@@ -490,14 +490,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -505,7 +505,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "eba9f9c598d658f8eb973f69d50f7756891eea8cfcab4f36d297deec0afb2735",
+    "sha256": "acf1e76ac6a6ff85a2d95d7f02825d996992ded163941d57d822cbff63d2aee9",
     "text": "지금은 대화를 할 수 없어요.",
     "voice": "kss"
   },
@@ -520,14 +520,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -535,7 +535,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "9b3e71770f65fa47cc5967668aeb27e161ea2d4c754313d465465b7a23d5d57e",
+    "sha256": "7c39cc34e952eb7813610090b2fe72cbf61535142ebd2d6d5e8629e63871cfe4",
     "text": "날씨 정보 조회를 한 번 다시 시도할게요.",
     "voice": "kss"
   },
@@ -550,14 +550,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -565,7 +565,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "5fb2613eedd20ea7b08369cc63bcf3099c11473cdaeda581bde0e2e92fe03d22",
+    "sha256": "34b63963bd21563185e3448b88b1accc05bb0b326cc10ae00178859907739c0f",
     "text": "지금 확인 중이에요. 잠시만요.",
     "voice": "kss"
   },
@@ -580,14 +580,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -595,7 +595,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "351d0070b697f4ec32fa991199f37edd013c02d62deb371a4e055f16dc9a70a0",
+    "sha256": "3925992db8170ce4b6c7b88362c05244cb7f52e0efb6a5ef3f6c4450a9a790aa",
     "text": "보호자에게 바로 알릴게요.",
     "voice": "kss"
   },
@@ -610,14 +610,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -625,7 +625,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "29b304d2759a0f35125d451087bc1c3a400dc04ddfaf75348cddb4cb9dbeb26d",
+    "sha256": "303f01ed8548c61c44f7873d394b0a2244a5f06b871d36c95c8c5c2d59f74aca",
     "text": "낙상 확인 중이라 잠시 이동할 수 없어요.",
     "voice": "kss"
   },
@@ -640,14 +640,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -655,7 +655,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "de6c2e7670f5d155efbb6177172ee11aab952293865b9621265512d2886e5904",
+    "sha256": "8295765c06821409d6e23a31609116d2721e627fe1e5bd6a40b413485bd5725a",
     "text": "낙상이 의심돼서 먼저 확인할게요.",
     "voice": "kss"
   },
@@ -670,14 +670,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -685,7 +685,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "4b513ff2d4e6b96a0dd06b7774ae1e11c868338a9bf3610f8a44d7f9e0a4ba06",
+    "sha256": "9b13aa8836c91ec06adf86793ce7e13124bc31b975d02c58f42ee689fdda8372",
     "text": "알겠어요. 확인을 멈추고 보호자에게 알릴게요.",
     "voice": "kss"
   },
@@ -700,14 +700,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -715,7 +715,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "c5a3c41df48a093451c3b98bffb6583c2951d1eb01dd0cfa797fdcc402640654",
+    "sha256": "195dd469ffd2dd44bd52a3433a749496213a5154c0e4326d2778001a79c3d60a",
     "text": "네, 홈캠에서 감지한 기록을 조회하겠습니다.",
     "voice": "kss"
   },
@@ -730,14 +730,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -745,7 +745,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "86e8b8e3cd82cc3ba31d1408ca79ee7dd196d204819e6e3a91d50dd02e069999",
+    "sha256": "89e07b8c33e1fc28611291f7908003e35cbf37154639059554573c53f8e7773d",
     "text": "네, 홈캠의 낙상 감지 기록을 조회하겠습니다.",
     "voice": "kss"
   },
@@ -760,14 +760,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -775,7 +775,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "d55f63ffe47a4614a230a18bfd798abeebe73a8541c2132988a6ef0fee2648f6",
+    "sha256": "cbb9244b0ea2bb6ea1fa5afbce38fcbb86a4aaf6e0c10b44183c838a80c3cbe7",
     "text": "네, 홈캠 녹화 목록을 조회하겠습니다.",
     "voice": "kss"
   },
@@ -790,14 +790,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -805,7 +805,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f6cebc3b7ba76ea994749d8706d221d763a783e427fa5e684e5b0e8cdb0eb953",
+    "sha256": "ccbc6829800d837caa7cdf2eab7f36a0a56449498e657e59c5d5430ad3b3130a",
     "text": "네, 홈캠 상태를 확인하겠습니다.",
     "voice": "kss"
   },
@@ -820,14 +820,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -835,7 +835,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "5db6527edf9160d964577f335aba04720855d2a0d57ae9ee02c85dcc1456a9b8",
+    "sha256": "a2d1a140e7c4093cfea7bc94c11da17125fce60e8b8ab380e4dc0ba1ec1ad67b",
     "text": "네, 날씨 조회를 시작하겠습니다.",
     "voice": "kss"
   },
@@ -850,14 +850,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -865,7 +865,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ad07013793b0a5eb9c4d0f16facf771408f1b4751dd6e7b82d695bd984e43a40",
+    "sha256": "1fa8b5277dc57d1ed43c0ab4638fdaea1b1971f33e8ba076218c62ef11317a34",
     "text": "네, 사람 따라가기를 시작하겠습니다.",
     "voice": "kss"
   },
@@ -880,14 +880,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -895,7 +895,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "1ddc62c084503e5531c51ab31651f65a2561bc172d5d5650f3cfa9188cd28cd9",
+    "sha256": "3fb4776fd31494ec8c330ece08db2b0edc4d40dc27ec20388056d8d6cfd529d9",
     "text": "네, 수동 조작을 준비하겠습니다.",
     "voice": "kss"
   },
@@ -910,14 +910,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -925,7 +925,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "25ce326538756934e9c8f32ae885408f5c4511534f15abca44954a718933dfa1",
+    "sha256": "496b40a9d18539fd372cd576f65f1a2818f529a022ea15318a899527b2b3e6bf",
     "text": "네, 지도 만들기를 시작하겠습니다.",
     "voice": "kss"
   },
@@ -940,14 +940,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -955,7 +955,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "23fad476101e3a3354595999e187dc07d7501d37e2d154d605b1ab666e550caf",
+    "sha256": "7cbaf6ad1f3325c161917a43a8439368aeda7d6cd20836f8f05d7fbbe938bda2",
     "text": "네, 요청하신 목적지로 이동을 시작하겠습니다.",
     "voice": "kss"
   },
@@ -970,14 +970,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -985,7 +985,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f1733bb197883cde04a97347bce832fb3b032919d49f4d2b115a7507496950ce",
+    "sha256": "2e4131e6af704e7ca8a451fcbace258c4a1fd4c25dffc22d470f728b461faa6f",
     "text": "네, 순찰을 시작하겠습니다.",
     "voice": "kss"
   },
@@ -1000,14 +1000,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1015,7 +1015,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "a73662373e291bb882811fc2675d2fee41a0c71dc40e164674437a6c0e73c776",
+    "sha256": "5be791dd7ef309c08c81117070586081675673fcea4e40c0050643d848231950",
     "text": "네, 복구 작업을 시작하겠습니다.",
     "voice": "kss"
   },
@@ -1030,14 +1030,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1045,7 +1045,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "26e14486e59e173f78311fa07168a94aee28aa66fb0ce57787f0538cac632116",
+    "sha256": "a80f458e691042e289d6f816f4abba9fcb919ee82a48def52794a841afb804f1",
     "text": "네, 현재 위치 확인을 시작하겠습니다.",
     "voice": "kss"
   },
@@ -1060,14 +1060,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1075,7 +1075,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f455e4c66f8be060b238d551ca9f7e65fa8f42d73deca44de0d78a1dc76097b2",
+    "sha256": "4f3168c2e817ed548591be1cab8de0ec30994f7e5a5eb3aa488826266cd471c4",
     "text": "네, 날씨 조회 지역을 설정하겠습니다.",
     "voice": "kss"
   },
@@ -1090,14 +1090,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1105,7 +1105,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "71667180ac7d6e6cd236873b278dff4a8c7dc18b8f83fb9aaba4ba20f8fbfca1",
+    "sha256": "7b22be6e423443b971b53a67c99c2471400730d76cb3be657fa5e34d3592fff5",
     "text": "홈캠 조회 결과로 답변을 만들지 못했어요.",
     "voice": "kss"
   },
@@ -1120,14 +1120,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1135,7 +1135,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "553564e796825e2b9842b6975e867762ee446c4dfeffd3ecb20b9eb16f7258d9",
+    "sha256": "a25182f30ea458b5b1a26b6b958c4c7fd2a43fd0d7969922f78c43ebc2ed41a0",
     "text": "홈캠 조회 인자가 올바르지 않아요.",
     "voice": "kss"
   },
@@ -1150,14 +1150,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1165,7 +1165,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "0e4c2f9e1883e813d370eed52034fc783d5450f384d33a9110a0506c05fb963d",
+    "sha256": "c12d6e025cdd04336894ac168bda054aa6b597af0e9bb84be9171a1774994274",
     "text": "웹에서 소유자의 음성 홈캠 조회 허용이 필요해요.",
     "voice": "kss"
   },
@@ -1180,14 +1180,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1195,7 +1195,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "44f5db0362c694a193ae6fd9ef19fc943f666b5bd1b7d4afccfb7991089fd14c",
+    "sha256": "406f0c66ae99baed88ca708d40bb7d02a7cd8b4b2357ee37e95af27d2bd9fabe",
     "text": "홈캠 조회가 연결되지 않았어요.",
     "voice": "kss"
   },
@@ -1210,14 +1210,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1225,7 +1225,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "fb45e5ad0bff7744d735d321cee6b24584e7fa38f8d5b0b429e21dfadf2bff0a",
+    "sha256": "3eccb7f89c918492768cb30a78b92f663ec1e112b0f76cfb77d7b0101ed881f5",
     "text": "지도가 바뀌었어요. 다시 요청해 주세요.",
     "voice": "kss"
   },
@@ -1240,14 +1240,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1255,7 +1255,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f425cbc7ab7e4e70d3e742d712f66316982b0afc346d989cc4d654194058e793",
+    "sha256": "03a81ddb5c3b57d3db6b6e68899e03ee712c0afe53f22cd40cc8bbd124ec302d",
     "text": "확인 중 지도나 목적지가 변경되었거나 시간이 지났어요. 다시 요청해 주세요.",
     "voice": "kss"
   },
@@ -1270,14 +1270,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1285,7 +1285,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "34548e38a1cc16ea26bbd2a46b199e29cb2c182798a7e1869cd76b464c42e698",
+    "sha256": "7035dfca008f9e41a29a88cc9a16916549e42ace57c84c6c3c2e94f8a3e4a174",
     "text": "목적지 확인 시간이 지났어요. 다시 요청해 주세요.",
     "voice": "kss"
   },
@@ -1300,14 +1300,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1315,7 +1315,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "7b203349338db0332fb173291c164e319d35aa1939bd1b1f622a5b0b77222d10",
+    "sha256": "ae71ad4b71b0030d5d2307958e7610b0ee8e073ea5cbcf78e7fc792e8a302666",
     "text": "저장된 지도를 먼저 선택해 주세요.",
     "voice": "kss"
   },
@@ -1330,14 +1330,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1345,7 +1345,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "328ff74aab88ed3290322cf2082454a0c56252ab97157723cec5bc38c548478c",
+    "sha256": "65cc363834a0d5c20f4f7695905f4ff605066702077ac4ac7f90d8288a429f92",
     "text": "이동할 목적지를 다시 알려주세요.",
     "voice": "kss"
   },
@@ -1360,14 +1360,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1375,7 +1375,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "79c5bff538f365ea0ae2fa3fae9bca68f07a910a3ab92c08e753397d4ac329ce",
+    "sha256": "ff65f0a629480df50701e02764c0d4291011f307aa1ef7e21b058568897baa76",
     "text": "작업이 취소됐어요.",
     "voice": "kss"
   },
@@ -1390,14 +1390,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1405,7 +1405,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "077ec8ff92724a68f5d727fdf43b42e07f15dac725a99ab09f4a5b510c5849c0",
+    "sha256": "4a55affae7f58277b5e3160a0cb15aae58aba441ba2367e61f6260d7ecb7f083",
     "text": "대화가 변경되어 이전 실행 요청을 보내지 않았어요.",
     "voice": "kss"
   },
@@ -1420,14 +1420,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1435,7 +1435,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "781f444b9db1cd09e367fcaba64fe612002e753ea6345114d376bfd3402faa72",
+    "sha256": "26691389e49e1a532a6e700242bffa09d2dcf99d072ad84a4dc00f206c49bf55",
     "text": "요청의 유효 시간이 지나 실행하지 않았어요. 다시 말씀해 주세요.",
     "voice": "kss"
   },
@@ -1450,14 +1450,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1465,7 +1465,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ab171a378f7da640327e32fb043fec2082ab33eaa49f6ebfed90476899a26409",
+    "sha256": "5338922c5beb75357af714ebfdea414a13c242428d00cdda817b01dcc8949596",
     "text": "작업을 완료하지 못했어요.",
     "voice": "kss"
   },
@@ -1480,14 +1480,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1495,7 +1495,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "e87fa383d36bf51bc1c92d72c393ee8209d54dc68b7e6494538fba78cc769db3",
+    "sha256": "098fc76771d233fb7d3cddd4267bbdfd90de9b7ee8e6b84d78992338bb76d7a4",
     "text": "실행 요청의 인자가 올바르지 않아요.",
     "voice": "kss"
   },
@@ -1510,14 +1510,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1525,7 +1525,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "c33bd63aedbd4c5ce2b8df203d0719b46e6cb9786f2c657576c41c46241129ca",
+    "sha256": "0ee850ab20ed691260f4f32f627cf3913ea4b78ad6aa52a3aee607e916add3c9",
     "text": "실행 요청의 유효 시간이 올바르지 않아요.",
     "voice": "kss"
   },
@@ -1540,14 +1540,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1555,7 +1555,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "8aa856c5697c011f3bb3616e3ae049a6be61b7b25cd71c683471746e2563a3fa",
+    "sha256": "4d4c09088472cfa387fc4f7e307abbbe9f405d4d28ae66697e1a5354ba2e8022",
     "text": "실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.",
     "voice": "kss"
   },
@@ -1570,14 +1570,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1585,7 +1585,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "192100c9d879701d098c23ef65c069e9f5ee8d8359b5a8aa08665287dd15b693",
+    "sha256": "29d4aadfbd3e0eba325921085d23d9e8cebc29a0496136b9909330aabf4d0964",
     "text": "요청을 접수했어요.",
     "voice": "kss"
   },
@@ -1600,14 +1600,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1615,7 +1615,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "e115b1d00d261372b3b80497b97ca832b5dc79ca60320fbed30dcad0474c7f55",
+    "sha256": "28f6dcb8e5103a7a6c6177e870c8ee13ada8a30b7da049cc21c3281d1491aabc",
     "text": "요청하신 작업이 완료됐어요.",
     "voice": "kss"
   },
@@ -1630,14 +1630,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1645,7 +1645,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "17ac6612fea324aa4409f318ec6d7aac1369711c110be5b1cce372949954b900",
+    "sha256": "bacce7cd184c1809cb1b9f038696759976ae5a8e7e3bdd5964c39ef3f8a12064",
     "text": "지금은 실행할 수 없어요.",
     "voice": "kss"
   },
@@ -1660,14 +1660,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1675,7 +1675,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f41f913fefae87f35fa1d22c2efed8833b53b8b6fdaeb9802627f1919111dfe0",
+    "sha256": "1cf8f268e97180e012dcdf20b1363af407df34444e42d345adce0c6d7cbeab1c",
     "text": "실행 상태를 확인하지 못했어요.",
     "voice": "kss"
   },
@@ -1690,14 +1690,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1705,7 +1705,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "6b0b3dbf2640084d632486ef38041b38abbe616e76f23ed03ac07afa8d191e7f",
+    "sha256": "b83e55a4f4b39cdb1a560af033f2ebeb12316e56fcddb87f28402843b914da90",
     "text": "현재 지원하지 않아요.",
     "voice": "kss"
   },
@@ -1720,14 +1720,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1735,7 +1735,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f6553c23c7adec94c83626bb0cd042defa74d507df30e26d8d912d03c8f68dc4",
+    "sha256": "4a6cb184ec995ff36b76730d6f14b8b7e8462af47bf61ab98519724cde963ac7",
     "text": "이 음성 실행 기능이 연결되지 않았어요.",
     "voice": "kss"
   },
@@ -1750,14 +1750,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1765,7 +1765,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "9caa723d94b0957c1fa91f092b954f852f1ea82b3625e13313d3704a4654e457",
+    "sha256": "550892fb04d9b0074fa85633eaff457ba89b88d8d99848cd3d5121393d03d91f",
     "text": "날씨 조회 지역을 저장했어요.",
     "voice": "kss"
   },
@@ -1780,14 +1780,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1795,7 +1795,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "c2c18fe927cd7f054e59f14ffb9d377ccf7f4a7e1e8a02f2fd9e1ae977652ab1",
+    "sha256": "68451541bc1cf79e747af83b8b83d63dfb1f2dd287267201a67275c600c9c5e0",
     "text": "실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?",
     "voice": "kss"
   },
@@ -1810,14 +1810,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1825,7 +1825,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "684000b0a0c40afa070253ae1b3e3100f04f3bb23987b43fad64655e336f331e",
+    "sha256": "7d6facbcb962007c013e2f79ecc828dc20eeaace895cdeae3881100145d87ed4",
     "text": "도움이 필요하신 것으로 확인했어요.",
     "voice": "kss"
   },
@@ -1840,14 +1840,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1855,7 +1855,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "ddc38b0244d2b0611d08b7bbdf3880cac8dbc82c6ab1de90adf83b0cbfb51660",
+    "sha256": "1abdca9318c9449c3815fc70d73aa0efba68316c696e281c43628e5de4616f91",
     "text": "알겠어요. 도움이 필요하지 않으신 것으로 확인했어요.",
     "voice": "kss"
   },
@@ -1870,14 +1870,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1885,7 +1885,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f57653ac71102cd79263e7d848f738d8006e6ae06cacd547af37074f71950736",
+    "sha256": "61d96560cdc4b45481c3b415fd453cfb1025c4d25394d0ba4fef220c3a985d94",
     "text": "답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.",
     "voice": "kss"
   },
@@ -1900,14 +1900,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1915,7 +1915,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "fbcaae0040e0c94b7ced25502e5aa04af4e2d4b9c30a90fb246676aedd5984ba",
+    "sha256": "32e59d062b58b41e0837e5b03e16269efa4bcd9e02833ef2d97664feebfbbddc",
     "text": "알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.",
     "voice": "kss"
   },
@@ -1930,14 +1930,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1945,7 +1945,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "43ac2ff8f9ed388811a79f08b92e80db1a5360cafa7cc1eb05803a13a6cc2554",
+    "sha256": "e2ed548f4c30931d296e4ea72ff46e10ee9f367df4aaeb420c62edd25b4ba067",
     "text": "상황을 충분히 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.",
     "voice": "kss"
   },
@@ -1960,14 +1960,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -1975,7 +1975,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "3e1e1ebe330a0823a9b124d05eace697883ca8db9dd5a1def6c29b155470b1f3",
+    "sha256": "9166f30f9b930e50b3f67b279c29eb8f9ddc5a3a24ab62ce50584fdc06dc13eb",
     "text": "날씨 조회 결과로 답변을 만들지 못했어요.",
     "voice": "kss"
   },
@@ -1990,14 +1990,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -2005,7 +2005,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "a6fa0b5ec7287b7b023c1c71a3547e3eae2e5e542b2dadfe2ce59b7e3efb3ffe",
+    "sha256": "94a8ac1f2f3a05e37d1500cb3fbd88b28e8a8143d2e63e5b2e93e4738d6b8082",
     "text": "날씨 조회 인자가 올바르지 않습니다.",
     "voice": "kss"
   },
@@ -2020,14 +2020,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -2035,7 +2035,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "fa0b9b72a2bc559b1482a5db59eb7ad1b241284f6e5b745d8278c3654e1af201",
+    "sha256": "d84947ba632ce0d7a0753d1a8b2637d32281ecfbc936ba6497ed25fa785033cf",
     "text": "지역 이름을 다시 알려주세요.",
     "voice": "kss"
   },
@@ -2050,14 +2050,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -2065,7 +2065,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "f54a1051f12717775ebe79fc6b67563487fe33a68a931d51bc6e178942e7964c",
+    "sha256": "171f0b4a521d1c94acec48343c05058b4658187a3f3ebbfed1380661d2e1328c",
     "text": "날씨를 확인할 지역을 알려주세요.",
     "voice": "kss"
   },
@@ -2080,14 +2080,14 @@
       "source_rate": 22050,
       "source_sha256": {
         "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
-        "korean_normalization.py": "275126b1fe2b78051a30b068ceaa3e57f512a0deceb0dd1efdc7f268a6e7fc7a",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
         "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
         "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
         "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
       },
       "threads": 6,
       "versions": {
-        "numpy": "2.2.6",
+        "numpy": "1.26.4",
         "onnxruntime": "1.23.2",
         "piper-tts": "1.8.0",
         "scipy": "1.15.3"
@@ -2095,7 +2095,7 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "cd509ec2043845fdb74a5f1f0dcf81a5ea5d8afb9011a76be15013e9111d930a",
+    "sha256": "08f235776ad054cda5b9db58bffa07264c4b6ac939143f913f2276417cd84334",
     "text": "날씨 조회 기능을 사용할 수 없습니다.",
     "voice": "kss"
   }
