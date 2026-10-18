@@ -7,22 +7,18 @@ import "@fontsource/source-sans-3/700.css";
 import { PwaBootstrap } from "./components/pwa-bootstrap";
 import "./globals.css";
 
-const legacyProductMetadata = {
-  title: "PETCAM | 보호자 실시간 펫 카메라",
-} as const;
-
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.AUTH_PUBLIC_ORIGIN ?? "http://localhost:3000"),
-  applicationName: "MALBUT 홈캠",
-  title: "MALBUT 홈캠 | 우리 집을 가까이",
-  description: "이동형 홈캠의 실시간 영상, PTT, AI 이벤트와 최근 7일 녹화를 가족과 안전하게 확인합니다.",
-  keywords: [legacyProductMetadata.title, "MALBUT", "홈캠", "AWS KVS WebRTC"],
+  applicationName: "말벗 홈캠",
+  title: "말벗 홈캠",
+  description: "우리 집 말벗의 실시간 영상과 낙상 알림을 가족과 함께 봐요.",
+  keywords: ["말벗", "말벗 홈캠", "홈캠", "낙상 알림"],
   referrer: "no-referrer",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "MALBUT 홈캠",
+    title: "말벗 홈캠",
   },
   formatDetection: {
     telephone: false,
@@ -32,14 +28,14 @@ export const metadata: Metadata = {
     apple: "/homecam-icon.svg",
   },
   openGraph: {
-    title: "MALBUT 홈캠 | 우리 집을 가까이",
-    description: "실시간 영상과 양방향 음성, AI 이벤트와 최근 7일 녹화를 한곳에서 확인합니다.",
+    title: "말벗 홈캠",
+    description: "우리 집 말벗의 실시간 영상과 낙상 알림을 가족과 함께 봐요.",
     images: [
       {
         url: "/og.png",
         width: 1732,
         height: 908,
-        alt: "클라우드와 보호자 휴대전화에 연결된 PETCAM 펫 로봇",
+        alt: "클라우드와 보호자 휴대전화에 연결된 바퀴 달린 홈캠 로봇",
       },
     ],
   },

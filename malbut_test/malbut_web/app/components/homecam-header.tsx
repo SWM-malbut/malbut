@@ -104,7 +104,7 @@ export function HomecamHeader({
       <button
         type="button"
         className="homecam-brand"
-        aria-label="MALBUT 홈캠 홈"
+        aria-label="말벗 홈캠 홈"
         onClick={() => onNavigate("home")}
       >
         <strong>말</strong>

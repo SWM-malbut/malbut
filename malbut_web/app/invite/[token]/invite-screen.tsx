@@ -86,7 +86,7 @@ export function InviteScreen({ token, returnTo, signedIn, invite, enabled, demo 
               <p>로그인하면 바로 보호자로 등록돼요. 실시간 영상과 사건을 함께 보고, 낙상 알림을 받을 수 있어요.</p>
             </section>
             <SocialProviderButtons returnTo={returnTo} enabled={enabled} />
-            <p className="ui-invite-note">이미 말벗을 쓰고 계시면 처음 가입한 방법으로 로그인하세요.</p>
+            <p className="ui-invite-note">이미 말벗을 쓰고 계시면 처음 가입한 방법으로 로그인해 주세요.</p>
           </>
         )}
 

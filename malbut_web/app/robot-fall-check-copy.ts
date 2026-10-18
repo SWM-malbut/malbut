@@ -68,10 +68,10 @@ export function fallCheckView(detail: Record<string, unknown> | null | undefined
   if (check.phase === "return") return view("확인을 마치고 원래 자리로 돌아가고 있어요", "도착하면 다시 이동할 수 있어요.");
   if (check.phase === "wait" && check.waiting_for === "manual_drive") {
     return alerted
-      ? view(target ? "직접 움직이기가 끝나면 의심 장소로 다시 가서 확인해요" : "직접 움직이기가 끝나면 낙상 확인을 이어 가요",
+      ? view(target ? "수동 조작이 끝나면 의심 장소로 다시 가서 확인해요" : "수동 조작이 끝나면 낙상 확인을 이어 가요",
         alertedDetail)
-      : view("직접 움직이기가 끝나면 낙상 확인을 이어 가요",
-        "직접 움직이기는 끊지 않아요. 1분 안에 확인하지 못하면 보호자에게 긴급 알림을 보내요.");
+      : view("수동 조작이 끝나면 낙상 확인을 이어 가요",
+        "수동 조작은 끊지 않아요. 1분 안에 확인하지 못하면 보호자에게 긴급 알림을 보내요.");
   }
   if (check.phase === "wait") {
     return alerted

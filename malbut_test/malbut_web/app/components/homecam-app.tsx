@@ -339,7 +339,7 @@ function Viewer({
         (reconnectPendingRef.current || viewerStateRef.current !== "live")
       ) {
         requestReconnectRef.current?.({
-          message: "화면으로 돌아와 홈캠 연결을 다시 확인하고 있습니다.",
+          message: "화면으로 돌아와 영상 연결을 다시 확인하고 있어요.",
         });
       }
     };
@@ -361,7 +361,7 @@ function Viewer({
         (reconnectPendingRef.current || viewerStateRef.current !== "live")
       ) {
         requestReconnectRef.current?.({
-          message: "네트워크가 복구되어 홈캠에 다시 연결하고 있습니다.",
+          message: "네트워크가 돌아와 영상에 다시 연결하고 있어요.",
         });
       }
     };
@@ -409,7 +409,7 @@ function Viewer({
         if (videoRef.current) videoRef.current.srcObject = null;
         viewerStateRef.current = "offline";
         setState("offline");
-        setError("홈캠 접근 권한이 해제되었습니다.");
+        setError("이 말벗을 볼 권한이 없어졌어요.");
       } catch {
         // Ignore transient access-check failures while healthy media is live.
       }
@@ -555,7 +555,7 @@ function Viewer({
         reconnectPendingRef.current = false;
         viewerStateRef.current = "offline";
         setError(
-          "자동 재연결을 여러 번 시도했지만 연결하지 못했습니다. 다시 연결 버튼을 눌러 주세요.",
+          "여러 번 다시 연결해 봤지만 연결하지 못했어요. 다시 연결 버튼을 눌러 주세요.",
         );
         setState("offline");
         return;
@@ -601,7 +601,7 @@ function Viewer({
       mediaTimer = window.setTimeout(() => {
         mediaTimer = null;
         scheduleAutomaticReconnect({
-          message: "영상 수신이 지연되어 홈캠에 다시 연결하고 있습니다.",
+          message: "영상이 늦게 와서 다시 연결하고 있어요.",
         });
       }, AUTHORIZED_P2P_MEDIA_TIMEOUT_MS);
     };
@@ -654,13 +654,13 @@ function Viewer({
         setupTimer = null;
         setupController?.abort();
         scheduleAutomaticReconnect({
-          message: "AWS 연결 정보를 받지 못해 다시 시도하고 있습니다.",
+          message: "연결 정보를 받지 못해 다시 시도하고 있어요.",
         });
       }, AUTHORIZED_VIEWER_SETUP_TIMEOUT_MS);
       connectTimer = window.setTimeout(() => {
         connectTimer = null;
         scheduleAutomaticReconnect({
-          message: "홈캠 연결 시간이 초과되어 다시 시도하고 있습니다.",
+          message: "영상 연결 시간이 지나 다시 시도하고 있어요.",
         });
       }, AUTHORIZED_P2P_CONNECT_TIMEOUT_MS);
     }
@@ -717,7 +717,7 @@ function Viewer({
                       (connectionStorageMode ?? storageModeRef.current) === false
                     ) {
                       scheduleAutomaticReconnect({
-                        message: "홈캠 영상이 종료되어 다시 연결하고 있습니다.",
+                        message: "영상이 끊겨 다시 연결하고 있어요.",
                       });
                     } else {
                       viewerStateRef.current = "offline";
@@ -762,7 +762,7 @@ function Viewer({
                 (connectionStorageMode ?? storageModeRef.current) === false
               ) {
                 scheduleAutomaticReconnect({
-                  message: "홈캠 연결이 끊겨 자동으로 다시 연결하고 있습니다.",
+                  message: "영상 연결이 끊겨 자동으로 다시 연결하고 있어요.",
                 });
               } else {
                 viewerStateRef.current = next;
@@ -775,7 +775,7 @@ function Viewer({
               mediaReady = false;
               clearMediaTimer();
               releaseTalkLease();
-              const message = reason.message || "AWS KVS 연결에 실패했습니다.";
+              const message = reason.message || "영상 연결에 실패했어요.";
               if (
                 deviceId &&
                 (connectionStorageMode ?? storageModeRef.current) === false
@@ -828,7 +828,7 @@ function Viewer({
               connectTimer = window.setTimeout(() => {
                 connectTimer = null;
                 scheduleAutomaticReconnect({
-                  message: "홈캠 연결 시간이 초과되어 다시 시도하고 있습니다.",
+                  message: "영상 연결 시간이 지나 다시 시도하고 있어요.",
                 });
               }, AUTHORIZED_P2P_CONNECT_TIMEOUT_MS);
             }
@@ -844,7 +844,7 @@ function Viewer({
         const message =
           reason instanceof Error && reason.name !== "AbortError"
             ? reason.message
-            : "홈캠 연결 준비 시간이 초과되었습니다.";
+            : "영상 연결 준비 시간이 지났어요.";
         if (
           deviceId &&
           !viewerAccessRevokedRef.current &&
@@ -856,7 +856,7 @@ function Viewer({
             message,
           });
         } else {
-          setError(message || "보호자 화면에 연결하지 못했습니다.");
+          setError(message || "보호자 화면에 연결하지 못했어요.");
           viewerStateRef.current = "error";
           setState("error");
         }
@@ -936,7 +936,7 @@ function Viewer({
       setError("");
       setState("connecting");
       setStorageMode(null);
-      setMicrophoneNotice("마이크를 연결하기 위해 AWS 세션을 다시 연결하고 있습니다.");
+      setMicrophoneNotice("마이크를 켜려고 영상 연결을 다시 하고 있어요.");
       viewerGenerationRef.current += 1;
       setAttempt((value) => value + 1);
       return "reconnecting";
@@ -1247,7 +1247,7 @@ function Viewer({
     window.queueMicrotask(() => {
       if (!viewerMountedRef.current) return;
       setTalkWanted(false);
-      setMicrophoneNotice("홈캠 연결이 끊겨 마이크를 켜지 못했어요.");
+      setMicrophoneNotice("영상 연결이 끊겨 마이크를 켜지 못했어요.");
     });
   }, [state]);
 
@@ -1349,7 +1349,7 @@ function Viewer({
               aria-hidden="true"
             />
             <strong>
-              {device?.displayName ?? "등록된 홈캠"}
+              {device?.displayName ?? "등록된 말벗"}
             </strong>
             <span data-testid="connection-status">{STATE_COPY[state]}</span>
           </div>
@@ -1389,12 +1389,12 @@ function Viewer({
                   <VideoCamera size={40} weight="light" aria-hidden="true" />
                   <h1>
                     {state === "offline"
-                      ? "홈캠 연결이 끊겼어요"
+                      ? "영상 연결이 끊겼어요"
                       : state === "error"
                         ? "연결을 다시 확인해 주세요"
                         : "보안 채널 연결 중"}
                   </h1>
-                  <p>연결되면 우리 집 영상과 소리가 이 화면에서 바로 시작됩니다.</p>
+                  <p>연결되면 우리 집 영상과 소리가 이 화면에서 바로 시작돼요.</p>
                 </div>
               )}
 

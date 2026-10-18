@@ -13,7 +13,7 @@ export async function GET(
   const { deviceId } = await context.params;
   const semantics = await getRobotMapSemantics(deviceId, userId);
   if (!semantics) {
-    return noStore({ error: "이 로봇의 사용자 지도를 볼 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗의 사용자 지도를 볼 권한이 없어요." }, 403);
   }
   return noStore(semantics, 200);
 }

@@ -95,7 +95,7 @@ test("the home notice and the key cards follow mockups 13 and 15", async () => {
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
   ]);
   for (const text of ["말벗이 지금 대화를 할 수 없어요", "낙상 AI 확인을 할 수 없어요", "말벗이 날씨를 확인할 수 없어요",
-    "AI 재확인이 빠져 정확도가 떨어질 수 있어요", "키를 확인해 주세요.", "소유자에게 키를 확인해 달라고 알려 주세요.",
+    "AI 확인이 빠져 정확도가 떨어질 수 있어요", "키를 확인해 주세요.", "소유자에게 키를 확인해 달라고 알려 주세요.",
     "도 확인이 필요해요.", "키 확인하기"]) assert.ok(notice.includes(text), text);
   // Conversation and fall AI are red, weather yellow.
   assert.match(notice, /openai: \{[^}]*urgent: true/);

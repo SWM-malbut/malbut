@@ -20,7 +20,7 @@ export async function GET(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanViewDevice(deviceId, userId))) {
-    return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗에서 말하기를 쓸 권한이 없어요." }, 403);
   }
   const clientId = new URL(request.url).searchParams.get("clientId") ?? undefined;
   if (clientId !== undefined && !isValidClientId(clientId)) {
@@ -38,7 +38,7 @@ export async function POST(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanViewDevice(deviceId, userId))) {
-    return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗에서 말하기를 쓸 권한이 없어요." }, 403);
   }
   const payload = (await request.json().catch(() => ({}))) as {
     leaseId?: unknown;
@@ -100,7 +100,7 @@ export async function DELETE(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanViewDevice(deviceId, userId))) {
-    return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗에서 말하기를 쓸 권한이 없어요." }, 403);
   }
   const payload = (await request.json().catch(() => null)) as {
     leaseId?: unknown;

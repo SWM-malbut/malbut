@@ -72,7 +72,7 @@ export type RobotSnapshot = {
 // 넘어가도 화면은 "이동하고 있어요" 3단계에 붙박여 있었다.
 const MAPPING_STEPS: Array<{ label: string; states: string[] }> = [
   { label: "주변을 인식하고 있어요", states: ["waiting_for_map"] },
-  { label: "자율주행을 준비하고 있어요", states: ["waiting_for_navigation"] },
+  { label: "이동할 준비를 하고 있어요", states: ["waiting_for_navigation"] },
   { label: "새로운 공간을 확인하러 이동하고 있어요", states: ["navigating"] },
   { label: "더 확인할 공간이 있는지 찾고 있어요", states: ["exploring", "review"] },
   { label: "지도를 안전하게 저장하고 있어요", states: ["saving"] },
@@ -131,11 +131,14 @@ const SPACE_OPERATIONS = new Set<string>(["rooms_save", "zones_apply", "room_spl
 export function RobotMapPanel({
   device,
   initialMode = "view",
+  initialRoomId = "",
   controlsMode = "legacy",
   header,
 }: {
   device: HomecamDevice | null;
   initialMode?: MapMode;
+  /** 홈 탭 지도 카드의 방 버튼: 이 방이 골라진 채로 보내기 화면을 연다(목업 40번). */
+  initialRoomId?: string;
   controlsMode?: "legacy" | "managed";
   /** The tab top shared by every tab (화면 이름 · 연결 상태 · 연결된 말벗); shown on the map screen only. */
   header?: ReactNode;
@@ -212,7 +215,7 @@ export function RobotMapPanel({
         { cache: "no-store" },
       );
       const payload = await response.json().catch(() => ({})) as RobotSnapshot & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "말벗 지도를 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(payload.error ?? "말벗 지도를 불러오지 못했어요.");
       setSnapshot(payload);
       setClockNow(Date.now());
       const command = payload.command;
@@ -234,34 +237,34 @@ export function RobotMapPanel({
           setNotice("");
         } else if (command.status === "failed") {
           const result = isRecord(command.result) ? command.result : {};
-          const message = typeof result.error === "string" ? result.error : "말벗이 명령을 완료하지 못했습니다.";
+          const message = typeof result.error === "string" ? result.error : "말벗이 명령을 끝내지 못했어요.";
           setNotice(message);
         } else if (command.operation === "robot_diagnostics" && isRecord(command.result)) {
           setManagedDiagnostics({ deviceId, report: command.result });
-          setNotice("로봇 진단 결과를 받았습니다.");
+          setNotice("말벗 진단 결과를 받았어요.");
         } else if (command.operation === "map_delete") {
-          setNotice("저장 지도를 삭제했습니다.");
+          setNotice("저장 지도를 지웠어요.");
         } else if (command.operation === "zones_save") {
-          setNotice("구역을 로봇에 저장했습니다. 주행에 반영하는 중입니다.");
+          setNotice("구역을 말벗에 저장했어요. 주행에 반영하는 중이에요.");
         } else if (command.operation === "robot_ping") {
-          setNotice("로봇이 응답했습니다. 디버깅에서 왕복 시간을 확인하세요.");
+          setNotice("말벗이 응답했어요. 디버깅에서 왕복 시간을 확인해 주세요.");
         } else if (command.operation === "navigation_start") {
           setNavigationPreview(null);
           setPreviewExpiresAt(0);
-          setNotice("선택한 목적지로 이동을 시작했습니다.");
+          setNotice("선택한 목적지로 이동을 시작했어요.");
         } else if (command.operation === "drive_mode_start") {
-          setNotice("자율주행을 시작했습니다.");
+          setNotice(`${autonomyObject(payload.state?.driveMode?.mode)} 시작했어요.`);
         } else if (command.operation === "drive_mode_pause") {
-          setNotice("자율주행을 일시정지했습니다.");
+          setNotice(`${autonomyObject(payload.state?.driveMode?.mode)} 잠시 멈췄어요.`);
         } else if (command.operation === "drive_mode_resume") {
-          setNotice("자율주행을 다시 시작했습니다.");
+          setNotice(`${autonomyObject(payload.state?.driveMode?.mode)} 다시 시작했어요.`);
         } else if (command.operation === "drive_mode_stop") {
-          setNotice("자율주행을 중지했습니다.");
+          setNotice(`${autonomyObject(payload.state?.driveMode?.mode)} 멈췄어요.`);
         }
       }
       if (!quiet) setNotice("");
     } catch (error) {
-      if (!quiet) setNotice(error instanceof Error ? error.message : "말벗 지도를 불러오지 못했습니다.");
+      if (!quiet) setNotice(error instanceof Error ? error.message : "말벗 지도를 불러오지 못했어요.");
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -276,7 +279,7 @@ export function RobotMapPanel({
     })
       .then(async (response) => {
         const payload = await response.json().catch(() => ({})) as RobotSemantics & { error?: string };
-        if (!response.ok) throw new Error(payload.error ?? "공간 정보를 불러오지 못했습니다.");
+        if (!response.ok) throw new Error(payload.error ?? "공간 정보를 불러오지 못했어요.");
         return payload;
       })
       .then((payload) => {
@@ -305,7 +308,7 @@ export function RobotMapPanel({
         loadedSemanticIdentity.current = identity;
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "공간 정보를 불러오지 못했습니다.");
+        if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "공간 정보를 불러오지 못했어요.");
       });
     return () => controller.abort();
   }, [controlsMode, deviceId, semanticRefresh, snapshot?.map?.revision]);
@@ -447,31 +450,31 @@ export function RobotMapPanel({
         },
       );
       const payload = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "지도 명령을 전달하지 못했습니다.");
+      if (!response.ok) throw new Error(payload.error ?? "지도 명령을 전달하지 못했어요.");
       setNotice(
         ["runtime_start", "runtime_stop", "mission_start", "mission_cancel", "debug_mission_start"].includes(operation)
-          ? "로봇에 요청을 전달했습니다. 실제 상태·결과를 확인하세요."
-          : operation === "map_delete" ? "저장 지도 삭제를 요청했습니다."
-          : operation === "manual_move" ? "수동 조작 명령을 보냈습니다."
-          : operation === "zones_save" ? "구역 저장을 요청했습니다."
-          : operation === "robot_ping" ? "로봇 응답 시간을 재고 있습니다."
-          : operation === "robot_diagnostics" ? "로봇 진단을 요청했습니다."
-          : operation === "start" ? "말벗에 지도 생성을 요청했습니다."
-          : operation === "finish" ? "탐색 완료와 지도 저장을 요청했습니다."
-            : operation === "cancel" ? "지도 생성을 중지하도록 요청했습니다."
-              : operation === "navigation_preview" ? "현재 costmap으로 안전한 경로를 확인하고 있습니다."
-                : operation === "navigation_start" ? "출발 전에 경로를 다시 확인하고 있습니다."
-                  : operation === "navigation_cancel" ? "주행 취소를 요청했습니다."
-                    : operation === "drive_mode_start" ? "자율주행 시작을 요청했습니다."
-                      : operation === "drive_mode_pause" ? "자율주행 일시정지를 요청했습니다."
-                        : operation === "drive_mode_resume" ? "자율주행 재개를 요청했습니다."
-                          : operation === "drive_mode_stop" ? "자율주행 중지를 요청했습니다."
-                            : "말벗에 요청을 전달했습니다.",
+          ? "말벗에 요청을 전달했어요. 실제 상태·결과를 확인해 주세요."
+          : operation === "map_delete" ? "저장 지도 삭제를 요청했어요."
+          : operation === "manual_move" ? "수동 조작 명령을 보냈어요."
+          : operation === "zones_save" ? "구역 저장을 요청했어요."
+          : operation === "robot_ping" ? "말벗 응답 시간을 재고 있어요."
+          : operation === "robot_diagnostics" ? "말벗 진단을 요청했어요."
+          : operation === "start" ? "말벗에 지도 만들기를 요청했어요."
+          : operation === "finish" ? "탐색 완료와 지도 저장을 요청했어요."
+            : operation === "cancel" ? "지도 만들기를 멈추도록 요청했어요."
+              : operation === "navigation_preview" ? "지도로 안전한 길을 확인하고 있어요."
+                : operation === "navigation_start" ? "출발 전에 길을 다시 확인하고 있어요."
+                  : operation === "navigation_cancel" ? "이동 취소를 요청했어요."
+                    : operation === "drive_mode_start" ? `${autonomyName(commandPayload.mode)} 시작을 요청했어요.`
+                      : operation === "drive_mode_pause" ? `${autonomyName(driveMode?.mode)} 일시정지를 요청했어요.`
+                        : operation === "drive_mode_resume" ? `${autonomyName(driveMode?.mode)} 다시 시작을 요청했어요.`
+                          : operation === "drive_mode_stop" ? `${autonomyName(driveMode?.mode)} 멈춤을 요청했어요.`
+                            : "말벗에 요청을 전달했어요.",
       );
       await load(true);
       return true;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "지도 명령을 전달하지 못했습니다.");
+      setNotice(error instanceof Error ? error.message : "지도 명령을 전달하지 못했어요.");
       return false;
     } finally {
       setBusy(false);
@@ -481,7 +484,7 @@ export function RobotMapPanel({
   // Held joystick/keyboard input: no busy state, notice or snapshot reload per
   // repeat; the tools card shows the last delivery error itself.
   const driveCommand = useCallback(async (velocity: ManualVelocity) => {
-    if (!device) return "장치를 선택하세요.";
+    if (!device) return "말벗을 골라 주세요.";
     try {
       const response = await fetch(
         `/api/devices/${encodeURIComponent(device.id)}/robot/commands`,
@@ -496,7 +499,7 @@ export function RobotMapPanel({
       const payload = await response.json().catch(() => ({})) as { error?: string };
       return payload.error ?? `HTTP ${response.status}`;
     } catch {
-      return "네트워크 오류로 명령을 보내지 못했습니다.";
+      return "네트워크 오류로 명령을 보내지 못했어요.";
     }
   }, [device]);
 
@@ -561,14 +564,14 @@ export function RobotMapPanel({
           return;
         }
         if (!room || featureId(room) === selectedRoomId) {
-          setNotice("현재 방과 맞닿아 있는 다른 방을 선택하세요.");
+          setNotice("현재 방과 맞닿아 있는 다른 방을 골라 주세요.");
           return;
         }
         setMergeTargetId(featureId(room));
         setNotice("");
       } else {
         if (!selectedRoom) {
-          setNotice("먼저 나눌 방을 선택한 뒤 ‘나누는 선 그리기’를 누르세요.");
+          setNotice("먼저 나눌 방을 고른 뒤 ‘방 나누기’를 눌러 주세요.");
           return;
         }
         setValidatedSplit(null);
@@ -576,7 +579,7 @@ export function RobotMapPanel({
         const point = snapToRoomWall(clickedPoint, selectedRoom.geometry, 0.25);
         if (!point) {
           setSplitValidation("invalid");
-          setSplitValidationMessage("분할선의 양 끝점은 방 벽에서 25cm 이내에 놓아야 합니다.");
+          setSplitValidationMessage("나누는 선의 양 끝은 방 벽에서 25cm 안에 놓아 주세요.");
           return;
         }
         if (pendingSplitPoint) {
@@ -589,7 +592,7 @@ export function RobotMapPanel({
         } else {
           setPendingSplitPoint(point);
           setSplitValidation("idle");
-          setSplitValidationMessage("두 번째 벽을 선택하세요.");
+          setSplitValidationMessage("두 번째 벽을 골라 주세요.");
         }
       }
       return;
@@ -601,12 +604,12 @@ export function RobotMapPanel({
       }
       if (zoneGoalMode && selectedZone) {
         if (!featureContains(selectedZone, x, y)) {
-          setNotice("대표 위치는 선택한 구역 안에 지정하세요.");
+          setNotice("대표 위치는 고른 구역 안에 정해 주세요.");
           return;
         }
         updateSelectedZone({ preferred_goal: [roundMapCoordinate(x), roundMapCoordinate(y)] });
         setZoneGoalMode(false);
-        setNotice("구역의 대표 위치를 지정했습니다. 주행에 적용하면 말벗에 반영됩니다.");
+        setNotice("구역의 대표 위치를 정했어요. 주행에 적용하면 말벗에 반영돼요.");
       } else {
         const zone = [...zoneDrafts].reverse().find((candidate) => featureContains(candidate, x, y));
         setSelectedZoneId(zone ? featureId(zone) : "");
@@ -676,13 +679,13 @@ export function RobotMapPanel({
       setValidatedSplit(null);
       clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
       setRoomTool("select");
-      setNotice("방을 나눴습니다. 이름과 종류를 확인한 뒤 방 설정을 저장하세요.");
+      setNotice("방을 나눴어요. 이름과 종류를 확인한 뒤 방 설정을 저장해 주세요.");
       return;
     }
     const signature = splitDraftSignature;
     const sourceId = featureId(selectedRoom);
     setSplitValidation("checking");
-    setSplitValidationMessage("최소 면적과 연결성을 확인하고 있습니다.");
+    setSplitValidationMessage("나눈 방의 넓이와 연결을 확인하고 있어요.");
     const result = await postSpaceEdit("rooms/split", { room: selectedRoom, lines: splitLines });
     // The owner moved the divider while it was checked: that answer is for another line.
     if (signature !== splitDraftSignatureRef.current) return;
@@ -694,13 +697,13 @@ export function RobotMapPanel({
       setValidatedSplit(null);
       setSplitValidation(result ? "invalid" : "ready");
       setSplitValidationMessage(result ? message : "");
-      if (result) setNotice(`방을 나눌 수 없습니다. ${message}`);
+      if (result) setNotice(`방을 나눌 수 없어요. ${message}`);
       return;
     }
     setValidatedSplit({ signature, sourceId, rooms });
     setSplitValidation("valid");
     setSplitValidationMessage("각 공간이 1㎡ 이상이고 정확히 두 공간으로 나뉩니다.");
-    setNotice("분할선을 확인했습니다. 지도에서 확인한 뒤 방 나누기를 적용하세요.");
+    setNotice("나누는 선을 확인했어요. 지도에서 확인한 뒤 방 나누기를 적용해 주세요.");
   };
 
   const applyRoomMerge = async () => {
@@ -709,7 +712,7 @@ export function RobotMapPanel({
     const result = await postSpaceEdit("rooms/merge", { rooms: [selectedRoom, mergeTarget] });
     if (!result) return;
     if (!result.ok || !isGeoFeature(result.payload.room)) {
-      setNotice(`방을 합칠 수 없습니다. ${result.ok ? "방을 합치지 못했어요." : result.error}`);
+      setNotice(`방을 합칠 수 없어요. ${result.ok ? "방을 합치지 못했어요." : result.error}`);
       return;
     }
     const merged = result.payload.room;
@@ -717,7 +720,7 @@ export function RobotMapPanel({
     setSelectedRoomId(featureId(merged));
     setMergeTargetId("");
     setRoomTool("select");
-    setNotice("인접한 두 방을 합쳤습니다. 확인한 뒤 저장해 주세요.");
+    setNotice("맞닿은 두 방을 합쳤어요. 확인한 뒤 저장해 주세요.");
   };
 
   const updateSelectedRoom = (properties: Record<string, unknown>) => {
@@ -738,7 +741,7 @@ export function RobotMapPanel({
     });
     if (!result) return;
     if (!result.ok) {
-      setNotice(`방 설정을 저장하지 못했습니다. ${result.error}`);
+      setNotice(`방 설정을 저장하지 못했어요. ${result.error}`);
       return;
     }
     // The server works out each room's area and representative point again.
@@ -761,12 +764,12 @@ export function RobotMapPanel({
 
   const addDefaultZone = () => {
     if (!walkableArea) {
-      setNotice("지도의 주행 가능 영역을 확인하지 못했습니다.");
+      setNotice("지도에서 말벗이 다닐 수 있는 곳을 확인하지 못했어요.");
       return;
     }
     const ring = defaultZoneRing(walkableArea, zoneDrafts.length);
     if (!ring) {
-      setNotice("새 구역을 배치할 수 있는 열린 공간이 없습니다.");
+      setNotice("새 구역을 놓을 빈 곳이 없어요.");
       return;
     }
     const zone = createZoneFeature(
@@ -778,7 +781,7 @@ export function RobotMapPanel({
     setSelectedZoneId(featureId(zone));
     setZoneGoalMode(false);
     setZoneCreateMode("closed");
-    setNotice("새 구역을 만들었습니다. 지도에서 끌거나 모서리와 변을 움직여 크기를 조절하세요.");
+    setNotice("새 구역을 만들었어요. 지도에서 끌거나 모서리와 변을 움직여 크기를 맞춰 주세요.");
   };
 
   const toggleWallDrawing = () => {
@@ -818,7 +821,7 @@ export function RobotMapPanel({
   const addRoomAsZone = (room: GeoFeature) => {
     const geometries = polygonGeometries(room.geometry);
     if (geometries.length === 0) {
-      setNotice("이 방의 경계를 구역으로 변환할 수 없습니다.");
+      setNotice("이 방의 경계로는 구역을 만들 수 없어요.");
       return;
     }
     const roomName = featureName(room, "이름 없는 방");
@@ -846,7 +849,7 @@ export function RobotMapPanel({
     setSelectedZoneId(featureId(additions[0]));
     setZoneGoalMode(false);
     setZoneCreateMode("closed");
-    setNotice(`${roomName} 전체를 ${zoneBehaviorLabel(newZoneBehavior)} 구역으로 추가했습니다.`);
+    setNotice(`${roomName} 전체를 ${zoneBehaviorLabel(newZoneBehavior)} 구역으로 더했어요.`);
   };
 
   const removeSelectedZone = () => {
@@ -882,7 +885,7 @@ export function RobotMapPanel({
     }).then((result) => {
       if (!result) return;
       if (!result.ok) {
-        setNotice(`구역 설정을 저장하지 못했습니다. ${result.error}`);
+        setNotice(`구역 설정을 저장하지 못했어요. ${result.error}`);
         return;
       }
       setZoneDrafts(normalized);
@@ -893,14 +896,14 @@ export function RobotMapPanel({
 
   const chooseRoomTool = (tool: RoomTool) => {
     if (tool !== "select" && !selectedRoom) {
-      setNotice("먼저 지도나 방 목록에서 편집할 방을 선택하세요.");
+      setNotice("먼저 지도나 방 목록에서 편집할 방을 골라 주세요.");
       return;
     }
     setRoomTool(tool);
     setValidatedSplit(null);
     setMergeTargetId("");
     clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
-    setNotice(tool === "merge" ? "현재 방과 합칠 방 하나를 선택하세요." : "");
+    setNotice(tool === "merge" ? "현재 방과 합칠 방 하나를 골라 주세요." : "");
   };
 
   const undoSplitPoint = useCallback(() => {
@@ -1056,6 +1059,18 @@ export function RobotMapPanel({
     clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
   };
 
+  // 홈 탭 지도 카드에서 누른 방: 지도 탭 "방으로 보내기"와 같이 그 방으로 미리보기를 한 번 요청한다.
+  const pendingRoomRef = useRef(initialRoomId);
+  useEffect(() => {
+    const roomId = pendingRoomRef.current;
+    if (!roomId || !snapshot?.online || navigationBusy || autonomousModeActive || activeCommand || busy) return;
+    const room = roomDrafts.find((item) => featureId(item) === roomId);
+    if (!room) return;
+    pendingRoomRef.current = "";
+    const point = featureWorldLabelPoint(room);
+    if (point) void sendCommand("navigation_preview", { x: point[0], y: point[1] });
+  });
+
   // 개발자 화면(로봇 기능)은 디자인을 바꾸지 않는다.
   if (managed) {
     return (
@@ -1177,8 +1192,8 @@ export function RobotMapPanel({
     );
   }
 
-  // 일반 지도: 지도(보기·목적지 선택) → 방·구역 편집 / 지도 관리. 편집·관리·자율주행은 소유자만,
-  // 보내기(목적지 선택·방 이름으로 보내기·이동 취소)는 보호자도 쓴다.
+  // 일반 지도: 지도(보기·목적지 선택) → 방·구역 편집 / 지도 관리. 편집·관리·순찰 · 따라가기는 소유자만,
+  // 보내기(목적지 선택·방으로 보내기·이동 취소)는 보호자도 쓴다.
   const activeScreen: MapScreen = !isOwner || (screen === "edit" && mapping) ? "map" : screen;
   const openScreen = (next: MapScreen, mode: MapMode = "view") => {
     changeMapMode(mode);
@@ -1577,12 +1592,12 @@ export function RobotMapPanel({
         {mapMode === "zones" && zoneCreateMode === "wall" && (
           <span className="robot-map-draw-hint" role="status">
             {pendingWallPoint
-              ? "끝점을 누르세요."
+              ? "끝점을 눌러 주세요."
               : selectedWallPoints?.length === 3 && drawnWallIds.includes(selectedZoneId)
                 ? "ㄱ자로 꺾었어요. 점을 끌어 계속 고칠 수 있어요."
                 : drawnWallIds.length > 0
                   ? "가상 벽이 생겼어요. 가운데 점을 끌면 꺾여요."
-                  : "시작점을 누르세요. 벽에서 25cm 안이면 벽에 붙어요."}
+                  : "시작점을 눌러 주세요. 벽에서 25cm 안이면 벽에 붙어요."}
           </span>
         )}
         {roomDrafts.map((room) => {
@@ -1674,8 +1689,8 @@ export function RobotMapPanel({
           {spaceEditUnsupported && <p className="ui-hint">이 말벗은 아직 방·구역 편집을 지원하지 않아요.</p>}
           <p className="ui-hint">
             {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
-              : navigating ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
-                : "저장된 공간과 말벗의 현재 위치를 확인하세요."}
+              : navigating ? "지도에서 목적지를 눌러 주세요. 방과 구역은 선택을 방해하지 않아요."
+                : "저장된 공간과 말벗의 현재 위치를 확인해 보세요."}
           </p>
           {mapFrame}
           {mapLegend}
@@ -1694,8 +1709,8 @@ export function RobotMapPanel({
                 : navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
                   : navigationSucceeded ? "선택한 목적지에 도착했어요"
                     : canStartPreview ? "선택한 위치까지 이동할 수 있어요"
-                      : navigating ? "지도에서 보낼 곳을 선택해 주세요"
-                        : snapshot?.map ? "저장된 지도를 사용하고 있어요" : "아직 저장된 지도가 없어요"}
+                      : navigating ? "지도에서 목적지를 골라 주세요"
+                        : robotActivityTitle(snapshot)}
             </strong>
             {!mapping && fallCheck && (
               <>
@@ -1772,7 +1787,8 @@ export function RobotMapPanel({
               <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
             )}
             <dl className="ui-map-facts">
-              <dt>현재 위치</dt>
+              {/* 꺼져 있으면 꺼지기 전에 알던 위치라 "마지막 위치"(목업 48번). */}
+              <dt>{snapshot?.online ? "현재 위치" : "마지막 위치"}</dt>
               <dd>{currentRoom ? featureName(currentRoom, "이름 없는 방") : localizationShortCopy(snapshot?.state?.localization.state)}</dd>
               {checkFacts ? (
                 <>
@@ -1787,17 +1803,23 @@ export function RobotMapPanel({
                   <dd>{mapStateCopy}</dd>
                 </>
               )}
+              {/* 말벗이 꺼진 건 고장이 아니라 회색(빨강은 고장만). */}
               <dt>말벗 연결</dt>
-              <dd className={snapshot?.online ? "is-ok" : "is-error"}>{snapshot?.online ? "정상" : "오프라인"}</dd>
-              <dt>구역 확인</dt>
-              <dd className={zoneChecked ? "is-ok" : ""}>{zoneChecked ? "문제 없음" : "선택 전"}</dd>
+              <dd className={snapshot?.online ? "is-ok" : ""}>{snapshot?.online ? "온라인" : "오프라인"}</dd>
+              {/* 고른 목적지가 금지 구역에 걸리는지라 보내기 화면에서만. */}
+              {navigating && (
+                <>
+                  <dt>구역 확인</dt>
+                  <dd className={zoneChecked ? "is-ok" : ""}>{zoneChecked ? "문제 없음" : "선택 전"}</dd>
+                </>
+              )}
             </dl>
           </article>
 
           {!mapping && roomDrafts.length > 0 && (
             <article className="ui-card">
-              <h2>방 이름으로 보내기</h2>
-              <span className="ui-caption">방마다 정해 둔 대표 위치로 이동해요.</span>
+              <h2>방으로 보내기</h2>
+              <span className="ui-caption">누르면 그 방의 대표 위치로 가요.</span>
               <div className="ui-map-room-send">
                 {roomDrafts.map((room) => (
                   <button
@@ -1819,7 +1841,7 @@ export function RobotMapPanel({
 
           {isOwner && !mapping && (
             <article className="ui-card">
-              <h2>자율주행</h2>
+              <h2>순찰 · 따라가기</h2>
               <span className="ui-caption">
                 {realRobot ? mapCheckDriveHint(mapCheck) ?? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
                   : "방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."}
@@ -1882,7 +1904,7 @@ export function RobotMapPanel({
                   })()}
                   {patrolLevels && (
                     <div className="ui-patrol-levels">
-                      <span id="patrol-level-label">순찰 꼼꼼함</span>
+                      <span id="patrol-level-label">어떻게 순찰할까요?</span>
                       <div className="ui-rule-choices" role="radiogroup" aria-labelledby="patrol-level-label">
                         {PATROL_LEVELS.map(([label, hint], level) => (
                           <button
@@ -1898,7 +1920,7 @@ export function RobotMapPanel({
                           </button>
                         ))}
                       </div>
-                      <small>꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.</small>
+                      <small>꼼꼼할수록 더 가까이, 더 넓게 보지만 오래 걸려요.</small>
                     </div>
                   )}
                   <button
@@ -1952,7 +1974,7 @@ export function RobotMapPanel({
               </button>
             </div>
           )}
-          <p className="ui-note ui-map-owner-note">지도 만들기와 방·구역 편집, 자율주행은 소유자만 할 수 있어요. 보호자에게는 보기와 보내기만 보여요.</p>
+          <p className="ui-note ui-map-owner-note">지도 만들기와 방·구역 편집, 순찰 · 따라가기는 소유자만 할 수 있어요. 보호자에게는 보기와 보내기만 보여요.</p>
         </div>
       </section>
     );
@@ -1978,7 +2000,7 @@ export function RobotMapPanel({
           {mapMode === "zones" ? (
             <>
               <article className="ui-card ui-map-editor">
-                <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 선택하세요"}</h2>
+                <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 골라 주세요"}</h2>
                 <span className="ui-caption">구역은 방 이름이 아니라 말벗의 이동 규칙이에요.</span>
                 {selectedZone ? (
                   <>
@@ -2025,7 +2047,7 @@ export function RobotMapPanel({
                     {zoneBehaviorOf(selectedZone) !== "restricted" && (
                       <div className="ui-map-goal-row">
                         <span>
-                          <strong>대표 목적지</strong>
+                          <strong>대표 위치</strong>
                           <small>{validPoint(selectedZone.properties.preferred_goal) ? "지정됨" : "지정 안 됨"}</small>
                         </span>
                         <button type="button" className={`ui-button ui-small ${zoneGoalMode ? "is-selected" : ""}`} onClick={() => setZoneGoalMode((current) => !current)}>
@@ -2039,7 +2061,7 @@ export function RobotMapPanel({
                     <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
                   </>
                 ) : (
-                  <p className="ui-hint">지도나 아래 목록에서 구역을 누르세요.</p>
+                  <p className="ui-hint">지도나 아래 목록에서 구역을 눌러 주세요.</p>
                 )}
                 <h3 className="ui-map-section-head">새 구역 규칙</h3>
                 <div className="ui-rule-choices" role="radiogroup" aria-label="새 구역 규칙">
@@ -2075,7 +2097,7 @@ export function RobotMapPanel({
                 </div>
                 {zoneCreateMode === "room" ? (
                   <div className="ui-map-room-zone">
-                    <p className="ui-note">저장된 방 경계를 그대로 사용해요. 구역으로 만들 방을 고르세요.</p>
+                    <p className="ui-note">저장된 방 경계를 그대로 써요. 구역으로 만들 방을 골라 주세요.</p>
                     {roomDrafts.map((room, index) => (
                       <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || busy}>
                         <i style={{ background: roomColor(room, index) }} />
@@ -2134,8 +2156,8 @@ export function RobotMapPanel({
           ) : (
             <>
               <article className="ui-card ui-map-editor">
-                <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 선택하세요"}</h2>
-                {!selectedRoom && <p className="ui-hint">지도나 아래 방 목록에서 방을 누르세요.</p>}
+                <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 골라 주세요"}</h2>
+                {!selectedRoom && <p className="ui-hint">지도나 아래 방 목록에서 방을 눌러 주세요.</p>}
                 <label className="ui-field">
                   <span>이름</span>
                   <input
@@ -2179,7 +2201,7 @@ export function RobotMapPanel({
                 {selectedRoom && (
                   <div className="ui-map-goal-row">
                     <span>
-                      <strong>대표 목적지</strong>
+                      <strong>대표 위치</strong>
                       <small>방 이름으로 보낼 때 가는 곳</small>
                     </span>
                     {validPoint(selectedRoom.properties.representative_point)
@@ -2214,7 +2236,7 @@ export function RobotMapPanel({
                     </div>
                     <div className={`robot-map-split-status is-${splitValidation}`} role="status">
                       {pendingSplitPoint
-                        ? "시작점을 정했습니다. 연결할 두 번째 벽을 선택하세요."
+                        ? "시작점을 정했어요. 이어 줄 두 번째 벽을 골라 주세요."
                         : splitValidation === "checking"
                           ? splitValidationMessage
                           : splitValidation === "valid"
@@ -2222,8 +2244,8 @@ export function RobotMapPanel({
                           : splitValidation === "invalid"
                             ? splitValidationMessage
                             : splitLines.length > 0
-                              ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 확인합니다.`
-                              : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
+                              ? `나누는 선 ${splitLines.length}개 · 나누면 두 방이 각각 1㎡ 이상인지 확인해요.`
+                              : "나누는 선의 양 끝은 벽에서 25cm 안에 놓아 주세요."}
                     </div>
                     <div className="ui-two-buttons">
                       <button type="button" className="ui-button ui-small" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
@@ -2236,9 +2258,9 @@ export function RobotMapPanel({
                 )}
                 {roomTool === "merge" && (
                   <div className="ui-map-tool">
-                    <p className="ui-note"><strong>{selectedRoom ? featureName(selectedRoom, "현재 방") : "현재 방"}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 고르세요. 떨어진 방은 합칠 수 없어요.</p>
+                    <p className="ui-note"><strong>{selectedRoom ? featureName(selectedRoom, "현재 방") : "현재 방"}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 골라 주세요. 떨어진 방은 합칠 수 없어요.</p>
                     <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
-                      {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
+                      {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있어요."}
                     </div>
                     <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || busy}>선택한 두 방 합치기</button>
                   </div>
@@ -2263,7 +2285,7 @@ export function RobotMapPanel({
                       <span>{featureName(room, `공간 ${index + 1}`)}</span>
                       {selectedRoomId === id ? <strong>현재 방</strong>
                         : mergeTargetId === id ? <strong>합칠 방</strong>
-                          : <small>{validPoint(room.properties.representative_point) ? "대표 목적지 있음" : "대표 목적지 없음"}</small>}
+                          : <small>{validPoint(room.properties.representative_point) ? "대표 위치 있음" : "대표 위치 없음"}</small>}
                     </button>
                   );
                 })}
@@ -2677,25 +2699,25 @@ function validateSplitDraft(
   pendingPoint: [number, number] | null,
   resolution: number,
 ) {
-  if (pendingPoint) return "선택 중인 시작점과 연결할 두 번째 벽을 지정하세요.";
-  if (lines.length === 0) return "분할선을 하나 이상 만드세요.";
+  if (pendingPoint) return "고른 시작점과 이어 줄 두 번째 벽을 골라 주세요.";
+  if (lines.length === 0) return "나누는 선을 하나 이상 그어 주세요.";
   for (const line of lines) {
-    if (line.length < 2) return "각 분할선의 양 끝점을 지정하세요.";
+    if (line.length < 2) return "나누는 선마다 양 끝을 정해 주세요.";
     if (!pointNearRoomWall(line[0], room.geometry, 0.25) ||
         !pointNearRoomWall(line[line.length - 1], room.geometry, 0.25)) {
-      return "분할선의 양 끝점은 방 벽에서 25cm 이내에 놓아야 합니다.";
+      return "나누는 선의 양 끝은 방 벽에서 25cm 안에 놓아 주세요.";
     }
     if (line.slice(1, -1).some((point) =>
       !pointInGeometry(point, room.geometry) && !pointNearRoomWall(point, room.geometry, 0.25))) {
-      return "분할선의 꺾임점은 방 안에 놓아야 합니다.";
+      return "나누는 선의 꺾이는 점은 방 안에 놓아 주세요.";
     }
     if (line.slice(1).some((point, index) =>
       Math.hypot(point[0] - line[index][0], point[1] - line[index][1]) < Math.max(0.08, resolution * 2))) {
-      return "분할선 구간이 너무 짧습니다.";
+      return "나누는 선이 너무 짧아요.";
     }
     if (line.slice(1).some((point, index) =>
       !segmentRunsThroughRoom(line[index], point, room.geometry, resolution))) {
-      return "분할선은 벽이나 장애물을 따라가지 않고 방 안쪽의 열린 바닥을 가로질러야 합니다.";
+      return "나누는 선은 벽이나 장애물을 따라가지 말고 방 안쪽의 빈 바닥을 가로질러야 해요.";
     }
   }
   return "";
@@ -3262,12 +3284,12 @@ function zoneShapeErrorOf(
   resolution: number,
   minimumArea = MIN_ZONE_AREA_M2,
 ) {
-  if (geometry.type !== "Polygon") return "구역은 하나의 Polygon이어야 합니다.";
+  if (geometry.type !== "Polygon") return "구역은 한 덩어리여야 해요.";
   const polygon = polygonGeometries(geometry)[0];
-  if (!polygon) return "구역 경계를 확인할 수 없습니다.";
+  if (!polygon) return "구역 경계를 확인할 수 없어요.";
   for (const ring of polygon.slice(1)) {
     const closed = closeRing(ring);
-    if (closed.length < 4 || ringSelfIntersects(closed)) return "구역의 내부 경계를 확인하세요.";
+    if (closed.length < 4 || ringSelfIntersects(closed)) return "구역 안쪽 경계를 확인해 주세요.";
   }
   return zoneShapeError(polygon[0], boundary, resolution, minimumArea, polygon);
 }
@@ -3280,9 +3302,9 @@ function zoneShapeError(
   polygon: PolygonCoordinates = [ring],
 ) {
   const closed = closeRing(ring);
-  if (closed.length < 4) return "구역은 세 점 이상이어야 합니다.";
-  if (ringSelfIntersects(closed)) return "구역 경계가 서로 교차할 수 없습니다.";
-  if (Math.abs(ringSignedMetrics(closed).area) < minimumArea) return `구역 면적은 ${minimumArea} m² 이상이어야 합니다.`;
+  if (closed.length < 4) return "구역은 점이 세 개 이상이어야 해요.";
+  if (ringSelfIntersects(closed)) return "구역 경계가 서로 엇갈리면 안 돼요.";
+  if (Math.abs(ringSignedMetrics(closed).area) < minimumArea) return `구역 넓이는 ${minimumArea} m² 이상이어야 해요.`;
   if (!zoneTouchesBoundary(polygon, boundary, resolution)) return "구역이 지도 밖에 있어요. 지도 안쪽으로 옮겨 주세요.";
   return "";
 }
@@ -3312,16 +3334,16 @@ function zoneRingValidationError(
   validateInterior = true,
 ) {
   const closed = closeRing(ring);
-  if (closed.length < 4) return "구역은 세 점 이상이어야 합니다.";
-  if (ringSelfIntersects(closed)) return "구역 경계가 서로 교차할 수 없습니다.";
-  if (Math.abs(ringSignedMetrics(closed).area) < minimumArea) return `구역 면적은 ${minimumArea} m² 이상이어야 합니다.`;
+  if (closed.length < 4) return "구역은 점이 세 개 이상이어야 해요.";
+  if (ringSelfIntersects(closed)) return "구역 경계가 서로 엇갈리면 안 돼요.";
+  if (Math.abs(ringSignedMetrics(closed).area) < minimumArea) return `구역 넓이는 ${minimumArea} m² 이상이어야 해요.`;
   for (let index = 1; index < closed.length; index += 1) {
     if (!segmentInsideBoundary(closed[index - 1], closed[index], boundary.geometry, resolution)) {
-      return "구역 경계 전체가 지도의 주행 가능 영역 안에 있어야 합니다.";
+      return "구역 경계 전체가 말벗이 다닐 수 있는 곳 안에 있어야 해요.";
     }
   }
   if (validateInterior && !zoneInteriorInsideBoundary([closed], boundary, resolution)) {
-    return "구역 내부에 벽이나 장애물이 포함될 수 없습니다.";
+    return "구역 안에 벽이나 장애물이 들어가면 안 돼요.";
   }
   return "";
 }
@@ -3468,16 +3490,70 @@ function zoneBehaviorLabel(behavior: ZoneBehavior) {
 
 function localizationCopy(state: string | undefined) {
   if (state === "ok") return "위치 확인됨";
-  if (state === "verifying") return "위치 재확인 중";
+  if (state === "verifying") return "위치 다시 확인 중";
   if (state === "revalidation_required") return "부팅 후 위치 확인 필요";
   return "위치 확인 필요";
 }
 
 function localizationShortCopy(state: string | undefined) {
   if (state === "ok") return "확인됨";
-  if (state === "verifying") return "재확인 중";
+  if (state === "verifying") return "다시 확인 중";
   if (state === "revalidation_required") return "부팅 후 확인 필요";
   return "확인 필요";
+}
+
+/**
+ * "지금 말벗은" 제목: 말벗이 지금 하는 일(홈 탭·지도 탭 같은 문장, 목업 38·48번).
+ * 아무 일도 안 할 때는 대기, 꺼져 있으면 연결을 기다림.
+ */
+export function robotActivityTitle(snapshot: RobotSnapshot | null): string {
+  if (!snapshot?.online) return "연결을 기다리고 있어요";
+  const state = snapshot.state;
+  const realRobot = state?.nav2.robot_interface === "malbut_manager_v1";
+  if (state && realRobot && state.state === "exploring") return "새 지도를 만들고 있어요";
+  if (state && !realRobot) {
+    const step = MAPPING_STEPS.find((item) => item.states.includes(state.state));
+    if (step) return state.message ?? step.label;
+  }
+  const driveMode = state?.driveMode;
+  const fallCheck = fallCheckView(driveMode?.detail);
+  if (fallCheck) return fallCheck.title;
+  const navigation = state?.target;
+  if (navigation?.state === "escaping") return NAVIGATION_ESCAPING_TITLE;
+  if (navigation?.state === "driving" || navigation?.state === "canceling") return "주변 장애물을 확인하며 이동하고 있어요";
+  if (driveMode && !["idle", "destination"].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state)) {
+    return (driveMode.mode === "person_following" ? followProgressCopy(driveMode) : patrolProgressCopy(driveMode))[0];
+  }
+  return "집 안에서 대기하고 있어요";
+}
+
+/** 홈 탭 지도 카드의 방 버튼(지도 탭과 같은 방 id). */
+export function homeRooms(semantics: RobotSemantics | null) {
+  const palette = ["#E7EBE3", "#E3E7EE", "#EFE7DE", "#DDE9E8"];
+  return featuresOf(semantics?.userMap).filter((feature) => feature.properties.role === "room").map((room, index) => ({
+    id: featureId(room),
+    name: featureName(room, `공간 ${index + 1}`),
+    color: typeof room.properties.color === "string" ? room.properties.color : palette[index % palette.length],
+  }));
+}
+
+/** 말벗이 지금 있는 방 이름(위치를 확인했고 켜져 있을 때만). 홈 탭 영상 카드(목업 39번). */
+export function robotRoomName(snapshot: RobotSnapshot | null, semantics: RobotSemantics | null): string | null {
+  const pose = snapshot?.online && snapshot.state?.localization.state === "ok" ? snapshot.state.pose : null;
+  if (!pose) return null;
+  const room = featuresOf(semantics?.userMap)
+    .find((feature) => feature.properties.role === "room" && featureContains(feature, pose.x, pose.y));
+  return room ? featureName(room, "") || null : null;
+}
+
+/** 지도 탭 알림의 순찰 · 따라가기 이름(예전 "자율주행"). */
+function autonomyName(mode: unknown) {
+  return mode === "person_following" ? "사람 따라가기" : mode === "roaming" ? "자율 배회"
+    : mode === "patrol" ? "순찰" : "순찰 · 따라가기";
+}
+
+function autonomyObject(mode: unknown) {
+  return mode === "patrol" ? "순찰을" : `${autonomyName(mode)}를`;
 }
 
 function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
@@ -3500,7 +3576,7 @@ function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
 }
 
 const PATROL_LEVELS: Array<[string, string]> = [
-  ["빠르게", "4m · 집의 80%"], ["보통", "3m · 집의 90%"], ["꼼꼼히", "2m · 집의 95%"],
+  ["빠르게", "집의 80% · 거리 기준 4m"], ["보통", "집의 90% · 거리 기준 3m"], ["꼼꼼히", "집의 95% · 거리 기준 2m"],
 ];
 
 function patrolNumbers(value: Record<string, unknown>) {
@@ -3620,7 +3696,7 @@ function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
 }
 
 function driveModeDetailCopy(value: RobotDriveModeSnapshot | undefined) {
-  if (!value) return "상태를 확인하고 있습니다.";
+  if (!value) return "상태를 확인하고 있어요.";
   const detail = value.detail;
   if (value.mode === "person_following" && detail) {
     const visible = detail.target_visible === true;
@@ -3648,7 +3724,7 @@ function driveModeDetailCopy(value: RobotDriveModeSnapshot | undefined) {
     const remaining = numberValue(detail.distance_remaining);
     return remaining > 0 ? `${state} · ${remaining.toFixed(1)}m 남음` : state;
   }
-  return value.state === "failed" ? "중지한 뒤 상태를 다시 확인해 주세요." : "안전 상태를 확인하고 있습니다.";
+  return value.state === "failed" ? "멈춘 뒤 상태를 다시 확인해 주세요." : "안전 상태를 확인하고 있어요.";
 }
 
 function numberValue(value: unknown) {

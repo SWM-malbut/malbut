@@ -6,7 +6,7 @@ import test from "node:test";
 import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
 import { buildFallNotification } from "../infra/aws/push-broker/fall-notification.mjs";
 
-// 낙상 확인이 직접 움직이기를 끊지 않고, 직접 확인하지 못하면 알리는 기능(목업 27·28번).
+// 낙상 확인이 수동 조작을 끊지 않고, 직접 확인하지 못하면 알리는 기능(목업 27·28번).
 
 const T0 = "2026-10-12T05:02:10.000Z";
 const at = (ms) => new Date(Date.parse(T0) + ms).toISOString();
@@ -325,13 +325,13 @@ test("incident screen: each mockup 28 state", async () => {
     ["notification_requested", "revisit_same_person_off_floor", { state: "recheck_required", notificationLevel: "info" }],
     ["approach_returned", "returned", { state: "recheck_required" }],
   ]);
-  assert.deepEqual(check, { reason: "직접 움직이기 중이라 1분 안에 묻지 못함", waited: true, stopped: false, failed: null,
+  assert.deepEqual(check, { reason: "수동 조작 중이라 1분 안에 묻지 못함", waited: true, stopped: false, failed: null,
     revisit: { title: "서 있음 · 같은 분으로 보임", subtitle: "다시 가 보니 같은 분으로 보이는 분이 서 있음",
       note: "AI가 처음 장면과 옷차림을 비교했어요(참고): 회색 상의와 검은 바지가 같아 보임. 같은 분인지는 직접 확인해 주세요." } });
   assert.deepEqual(lines.slice(1), [
-    "확인하러 가려 했지만 직접 움직이기 중 → 끝나면 확인",
+    "확인하러 가려 했지만 수동 조작 중 → 끝나면 확인",
     "1분째 확인하지 못함 → 긴급 알림",
-    "직접 움직이기 끝남 → 묻기 전에 의심 장소로 다시 감",
+    "수동 조작 끝남 → 묻기 전에 넘어진 것 같은 자리로 다시 감",
     "의심 장소 1 m 앞에 다시 도착",
     "가까이에서 다시 확인: 사람 · 몸 일부만 보임",
     "몸 전체가 보이는 자리로 옮김",
@@ -384,7 +384,7 @@ test("incident list carries the robot check summary from storage", async () => {
     const rows = journal([...waitedStart, ["person_check_completed", "nobody_there", { state: "recheck_required" }]]);
     for (const e of rows) await events.storeFallEvent("robot-a", e);
     const [summary] = await review.listFallIncidentSummaries("robot-a");
-    assert.equal(summary.robotCheck.reason, "직접 움직이기 중이라 1분 안에 묻지 못함");
+    assert.equal(summary.robotCheck.reason, "수동 조작 중이라 1분 안에 묻지 못함");
     assert.equal(summary.robotCheck.revisit.subtitle, "다시 가 보니 그 자리에 사람이 없음");
     assert.equal(summary.needsCheck, true);
     const detail = await review.getFallIncidentDetail("robot-a", rows[0].incidentId);
@@ -406,10 +406,10 @@ test("map screen: fall check stages read as mockup 27", () => {
   assert.equal(fallCheckView(detail({ phase: "ask", target })).title, "낙상 의심 상황을 말로 묻고 있어요");
   assert.equal(fallCheckView(detail({ phase: "return", target })).title, "확인을 마치고 원래 자리로 돌아가고 있어요");
   assert.deepEqual(fallCheckView(detail({ phase: "wait", waiting_for: "manual_drive", alerted: false, target })), {
-    title: "직접 움직이기가 끝나면 낙상 확인을 이어 가요",
-    detail: "직접 움직이기는 끊지 않아요. 1분 안에 확인하지 못하면 보호자에게 긴급 알림을 보내요.", target });
+    title: "수동 조작이 끝나면 낙상 확인을 이어 가요",
+    detail: "수동 조작은 끊지 않아요. 1분 안에 확인하지 못하면 보호자에게 긴급 알림을 보내요.", target });
   assert.deepEqual(fallCheckView(detail({ phase: "wait", waiting_for: "manual_drive", alerted: true, target })), {
-    title: "직접 움직이기가 끝나면 의심 장소로 다시 가서 확인해요",
+    title: "수동 조작이 끝나면 의심 장소로 다시 가서 확인해요",
     detail: "1분 안에 확인하지 못해 보호자에게 긴급 알림을 보냈어요. 그새 움직였을 수 있어 묻기 전에 다시 봐요.", target });
   assert.deepEqual(fallCheckView(detail({ phase: "wait", waiting_for: "busy", alerted: false, target: null })), {
     title: "다른 일이 끝나면 낙상 확인을 이어 가요",
@@ -440,7 +440,7 @@ test("map screen: fall status does not gate mission requests outside the Manager
   assert.doesNotMatch(panel, /if \(fallCheck && mapMode === "navigate"\) return;/);
   assert.doesNotMatch(panel, /fallCheckActive\(/);
   assert.doesNotMatch(manager, /fallCheckActive/);
-  // 직접 움직이기 is not gated by the fall check.
+  // 수동 조작 is not gated by the fall check.
   const pad = panel.slice(panel.indexOf("<MapDrivePad"), panel.indexOf("/>", panel.indexOf("<MapDrivePad")));
   assert.doesNotMatch(pad, /fallCheck/);
   // 순찰 멈춤 카드: 다시 가서 본 뒤 알림만 보냄.
@@ -448,7 +448,7 @@ test("map screen: fall status does not gate mission requests outside the Manager
 });
 
 test("contract: '그만' during the check stops it without a question and alerts once (check)", async () => {
-  // 2026-10-13: "그만/멈춰" ranks above the fall check like 직접 움직이기.
+  // 2026-10-13: "그만/멈춰" ranks above the fall check like 수동 조작.
   const load = moduleLoader();
   const { parseFallEvent } = load("app/fall-contract.ts");
   const { fallEventLabel } = load("app/fall-event-label.ts");

@@ -25,9 +25,13 @@ import { type HomecamTab, useHomecamAuth } from "./homecam-header";
 import { UiTabBar } from "./ui-tab-bar";
 import { DisplayNameForm } from "./display-name-form";
 import { talkNote, type LiveTalk } from "../homecam-talk";
+import { withRo } from "../korean-particle";
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
+  homeRooms,
+  robotActivityTitle,
+  robotRoomName,
   type MapMode,
   type RobotSemantics,
   type RobotSnapshot,
@@ -112,22 +116,16 @@ function mapFrameStyle(snapshot: RobotSnapshot | null): React.CSSProperties {
   return ratio > 0 && Number.isFinite(ratio) ? ({ "--map-ratio": ratio } as React.CSSProperties) : {};
 }
 
-function HomeMapSummary({
-  device,
-  onOpenMap,
-}: {
-  device: HomecamDevice | null;
-  onOpenMap: (mode: MapMode) => void;
-}) {
+/** 홈 탭이 쓰는 말벗 상태와 방(지도 카드·영상 카드·"지금 말벗은" 제목이 같이 씀). */
+function useHomeRobot(device: HomecamDevice | null, active: boolean) {
   const deviceId = device?.id ?? "";
   const localDemo = LOCAL_HOME_CAM_DEMO && deviceId === LOCAL_DEMO_DEVICE_ID;
   const [robotSnapshot, setRobotSnapshot] = useState<RobotSnapshot | null>(null);
   const [semantics, setSemantics] = useState<RobotSemantics | null>(null);
-  const [rooms, setRooms] = useState<Array<{ id: string; name: string; color: string }>>([]);
   const revision = robotSnapshot?.map?.revision ?? "";
 
   useEffect(() => {
-    if (localDemo) return;
+    if (localDemo || !active) return;
     if (!deviceId) {
       const timer = window.setTimeout(() => {
         setRobotSnapshot(null);
@@ -149,14 +147,13 @@ function HomeMapSummary({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [deviceId, localDemo]);
+  }, [active, deviceId, localDemo]);
 
   useEffect(() => {
-    if (localDemo) return;
+    if (localDemo || !active) return;
     if (!deviceId || !revision) {
       const timer = window.setTimeout(() => {
         setSemantics(null);
-        setRooms([]);
       }, 0);
       return () => window.clearTimeout(timer);
     }
@@ -168,21 +165,28 @@ function HomeMapSummary({
       const semantic = await response.json().catch(() => ({})) as RobotSemantics;
       if (!response.ok || controller.signal.aborted) return;
       setSemantics(semantic);
-      const userMap = asRecord(semantic.userMap);
-      const features = Array.isArray(userMap.features) ? userMap.features : [];
-      setRooms(features.flatMap((value, index) => {
-        const feature = asRecord(value);
-        const properties = asRecord(feature.properties);
-        if (properties.role !== "room") return [];
-        return [{
-          id: stringValue(feature.id) ?? stringValue(properties.room_id) ?? `room-${index}`,
-          name: stringValue(properties.name) ?? `공간 ${index + 1}`,
-          color: stringValue(properties.color) ?? ["#E7EBE3", "#E3E7EE", "#EFE7DE", "#DDE9E8"][index % 4],
-        }];
-      }));
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [deviceId, localDemo, revision]);
+  }, [active, deviceId, localDemo, revision]);
+
+  return { robotSnapshot: deviceId ? robotSnapshot : null, semantics: deviceId ? semantics : null };
+}
+
+function HomeMapSummary({
+  device,
+  robotSnapshot,
+  semantics,
+  onOpenMap,
+}: {
+  device: HomecamDevice | null;
+  robotSnapshot: RobotSnapshot | null;
+  semantics: RobotSemantics | null;
+  onOpenMap: (mode: MapMode, roomId?: string) => void;
+}) {
+  const deviceId = device?.id ?? "";
+  const localDemo = LOCAL_HOME_CAM_DEMO && deviceId === LOCAL_DEMO_DEVICE_ID;
+  const revision = robotSnapshot?.map?.revision ?? "";
+  const rooms = homeRooms(semantics);
 
   const visibleRooms = localDemo
     ? [
@@ -227,10 +231,10 @@ function HomeMapSummary({
       {visibleRooms.length === 0 ? (
         <p className="ui-hint">방을 나누고 이름을 정하면 여기에 표시돼요.</p>
       ) : (
-        <div className="ui-rooms" aria-label="방 이름으로 보내기">
+        <div className="ui-rooms" aria-label="방으로 보내기">
           {visibleRooms.slice(0, 4).map((room) => (
             <button type="button" key={room.id} style={{ background: room.color }}
-              onClick={() => onOpenMap("navigate")} aria-label={`${room.name}(으)로 보내기`}>
+              onClick={() => onOpenMap("navigate", room.id)} aria-label={`${withRo(room.name)} 보내기`}>
               {room.name}
             </button>
           ))}
@@ -270,7 +274,7 @@ function normalizeDevice(value: unknown): HomecamDevice | null {
 
   return {
     id,
-    displayName: stringValue(raw.displayName, raw.display_name, raw.name) ?? "우리 집 홈캠",
+    displayName: stringValue(raw.displayName, raw.display_name, raw.name) ?? "우리 집 말벗",
     online: booleanValue(false, raw.online, state.online),
     lastSeenAt: stringValue(raw.lastSeenAt, raw.last_seen_at, state.lastSeenAt, state.last_seen_at) ?? null,
     role,
@@ -510,6 +514,8 @@ export function HomecamDashboard({
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [tab, setTab] = useState<HomecamTab>(initialTab);
   const [mapEntryMode, setMapEntryMode] = useState<MapMode>("view");
+  // 홈 탭 지도 카드에서 누른 방: 그 방이 골라진 채로 보내기 화면을 연다(목업 40번).
+  const [mapEntryRoom, setMapEntryRoom] = useState("");
   const [availability, setAvailability] = useState<ApiAvailability>("loading");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -562,8 +568,9 @@ export function HomecamDashboard({
   }, [authStatus?.authenticated]);
   const localDemoAutoplayRef = useRef(false);
   const navigationStateReadyRef = useRef(false);
-  const openMap = useCallback((mode: MapMode) => {
+  const openMap = useCallback((mode: MapMode, roomId = "") => {
     setMapEntryMode(mode);
+    setMapEntryRoom(roomId);
     setTab("map");
   }, []);
 
@@ -594,15 +601,13 @@ export function HomecamDashboard({
     () => devices.find((device) => device.id === selectedDeviceId) ?? devices[0] ?? null,
     [devices, selectedDeviceId],
   );
+  const homeRobot = useHomeRobot(selectedDevice, tab === "home");
   const devicePollIntervalMs = Boolean(
     selectedDevice?.online &&
     selectedDevice.monitoringEnabled &&
     selectedDevice.cameraEnabled &&
     !selectedDevice.storageHealthy
   ) ? 1_000 : 15_000;
-  const displayedMediaReady = liveViewer
-    ? liveMediaReady
-    : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
   const liveViewerActive = Boolean(liveViewer);
   const livePipActive = tab !== "live" && liveViewerActive;
   const talkNoteNow = liveTalk ? talkNote(liveTalk) : null;
@@ -1038,7 +1043,7 @@ export function HomecamDashboard({
         return;
       }
 
-      if (!selectedDevice) throw new Error("알림을 받을 홈캠을 먼저 선택해 주세요.");
+      if (!selectedDevice) throw new Error("알림을 받을 말벗을 먼저 골라 주세요.");
       const saved = await subscribeFallPush(selectedDevice.id);
       setPushEnabled(true);
       setPushEndpointRegistrationCount((count) => Math.max(1, count + 1));
@@ -1115,16 +1120,39 @@ export function HomecamDashboard({
     !storageReady &&
     (selectedDevice.storageSessionActive || liveClockMs < storageGraceUntilMs),
   );
+  // 말벗이 꺼지면 저장되는지 웹에서 알 수 없을 뿐이라 "저장 오류"가 아니다(목업 41번).
   const storageError = Boolean(
+    selectedDevice?.online &&
     storageCanRun &&
     !storageReady &&
     !storageConnecting,
   );
   const isGuardianView = selectedDevice?.role !== "owner";
   const roleLabel = selectedDevice?.role === "owner" ? "소유자" : selectedDevice?.role === "family" ? "보호자" : "읽기 전용";
-  const connectionText = selectedDevice?.online
-    ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
-    : "오프라인";
+  // 위쪽 표시는 말벗 연결만(목업 33번). 영상 상태는 홈캠 탭 "현재 상태 › 영상 연결"에서.
+  const connectionText = selectedDevice?.online ? "온라인" : "오프라인";
+  // 홈캠 › 현재 상태 › 영상 연결: 준비 안 됨 → 준비 중 → 준비됨 → (재생) 연결 중 → 연결됨.
+  const videoLink: [string, string] = !selectedDevice?.online ? ["준비 안 됨", ""]
+    : !selectedDevice.cameraEnabled ? ["카메라 꺼짐", ""]
+      : liveViewer ? (liveMediaReady ? ["연결됨", "is-good"] : ["연결 중", "is-pending"])
+        : selectedDevice.p2pHealthy ? ["준비됨", "is-good"] : ["준비 중", "is-pending"];
+  // 홈 "지금 말벗은" 칩(목업 38번). 영상 준비 값은 말벗이 꺼지기 전 마지막 값이 남아 있어 켜져 있을 때만 본다.
+  const homeVideoChip: [string, string] = !selectedDevice?.online || !selectedDevice.cameraEnabled ? ["영상 준비 안 됨", ""]
+    : selectedDevice.p2pHealthy ? ["영상 준비됨", "is-ok"] : ["영상 준비 중", "is-warn"];
+  // 홈 "영상 저장" 카드(목업 41번): 홈캠 탭 영상 저장 줄과 같은 상태.
+  const storageSummary: [string, string] = !storageEnabled ? ["영상을 저장하지 않아요", ""]
+    : !selectedDevice?.cameraEnabled ? ["카메라가 꺼져 있어 저장하지 않아요", ""]
+      : !selectedDevice.online ? ["말벗이 오프라인이라 저장 상태를 알 수 없어요", "is-muted"]
+        : storageReady ? ["연속 녹화로 저장하고 있어요 (7일 보관)", ""]
+          : storageConnecting ? ["저장을 준비하고 있어요", ""]
+            : ["영상이 저장되지 않고 있어요", "is-error"];
+  // 홈 영상 카드 제목(목업 39번): 말벗이 지금 있는 방, 볼 수 없으면 그 이유.
+  const homeRoomName = robotRoomName(homeRobot.robotSnapshot, homeRobot.semantics);
+  const homeVideoTitle = !selectedDevice?.online ? "말벗이 오프라인이에요"
+    : !selectedDevice.cameraEnabled ? "카메라가 꺼져 있어요"
+      : homeRoomName ? `${homeRoomName} 실시간 영상 보기` : "실시간 영상 보기";
+  const homeActivity = !selectedDevice?.online ? "연결을 기다리고 있어요"
+    : homeRobot.robotSnapshot ? robotActivityTitle(homeRobot.robotSnapshot) : "집 안에서 대기하고 있어요";
   // 홈 영상 카드: 지금 볼 수 없으면 빨간 "실시간" 대신 그 이유를 회색으로.
   const homeLiveBlocked = !selectedDevice?.online ? "오프라인" : !selectedDevice.cameraEnabled ? "카메라 꺼짐" : null;
   const showTopBar = tab === "home" || tab === "live" || (tab === "settings" && settingsView === "main");
@@ -1204,28 +1232,36 @@ export function HomecamDashboard({
             <article className="ui-card ui-hero">
               <span className="ui-caption">지금 말벗은</span>
               <strong className="ui-hero-title">
-                {selectedDevice?.online ? "집 안에서 대기하고 있어요" : "연결을 기다리고 있어요"}
+                {homeActivity}
               </strong>
+              {/* 첫 줄 = 지금 상태, 둘째 줄 = 소유자 설정(꺼져 있으면 동작하지 않아 뺌). */}
               <div className="ui-chips">
-                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.online ? "말벗 연결됨" : "말벗 오프라인"}</span>
-                <span className={selectedDevice?.p2pHealthy ? "is-ok" : ""}>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
-                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "말벗 마이크 켜짐" : "말벗 마이크 꺼짐"}</span>
+                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.online ? "말벗 온라인" : "말벗 오프라인"}</span>
+                <span className={homeVideoChip[1]}>{homeVideoChip[0]}</span>
               </div>
+              {selectedDevice?.online && (
+                <div className="ui-chips">
+                  <span className={selectedDevice.cameraEnabled ? "is-ok" : ""}>{selectedDevice.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}</span>
+                  {selectedDevice.cameraEnabled && (
+                    <span className={selectedDevice.microphoneEnabled ? "is-ok" : ""}>{selectedDevice.microphoneEnabled ? "말벗 마이크 켜짐" : "말벗 마이크 꺼짐"}</span>
+                  )}
+                </div>
+              )}
               <div className="ui-two-buttons">
                 <button type="button" className="ui-button is-strong" onClick={() => setTab("live")}>홈캠 열기</button>
                 <button type="button" className="ui-button" onClick={() => openMap("navigate")}>지도에서 보내기</button>
               </div>
             </article>
 
-            <button type="button" className="ui-card ui-camera-card" onClick={() => setTab("live")} aria-label="거실 실시간 영상 열기">
+            <button type="button" className="ui-card ui-camera-card" onClick={() => setTab("live")} aria-label={homeVideoTitle}>
               <span className="ui-camera-media">
                 <span className={`ui-live-tag ${homeLiveBlocked ? "is-off" : ""}`}>● {homeLiveBlocked ?? "실시간"}</span>
                 <VideoCamera size={44} weight="light" aria-hidden="true" />
               </span>
               <span className="ui-camera-text">
                 <span>
-                  <strong>{selectedDevice?.online ? "거실 실시간 영상 열기" : "홈캠 연결 상태 확인"}</strong>
-                  <small>보호자 계정으로 안전하게 연결합니다</small>
+                  <strong>{homeVideoTitle}</strong>
+                  <small>보호자 계정으로 안전하게 연결해요</small>
                 </span>
                 <span className="ui-link-text">크게 보기</span>
               </span>
@@ -1253,11 +1289,11 @@ export function HomecamDashboard({
               ))}
             </article>
 
-            <HomeMapSummary device={selectedDevice} onOpenMap={openMap} />
+            <HomeMapSummary device={selectedDevice} robotSnapshot={homeRobot.robotSnapshot} semantics={homeRobot.semantics} onOpenMap={openMap} />
 
             <article className="ui-card ui-privacy">
               <ShieldCheck size={24} weight="regular" aria-hidden="true" />
-              <span><small>개인정보</small><strong>{selectedDevice?.monitoringEnabled ? "연속 녹화로 저장하고 있어요 (7일 보관)" : "영상 저장을 사용하지 않아요"}</strong></span>
+              <span><small>영상 저장</small><strong className={storageSummary[1]}>{storageSummary[0]}</strong></span>
               <button type="button" className="ui-text-button" onClick={() => { setSettingsView("homecam"); setTab("settings"); }}>저장 설정</button>
             </article>
           </section>
@@ -1309,12 +1345,12 @@ export function HomecamDashboard({
                 <VideoCamera size={38} weight="light" aria-hidden="true" />
                 <strong>
                   {!selectedDevice
-                    ? "홈캠을 연결해 주세요"
+                    ? "말벗을 연결해 주세요"
                     : !selectedDevice.cameraEnabled
                       ? "카메라가 꺼져 있어요"
                       : selectedDevice.online
                         ? "보안 채널 연결 대기 중"
-                        : "홈캠이 오프라인이에요"}
+                        : "말벗이 오프라인이에요"}
                 </strong>
                 <span className="ui-video-clock">{formatLiveClock(liveClockMs)}</span>
               </div>
@@ -1331,7 +1367,7 @@ export function HomecamDashboard({
                 <h2>현재 상태</h2>
                 <div>
                   <span>영상 연결</span>
-                  <strong className={displayedMediaReady ? "is-good" : ""}>{displayedMediaReady ? "연결됨" : selectedDevice?.online ? "연결 중" : "오프라인"}</strong>
+                  <strong className={videoLink[1]}>{videoLink[0]}</strong>
                 </div>
                 {/* 보면서 바로 켜고 끄는 것: 말벗 카메라·마이크(소유자만)와 이 기기의 소리. 연속 녹화는 설정 › 홈캠 설정. */}
                 <div>
@@ -1393,6 +1429,8 @@ export function HomecamDashboard({
                       ? "안 함"
                       : !selectedDevice?.cameraEnabled
                         ? "카메라 꺼짐"
+                      : !selectedDevice.online
+                        ? "알 수 없음"
                       : storageReady
                         ? "저장 중 · 연속 녹화"
                         : storageConnecting
@@ -1462,7 +1500,8 @@ export function HomecamDashboard({
         {tab === "map" && (
           LOCAL_HOME_CAM_DEMO && selectedDevice?.id === LOCAL_DEMO_DEVICE_ID
             ? <LocalDemoMapPanel mode={mapEntryMode} onModeChange={setMapEntryMode} />
-            : <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} header={topHeader("지도")} />
+            : <RobotMapPanel key={`${mapEntryMode}:${mapEntryRoom}`} device={selectedDevice} initialMode={mapEntryMode}
+              initialRoomId={mapEntryRoom} header={topHeader("지도")} />
         )}
 
         {tab === "robot" && (
@@ -1521,7 +1560,7 @@ export function HomecamDashboard({
               <span className="ui-group-title">알림</span>
               <article className="ui-card ui-setting">
                 <div className="ui-setting-row">
-                  <span><strong>낙상 알림</strong><small>낙상이 의심되면 알려드려요. 아무도 확인하지 않으면 [재발신]해요.</small></span>
+                  <span><strong>낙상 알림</strong><small>낙상이 의심되면 알려 드려요. 아무도 의견을 남기지 않으면 재발신해요.</small></span>
                   <Switch
                     checked={pushEnabled}
                     disabled={busy === "push"}
@@ -1529,7 +1568,7 @@ export function HomecamDashboard({
                     onChange={() => void togglePush()}
                   />
                 </div>
-                <small className="ui-note">알림에는 사진 없이 단계와 시각만 표시해요. 이 휴대폰에만 적용돼요.</small>
+                <small className="ui-note">알림에는 사진 없이 무슨 일인지만 보여 줘요. 이 휴대폰에만 적용돼요.</small>
                 <small className="ui-note">iPhone·iPad는 이 사이트를 홈 화면에 설치한 뒤 알림을 켤 수 있어요.</small>
               </article>
             </div>
@@ -1537,7 +1576,7 @@ export function HomecamDashboard({
             <div className="ui-group">
               <span className="ui-group-title">화면</span>
               <article className="ui-card ui-setting">
-                <span><strong>큰 글자</strong><small>화면 전체 글자를 키워요 · 본문 16→18px</small></span>
+                <span><strong>큰 글자</strong><small>화면 전체 글자를 한 단계 키워요</small></span>
                 <div className="ui-segment" role="group" aria-label="글자 크기">
                   {(["default", "large"] as const).map((size) => (
                     <button type="button" key={size} aria-pressed={textSize === size}
@@ -1567,7 +1606,7 @@ export function HomecamDashboard({
             </div>
 
             <div className="ui-group">
-              <span className="ui-group-title">개발자 메뉴 (디자인 그대로)</span>
+              <span className="ui-group-title">개발자 메뉴</span>
               <div className="ui-card ui-list is-dev">
                 <button type="button" onClick={() => setTab("robot")}>
                   <span>개발자 화면 (주행·디버그)</span>

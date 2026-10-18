@@ -220,7 +220,7 @@ test("설정 › AI·서비스 키 follows the mockup; 홈캠 설정 keeps only 
   ]);
   for (const text of ["AI·서비스 키", "소유자 화면 · 보호자에게는 보이지 않아요", "대화 · OpenAI", "날씨 · 기상청",
     "낙상 AI 확인 · Ollama", "팀 키 사용 중", "확인하고 저장", "확인하는 중…", "말벗에 반영됨", "말벗에 1분 안에 반영돼요",
-    "새로 받은 키는 쓸 수 있게 되기까지 시간이 걸릴 수 있어요", "AI 재확인이 빠져 정확도가 떨어질 수 있어요", "팀 키로 돌아가지 않아요"]) {
+    "새로 받은 키는 쓸 수 있게 되기까지 시간이 걸릴 수 있어요", "AI 확인이 빠져 정확도가 떨어질 수 있어요", "팀 키로 돌아가지 않아요"]) {
     assert.ok(screen.includes(text), text);
   }
   assert.match(dashboard, /\{isOwner && \(\s*<button type="button" onClick=\{\(\) => setSettingsView\("keys"\)\}>/);

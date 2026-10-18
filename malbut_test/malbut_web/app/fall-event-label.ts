@@ -72,11 +72,11 @@ const POSTURE: Record<string, string> = {
 
 // 목업 28번: 바로 묻지 못한 이유, 1분, 다시 가서 보기, 처음 장면과 비교.
 const CHECK_WAITING: Record<string, string> = {
-  manual_drive: "확인하러 가려 했지만 직접 움직이기 중 → 끝나면 확인",
+  manual_drive: "확인하러 가려 했지만 수동 조작 중 → 끝나면 확인",
   busy: "확인하러 가려 했지만 말벗이 다른 일을 하는 중 → 끝나면 확인",
 };
 const REVISIT_START: Record<string, string> = {
-  manual_drive: "직접 움직이기 끝남 → 묻기 전에 의심 장소로 다시 감",
+  manual_drive: "수동 조작 끝남 → 묻기 전에 넘어진 것 같은 자리로 다시 감",
   busy: "다른 일이 끝남 → 묻기 전에 의심 장소로 다시 감",
 };
 const CHECK_FAILED: Record<string, string> = {
@@ -372,7 +372,7 @@ export type FallRobotCheck = {
 };
 
 const WAITED_REASON: Record<string, string> = {
-  waited_manual_drive: "직접 움직이기 중이라 1분 안에 묻지 못함",
+  waited_manual_drive: "수동 조작 중이라 1분 안에 묻지 못함",
   waited_busy: "말벗이 다른 일로 바빠 1분 안에 묻지 못함",
 };
 const FAILED_REASON: Record<string, [string, string]> = {

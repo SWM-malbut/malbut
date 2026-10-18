@@ -108,7 +108,7 @@ export function RegisterScreen({ hasHomecam, demo = false }: { hasHomecam: boole
             <span className="ui-badge is-danger">이미 등록된 말벗</span>
             <strong id={`${inputId}-taken`}>다시 등록할까요?</strong>
             <p>이 말벗에는 이미 소유자가 있어요. 다시 등록하면 지금의 소유자와 보호자가 모두 지워지고, 내가 새 소유자가 돼요.</p>
-            <p className="is-muted">소유자 계정을 쓸 수 없게 됐거나 말벗을 다른 집으로 옮길 때만 다시 등록하세요.</p>
+            <p className="is-muted">소유자 계정을 쓸 수 없게 됐거나 말벗을 다른 집으로 옮길 때만 다시 등록해 주세요.</p>
             <div className="ui-register-history">
               <strong>지난 사건 기록과 의견은 어떻게 할까요?</strong>
               <div className="ui-radio-list" role="radiogroup" aria-label="지난 기록">
@@ -142,7 +142,7 @@ export function RegisterScreen({ hasHomecam, demo = false }: { hasHomecam: boole
           <section className="ui-card ui-register-done" role="status">
             <span className="ui-badge is-ok">등록 완료</span>
             <strong>우리 집 말벗의 소유자가 됐어요</strong>
-            <p>함께 볼 사람이 있으면 설정 › 보호자 관리에서 초대 링크를 만들어 보내세요.</p>
+            <p>함께 볼 사람이 있으면 설정 › 보호자에서 초대 링크를 만들어 보내 주세요.</p>
             <Link className="ui-button is-strong ui-register-main" href="/">홈으로</Link>
           </section>
         )}

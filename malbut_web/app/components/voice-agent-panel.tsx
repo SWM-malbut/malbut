@@ -20,10 +20,10 @@ export function VoiceAgentPanel({ deviceId, isOwner = false, settings = false }:
     try {
       const response = await fetch(url, { cache: "no-store", signal });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "음성 요청을 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(body.error || "음성 요청을 불러오지 못했어요.");
       if (!signal.aborted) { setView(body); setError(""); }
     } catch (caught) {
-      if (!signal.aborted) setError(caught instanceof Error ? caught.message : "음성 요청을 불러오지 못했습니다.");
+      if (!signal.aborted) setError(caught instanceof Error ? caught.message : "음성 요청을 불러오지 못했어요.");
     }
   }, [url]);
   useEffect(() => {
@@ -44,25 +44,34 @@ export function VoiceAgentPanel({ deviceId, isOwner = false, settings = false }:
       const response = await fetch(url, { method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }) });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "음성 권한을 저장하지 못했습니다.");
+      if (!response.ok) throw new Error(body.error || "음성으로 홈캠 쓰기를 저장하지 못했어요.");
       setView((current) => current ? { ...current, delegation: body.delegation } : current);
       setError("");
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "음성 권한을 저장하지 못했습니다."); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "음성으로 홈캠 쓰기를 저장하지 못했어요."); }
     finally { setBusy(false); }
   }
-  return <section className={settings ? "homecam-settings-card" : "robot-map-panel-card"}>
-    <h3>{settings ? "음성으로 홈캠 사용" : "음성 요청·결과"}</h3>
-    {settings ? <>
-      <p>로봇 가까이에서 말한 사람이 홈캠 상태·기록을 확인하고 카메라·홈캠 마이크·모니터링·낙상 감지를 켜거나 끌 수 있게 합니다.</p>
-      <label><input type="checkbox" role="switch" checked={view?.delegation.enabled ?? false}
-        disabled={!view || !isOwner || busy} onChange={(event) => void update(event.target.checked)} /> 음성 홈캠 사용 허용</label>
-      <p>소유자가 한 번 허용하면 유지됩니다. 해제하면 대기 중인 홈캠 요청도 취소됩니다. 가족 권한과 Cloud 분석 동의는 웹에서만 변경합니다.</p>
-      <small>홈캠 마이크는 보호자에게 보내는 소리입니다. 로봇의 음성 대기는 유지됩니다.</small>
-    </> : <>
-      {view && !view.requests.length && <p>아직 음성 요청 기록이 없습니다.</p>}
-      {view?.requests.map((item) => <VoiceResult key={item.requestId} item={item} />)}
-      <small>접수·설정 저장과 로봇 실행·적용은 다릅니다. 낙상 설정의 적용 회신은 설정 화면에서 확인하세요.</small>
-    </>}
+  // 홈캠 설정: 위 줄들(카메라 사용·연속 녹화…)과 같은 모양의 스위치 줄(목업 49번).
+  if (settings) {
+    const enabled = view?.delegation.enabled ?? false;
+    return <div className="fall-card fall-settings-list fall-voice-settings">
+      <div className={`fall-settings-row ${!isOwner ? "is-dim" : ""}`}>
+        <span>
+          <strong>음성으로 홈캠 쓰기</strong>
+          <small>말벗 가까이에서 말하면 홈캠 상태와 기록을 듣고, 카메라·말벗 마이크·연속 녹화·낙상 감지를 켜고 끌 수 있어요.</small>
+        </span>
+        {/* 홈캠 설정의 다른 줄과 같은 스위치 모양(fall-switch). */}
+        <button type="button" role="switch" aria-checked={enabled} aria-label="음성으로 홈캠 쓰기" disabled={!view || !isOwner || busy}
+          className={`fall-switch ${enabled ? "is-on" : ""}`} onClick={() => void update(!enabled)}><span /></button>
+      </div>
+      <p className="fall-voice-note ui-lines">{"끄면 기다리던 음성 요청도 취소돼요.\n보호자 관리와 클라우드 AI 확인 동의는 웹에서만 바꿀 수 있어요.\n말벗 마이크를 꺼도 말벗은 계속 말을 알아들어요."}</p>
+      {error && <p className="fall-voice-note is-danger" role="alert">{error}</p>}
+    </div>;
+  }
+  return <section className="robot-map-panel-card">
+    <h3>음성 요청·결과</h3>
+    {view && !view.requests.length && <p>아직 음성 요청 기록이 없습니다.</p>}
+    {view?.requests.map((item) => <VoiceResult key={item.requestId} item={item} />)}
+    <small>접수·설정 저장과 로봇 실행·적용은 다릅니다. 낙상 설정의 적용 회신은 설정 화면에서 확인하세요.</small>
     {error && <p role="alert">{error}</p>}
   </section>;
 }

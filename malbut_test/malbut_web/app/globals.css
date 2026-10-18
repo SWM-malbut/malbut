@@ -102,7 +102,13 @@ body {
     var(--canvas);
   font-family: "Pretendard Variable", Pretendard, "Source Sans 3", "Noto Sans CJK KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility;
+  /* 한국어 낱말 중간에서 줄이 바뀌지 않게(웹 용어 6번). 긴 영어·주소만 칸에서 넘칠 때 끊는다. */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
+
+/* 문장마다 줄을 나눠 쓴 안내(키 문제 안내·수동 조작 안내 등). */
+.ui-lines { white-space: pre-line; }
 
 button,
 input {
@@ -4426,6 +4432,9 @@ a:focus-visible {
 .ui-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 .ui-chips span { font-size: 0.75rem; padding: 0.25rem 0.625rem; border-radius: 6px; color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
 .ui-chips span.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-chips span.is-warn { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+/* 홈 "지금 말벗은": 둘째 줄(소유자 설정) 칩은 첫 줄에 붙여 둔다. */
+.ui-hero .ui-chips + .ui-chips { margin-top: -0.375rem; }
 .ui-badge {
   display: inline-block; font-size: 0.75rem; font-weight: 700; padding: 0.125rem 0.5rem; border-radius: 6px;
   color: var(--ui-text-muted); background: var(--ui-neutral-soft); vertical-align: middle;
@@ -4471,15 +4480,19 @@ a:focus-visible {
   position: relative; height: 150px; border: 1px solid var(--ui-border); border-radius: 10px; overflow: hidden;
   background: var(--ui-neutral-soft); cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
-.ui-rooms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.375rem; }
+.ui-rooms { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.375rem; }
+/* 홈 지도 카드 방 버튼: 한 줄 4칸 · 36px(목업 40번). 예전 3칸 · 72px 타일은 지도만큼 커졌다. */
 .ui-rooms button {
-  min-height: 72px; border: 0; border-radius: 8px; padding: 0.5rem; display: flex; align-items: flex-end;
-  font-size: 0.75rem; color: var(--ui-text); cursor: pointer; text-align: left;
+  min-height: 36px; border: 0; border-radius: 8px; padding: 0 0.5rem; display: flex; align-items: center; justify-content: center;
+  font-size: 0.8125rem; color: var(--ui-text); cursor: pointer; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-privacy { flex-direction: row; align-items: center; gap: 0.75rem; }
 .ui-privacy > span { flex: 1; display: flex; flex-direction: column; gap: 0.125rem; }
 .ui-privacy small { font-size: 0.75rem; color: var(--ui-text-muted); }
 .ui-privacy strong { font-size: 0.875rem; font-weight: 500; }
+.ui-privacy strong.is-muted { color: var(--ui-text-muted); }
+.ui-privacy strong.is-error { color: var(--ui-danger); }
 
 /* 홈캠 */
 .homecam-dashboard-shell.ui-app .ui-main > .homecam-live-view:not(.is-pip) {
@@ -4998,3 +5011,8 @@ a.ui-back { text-decoration: none; }
 .ui-key-notice > strong { font-size: 1rem; font-weight: 700; line-height: 1.45; }
 .ui-key-notice > p { margin: 0; font-size: 0.875rem; line-height: 1.6; }
 .ui-key-notice > small { font-size: 0.8125rem; line-height: 1.6; color: var(--ui-text-muted); }
+
+/* 홈캠 설정 › 음성으로 홈캠 쓰기: 위 줄들과 같은 스위치 줄(목업 49번). */
+.fall-voice-settings { margin-top: 12px; }
+.fall-voice-note { margin: 0; padding: 0 14px 14px; font-size: 12px; line-height: 1.6; color: var(--ui-text-muted); }
+.fall-voice-note.is-danger { color: var(--ui-danger); }

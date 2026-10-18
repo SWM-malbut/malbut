@@ -13,7 +13,7 @@ test("the cloud zone editor keeps the established map editing contract", async (
   assert.match(panel, /type: "move"/);
   assert.match(panel, /zoneRingValidationError/);
   assert.match(panel, /zoneInteriorInsideBoundary/);
-  assert.match(panel, /구역 내부에 벽이나 장애물이 포함될 수 없습니다/);
+  assert.match(panel, /구역 안에 벽이나 장애물이 들어가면 안 돼요/);
   assert.match(panel, /preferred_goal/);
   assert.match(panel, /role: "semantic_zone"/);
   assert.match(panel, /postSpaceEdit\("space-drafts", \{\s*kind: "zones"/);
@@ -30,7 +30,7 @@ test("the add menu can copy a complete room into a semantic movement zone", asyn
   assert.match(panel, /polygonGeometries\(room\.geometry\)/);
   assert.match(panel, /source_room_id/);
   assert.match(panel, /방 전체 적용/);
-  assert.match(panel, /저장된 방 경계를 그대로 사용/);
+  assert.match(panel, /저장된 방 경계를 그대로 써요/);
   assert.match(panel, /zoneCreateMode === "room"/);
 });
 
@@ -145,7 +145,7 @@ test("common drive mode blocks conflicting destination commands and stays owner-
   assert.match(panel, /disabled=\{!snapshot\?\.online \|\| autonomousModeActive/);
   assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| snapshot\?\.state\?\.localization\.state !== "ok" \|\| navigationBusy \|\| autonomousModeActive/);
   assert.match(panel, /if \(!isOwner && mapMode !== "navigate"\) return;/);
-  assert.match(panel, /자율주행은 소유자만 할 수 있어요/);
+  assert.match(panel, /순찰 · 따라가기는 소유자만 할 수 있어요/);
   assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
   assert.match(panel, /function driveModeCopy/);
 });
@@ -188,7 +188,7 @@ test("the home map summary reuses rooms, zones, and the live localized robot pos
   assert.match(panel, /snapshot\?\.state\?\.localization\.state === "ok"/);
   assert.match(panel, /function localizationCopy/);
   assert.match(panel, /부팅 후 위치 확인 필요/);
-  assert.match(panel, /위치 재확인 중/);
+  assert.match(panel, /위치 다시 확인 중/);
   assert.match(panel, /robot-map-home-marker/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-semantics/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-marker/);
@@ -235,8 +235,8 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
   assert.match(panel, /\{ mode: "patrol", thoroughness: patrolLevel \}/);
   assert.match(panel, /useState\(1\);/, "보통 is chosen first");
   for (const copy of [
-    "순찰 꼼꼼함", "빠르게", "4m · 집의 80%", "보통", "3m · 집의 90%", "꼼꼼히", "2m · 집의 95%",
-    "꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.",
+    "어떻게 순찰할까요?", "빠르게", "집의 80% · 거리 기준 4m", "보통", "집의 90% · 거리 기준 3m", "꼼꼼히", "집의 95% · 거리 기준 2m",
+    "꼼꼼할수록 더 가까이, 더 넓게 보지만 오래 걸려요.",
     "경로 계산 중", "이동 중", "둘러보는 중", "% 살펴봄", "곳 중 ", "곳 둘러봄", "곳 모두 둘러봄", "남은 방: ",
     "말벗과 연결이 끊겼어요. 말벗은 ", '"따라가기를" : "순찰을"', "계속하고, 다시 연결되면 지금 상태를 보여 드려요.",
     "중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.",
@@ -302,7 +302,7 @@ test("the developer screen's map, follow and drive tools reach the map tab for t
     "지도를 바꾸고 있어요", "주행 시스템이 꺼져 있어요", "사용 중", "이름 바꾸기", "삭제",
     "지도 만들기를 멈췄어요", "지금은 빈 지도라, 아래 목록에서 쓰던 지도를 골라 주세요.",
     "지도를 지우면 그 지도의 방·구역도 함께 지워져요. 사용 중인 지도는 지울 수 없어요.",
-    "직접 움직이기", "패드를 누른 채 끄는 만큼 빨라져요(최대 0.15m/s). 손을 떼면 바로 멈춰요.",
+    "수동 조작", "패드를 누른 채 끄는 만큼 빨라져요(최대 0.15m/s).", "손을 떼면 바로 멈추고, 장애물 앞에서는 말벗이 스스로 멈춰요.",
   ]) assert.ok(manager.includes(copy), copy);
   // 사람 따라가기 at the fixed 0.6 m (robot side), with stop only.
   for (const copy of ["사람 따라가기 · 따라가는 중", "사람 확인됨 · 지금 ", "사람 따라가기 · 사람 찾는 중",

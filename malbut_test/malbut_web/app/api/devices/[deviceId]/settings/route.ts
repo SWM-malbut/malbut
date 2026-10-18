@@ -16,7 +16,7 @@ export async function PATCH(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanManageDevice(deviceId, userId))) {
-    return noStore({ error: "소유자만 홈캠 설정을 변경할 수 있습니다." }, 403);
+    return noStore({ error: "소유자만 홈캠 설정을 바꿀 수 있어요." }, 403);
   }
   const patch = parseDeviceSettingsPatch(await request.json().catch(() => null));
   if (!patch) return noStore({ error: "설정 형식을 확인해 주세요." }, 400);
@@ -30,6 +30,6 @@ export async function PATCH(
         409,
       );
     }
-    return noStore({ error: "홈캠 설정을 저장하지 못했습니다." }, 500);
+    return noStore({ error: "홈캠 설정을 저장하지 못했어요." }, 500);
   }
 }
