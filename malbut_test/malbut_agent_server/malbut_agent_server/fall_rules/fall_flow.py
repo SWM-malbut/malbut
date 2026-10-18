@@ -26,15 +26,19 @@ whether a fall was seen, the latest answer and the check round.
 Decisions: ~/fall-refactor-plan-20261017.md, ~/fall-refactor-design-20261017.md.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import math
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
-# One person's one fall (design 3): the same person by track, then by map
-# place, then by screen box while the camera stayed still; unknown attaches.
+# One person's one fall (design 3): the same person by a track seen again within
+# seconds, then by map place, then by screen box while the camera stayed still;
+# unknown attaches.
 SAME_PLACE_M = 1.0
 SAME_BOX_IOU = 0.3
+# A YOLO track is handed to someone else after an occlusion (10-17 21:50, 95bd kept
+# 사람2 in 사람1's incident for half an hour): it names the person only this soon after.
+TRACK_KEEP_S = 10.0
 STANDOFF_M = 1.0
 VIEW_MAX_M = 3.0
 # A drop needs a second filter look a few seconds later (design 4).
@@ -118,23 +122,38 @@ class Sighting:
 class Body:
     """Who a check, a filter or a memory is about, kept up to date by sightings."""
 
-    tracks: set = field(default_factory=set)
+    tracks: dict = field(default_factory=dict)   # track -> when last seen as this person
     point: Optional[Tuple[float, float]] = None
     box: Optional[Tuple[float, float, float, float]] = None
     view: Optional[int] = None
     last_seen: float = 0.0
 
+    def __post_init__(self):
+        if not isinstance(self.tracks, dict):
+            self.tracks = {track: self.last_seen for track in self.tracks}
+
     @classmethod
     def of(cls, s):
-        return cls({s.track} if s.track else set(), s.point, s.box, s.view, s.at)
+        return cls({s.track: s.at} if s.track else {}, s.point, s.box, s.view, s.at)
 
-    def update(self, s):
-        if s.track:
-            self.tracks.add(s.track)
-        self.point = s.point or self.point
-        if s.box:
-            self.box, self.view = s.box, s.view
+    def follows(self, s):
+        """The same track seen again without a break: still this person."""
+        return bool(s.track) and s.at - self.tracks.get(s.track, -math.inf) <= TRACK_KEEP_S
+
+    def update(self, s, *, move=True):
+        """``move``: a suspicion may move the place and box; a plain sighting only keeps
+        the track alive (4-4 replay, bed 10-10 20:43)."""
         self.last_seen = max(self.last_seen, s.at)
+        if not self.follows(s):
+            # Matched by place or box only: who this is never moves to another person
+            # (10-17: one wrong join moved the box to 사람2, and the rest followed).
+            return
+        self.tracks = {t: at for t, at in self.tracks.items() if s.at - at <= TRACK_KEEP_S}
+        self.tracks[s.track] = s.at
+        if move:
+            self.point = s.point or self.point
+            if s.box:
+                self.box, self.view = s.box, s.view
 
 
 def _iou(a, b):
@@ -148,7 +167,7 @@ def _iou(a, b):
 
 def same_person(body, s):
     """True, False, or None when it cannot be told (design 3)."""
-    if s.track and s.track in body.tracks:
+    if body.follows(s):
         return True
     if s.point and body.point:
         return math.dist(s.point, body.point) <= SAME_PLACE_M
@@ -212,7 +231,8 @@ class Memory:
     place: Optional[str] = None   # floor or off_floor, for a person
     since: float = 0.0
     incident_id: Optional[str] = None
-    source: Optional[Sighting] = None
+    # Filtered 30 minutes ago and never opened: filtered again on the next suspicion.
+    due: bool = False
 
 
 class FallFlow:
@@ -263,7 +283,12 @@ class FallFlow:
             self.memory.remove(memory)  # A new fall: start afresh (design 3).
         elif memory is not None:
             memory.body.update(s)
-            if s.kind == 'up' and memory.kind == 'person':
+            if memory.due and s.suspicion:
+                # 30 minutes on, filtered again with what is seen now (2026-10-18: a copy
+                # of the old sighting kept 30-minute-old data and an id the VLM never saw).
+                self.memory.remove(memory)
+                self._candidate(s, now)
+            elif s.kind == 'up' and memory.kind == 'person':
                 self._recheck(memory, 'stood_up', now)
             elif (memory.kind == 'person' and memory.place == OFF_FLOOR
                   and s.kind in ('lying', 'cloud')):
@@ -287,8 +312,7 @@ class FallFlow:
             self._record('candidate_dropped', None, verdict, sighting_id=sighting_id)
             if verdict == 'ordinary':
                 place = OFF_FLOOR if candidate.sighting.on_floor is False else FLOOR
-                self.memory.append(Memory(candidate.body, 'person', place, now,
-                                          source=candidate.sighting))
+                self.memory.append(Memory(candidate.body, 'person', place, now))
             elif candidate.sighting.track:
                 self.memory.append(Memory(Body({candidate.sighting.track}, last_seen=now),
                                           'object', since=now))
@@ -538,7 +562,7 @@ class FallFlow:
         for memory in list(self.memory):
             if now - memory.body.last_seen >= FORGET_S and now - memory.since >= FORGET_S:
                 self.memory.remove(memory)  # Unseen for 30 minutes: start afresh next time.
-            elif (memory.kind == 'person' and memory.place == FLOOR
+            elif (memory.kind == 'person' and memory.place == FLOOR and not memory.due
                   and now - memory.since >= RECHECK_S):
                 self._recheck(memory, 'recheck', now)
 
@@ -758,29 +782,25 @@ class FallFlow:
 
     def _recheck(self, memory, purpose, now):
         """Check again someone remembered after a close (decision G, standing up)."""
-        self.memory.remove(memory)
         incident = self.incidents.get(memory.incident_id)
-        if incident is not None:
-            incident.state = 'open'
-            incident.body = memory.body
-            incident.asked = incident.keep_open = False
-            self._restart(incident, purpose, now)
-        elif memory.source is not None:  # Filtered, never opened: filter again.
-            s = replace(memory.source, sighting_id=f'{memory.source.sighting_id}+{int(now)}',
-                        at=now)
-            self._candidate(s, now)
+        if incident is None:
+            memory.due = True  # Filtered, never opened: filtered again when next suspected.
+            return
+        self.memory.remove(memory)
+        incident.state = 'open'
+        incident.body = memory.body
+        incident.asked = incident.keep_open = False
+        self._restart(incident, purpose, now)
 
     def _forget(self, incident_id):
         self.memory = [m for m in self.memory if m.incident_id != incident_id]
 
     def _attach(self, incident, s):
+        # Only the same track seen again moves who this is (Body.update), and only a
+        # suspicion moves the place and box (4-4 replay bed 10-10 20:43, 10-17 21:50).
+        incident.body.update(s, move=s.suspicion)
         if not s.suspicion:
-            # Someone merely in view near the spot keeps neither the place nor the box:
-            # 4-4 replay (bed 10-10 20:43), another box 1 m off moved the place and the
-            # next Cloud find at the same spot opened a second incident.
-            incident.body.last_seen = max(incident.body.last_seen, s.at)
             return
-        incident.body.update(s)
         if s.fall_moment and s.fall_moment not in incident.fall_moments:
             incident.fall_moments.append(s.fall_moment)
             del incident.fall_moments[1:-1]  # The first and the last fall (design 5).

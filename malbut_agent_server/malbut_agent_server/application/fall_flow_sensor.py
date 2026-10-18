@@ -172,7 +172,7 @@ class FallFlowSensor:
                  wall_clock: Callable[[], float] = time.time,
                  clip_planner: Optional[FallClipPlanner] = None,
                  people_recorder: Optional[FallPeopleRecorder] = None,
-                 place_locator=None) -> None:
+                 place_locator=None, flow_log=None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -187,6 +187,7 @@ class FallFlowSensor:
         self._people = people_recorder or FallPeopleRecorder(boot_id=boot_id)
         self.people_storage_failures = 0
         self._place = place_locator
+        self._flow_log = flow_log  # FallFlowLog: what went to and came from the rules
         self._subjects = FallSubjectEvidence(retention_s=buffer.retention_s,
                                              max_frames=buffer.max_frames)
         self._enabled = self._camera = self._consent = self._connected = False
@@ -229,6 +230,9 @@ class FallFlowSensor:
 
     def drain_events(self):
         messages, self._messages = tuple(self._messages), []
+        if self._flow_log is not None:
+            for message in messages:
+                self._flow_log.write('to_rules', message)
         return messages
 
     def pending_questions(self):
@@ -362,8 +366,10 @@ class FallFlowSensor:
             self._pending_moments[moment] = candidate.observed_at
         start = (candidate.evidence_started_at if candidate.evidence_started_at is not None
                  else candidate.observed_at)
+        floor = candidate.sensors.floor_distance_m if candidate.sensors is not None else None
         return self._sight(kind, candidate.observed_at, track=candidate.subject_key, box=box,
-                           photo=True, fall_moment=moment, evidence=(start, candidate.observed_at))
+                           photo=True, fall_moment=moment, evidence=(start, candidate.observed_at),
+                           floor=floor)
 
     def close_by_guardian(self, incident_id):
         """처리 완료 in the app: the rules stop and never check it again."""
@@ -425,6 +431,8 @@ class FallFlowSensor:
         """One decision of the Agent's fall rules (/malbut/falls/runtime/decision)."""
         if not isinstance(data, dict):
             raise ValueError('invalid decision')
+        if self._flow_log is not None:
+            self._flow_log.write('from_rules', data)
         action = data.get('action')
         if action == 'flow_hello':
             self._ready()
@@ -589,7 +597,7 @@ class FallFlowSensor:
     # ------------------------------------------------------------ sightings
 
     def _sight(self, kind, at, *, track=None, box=None, photo=False, fall_moment=None,
-               evidence=None, point=None, frames=None):
+               evidence=None, point=None, frames=None, floor=None):
         sighting_id = 's-' + uuid4().hex
         if point is None and box is not None and self._place is not None:
             try:
@@ -612,7 +620,9 @@ class FallFlowSensor:
         message = dict(sighting_id=sighting_id, at=at, kind=kind, track=track,
                        point=_point(point), box=list(box) if box is not None else None,
                        view=self._view, robot=_point(robot), on_floor=None, photo=photo_id,
-                       fall_moment=fall_moment)
+                       fall_moment=fall_moment,
+                       # Torso height above the floor by depth (YOLO candidates): for the log.
+                       floor=None if floor is None else round(float(floor), 3))
         if kind != 'seen':
             self._sightings[sighting_id] = (message, *(evidence or (at, at)))
             while len(self._sightings) > 512:

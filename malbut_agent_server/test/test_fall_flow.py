@@ -7,8 +7,8 @@ import math
 import pytest
 
 from malbut_agent_server.fall_rules.fall_flow import (
-    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow, Incident, Body,
-    Sighting,
+    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, TRACK_KEEP_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow,
+    Incident, Body, Sighting,
 )
 
 SPOT = (3.0, 0.0)
@@ -691,3 +691,57 @@ def test_still_unsure_with_the_whole_body_goes_on_as_the_same_person():
     assert not notices(out) and looks(out, 'posture') and not robot.only().keep_open
     out = robot.posture(('furniture', None), ('furniture', None))
     assert records(out, 'incident_resolved') == ['off_floor_verified']
+
+
+# ------------------------------------------------------------ the same person (2026-10-18)
+# 10-17 21:31~22:22 on the robot: 사람1 under a table and 사람2 beside the robot ended up in one
+# incident for half an hour (~/.local/share/malbut-evaluations/ids-20261017).
+
+LEFT, RIGHT = (0.16, 0.24, 0.42, 0.49), (0.40, 0.0, 1.0, 0.56)  # 사람1 and 사람2 on screen
+
+
+def test_a_track_names_the_person_only_for_a_few_seconds():
+    robot = Robot()
+    robot.open(track='t1', point=None, box=LEFT, view=1)
+    robot.wait(TRACK_KEEP_S + 1)
+    # The same number long after, where 사람2 is: no longer 사람1 by the number alone
+    # (before: any number the incident ever had meant 사람1).
+    _, out = robot.see(track='t1', point=None, box=RIGHT, view=1)
+    assert looks(out, 'filter') and len(robot.flow.incidents) == 1
+
+
+def test_a_person_merely_in_view_keeps_the_track_alive_without_moving_the_box():
+    robot = Robot()
+    robot.open(track='t1', point=None, box=LEFT, view=1)
+    for _ in range(8):  # Seen every 2 s for 16 s, no new suspicion.
+        robot.wait(2.0)
+        robot.see('seen', track='t1', point=None, box=RIGHT, view=1)
+    assert robot.only().body.box == LEFT
+    _, out = robot.see(track='t1', point=None, box=LEFT, view=1)
+    assert kinds(out, 'link') and not looks(out, 'filter')
+
+
+def test_a_wrong_join_by_box_never_moves_who_the_incident_is_about():
+    robot = Robot()
+    robot.open(track='a', point=None, box=LEFT, view=1)
+    # 사람2 overlapping 사람1's box once (no track continuity): joins, but the body stays.
+    _, out = robot.see(track='b', point=None, box=(0.22, 0.24, 0.50, 0.50), view=1)
+    assert kinds(out, 'link') and robot.only().body.box == LEFT
+    assert 'b' not in robot.only().body.tracks
+    # 사람2 where they really are: not 사람1 (the old body moved there and kept joining).
+    _, out = robot.see(track='b', point=None, box=RIGHT, view=1)
+    assert looks(out, 'filter') and kinds(out, 'link') == []
+
+
+def test_a_person_filtered_on_the_floor_is_filtered_again_with_a_new_sighting():
+    # 10-17 21:31: the 30-minute refilter copied the 21:01 sighting under a new id the VLM
+    # never saw (no first photo, no place, not restored after a restart).
+    robot = Robot()
+    s, _ = robot.see(track='t1', point=None, box=LEFT, view=1)
+    robot.filter(s, 'ordinary', 'ordinary')
+    assert not looks(robot.wait(RECHECK_S))  # Due, but nothing is copied.
+    fresh, out = robot.see(track='t9', point=(2.0, 0.5), box=LEFT, view=1)
+    look, = looks(out, 'filter')
+    assert look['sighting_id'] == fresh.sighting_id and '+' not in look['sighting_id']
+    robot.filter(fresh, 'suspect')
+    assert robot.only().first == fresh and drives(robot.log, 'approach')

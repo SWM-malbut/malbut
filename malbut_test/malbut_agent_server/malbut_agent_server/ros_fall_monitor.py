@@ -13,6 +13,7 @@ import time
 from uuid import uuid4
 
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
+from malbut_agent_server.application.fall_flow_log import FallFlowLog
 from malbut_agent_server.application.fall_flow_sensor import FallFlowSensor
 from malbut_agent_server.application.fall_detector_input import (
     FallDetectorInput, bounded_object, ros_stamp,
@@ -98,10 +99,13 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                                      max_bytes=settings.buffer_bytes,
                                      max_frames=settings.buffer_frames)
             if self.flow:
+                # What went to and came from the rules, kept seven days beside the journal
+                # (2026-10-18): depth-measured places that nothing else keeps.
                 self.monitor = FallFlowSensor(
                     device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
                     buffer=buffer, provider=provider, journal=journal, clock=clock,
-                    place_locator=self.place)
+                    place_locator=self.place,
+                    flow_log=FallFlowLog(Path(settings.journal_path).parent / 'fall_flow_log'))
             else:
                 self.monitor = CloudFallMonitor(
                     device_id=settings.device_id, boot_id=str(uuid4()), policy=settings.policy,
