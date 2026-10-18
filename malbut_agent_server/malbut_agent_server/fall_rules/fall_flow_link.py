@@ -2,7 +2,7 @@
 
 With Bringup ``fall_flow`` on, this replaces FallConfirmationLink. The VLM's
 sightings and Cloud answers go into FallFlow; its commands come out as decisions
-for the VLM (a Cloud look, a record, a notification, a clip link) or as Manager
+for the VLM (a Cloud look, a record, a notification, a clip link or mark) or as Manager
 missions (``fall_approach`` drives and holds, ``fall_confirmation`` questions).
 How a mission is sent, waited for and held is unchanged from that link: HIGH
 missions, 직접 움직이기 (URGENT) and other jobs make a step wait and go again a
@@ -297,7 +297,7 @@ class FallFlowLink:
             self.looks[fields['look_id']] = (fields['what'], key, self.clock())
             self._decide(dict(action='look', **{
                 k: (list(v) if isinstance(v, tuple) else v) for k, v in fields.items()}))
-        elif kind in ('record', 'notify', 'link'):
+        elif kind in ('record', 'notify', 'link', 'clip'):
             self._decide(dict(action=kind, **fields))
         elif kind in ('drive', 'ask'):
             self._replace(dict(command))

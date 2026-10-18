@@ -19,10 +19,12 @@ lying on the floor after a close off the floor, or 30 minutes after a close on
 the floor start the check again (a new round of the same incident).
 
 Pure: no ROS, transport or clock. Callers pass the time and drain ``commands``:
-look (a Cloud look by the VLM), drive, ask, stop (the link), and record, notify
-and link (written by the VLM in its journal, in the web's words:
+look (a Cloud look by the VLM), drive, ask, stop (the link), and record, notify,
+link and clip (written by the VLM in its journal, in the web's words:
 malbut_interfaces/contracts/fall_events.json). Each record carries the web state,
-whether a fall was seen, the latest answer and the check round.
+whether a fall was seen, the latest answer and the check round. Clip marks the
+robot's check for the incident's video (SWM25-268, 목업 53번): start when the
+robot gets to work on a round, pause while it waits, end at the judgment.
 Decisions: ~/fall-refactor-plan-20261017.md, ~/fall-refactor-design-20261017.md.
 """
 
@@ -207,6 +209,7 @@ class Incident:
     wait_alerted: bool = False
     waits_noted: set = field(default_factory=set)
     revisit_noted: bool = False
+    clip_open: bool = False      # this round's clip range is growing (SWM25-268)
 
     @property
     def fall_seen(self):
@@ -489,6 +492,7 @@ class FallFlow:
             return
         reason = reason if reason in WAITING_FOR else 'busy'
         if incident.waiting_since is None:
+            self._clip(incident, 'pause')  # The wait is left out of the video (목업 53번).
             incident.waiting_since = now
         incident.waiting_for = reason
         if reason not in incident.waits_noted:
@@ -642,6 +646,7 @@ class FallFlow:
                       from_point=incident.first.robot, standoff=STANDOFF_M)
 
     def _look(self, incident, what, **fields):
+        self._clip(incident, 'start')  # Looking without a drive first (no map place).
         incident.look_id = str(uuid4())
         self._command('look', incident, what=what, look_id=incident.look_id, **fields)
 
@@ -746,6 +751,7 @@ class FallFlow:
         self._finish(incident, now, go_back=False)
 
     def _finish(self, incident, now, *, go_back, why=None):
+        self._clip(incident, 'end')  # The judgment: the video ends 5 s later.
         if go_back:  # why: the approach node's return reason (not_a_person, off_floor).
             self._command('drive', incident, purpose='return', reason=why)
         incident.waiting_since = None
@@ -763,6 +769,7 @@ class FallFlow:
                 and not incident.revisit_noted):
             incident.revisit_noted = True
             self._record('revisit_started', incident, incident.waiting_for or 'busy')
+        self._clip(incident, 'start')  # The Manager took a step, or a step came back.
 
     def _new_round(self, incident, why):
         """Check it again: a new round with its own waiting and alerts (decision B)."""
@@ -859,6 +866,20 @@ class FallFlow:
 
     def _command(self, kind, incident, **fields):
         self.commands.append(dict(kind=kind, incident_id=incident.incident_id, **fields))
+
+    def _clip(self, incident, mark):
+        """The video of this round (SWM25-268): it starts when the robot gets to work, so
+        a wait before that (직접 움직이기, another job, another incident) leaves the first
+        suspicion's own range as 발견; it pauses for a wait and ends at the judgment."""
+        if mark == 'start':
+            if incident.clip_open or incident.incident_id != self.active:
+                return
+            incident.clip_open = True
+        elif incident.clip_open:
+            incident.clip_open = False
+        else:
+            return
+        self._command('clip', incident, mark=mark, check_round=incident.check_round)
 
     def _web(self, incident, state):
         return dict(state=state or self._state(incident), fall_seen=incident.fall_seen,

@@ -1,19 +1,22 @@
 """Per-incident recording ranges for fall event clips; metadata only, no pixels.
 
 Each observation is an evidence window on the monitor's monotonic clock. Its
-clip is the window widened by ``pre_s`` before and ``post_s`` after. Ranges of
-one incident extend while they touch and are split into segments of at most
-``max_segment_s``. Times stay monotonic here; the monitor converts them to wall
-time when it records them, because the recording archive is indexed by wall time.
+clip is the window widened by ``pre_s`` before and ``post_s`` after (or the
+observation's own margins). Ranges of one incident extend while they touch and are
+split into segments of at most ``max_segment_s``; two check rounds never share a
+segment. Times stay monotonic here; the monitor converts them to wall time when it
+records them, because the recording archive is indexed by wall time.
 """
 
 from dataclasses import dataclass, replace
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from malbut_agent_server.domain.fall_monitoring import identifier, timestamp
 
-ANCHOR_KINDS = ('pose_motion', 'pose_found_down', 'cloud_window')
+# check: the robot's check of an incident, from the first suspicion to the judgment;
+# recheck: a later round of it (SWM25-268, 목업 53번).
+ANCHOR_KINDS = ('pose_motion', 'pose_found_down', 'cloud_window', 'check', 'recheck')
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class ClipSegment:
     revision: int
     anchor_kinds: Tuple[str, ...]
     found_down: bool
+    check_round: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ class RecordedClip:
     anchor_kinds: Tuple[str, ...]
     found_down: bool
     clock_stepped: bool
+    check_round: Optional[int] = None
 
 
 class FallClipPlanner:
@@ -67,8 +72,13 @@ class FallClipPlanner:
         self._segments.pop(incident_id, None)
 
     def observe(self, incident_id: str, evidence_start: float, evidence_end: float, *,
-                anchor_kind: str, found_down: bool = False) -> Tuple[ClipSegment, ...]:
-        """Return the segments created or changed by this evidence window."""
+                anchor_kind: str, found_down: bool = False, pre_s: Optional[float] = None,
+                post_s: Optional[float] = None,
+                check_round: Optional[int] = None) -> Tuple[ClipSegment, ...]:
+        """Return the segments created or changed by this evidence window.
+
+        ``check_round``: the round of a check or recheck range, kept on its segments.
+        """
         identifier(incident_id)
         timestamp(evidence_start)
         timestamp(evidence_end)
@@ -76,8 +86,15 @@ class FallClipPlanner:
             raise ValueError('evidence window is reversed')
         if anchor_kind not in ANCHOR_KINDS:
             raise ValueError('unsupported clip anchor')
-        start = max(0.0, evidence_start - self.pre_s)
-        end = evidence_end + self.post_s
+        pre = self.pre_s if pre_s is None else pre_s
+        post = self.post_s if post_s is None else post_s
+        for value in (pre, post):
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError('clip margins must be finite and non-negative')
+        if check_round is not None and (type(check_round) is not int or check_round < 1):
+            raise ValueError('check round must be a positive integer')
+        start = max(0.0, evidence_start - pre)
+        end = evidence_end + post
         found_down = bool(found_down) or anchor_kind == 'pose_found_down'
         segments = self._segments.setdefault(incident_id, [])
         changed: List[ClipSegment] = []
@@ -85,7 +102,11 @@ class FallClipPlanner:
             # Earlier than the last segment: older segments already cover that
             # part of the incident; never attach it to an unrelated segment.
             return ()
-        if segments and start <= segments[-1].end:
+        if (segments and check_round is not None
+                and segments[-1].check_round not in (None, check_round)):
+            # Another round: its own segment from where the last one ends.
+            start = max(start, segments[-1].end)
+        elif segments and start <= segments[-1].end:
             last = segments[-1]
             # Earlier evidence may widen the first segment only; later segments
             # already belong to an older part of the same incident.
@@ -95,7 +116,9 @@ class FallClipPlanner:
                                          else (anchor_kind,))
             limit = new_start + self.max_segment_s
             updated = replace(last, start=new_start, end=min(new_end, limit),
-                              anchor_kinds=kinds, found_down=last.found_down or found_down)
+                              anchor_kinds=kinds, found_down=last.found_down or found_down,
+                              check_round=last.check_round if check_round is None
+                              else check_round)
             if updated != last:
                 segments[-1] = replace(updated, revision=last.revision + 1)
                 changed.append(segments[-1])
@@ -108,7 +131,7 @@ class FallClipPlanner:
                 break
             segment = ClipSegment(
                 incident_id, len(segments), start, min(end, start + self.max_segment_s),
-                1, (anchor_kind,), found_down)
+                1, (anchor_kind,), found_down, check_round)
             segments.append(segment)
             changed.append(segment)
             start = segment.end

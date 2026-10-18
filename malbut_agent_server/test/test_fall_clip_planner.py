@@ -107,3 +107,37 @@ def test_evidence_before_the_last_segment_does_not_touch_it():
     planner.observe('incident-1', 110.0, 230.0, anchor_kind='cloud_window')
     assert planner.observe('incident-1', 120.0, 125.0, anchor_kind='pose_found_down') == ()
     assert [s.revision for s in planner.segments('incident-1')] == [2, 1]
+
+
+def test_a_check_range_has_its_own_margins_and_keeps_its_round():
+    planner = FallClipPlanner()
+    planner.observe('incident-1', 100.0, 100.0, anchor_kind='pose_found_down')
+    changed = planner.observe('incident-1', 105.0, 140.0, anchor_kind='check', pre_s=0.0,
+                              post_s=5.0, check_round=1)
+    assert [(s.start, s.end, s.anchor_kinds, s.check_round) for s in changed] == [
+        (90.0, 145.0, ('pose_found_down', 'check'), 1)]
+    # The person seen again keeps the round; a long check goes on in a new segment.
+    planner.observe('incident-1', 141.0, 141.0, anchor_kind='pose_found_down')
+    changed = planner.observe('incident-1', 105.0, 230.0, anchor_kind='check', pre_s=0.0,
+                              post_s=5.0, check_round=1)
+    assert [(s.segment_index, s.start, s.end, s.check_round) for s in changed] == [
+        (0, 90.0, 210.0, 1), (1, 210.0, 235.0, 1)]
+
+
+def test_two_rounds_never_share_a_segment():
+    planner = FallClipPlanner()
+    planner.observe('incident-1', 100.0, 150.0, anchor_kind='check', pre_s=0.0, post_s=5.0,
+                    check_round=1)
+    changed = planner.observe('incident-1', 152.0, 170.0, anchor_kind='recheck', pre_s=0.0,
+                              post_s=5.0, check_round=2)
+    assert [(s.segment_index, s.start, s.end, s.anchor_kinds, s.check_round)
+            for s in changed] == [(1, 155.0, 175.0, ('recheck',), 2)]
+    assert planner.segments('incident-1')[0].check_round == 1
+
+
+def test_bad_margins_or_rounds_are_refused():
+    planner = FallClipPlanner()
+    for fields in (dict(pre_s=-1.0), dict(post_s=float('inf')), dict(check_round=0),
+                   dict(check_round=True)):
+        with pytest.raises(ValueError):
+            planner.observe('incident-1', 100.0, 101.0, anchor_kind='check', **fields)
