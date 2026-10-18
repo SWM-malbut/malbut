@@ -520,7 +520,13 @@ def test_similar_navigation_name_uses_registered_catalog_without_confirmation(
     assert body['navigation_locations'] == ['거실']
     encoded = json.dumps(body)
     assert str(selected) not in encoded
-    assert not any(field in encoded for field in ('"pose"', '"x"', '"y"', '"yaw"'))
+    # Scene observations intentionally carry map coordinates (SWM25-222).
+    # The name-based request still must not contain a model-selected Goal.
+    name_request = json.dumps({key: value for key, value in body.items()
+                               if key != 'scene_context'})
+    assert not any(field in name_request for field in ('"pose"', '"x"', '"y"', '"yaw"'))
+    assert body['scene_context']['map'] == targets.scene(str(selected))
+    assert body['scene_context']['pose'] is None  # This graph publishes no TF.
 
 
 def test_distant_navigation_name_requires_published_confirmation_once(
