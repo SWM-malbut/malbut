@@ -238,6 +238,14 @@ test("clip contract is strict: wall-clock ranges only, no media or session IDs",
   const { clockStepped, ...missing } = clip();
   assert.equal(clockStepped, false);
   assert.equal(parseFallClip(missing), null);
+  // SWM25-268: check ranges and the round they belong to; older robots send no round.
+  assert.deepEqual(parseFallClip(clip({ anchorKinds: ["check", "pose_found_down"], checkRound: 1 })).checkRound, 1);
+  assert.ok(parseFallClip(clip({ anchorKinds: ["recheck"], checkRound: 3 })));
+  assert.equal(Object.hasOwn(parseFallClip(clip()), "checkRound"), false);
+  for (const checkRound of [0, -1, 1.5, "2", null, 10001]) {
+    assert.equal(parseFallClip(clip({ anchorKinds: ["recheck"], checkRound })), null, String(checkRound));
+  }
+  assert.equal(parseFallClip(clip({ checkRound: 1, extra: 1 })), null);
 });
 
 test("clip storage keeps the newest revision and waits for the incident instead of blocking", async () => {
@@ -383,6 +391,12 @@ test("detail shows clips, automatic judgments, notifications, all opinions and l
     assert.deepEqual(detail.linkedIncidentIds, [b.incidentId]);
     assert.equal((await review.getFallIncidentDetail("robot-a", b.incidentId)).foundDown, true);
     assert.equal(await review.getFallIncidentDetail("robot-b", a.incidentId), null);
+    // SWM25-268: the round of a recheck range comes back for its 재확인 · N회차 button.
+    assert.equal(detail.clips[0].checkRound, null);
+    await review.storeFallClip("robot-a", clip({ incidentId: a.incidentId, segmentIndex: 1, startAt: recent(30_000),
+      endAt: recent(60_000), anchorKinds: ["recheck"], checkRound: 2 }));
+    assert.deepEqual((await review.getFallIncidentDetail("robot-a", a.incidentId)).clips
+      .map((c) => [c.anchorKinds, c.checkRound]), [[["pose_motion"], null], [["recheck"], 2]]);
   });
 });
 
@@ -814,6 +828,14 @@ test("사건 screen: incidents replace general events; demo API only for the loc
   assert.match(panel, /onLoad=\{\(\) => setStill\("shown"\)\} onError=\{\(\) => setStill\("none"\)\}/);
   assert.ok(panel.includes("누르면 이 구간을 재생해요"));
   assert.doesNotMatch(panel, />장면 영상 보기<\/button>/);
+  // 장면 구간 (SWM25-268, 목업 53번): buttons by kind, 재감지 as photos, the wait skipped with a card.
+  assert.match(panel, /const groups = clipGroups\(detail\.clips\);/);
+  assert.match(panel, /\{groupLabel\(g\)\}/);
+  assert.match(panel, /<div className="fall-redetect" role="group" aria-label="재감지 사진">/);
+  assert.match(panel, /`재감지 \$\{at\.clip \+ 1\}\/\$\{group\.clips\.length\} · \$\{clock\(current\.startAt, true\)\}`/);
+  assert.match(panel, /\{waited\} \{skipped\} 건너뛰어요/);
+  assert.ok(panel.includes("영상에서 뺐어요. 그동안 일은 아래 자동 판정 기록에 있어요."));
+  assert.match(panel, /e\.eventKind === "check_waiting" && e\.reason === "manual_drive"/);
 });
 
 test("연속 녹화: day timeline marks, recorded spans and report memo", async () => {
