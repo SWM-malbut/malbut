@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from malbut_agent_server.fall_rules.fall_flow_link import (
-    LOOK_TIMEOUT_S, FallFlowLink, parse_sighting,
+    LOOK_TIMEOUT_S, FallFlowLink, parse_people, parse_sighting,
 )
 
 
@@ -228,3 +228,27 @@ def test_the_marks_of_the_check_video_go_to_the_vlm(rig):
     drive.feedback(SimpleNamespace(feedback=SimpleNamespace(state='RUNNING', feedback_yaml='')))
     mark, = decisions(rig.link, 'clip')
     assert mark == dict(action='clip', incident_id=incident, mark='start', check_round=1)
+
+
+def test_pose_frames_go_to_the_person_tracking_and_its_numbers_to_the_vlm(rig):
+    """SWM25-267: who is who is decided here; the VLM is told, for the people boxes."""
+    event(rig.link, kind='fall_people', at=99.0, view=0, stationary=True, robot=[0.0, 0.0],
+          people=[dict(track='pose:1:a', box=[0.3, 0.5, 0.7, 0.9], point=[3.0, 1.0],
+                       state='suspected')])
+    numbers, = decisions(rig.link, 'people')
+    assert numbers['tracks'] == {'pose:1:a': rig.link.flow.tracker.person_of('pose:1:a')}
+    incident = open_incident(rig)  # Its sighting is pose:1:a at the same place.
+    bound, = [d for d in decisions(rig.link, 'people') if 'incidents' in d]
+    assert bound['incidents'] == {incident: numbers['tracks']['pose:1:a']}
+
+
+def test_a_malformed_pose_frame_is_refused():
+    ok = dict(at=1.0, view=0, people=[dict(track='a', box=None, point=None, state='clear')])
+    assert parse_people(ok).people[0].state == 'clear'
+    for bad in (dict(ok, at='x'), dict(ok, view=-1), dict(ok, people='a'),
+                dict(ok, people=[dict(track='a', state='lying')]),
+                dict(ok, people=[dict(track='a', box=[0, 0, 2, 1], state='clear')])):
+        with pytest.raises(ValueError):
+            parse_people(bad)
+    with pytest.raises(ValueError):
+        parse_sighting(dict(sighting_id='s1', at=1.0, kind='seen'))  # Frames carry this now.

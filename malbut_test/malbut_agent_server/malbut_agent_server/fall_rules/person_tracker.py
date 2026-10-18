@@ -144,8 +144,7 @@ class PersonTracker:
         self._forget(at)
         (_, person), = self._match((obs,), at, view)
         self._apply(person, obs, at, view)
-        if obs.track:
-            self._sent[obs.track] = person.person_id
+        # Its track's number goes to the VLM with the next frame, which follows at once.
         return person.person_id, self.uncertain(person.person_id)
 
     # ------------------------------------------------------------ matching

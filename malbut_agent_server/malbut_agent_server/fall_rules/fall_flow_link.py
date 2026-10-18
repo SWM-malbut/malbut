@@ -24,7 +24,8 @@ from .fall_confirmation_link import (
     CHECK_STATUS_TOPIC, DOWNSTREAM_REJECTED, EXECUTE_MISSION_ACTION, FALL_MISSIONS,
     MANUAL_DRIVE, NO_MAP, SPEECH_UNAVAILABLE, STATUS_PERIOD_S, WAIT_MESSAGES, WAIT_PREFIXES,
 )
-from .fall_flow import Body, FallFlow, Incident, Sighting
+from .fall_flow import FallFlow, Incident, Sighting
+from .person_tracker import Frame, Observation
 
 # A Cloud look not answered by then (a VLM restart lost it): treat it as failed.
 LOOK_TIMEOUT_S = 90.0
@@ -34,7 +35,8 @@ HELLO_EVERY_S = 5.0
 STEP_PHASE = {'queued': 'approach', 'approach': 'approach', 'reverify': 'approach',
               'view': 'approach', 'closer': 'approach', 'compare': 'look',
               'departure': 'look', 'posture': 'look', 'ask': 'ask', 'wait': 'wait'}
-SIGHTING_KINDS = ('low', 'lying', 'motion', 'cloud', 'up', 'seen')
+SIGHTING_KINDS = ('low', 'lying', 'motion', 'cloud')
+POSTURES = ('clear', 'suspected', 'unknown')
 VERDICTS = {
     'filter': ('suspect', 'not_person', 'reflection', 'ordinary', 'failed', 'guard'),
     'arrival': ('same_person', 'person_unsure', 'different_person', 'same_object', 'gone',
@@ -93,6 +95,24 @@ def parse_sighting(data):
         photo=_text(data.get('photo')), fall_moment=_text(data.get('fall_moment')))
 
 
+def parse_people(data):
+    """A VLM pose frame (``fall_people``, SWM25-267) as the tracker's Frame, or ValueError."""
+    if not isinstance(data, dict):
+        raise ValueError('invalid people frame')
+    at, view, people = data.get('at'), data.get('view'), data.get('people')
+    if (isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at)
+            or type(view) is not int or view < 0
+            or not isinstance(people, list) or len(people) > 64):
+        raise ValueError('invalid people frame')
+    observations = []
+    for person in people:
+        if not isinstance(person, dict) or person.get('state') not in POSTURES:
+            raise ValueError('invalid people frame')
+        observations.append(Observation(_text(person.get('track')), _box(person.get('box')),
+                                        _pair(person.get('point')), person['state']))
+    return Frame(float(at), view, tuple(observations))
+
+
 def restored_incident(data, now):
     """An open incident from flow_ready, checked again from the start after a restart."""
     first = parse_sighting(data.get('first'))
@@ -100,7 +120,8 @@ def restored_incident(data, now):
     if type(round_) is not int or not 1 <= round_ <= 10000:
         raise ValueError('invalid check round')
     moments = [_text(m) for m in data.get('fall_moments') or [] if m][:2]
-    return Incident(_text(data.get('incident_id')), first, Body.of(first), now,
+    # Nobody is bound yet: the first one seen for sure at its place (person_tracker).
+    return Incident(_text(data.get('incident_id')), first, None, now, place=first.point,
                     fall_moments=moments, check_round=round_)
 
 
@@ -185,7 +206,9 @@ class FallFlowLink:
 
     def _receive(self, data, now):
         kind = data.get('kind')
-        if kind == 'fall_sighting':
+        if kind == 'fall_people':
+            self.flow.people(parse_people(data), now)
+        elif kind == 'fall_sighting':
             self.flow.sighted(parse_sighting(data.get('sighting')), now)
         elif kind == 'fall_look_result':
             look_id = _text(data.get('look_id'))
@@ -297,7 +320,7 @@ class FallFlowLink:
             self.looks[fields['look_id']] = (fields['what'], key, self.clock())
             self._decide(dict(action='look', **{
                 k: (list(v) if isinstance(v, tuple) else v) for k, v in fields.items()}))
-        elif kind in ('record', 'notify', 'link', 'clip'):
+        elif kind in ('record', 'notify', 'link', 'clip', 'people'):
             self._decide(dict(action=kind, **fields))
         elif kind in ('drive', 'ask'):
             self._replace(dict(command))

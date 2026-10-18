@@ -47,8 +47,22 @@ def ros_stamp(value):
     return sec + nano / 1e9
 
 
+class _SameTracks:
+    """No alias repair: with the fall rules' person tracking (fall_flow, SWM25-267) the
+    Agent decides who is the same person, so YOLO's tracks go out as they are."""
+
+    def observe(self, frame, **_):
+        return frame
+
+    def key(self, track):
+        return track
+
+    def clear(self):
+        pass
+
+
 class FallDetectorInput:
-    def __init__(self, monitor, *, max_source_age_s, max_candidates=64):
+    def __init__(self, monitor, *, max_source_age_s, max_candidates=64, pose_aliases=True):
         positive(max_source_age_s, 'max_source_age_s')
         if type(max_candidates) is not int or not 1 <= max_candidates <= 256:
             raise ValueError('invalid candidate limit')
@@ -61,7 +75,7 @@ class FallDetectorInput:
         self._frame_id = None
         self._last_source_now = None
         self._generation = 0
-        self._pose_aliases = LowPoseAliases()
+        self._pose_aliases = LowPoseAliases() if pose_aliases else _SameTracks()
         self._settings = dict(enabled=False, camera_enabled=False,
                               cloud_consent=False, connected=False)
 

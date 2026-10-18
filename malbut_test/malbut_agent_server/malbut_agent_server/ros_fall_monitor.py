@@ -114,7 +114,8 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 self.monitor.approach_enabled = bool(approach)
                 self.monitor.full_view_enabled = bool(full_view)
             self.inputs = FallDetectorInput(
-                self.monitor, max_source_age_s=settings.max_source_age_s)
+                self.monitor, max_source_age_s=settings.max_source_age_s,
+                pose_aliases=not self.flow)
             manager = self.declare_parameter(
                 'manager_runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
             runtime = self.declare_parameter(
