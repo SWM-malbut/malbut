@@ -77,6 +77,32 @@ def test_map_point_reuses_existing_navigation_manifest(navigation):
     assert payload['pose']['pose']['orientation']['z'] == pytest.approx(math.sqrt(0.5))
 
 
+def test_scene_grounded_goal_does_not_require_user_supplied_numbers(navigation):
+    from malbut_agent_server.safety import SafetyPolicy
+    from malbut_agent_server.schemas import AgentDecision, RobotState, SpeechAgentRequest
+    from malbut_agent_server.speech_mission_policy import SpeechMissionPolicy
+
+    missions, manager, _, _ = navigation
+    tool = 'request_navigation_point'
+    scene = {'map': missions.map_context(), 'image': {'available': True},
+             'pose': {'frame_id': 'map', 'x': 0.5, 'y': 0.5, 'yaw_deg': 45, 'age_s': 0.1}}
+    original = SpeechAgentRequest(
+        'scene-goal', 'speaker', 'conversation', 'turn', '사진 보고 거실 쪽으로 조금 가줘',
+        RobotState(), (tool,), scene_context=scene, navigation_locations=(),
+    )
+    # A model estimate, not an existing landmark or a number in the utterance.
+    # This exercises server acceptance, not the accuracy of live LLM inference.
+    arguments = {'map_revision': scene['map']['revision'], 'x': 0.8, 'y': 0.8, 'yaw_deg': 45}
+    decision = AgentDecision('tool_call', '', tool_name=tool, arguments=arguments)
+    assert SpeechMissionPolicy(SafetyPolicy(), (tool,)).evaluate(original, decision).allowed
+    proposal = missions.prepare(original.request_id, tool, arguments)
+    assert not proposal.blocked
+    missions.dispatch(proposal)
+    assert manager.submissions[0][0] == 'navigate_to_pose'
+    position = manager.submissions[0][1]['pose']['pose']['position']
+    assert (position['x'], position['y']) == (0.8, 0.8)
+
+
 def test_waypoints_one_goal_ordered_and_cancelled_as_one_mission(navigation):
     missions, manager, _, _ = navigation
     args = {'map_revision': missions.map_context()['revision'], 'waypoints': [

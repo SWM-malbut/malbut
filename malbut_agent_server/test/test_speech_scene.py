@@ -112,6 +112,39 @@ def test_provider_attaches_exactly_one_image_without_counting_base64_as_text():
     assert json.loads(content[0]['text'].split('\n', 1)[1])['scene_context_untrusted']['image']['available']
 
 
+def test_actual_provider_prompt_allows_scene_grounded_motion_estimates():
+    from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, select_tool_specs
+
+    scene = {
+        'image': {'available': True},
+        'pose': {'frame_id': 'map', 'x': 0.5, 'y': 0.5, 'yaw_deg': 30, 'age_s': 0.1},
+        'map': {'revision': 'current-map', 'landmarks': [
+            {'location': '거실', 'x': 1.0, 'y': 2.0}]},
+    }
+    original = replace(
+        request(TurnImage(b'jpeg', lambda: True)), utterance='사진 보고 거실 쪽으로 조금 가줘',
+        available_tools=SPEECH_MISSION_TOOLS, scene_context=scene, navigation_locations=(),
+    )
+    payload = OpenAIResponsesProvider('offline-key', 'offline-model').build_payload(
+        original, [], [], select_tool_specs(SPEECH_MISSION_TOOLS))
+    instructions = payload['instructions']
+    assert '이동 방향·회전각·이동거리·지도 목표·경유점을 판단한다' in instructions
+    assert '사용자가 수치를 지정하면 따르고, 지정하지 않았어도' in instructions
+    assert '지도 목표는 제공된 현재 위치·방향과 장소 좌표를 기준으로 선택하거나 계산할 수 있다' in instructions
+    assert '사소한 불확실성만으로 매번 수치를 되묻지 않는다' in instructions
+    assert '후방이 안전하다고 단정하지 않는다' in instructions
+    assert '별도 좌표·회전·후진 도구의 장면 기반 판단을 금지하지 않습니다' in instructions
+    assert '사진만 보고 이동 목표를 만들지 않는다' not in instructions
+    descriptions = {tool['name']: tool['description'] for tool in payload['tools']}
+    assert 'otherwise choose an appropriate' in descriptions['request_rotation']
+    assert 'otherwise choose a modest distance' in descriptions['request_backup']
+    assert 'choose or calculate an approximate goal' in descriptions['request_navigation_point']
+    assert 'chosen using the current pose' in descriptions['request_waypoints']
+    data = json.loads(payload['input'][0]['content'][0]['text'].split('\n', 1)[1])
+    assert data['scene_context_untrusted'] == scene
+    assert data['navigation_context']['locations'] == []
+
+
 def test_no_image_after_revocation_or_in_background_memory_requests():
     permission = [True]
     original = request(TurnImage(b'jpeg', lambda: permission[0]))

@@ -16,26 +16,30 @@ POINT_SCHEMA = {
 NAV2_TOOL_DEFINITIONS = {
     'request_rotation': (
         'Request one relative in-place rotation through Manager and Nav2 Spin. '
-        'Use direction left/right and a positive angle_deg from the current request; '
-        'one full turn is 360 degrees. Never infer a precise angle from RGB alone. '
+        'Use direction left/right and a positive angle_deg; one full turn is 360 degrees. '
+        'Use the requested angle when specified; otherwise choose an appropriate '
+        'approximate angle from the current request, RGB scene and robot/map context. '
         'Speed and timeout are server-owned. This is not navigation to a map heading.',
         {'direction': {'type': 'string', 'enum': ['left', 'right']},
          'angle_deg': {'type': 'number', 'minimum': 1, 'maximum': 360}},
     ),
     'request_backup': (
         'Request straight backward motion through Manager and Nav2 BackUp. '
-        'distance_m is the explicitly requested distance, between 0.05 and 1 metre. '
-        'Ask for a distance when none is specified. A front RGB image cannot prove '
-        'rear clearance; do not claim it can. Speed and timeout are server-owned.',
+        'distance_m is between 0.05 and 1 metre. Use the requested distance when specified; '
+        'otherwise choose a modest distance from the current request and scene context. '
+        'A front RGB image does not establish rear clearance, so keep estimates conservative. '
+        'Speed and timeout are server-owned.',
         {'distance_m': {'type': 'number', 'minimum': 0.05, 'maximum': 1}},
     ),
     'request_navigation_point': (
-        'Request one explicitly specified map-frame point through Manager NavigateToPose. '
+        'Request one map-frame point through Manager NavigateToPose. '
         'Use map_revision from the current scene context, x/y in metres and optional '
-        'yaw_deg (null uses the configured zero map heading). Coordinates must come '
-        'from the current user request or supplied map landmarks, never from guessed '
-        'RGB depth or image pixels. Map bounds do not describe free space or paths. '
-        'Use named navigation for a named room.',
+        'yaw_deg (null uses the configured zero map heading). Use explicit coordinates '
+        'when supplied; otherwise choose or calculate an approximate goal using the '
+        'current pose, registered landmark coordinates and RGB cues together. '
+        'Ground map goals in the supplied map coordinates, not image pixels as metres. '
+        'Map bounds alone do not describe free space or paths. '
+        'Use named navigation when going to a registered room itself.',
         {'map_revision': {'type': 'string', 'maxLength': 128},
          'x': {'type': 'number', 'minimum': -10000, 'maximum': 10000},
          'y': {'type': 'number', 'minimum': -10000, 'maximum': 10000},
@@ -45,7 +49,9 @@ NAV2_TOOL_DEFINITIONS = {
         'Visit an ordered list in ONE Manager mission using existing Nav2 FollowWaypoints. '
         'Copy map_revision from the current scene context. For each waypoint use either '
         'an exact registered location with x/y/yaw_deg null, OR location null with '
-        'explicit map x/y and optional yaw_deg. Do not guess map points from RGB. '
+        'map x/y and optional yaw_deg. Coordinates may be specified by the user or '
+        'chosen using the current pose, landmark coordinates and RGB cues together. '
+        'Use reasonable approximate goals grounded in the supplied map coordinates. '
         'This tool is one action even when several places are requested. '
         'One traversal only, stop on the first failed waypoint; no loops or hidden tasks.',
         {'map_revision': {'type': 'string', 'maxLength': 128},
