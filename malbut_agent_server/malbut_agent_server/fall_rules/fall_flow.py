@@ -7,7 +7,7 @@ time, late after waiting, or again after a close:
 
   1. a fall suspicion is seen; Cloud's first filter drops what is clearly not a
      person, only an image, or ordinary (twice), and one incident is one
-     person's one fall;
+     person's one fall (who is who: person_tracker.py, SWM25-267);
   2. the robot stops 1 m from the spot on the side it was first seen from and
      compares the first sight with what it sees on arrival (gone: look again
      from where it was first seen, then ask Cloud what left);
@@ -28,19 +28,15 @@ robot gets to work on a round, pause while it waits, end at the judgment.
 Decisions: ~/fall-refactor-plan-20261017.md, ~/fall-refactor-design-20261017.md.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
-# One person's one fall (design 3): the same person by a track seen again within
-# seconds, then by map place, then by screen box while the camera stayed still;
-# unknown attaches.
-SAME_PLACE_M = 1.0
-SAME_BOX_IOU = 0.3
-# A YOLO track is handed to someone else after an occlusion (10-17 21:50, 95bd kept
-# 사람2 in 사람1's incident for half an hour): it names the person only this soon after.
-TRACK_KEEP_S = 10.0
+from .person_tracker import (
+    FORGET_S, REAPPEAR_M, SHORT_GONE_S, Observation, PersonTracker,
+)
+
 STANDOFF_M = 1.0
 VIEW_MAX_M = 3.0
 # A drop needs a second filter look a few seconds later (design 4).
@@ -52,10 +48,12 @@ POSTURE_AGAIN_S = 2.5
 # the start; it stops trying after ten minutes of waiting in all.
 WAIT_ALERT_S = 60.0
 WAIT_LIMIT_S = 600.0
-# After a close (design 8): forget someone unseen for 30 minutes; recheck
-# someone closed on the floor every 30 minutes (decision G).
-FORGET_S = 1800.0
+# After a close (design 8): forget someone unseen for 30 minutes (FORGET_S, the same
+# as the person tracking); recheck someone closed on the floor every 30 minutes (G).
 RECHECK_S = 1800.0
+# One alert per place and level (decision 6, mockup 55 ③): the same level from the same
+# place (1 m) within 10 minutes is noted on the incident that sent it instead.
+GROUP_S, GROUP_M = 600.0, 1.0
 
 FLOOR, OFF_FLOOR = 'floor', 'off_floor'
 POSTURE_PLACE = {'floor': FLOOR, 'floor_active': FLOOR, 'unclear': FLOOR,
@@ -92,11 +90,12 @@ NOTICES = {
 
 @dataclass(frozen=True)
 class Sighting:
-    """What the VLM saw. ``kind``: low, lying, motion (a fall motion), cloud (a
-    Cloud crosscheck finding, already filtered), up (stood up) or seen (still there).
+    """A suspicion the VLM saw. ``kind``: low, lying, motion (a fall motion) or cloud
+    (a Cloud crosscheck finding, already filtered).
 
     ``robot`` is where the robot saw it from; ``view`` changes whenever the
-    robot moves, so boxes compare only within one view.
+    robot moves, so boxes compare only within one view. ``person`` and
+    ``uncertain`` come from the person tracking when the rules take it in.
     """
 
     sighting_id: str
@@ -110,80 +109,22 @@ class Sighting:
     on_floor: Optional[bool] = None
     photo: Optional[str] = None
     fall_moment: Optional[str] = None
+    person: Optional[str] = None
+    uncertain: bool = False
 
     @property
     def fall_seen(self):
         return self.kind == 'motion' or self.fall_moment is not None
-
-    @property
-    def suspicion(self):
-        return self.kind in ('low', 'lying', 'motion', 'cloud')
-
-
-@dataclass
-class Body:
-    """Who a check, a filter or a memory is about, kept up to date by sightings."""
-
-    tracks: dict = field(default_factory=dict)   # track -> when last seen as this person
-    point: Optional[Tuple[float, float]] = None
-    box: Optional[Tuple[float, float, float, float]] = None
-    view: Optional[int] = None
-    last_seen: float = 0.0
-
-    def __post_init__(self):
-        if not isinstance(self.tracks, dict):
-            self.tracks = {track: self.last_seen for track in self.tracks}
-
-    @classmethod
-    def of(cls, s):
-        return cls({s.track: s.at} if s.track else {}, s.point, s.box, s.view, s.at)
-
-    def follows(self, s):
-        """The same track seen again without a break: still this person."""
-        return bool(s.track) and s.at - self.tracks.get(s.track, -math.inf) <= TRACK_KEEP_S
-
-    def update(self, s, *, move=True):
-        """``move``: a suspicion may move the place and box; a plain sighting only keeps
-        the track alive (4-4 replay, bed 10-10 20:43)."""
-        self.last_seen = max(self.last_seen, s.at)
-        if not self.follows(s):
-            # Matched by place or box only: who this is never moves to another person
-            # (10-17: one wrong join moved the box to 사람2, and the rest followed).
-            return
-        self.tracks = {t: at for t, at in self.tracks.items() if s.at - at <= TRACK_KEEP_S}
-        self.tracks[s.track] = s.at
-        if move:
-            self.point = s.point or self.point
-            if s.box:
-                self.box, self.view = s.box, s.view
-
-
-def _iou(a, b):
-    width = min(a[2], b[2]) - max(a[0], b[0])
-    height = min(a[3], b[3]) - max(a[1], b[1])
-    if width <= 0 or height <= 0:
-        return 0.0
-    inter = width * height
-    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
-
-
-def same_person(body, s):
-    """True, False, or None when it cannot be told (design 3)."""
-    if body.follows(s):
-        return True
-    if s.point and body.point:
-        return math.dist(s.point, body.point) <= SAME_PLACE_M
-    if s.box and body.box and s.view is not None and s.view == body.view:
-        return _iou(s.box, body.box) >= SAME_BOX_IOU
-    return None
 
 
 @dataclass
 class Incident:
     incident_id: str
     first: Sighting
-    body: Body
+    person: Optional[str]        # None after a restart until someone is seen at its place
     opened_at: float
+    place: Optional[Tuple[float, float]] = None   # where to go: the person's last certain place
+    uncertain: bool = False      # opened while who is who was uncertain (decision 4)
     fall_moments: List[str] = field(default_factory=list)
     state: str = 'open'          # open, closed
     step: str = 'queued'         # see FallFlow.status()
@@ -219,7 +160,7 @@ class Incident:
 @dataclass
 class Candidate:
     sighting: Sighting
-    body: Body
+    person: str
     drops: List[str] = field(default_factory=list)
     next_look_at: Optional[float] = None
     look_id: Optional[str] = None
@@ -227,9 +168,9 @@ class Candidate:
 
 @dataclass
 class Memory:
-    """Someone checked or filtered as not a fall, or a filtered object (track only)."""
+    """Someone checked or filtered as not a fall, or a filtered object (while seen)."""
 
-    body: Body
+    person: str
     kind: str                     # person or object
     place: Optional[str] = None   # floor or off_floor, for a person
     since: float = 0.0
@@ -239,8 +180,12 @@ class Memory:
 
 
 class FallFlow:
-    def __init__(self):
+    def __init__(self, tracker=None):
         self.commands = []
+        self.tracker = tracker or PersonTracker()
+        self.now = 0.0
+        # Alerts sent lately: (when, level, place, incident) for grouping (decision 6).
+        self.sent: List[tuple] = []
         self.incidents: Dict[str, Incident] = {}
         self.candidates: Dict[str, Candidate] = {}
         self.memory: List[Memory] = []
@@ -262,47 +207,68 @@ class FallFlow:
         step = 'wait' if incident.waiting_since is not None else incident.step
         return dict(active=True, incident_id=incident.incident_id, step=step,
                     purpose=incident.purpose, waiting_for=incident.waiting_for,
-                    alerted=incident.wait_alerted, target=incident.body.point,
+                    alerted=incident.wait_alerted, target=self._target(incident),
                     check_round=incident.check_round)
 
     # ------------------------------------------------------------ inputs: VLM
 
+    def people(self, frame, now):
+        """A pose frame (VLM ``fall_people``): who is who, then what follows from it."""
+        self.now = now  # For the alert grouping (10 minutes).
+        result = self.tracker.update(frame)
+        if result.changed:  # For the people boxes on the incident's video.
+            self.commands.append(dict(kind='people', at=frame.at, tracks=dict(result.changed)))
+        for person in result.stood_up:
+            memory = next((m for m in self.memory if m.person == person
+                           and m.kind == 'person'), None)
+            if memory is not None and not self.tracker.uncertain(person):
+                self._recheck(memory, 'stood_up', now)
+        for incident in list(self.incidents.values()):
+            if incident.state == 'open' and incident.person is None and incident.place:
+                # After a restart: the first one seen for sure at its place (decision 5).
+                here = [p for p in self.tracker.people.values() if p.last_seen == frame.at
+                        and p.point and math.dist(p.point, incident.place) <= REAPPEAR_M
+                        and not self.tracker.uncertain(p.person_id)]
+                if here:
+                    self._bind(incident, here[0].person_id)
+
     def sighted(self, s, now):
-        """A suspicion or a sighting of someone watched after a close."""
+        """A suspicion: whose it is, then that person's incident, filter or memory."""
+        self.now = now  # For the alert grouping (10 minutes).
+        person, uncertain = self.tracker.assign(Observation(s.track, s.box, s.point), s.at, s.view)
+        s = replace(s, person=person, uncertain=uncertain)
         checking = self.incidents.get(self.active)
-        if s.fall_seen and checking is not None and same_person(checking.body, s) is not False:
+        if (s.fall_seen and checking is not None and checking.person == person
+                and not uncertain):
             self._attach(checking, s)  # A fall while being checked joins that check.
             return
-        open_incident = None if s.fall_seen else self._open_match(s, strict=not s.suspicion)
+        open_incident = None if s.fall_seen else self._open_match(s)
         if open_incident is not None:
             self._attach(open_incident, s)
-            if open_incident.idle == 'nobody' and s.suspicion:
+            if open_incident.idle == 'nobody':
                 self._restart(open_incident, 'again', now)  # Someone there now (design 3).
             return
-        if s.suspicion and self._candidate_match(s):
+        if self._candidate_match(s):
             return  # Already waiting for Cloud's first filter.
         memory = self._memory_match(s)
         if memory is not None and s.fall_seen:
             self.memory.remove(memory)  # A new fall: start afresh (design 3).
         elif memory is not None:
-            memory.body.update(s)
-            if memory.due and s.suspicion:
+            if memory.due:
                 # 30 minutes on, filtered again with what is seen now (2026-10-18: a copy
                 # of the old sighting kept 30-minute-old data and an id the VLM never saw).
                 self.memory.remove(memory)
                 self._candidate(s, now)
-            elif s.kind == 'up' and memory.kind == 'person':
-                self._recheck(memory, 'stood_up', now)
             elif (memory.kind == 'person' and memory.place == OFF_FLOOR
                   and s.kind in ('lying', 'cloud')):
                 self.memory.remove(memory)  # Closed off the floor, now down (decision F).
                 self._candidate(s, now)
             return
-        if s.suspicion:
-            self._candidate(s, now)
+        self._candidate(s, now)
 
     def filter_answered(self, sighting_id, verdict, now, *, look_id=None, reason=None):
         """Cloud's first filter: suspect, not_person, reflection, ordinary, failed or guard."""
+        self.now = now  # For the alert grouping (10 minutes).
         candidate = self.candidates.get(sighting_id)
         if candidate is None or (look_id is not None and look_id != candidate.look_id):
             return
@@ -315,17 +281,17 @@ class FallFlow:
             self._record('candidate_dropped', None, verdict, sighting_id=sighting_id)
             if verdict == 'ordinary':
                 place = OFF_FLOOR if candidate.sighting.on_floor is False else FLOOR
-                self.memory.append(Memory(candidate.body, 'person', place, now))
-            elif candidate.sighting.track:
-                self.memory.append(Memory(Body({candidate.sighting.track}, last_seen=now),
-                                          'object', since=now))
+                self.memory.append(Memory(candidate.person, 'person', place, now))
+            else:
+                self.memory.append(Memory(candidate.person, 'object', since=now))
             return
         del self.candidates[sighting_id]
-        self._open(candidate.sighting, candidate.body, now, guard=verdict == 'guard',
+        self._open(candidate.sighting, now, guard=verdict == 'guard',
                    look_id=look_id if verdict == 'suspect' else None, guard_reason=reason)
 
     def arrival_answered(self, incident_id, verdict, now, *, look_id=None, reason=None):
         """First sight vs arrival (design 6)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'compare', look_id)
         if incident is None:
             return
@@ -365,6 +331,7 @@ class FallFlow:
 
     def departure_answered(self, incident_id, verdict, now, *, look_id=None, reason=None):
         """What left the spot, from the frames between first sight and arrival."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'departure', look_id)
         if incident is None:
             return
@@ -383,6 +350,7 @@ class FallFlow:
 
     def posture_answered(self, incident_id, verdict, earlier, now, *, look_id=None, reason=None):
         """Where the body rests now, and (fall seen) whether the earlier moment was a fall."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self._current(incident_id, 'posture', look_id)
         if incident is None:
             return
@@ -417,6 +385,7 @@ class FallFlow:
     # ------------------------------------------------------------ inputs: the link
 
     def drive_done(self, incident_id, purpose, outcome, now):
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if purpose == 'return':
             # The way back after a close without a question; the check is already over.
@@ -455,6 +424,7 @@ class FallFlow:
         ``assessment``: the Agent's situation (confirmed_incident, resolved, unknown);
         ``reason``: why it failed (speech_unavailable, question_error, time_limit).
         """
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None or incident_id != self.active or incident.step != 'ask':
             return
@@ -487,6 +457,7 @@ class FallFlow:
 
     def blocked(self, incident_id, reason, now):
         """The Manager refused or interrupted the step; the link sends it again."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None or incident_id != self.active:
             return
@@ -501,12 +472,14 @@ class FallFlow:
 
     def resumed(self, incident_id, now):
         """The Manager took the step: the waiting (if any) is over."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is not None and incident_id == self.active:
             self._resume(incident, now)
 
     def voice(self, kind, now):
         """"도와줘" or "그만" heard during a check (2026-10-13)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(self.active)
         if incident is None:
             return
@@ -522,6 +495,7 @@ class FallFlow:
 
     def guardian_closed(self, incident_id, now):
         """처리 완료: stop, and never check this incident again (목업 31번)."""
+        self.now = now  # For the alert grouping (10 minutes).
         incident = self.incidents.get(incident_id)
         if incident is None:
             return
@@ -537,6 +511,7 @@ class FallFlow:
         self._close(incident, 'guardian_closed', now, memory=None, quiet=True)
 
     def tick(self, now):
+        self.now = now  # For the alert grouping (10 minutes).
         for candidate in list(self.candidates.values()):
             if candidate.next_look_at is not None and now >= candidate.next_look_at:
                 candidate.next_look_at = None
@@ -564,14 +539,21 @@ class FallFlow:
                     self._enqueue(incident, 'revisit')
                     self._next(now)
         for memory in list(self.memory):
-            if now - memory.body.last_seen >= FORGET_S and now - memory.since >= FORGET_S:
+            person = self.tracker.people.get(memory.person)
+            if person is None or now - person.last_seen >= FORGET_S:
                 self.memory.remove(memory)  # Unseen for 30 minutes: start afresh next time.
+            elif memory.kind == 'object' and (now - person.last_seen > SHORT_GONE_S
+                                              or self.tracker.uncertain(memory.person)):
+                # An object only while it stays in view and sure (10-17 design 8): someone
+                # who later lies down there must not inherit it.
+                self.memory.remove(memory)
             elif (memory.kind == 'person' and memory.place == FLOOR and not memory.due
                   and now - memory.since >= RECHECK_S):
                 self._recheck(memory, 'recheck', now)
 
     def restore(self, incidents, now):
         """After a restart: every open incident is checked again from the start."""
+        self.now = now  # For the alert grouping (10 minutes).
         for incident in incidents:
             if incident.state != 'open' or incident.incident_id in self.incidents:
                 continue
@@ -585,9 +567,9 @@ class FallFlow:
 
     def _candidate(self, s, now):
         if s.kind == 'cloud':  # Cloud's crosscheck already asked the same questions.
-            self._open(s, Body.of(s), now)
+            self._open(s, now)
             return
-        candidate = Candidate(s, Body.of(s))
+        candidate = Candidate(s, s.person)
         self.candidates[s.sighting_id] = candidate
         self._filter_look(candidate)
 
@@ -599,13 +581,15 @@ class FallFlow:
                                   sighting_id=s.sighting_id, photo=s.photo, box=s.box,
                                   track=s.track, ordinary_drops=not s.fall_seen))
 
-    def _open(self, s, body, now, *, guard=False, look_id=None, guard_reason=None):
-        incident = Incident(str(uuid4()), s, body, now)
+    def _open(self, s, now, *, guard=False, look_id=None, guard_reason=None):
+        incident = Incident(str(uuid4()), s, s.person, now, place=s.point,
+                            uncertain=s.uncertain)
         if s.fall_moment:
             incident.fall_moments.append(s.fall_moment)
         self.incidents[incident.incident_id] = incident
         self._record('incident_opened', incident, OPEN_REASON.get(s.kind),
                      sighting_id=s.sighting_id)
+        self._bind(incident, s.person)
         if look_id is not None or s.kind == 'cloud':
             # The filter's explanation, or for a Cloud find its periodic look's.
             self._record('analysis_completed', incident, None, look_id=look_id or s.sighting_id)
@@ -635,14 +619,27 @@ class FallFlow:
             incident.looks = []
             self._approach(incident)
 
+    def _target(self, incident):
+        """Where the incident's person is now, or their last certain place."""
+        person = self.tracker.people.get(incident.person) if incident.person else None
+        if (person is not None and person.point is not None
+                and not self.tracker.uncertain(incident.person)):
+            incident.place = person.point
+        return incident.place
+
+    def _bind(self, incident, person):
+        """Whose incident it is, also for the yellow box on its video (decision 2)."""
+        incident.person = person
+        self.commands.append(dict(kind='people', incidents={incident.incident_id: person}))
+
     def _approach(self, incident):
-        if incident.body.point is None:
+        if self._target(incident) is None:
             self._posture(incident, None)  # No map place: look and ask from here.
             return
         if incident.purpose != 'revisit':  # Going back after waiting is revisit_started.
             self._record('approach_started', incident, None)
         incident.step = 'approach'
-        self._command('drive', incident, purpose='approach', target=incident.body.point,
+        self._command('drive', incident, purpose='approach', target=self._target(incident),
                       from_point=incident.first.robot, standoff=STANDOFF_M)
 
     def _look(self, incident, what, **fields):
@@ -656,21 +653,20 @@ class FallFlow:
 
     def _reverify(self, incident):
         incident.reverified = True
-        origin = incident.first.robot
-        if origin is None or incident.body.point is None:
+        origin, target = incident.first.robot, self._target(incident)
+        if origin is None or target is None:
             self._idle(incident, 'nobody', 'could_not_compare', None)
             return
         incident.step = 'reverify'
-        self._command('drive', incident, purpose='reverify', target=incident.body.point,
-                      from_point=origin,
-                      standoff=max(STANDOFF_M, math.dist(origin, incident.body.point)))
+        self._command('drive', incident, purpose='reverify', target=target,
+                      from_point=origin, standoff=max(STANDOFF_M, math.dist(origin, target)))
 
     def _view(self, incident):
         incident.step = 'view'
-        if incident.body.point is None:
+        if self._target(incident) is None:
             self._posture(incident, None)
             return
-        self._command('drive', incident, purpose='view', target=incident.body.point,
+        self._command('drive', incident, purpose='view', target=self._target(incident),
                       standoff=VIEW_MAX_M)
 
     def _to_view_or_posture(self, incident, at_view, now):
@@ -702,10 +698,10 @@ class FallFlow:
 
     def _closer(self, incident):
         incident.step = 'closer'
-        if incident.body.point is None:
+        if self._target(incident) is None:
             self._ask(incident)
             return
-        self._command('drive', incident, purpose='closer', target=incident.body.point,
+        self._command('drive', incident, purpose='closer', target=self._target(incident),
                       standoff=STANDOFF_M)
 
     def _ask(self, incident):
@@ -735,10 +731,11 @@ class FallFlow:
         if memory == 'person':
             place = POSTURE_PLACE.get(incident.posture, FLOOR)
             self._forget(incident.incident_id)
-            self.memory.append(Memory(incident.body, 'person', place, now, incident.incident_id))
-        elif memory == 'object' and incident.body.tracks:
-            self.memory.append(Memory(Body(set(incident.body.tracks), last_seen=now), 'object',
-                                      since=now))
+            if incident.person:
+                self.memory.append(Memory(incident.person, 'person', place, now,
+                                          incident.incident_id))
+        elif memory == 'object' and incident.person:
+            self.memory.append(Memory(incident.person, 'object', since=now))
         self._finish(incident, now, go_back=not incident.asked and not quiet,
                      why='not_a_person' if reason == 'not_a_person' else 'off_floor')
 
@@ -795,7 +792,6 @@ class FallFlow:
             return
         self.memory.remove(memory)
         incident.state = 'open'
-        incident.body = memory.body
         incident.asked = incident.keep_open = False
         self._restart(incident, purpose, now)
 
@@ -803,11 +799,10 @@ class FallFlow:
         self.memory = [m for m in self.memory if m.incident_id != incident_id]
 
     def _attach(self, incident, s):
-        # Only the same track seen again moves who this is (Body.update), and only a
-        # suspicion moves the place and box (4-4 replay bed 10-10 20:43, 10-17 21:50).
-        incident.body.update(s, move=s.suspicion)
-        if not s.suspicion:
-            return
+        if incident.person is None:
+            self._bind(incident, s.person)  # After a restart: seen at its place.
+        if s.point and not s.uncertain and s.person == incident.person:
+            incident.place = s.point
         if s.fall_moment and s.fall_moment not in incident.fall_moments:
             incident.fall_moments.append(s.fall_moment)
             del incident.fall_moments[1:-1]  # The first and the last fall (design 5).
@@ -815,36 +810,33 @@ class FallFlow:
         self.commands.append(dict(kind='link', sighting_id=s.sighting_id,
                                   incident_id=incident.incident_id))
 
-    def _open_match(self, s, *, strict):
-        unknown = None
-        for incident in self.incidents.values():
-            if incident.state != 'open':
-                continue
-            same = same_person(incident.body, s)
-            if same:
-                return incident
-            if same is None and (unknown is None
-                                 or incident.body.last_seen > unknown.body.last_seen):
-                unknown = incident
-        # A suspicion that cannot be told apart joins the open incident (decision A);
-        # a plain sighting never does, so it cannot lend its track to someone else.
-        return None if strict else unknown
+    def _open_match(self, s):
+        """That person's open incident (design decision 6). Uncertain who it is: only an
+        incident opened while uncertain, so another person is never missed (decision 4).
+        Nothing joins "the latest incident" any more (10-17 decision A, 사람2 at 21:50)."""
+        mine = [i for i in self.incidents.values()
+                if i.state == 'open' and i.person is not None and i.person == s.person]
+        if not s.uncertain:
+            sure = next((i for i in mine if not i.uncertain), None)
+            if sure is not None:
+                return sure
+        separate = next((i for i in mine if i.uncertain), None)
+        if separate is not None or s.uncertain or s.point is None:
+            return separate
+        # After a restart nobody is bound yet: a suspicion at its place is its person.
+        return next((i for i in self.incidents.values()
+                     if i.state == 'open' and i.person is None and i.place
+                     and math.dist(s.point, i.place) <= REAPPEAR_M), None)
 
     def _candidate_match(self, s):
-        for candidate in self.candidates.values():
-            if same_person(candidate.body, s):
-                candidate.body.update(s)
-                return candidate
-        return None
+        if s.uncertain:
+            return None  # Maybe someone else: filtered separately.
+        return next((c for c in self.candidates.values() if c.person == s.person), None)
 
     def _memory_match(self, s):
-        for memory in self.memory:
-            if memory.kind == 'object':
-                if s.track and s.track in memory.body.tracks:
-                    return memory  # Objects only by their track (design 8).
-            elif same_person(memory.body, s) is not False:
-                return memory
-        return None
+        if s.uncertain:
+            return None  # Maybe someone else: from the first filter.
+        return next((m for m in self.memory if m.person == s.person), None)
 
     def _current(self, incident_id, step, look_id=None):
         incident = self.incidents.get(incident_id)
@@ -895,7 +887,18 @@ class FallFlow:
 
     def _notify(self, incident, reason, *, state=None):
         level = NOTICES[reason]
+        place = self._target(incident)
+        self.sent = [n for n in self.sent if self.now - n[0] <= GROUP_S]
+        earlier = next((n for n in reversed(self.sent) if n[1] == level and place and n[2]
+                        and math.dist(place, n[2]) <= GROUP_M), None)
+        if earlier is not None:
+            # Not sent: "다시 확인함" on the incident that sent it, and on this one.
+            for target in dict.fromkeys((earlier[3], incident.incident_id)):
+                if target in self.incidents:
+                    self._record('notification_grouped', self.incidents[target], reason)
+            return
         if level == URGENT:
             incident.urgent_sent = True
+        self.sent.append((self.now, level, place, incident.incident_id))
         self._command('notify', incident, reason=reason, level=level,
                       **self._web(incident, state))

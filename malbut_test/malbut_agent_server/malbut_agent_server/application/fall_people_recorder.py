@@ -7,7 +7,9 @@ changes. Times are milliseconds from the segment start, so a wall clock step
 never moves a box inside its clip. Track keys are one-way hashes: they only let
 the web match the same person across linked incidents of one scene.
 Weak detector boxes (clothes, bedding) are left out unless they are the
-incident's own person.
+incident's own person. With the fall rules' person tracking (SWM25-267) a box is
+named by the person its YOLO track was at that moment, so one person stays one
+row across track changes and the yellow box follows the incident's person.
 """
 
 from collections import OrderedDict, deque
@@ -79,6 +81,8 @@ class FallPeopleRecorder:
         # Last sent revision per segment, kept after the samples are released so
         # a late change never re-sends a partial segment under an old revision.
         self._revisions = OrderedDict()
+        # YOLO track -> [(from when, person)], as the fall rules said (SWM25-267).
+        self._persons: "OrderedDict[str, list]" = OrderedDict()
 
     def observe(self, observed_at: float, people: Iterable[tuple]) -> None:
         """people: (subject key, box) or (subject key, box, strong)."""
@@ -114,6 +118,34 @@ class FallPeopleRecorder:
         for observed_at, frame in self._history:
             if start <= observed_at <= end and observed_at not in segment.frames:
                 self._add(segment, observed_at, frame)
+
+    def assign(self, subject_key: str, person: str, from_at: float) -> None:
+        """From ``from_at`` on, boxes of this track are this person."""
+        timestamp(from_at)
+        history = self._persons.setdefault(subject_key, [])
+        history.append((from_at, person))
+        history.sort(key=lambda item: item[0])
+        del history[:-16]
+        self._persons.move_to_end(subject_key)
+        while len(self._persons) > 1024:
+            self._persons.popitem(last=False)
+        # A segment already sent is not changed for a late word (design decision 7).
+
+    def retarget(self, incident_id: str, target: str) -> None:
+        """The incident's own person, once the fall rules named it (the yellow box)."""
+        for segment in self._segments.values():
+            if segment.incident_id == incident_id and segment.target != target:
+                segment.target, segment.dirty = target, True
+
+    def _who(self, subject_key: str, observed_at: float) -> str:
+        history = self._persons.get(subject_key)
+        if not history:
+            return subject_key  # No person tracking (fall_flow off): the YOLO track.
+        person = history[0][1]  # Before the first word: what the rules then said.
+        for from_at, named in history:
+            if from_at <= observed_at:
+                person = named
+        return person
 
     def cloud(self, incident_id: str, observed_at: float, box: Box) -> None:
         timestamp(observed_at)
@@ -174,11 +206,14 @@ class FallPeopleRecorder:
             return min(span, max(0, round((t - segment.start) * 1000)))
         tracks: Dict[str, list] = {}
         for observed_at in sorted(segment.frames):
-            for subject, box, strong in segment.frames[observed_at]:
-                if strong is False and subject != segment.target:
+            named = set()
+            for track, box, strong in segment.frames[observed_at]:
+                subject = self._who(track, observed_at)
+                if (strong is False and subject != segment.target) or subject in named:
                     continue
                 mille = _mille(box)
                 if mille is not None:
+                    named.add(subject)
                     tracks.setdefault(subject, []).append((ms(observed_at),) + mille)
         # Over the limit: keep the incident's own person, then the longest tracks.
         kept = sorted(tracks, key=lambda s: (s != segment.target, -len(tracks[s])))

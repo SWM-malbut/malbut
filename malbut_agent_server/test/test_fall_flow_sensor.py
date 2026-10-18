@@ -157,8 +157,9 @@ def web_accepts(payload):
     if kind == 'notification_requested':
         assert CONTRACT['notificationReasons'][reason] == payload['notificationLevel']
         assert payload['state'] != 'resolved'
-    if payload['state'] == 'resolved':
-        assert kind in ('incident_resolved', 'confirmation_completed', 'approach_returned')
+    if payload['state'] == 'resolved':  # A grouped alert may note an incident already closed.
+        assert kind in ('incident_resolved', 'confirmation_completed', 'approach_returned',
+                        'notification_grouped')
     assert payload['checkRound'] >= 1 and payload['evidenceRevision'] == payload['checkRound']
 
 
@@ -190,15 +191,33 @@ def test_a_fall_motion_keeps_its_moment_from_4_s_before_to_1_s_after(robot):
     assert 1 < len(frames) <= 12 and frames[-1].captured_at <= clock.value
 
 
-def test_people_in_view_are_reported_every_2_s_and_standing_up_at_once(robot):
+def test_people_in_view_and_standing_up_go_as_frames_not_sightings(robot):
+    """SWM25-267: the Agent's person tracking decides who stood up, from the frames."""
     sensor, clock, _, _ = robot
     for _ in range(5):
         poses(sensor, clock)
         clock.value += 0.5
-    seen = [m['sighting']['kind'] for m in messages(sensor, 'fall_sighting')]
-    assert seen == ['seen', 'seen']
     poses(sensor, clock, SubjectCheckState.CLEAR)
-    assert [m['sighting']['kind'] for m in messages(sensor, 'fall_sighting')] == ['up']
+    sent = messages(sensor)
+    assert not [m for m in sent if m['kind'] == 'fall_sighting']
+    assert [m['people'][0]['state'] for m in sent if m['kind'] == 'fall_people'][-2:] == [
+        'suspected', 'clear']
+
+
+def test_the_agents_person_numbers_name_the_people_boxes(robot):
+    sensor, clock, _, journal = robot
+    advance(sensor, clock, 4)
+    sensor._sight('low', clock.value, box=BOX, point=SPOT, photo=True)
+    sighting = messages(sensor, 'fall_sighting')[0]['sighting']
+    record(sensor, 'incident_opened', 'pose_sustained_low_posture',
+           sighting_id=sighting['sighting_id'])
+    sensor.apply(dict(action='people', incidents={'i1': 'r1:P1'}))
+    sensor.apply(dict(action='people', at=clock.value, tracks={'pose:1:a': 'r1:P1'}))
+    assert sensor._incident('i1').person == 'r1:P1'
+    assert sensor._people._who('pose:1:a', clock.value) == 'r1:P1'
+    assert sensor._people._segments[('i1', 0)].target == 'r1:P1'  # The yellow box.
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='people', tracks={'pose:1:a': 'r1:P1'}))  # No time.
 
 
 class NoDepth(Places):
@@ -381,6 +400,18 @@ def test_a_recheck_reopens_and_the_round_goes_on_the_record(robot):
     open_, = journal.open_flow_incidents()
     assert open_['check_round'] == 2
     assert stored(journal)[-1]['checkRound'] == 2
+
+
+def test_a_grouped_alert_is_written_as_the_web_takes_it(robot):
+    """SWM25-267: an alert not sent because one of the same level just went from there."""
+    sensor, _, _, journal = robot
+    record(sensor, 'incident_opened', 'cloud_crosscheck', sighting_id='unknown')
+    record(sensor, 'incident_resolved', 'response_completed', state='resolved', answer='okay')
+    record(sensor, 'notification_grouped', 'confirmation_help_required', state='resolved',
+           answer='okay')
+    grouped = stored(journal)[-1]
+    web_accepts(grouped)
+    assert (grouped['eventKind'], grouped['notificationLevel']) == ('notification_grouped', None)
 
 
 def test_a_dropped_candidate_stays_local(robot):
