@@ -7,9 +7,9 @@ import math
 import pytest
 
 from malbut_agent_server.fall_rules.fall_flow import (
-    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, TRACK_KEEP_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow,
-    Incident, Body, Sighting,
+    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow, Incident, Sighting,
 )
+from malbut_agent_server.fall_rules.person_tracker import SHORT_GONE_S, Frame, Observation
 
 SPOT = (3.0, 0.0)
 FROM = (0.0, 0.0)
@@ -40,6 +40,11 @@ class Robot:
         s = Sighting(f's{self._n}', self.now, kind, **fields)
         self.flow.sighted(s, self.now)
         return s, self.take()
+
+    def frame(self, *people, view=0):
+        """A pose frame from the VLM (``fall_people``): who is in view, numbers only."""
+        self.flow.people(Frame(self.now, view, tuple(people)), self.now)
+        return self.take()
 
     def filter(self, s, *verdicts):
         out = []
@@ -91,6 +96,10 @@ class Robot:
         self.drive('approach')
         self.arrival(compare)
         return self.drive('view')
+
+
+def person(track='t1', point=SPOT, box=None, state='unknown'):
+    return Observation(track, box, point, state)
 
 
 def kinds(commands, kind):
@@ -161,11 +170,16 @@ def test_case02_after_a_fall_up_again_is_closed_only_when_cloud_saw_a_controlled
     assert records(out, 'incident_resolved') == ['off_floor_verified']
 
 
-def test_case03_a_new_track_at_the_spot_is_filtered_again():
+def test_case03_an_object_is_remembered_while_in_view_and_filtered_again_once_out_of_it():
+    # SWM25-267 (design decision 6): an object by its person number while it stays in view;
+    # a new YOLO track for the same pile in view is still the pile.
     robot = Robot()
     s, _ = robot.see(track='pile-1')
     robot.filter(s, 'not_person', 'not_person')
-    _, out = robot.see(track='pile-2')  # The robot moved: same clothes, new track.
+    _, out = robot.see(track='pile-2')
+    assert not looks(out)
+    robot.wait(SHORT_GONE_S + 1)  # Out of view (the robot moved): forgotten.
+    _, out = robot.see(track='pile-3')
     assert looks(out, 'filter')
 
 
@@ -173,10 +187,9 @@ def test_case04_someone_resting_on_a_bed_is_filtered_and_not_checked_every_30_mi
     robot = Robot()
     s, _ = robot.see(track='t1', on_floor=False)
     robot.filter(s, 'ordinary', 'ordinary')
-    _, out = robot.see('seen', track='t1')
-    assert out == []
+    assert not looks(robot.frame(person('t1')))
     for _ in range(4):  # Stays in view for an hour: no recheck off the floor (decision G).
-        robot.see('seen', track='t1')
+        robot.frame(person('t1'))
         assert not looks(robot.wait(RECHECK_S / 2))
 
 
@@ -276,7 +289,7 @@ def test_case14_floor_activity_closes_and_is_checked_again_every_30_minutes():
     out = robot.posture(('floor_active', None), ('floor_active', None))
     assert records(out, 'incident_resolved') == ['floor_activity_verified']
     robot.wait(RECHECK_S - 60)
-    robot.see('seen', track='t1')  # Still in view (the VLM keeps reporting it).
+    robot.frame(person('t1'))  # Still in view (the VLM keeps reporting it).
     out = robot.wait(60)
     assert records(out, 'recheck_started') == ['floor_recheck'] and drives(out, 'approach')
 
@@ -331,7 +344,7 @@ def test_case17_okay_on_the_floor_is_checked_again_after_30_minutes():
     assert records(out, 'incident_resolved') == ['response_completed']
     assert not drives(out, 'return')
     robot.wait(RECHECK_S - 60)
-    robot.see('seen', track='t1')
+    robot.frame(person('t1'))
     out = robot.wait(60)
     assert records(out, 'recheck_started') == ['floor_recheck']
 
@@ -364,13 +377,12 @@ def test_case18_leaving_unseen_stays_open_and_tells_the_guardian():
 # ------------------------------------------------------------ design decisions
 
 
-def test_a_suspicion_that_cannot_be_told_apart_joins_the_open_incident():
+def test_a_suspicion_that_cannot_be_told_apart_is_checked_separately():
+    # SWM25-267 (decision 4): it no longer joins "the latest incident" (10-17 decision A).
     robot = Robot()
     robot.open(track='t1', point=None, box=(0.1, 0.1, 0.4, 0.8), view=1)
     _, out = robot.see(point=None, box=(0.6, 0.1, 0.9, 0.8), view=2)  # Robot moved, no place.
-    assert records(out, 'incident_opened') == [] and len(robot.flow.incidents) == 1
-    _, out = robot.see('seen', track='t9', point=None)
-    assert 't9' not in robot.only().body.tracks  # A plain sighting never joins.
+    assert looks(out, 'filter') and not kinds(out, 'link') and len(robot.flow.incidents) == 1
 
 
 def test_another_place_on_the_map_is_another_person():
@@ -437,7 +449,7 @@ def test_incidents_are_checked_one_at_a_time_in_order():
 def test_after_a_restart_open_incidents_are_checked_from_the_start():
     flow = FallFlow()
     s = Sighting('s1', 0.0, 'low', track='t1', point=SPOT, robot=FROM)
-    incident = Incident('i7', s, Body.of(s), 0.0, step='posture')
+    incident = Incident('i7', s, None, 0.0, place=SPOT, step='posture')
     flow.restore([incident], 5.0)
     out = flow.drain()
     assert flow.status()['incident_id'] == 'i7' and drives(out, 'approach')
@@ -631,7 +643,7 @@ def test_a_guardian_close_after_the_robot_closed_it_stops_rechecking():
     assert records(robot.take(), 'incident_resolved') == ['guardian_closed']
     robot.flow.guardian_closed(incident, robot.now)  # The web repeats the list.
     assert robot.take() == []
-    robot.see('seen', track='t1')
+    robot.frame(person('t1'))
     assert not records(robot.wait(RECHECK_S), 'recheck_started')  # 목업 31번.
 
 
@@ -645,8 +657,9 @@ def test_a_recheck_is_a_new_round_that_alerts_again():
     robot.posture(('floor', None))
     robot.drive('closer')
     robot.ask('okay')
+    robot.frame(person('t1'))  # In view while being asked.
     robot.wait(RECHECK_S - 60)
-    robot.see('seen', track='t1')
+    robot.frame(person('t1'))
     out = robot.wait(60)
     started = record(out, 'recheck_started')
     assert (started['reason'], started['check_round'], started['state']) == (
@@ -664,8 +677,7 @@ def test_a_suspicion_joining_an_incident_extends_its_clip():
     s, out = robot.see('lying', track='t1')
     assert kinds(out, 'link') == [
         dict(kind='link', sighting_id=s.sighting_id, incident_id=incident)]
-    _, out = robot.see('seen', track='t1')
-    assert out == []  # Plain sightings are not clip evidence.
+    assert not kinds(robot.frame(person('t1')), 'link')  # Being in view is not clip evidence.
 
 
 def test_someone_merely_in_view_does_not_move_the_incidents_place():
@@ -674,8 +686,8 @@ def test_someone_merely_in_view_does_not_move_the_incidents_place():
     robot = Robot()
     robot.open('cloud', point=(2.0, 1.2))
     robot.drive('approach')
-    robot.see('seen', track='t7', point=(1.3, 0.6))
-    assert robot.only().body.point == (2.0, 1.2) and 't7' not in robot.only().body.tracks
+    robot.frame(person('t7', (1.3, 0.6)))
+    assert robot.only().place == (2.0, 1.2)
     _, out = robot.see('cloud', point=(2.0, 1.2))
     assert records(out, 'incident_opened') == [] and len(robot.flow.incidents) == 1
 
@@ -700,37 +712,99 @@ def test_still_unsure_with_the_whole_body_goes_on_as_the_same_person():
 LEFT, RIGHT = (0.16, 0.24, 0.42, 0.49), (0.40, 0.0, 1.0, 0.56)  # 사람1 and 사람2 on screen
 
 
-def test_a_track_names_the_person_only_for_a_few_seconds():
+def test_a_track_seen_again_long_after_where_someone_else_is_is_not_trusted():
     robot = Robot()
     robot.open(track='t1', point=None, box=LEFT, view=1)
-    robot.wait(TRACK_KEEP_S + 1)
-    # The same number long after, where 사람2 is: no longer 사람1 by the number alone
-    # (before: any number the incident ever had meant 사람1).
+    robot.wait(11.0)
+    # The same number long after, where 사람2 is: maybe someone else, checked separately.
     _, out = robot.see(track='t1', point=None, box=RIGHT, view=1)
     assert looks(out, 'filter') and len(robot.flow.incidents) == 1
 
 
-def test_a_person_merely_in_view_keeps_the_track_alive_without_moving_the_box():
+def test_the_10_17_layout_is_two_incidents():
+    """사람1 under the table, then 사람2 on the floor beside the robot (ids-20261017)."""
     robot = Robot()
-    robot.open(track='t1', point=None, box=LEFT, view=1)
-    for _ in range(8):  # Seen every 2 s for 16 s, no new suspicion.
-        robot.wait(2.0)
-        robot.see('seen', track='t1', point=None, box=RIGHT, view=1)
-    assert robot.only().body.box == LEFT
-    _, out = robot.see(track='t1', point=None, box=LEFT, view=1)
-    assert kinds(out, 'link') and not looks(out, 'filter')
+    first = robot.open(track='a', point=None, box=LEFT, view=1)
+    robot.frame(person('a', None, LEFT), view=1)
+    robot.frame(person('a', None, LEFT), person('b', None, RIGHT), view=1)
+    s, out = robot.see(track='b', point=None, box=RIGHT, view=1)
+    assert looks(out, 'filter') and not kinds(out, 'link')
+    robot.filter(s, 'suspect')
+    assert len(robot.flow.incidents) == 2 and first in robot.flow.incidents
+    second = next(i for i in robot.flow.incidents.values() if i.incident_id != first)
+    assert second.person != robot.flow.incidents[first].person and not second.uncertain
 
 
-def test_a_wrong_join_by_box_never_moves_who_the_incident_is_about():
+def test_a_track_handed_to_someone_far_away_does_not_join_the_first_incident():
     robot = Robot()
-    robot.open(track='a', point=None, box=LEFT, view=1)
-    # 사람2 overlapping 사람1's box once (no track continuity): joins, but the body stays.
-    _, out = robot.see(track='b', point=None, box=(0.22, 0.24, 0.50, 0.50), view=1)
-    assert kinds(out, 'link') and robot.only().body.box == LEFT
-    assert 'b' not in robot.only().body.tracks
-    # 사람2 where they really are: not 사람1 (the old body moved there and kept joining).
-    _, out = robot.see(track='b', point=None, box=RIGHT, view=1)
-    assert looks(out, 'filter') and kinds(out, 'link') == []
+    robot.open(track='95bd', point=(3.0, 1.0))
+    robot.frame(person('95bd', (3.0, 1.0)))
+    robot.now += 0.2
+    _, out = robot.see(track='95bd', point=(0.6, 0.0))  # 10-17 21:50: YOLO gave it to 사람2.
+    assert looks(out, 'filter') and not kinds(out, 'link')
+
+
+def test_a_fall_while_two_are_too_close_is_checked_separately_once():
+    robot = Robot()
+    first = robot.open(track='a', point=(3.0, 1.0))
+    robot.frame(person('a', (3.0, 1.0)), person('b', (3.3, 1.0)))  # Too close: uncertain.
+    s, out = robot.see(track='b', point=(3.3, 1.0))
+    assert looks(out, 'filter') and not kinds(out, 'link')
+    robot.filter(s, 'suspect')
+    separate = next(i for i in robot.flow.incidents.values() if i.incident_id != first)
+    assert separate.uncertain
+    _, out = robot.see(track='b', point=(3.3, 1.0))
+    assert kinds(out, 'link') == [dict(kind='link', sighting_id=out[0]['sighting_id'],
+                                       incident_id=separate.incident_id)]
+    assert len(robot.flow.incidents) == 2  # One more, not one per suspicion.
+
+
+def test_someone_who_lies_down_next_to_a_filtered_object_is_not_taken_for_it():
+    robot = Robot()
+    s, _ = robot.see(track='bag', point=(3.0, 1.0))
+    robot.filter(s, 'not_person', 'not_person')
+    for step in range(10):  # Someone walks up to the bag.
+        robot.now += 0.2
+        robot.frame(person('bag', (3.0, 1.0)), person('walk', (3.0, 3.0 - step * 0.2)))
+    robot.wait(0.2)
+    _, out = robot.see(track='walk', point=(3.0, 1.2))
+    assert looks(out, 'filter')
+
+
+def test_standing_up_after_a_close_on_the_floor_checks_again():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected'))
+    robot.now += 0.2
+    out = robot.frame(person('t1', state='clear'))
+    assert records(out, 'recheck_started') == ['stood_up']
+
+
+def test_the_vlm_is_told_who_each_track_is_and_whose_each_incident_is():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    bound, = [c for c in robot.log if c['kind'] == 'people' and 'incidents' in c]
+    assert bound['incidents'] == {incident: robot.only().person}
+    both = (person('t1'), person('t2', (6.0, 0.0)))
+    tracks, = [c['tracks'] for c in robot.frame(*both) if c['kind'] == 'people']
+    assert tracks['t1'] == robot.only().person and tracks['t2'] != tracks['t1']
+    assert not kinds(robot.frame(*both), 'people')  # Only changes are told.
+
+
+def test_after_a_restart_an_incident_is_bound_to_who_is_at_its_place():
+    flow = FallFlow()
+    s = Sighting('s1', 0.0, 'low', track='old', point=SPOT, robot=FROM)
+    incident = Incident('i7', s, None, 0.0, place=SPOT)
+    flow.restore([incident], 5.0)
+    flow.drain()
+    flow.people(Frame(6.0, 0, (person('new', (3.2, 0.0)),)), 6.0)
+    out = flow.drain()
+    assert incident.person is not None
+    assert {'kind': 'people', 'incidents': {'i7': incident.person}} in out
 
 
 def test_a_person_filtered_on_the_floor_is_filtered_again_with_a_new_sighting():
@@ -744,7 +818,7 @@ def test_a_person_filtered_on_the_floor_is_filtered_again_with_a_new_sighting():
     look, = looks(out, 'filter')
     assert look['sighting_id'] == fresh.sighting_id and '+' not in look['sighting_id']
     robot.filter(fresh, 'suspect')
-    assert robot.only().first == fresh and drives(robot.log, 'approach')
+    assert robot.only().first.sighting_id == fresh.sighting_id and drives(robot.log, 'approach')
 
 
 # ------------------------------------------------------------ the check's video (SWM25-268)
@@ -797,7 +871,7 @@ def test_a_later_round_has_its_own_video():
     robot.drive('closer')
     robot.ask('okay')
     robot.wait(RECHECK_S - 60)
-    robot.see('seen', track='t1')
+    robot.frame(person('t1'))
     robot.wait(60)
     assert robot.active() == incident
     robot.flow.resumed(incident, robot.now)

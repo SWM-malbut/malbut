@@ -121,3 +121,12 @@ def test_malformed_messages_cannot_create_partial_questions():
     with pytest.raises(ValueError):
         adapter.candidates('{"schemaVersion":1,"schemaVersion":1}',
                            source_now=1000, now=clock())
+
+
+def test_with_the_fall_rules_person_tracking_tracks_go_out_as_yolo_gave_them():
+    """SWM25-267: no alias repair here; the Agent decides who is the same person."""
+    monitor, _, _ = make()
+    adapter = FallDetectorInput(monitor, max_source_age_s=2, pose_aliases=False)
+    assert adapter._pose_aliases.key('p2') == 'p2'
+    frame = object()
+    assert adapter._pose_aliases.observe(frame, stationary=True) is frame

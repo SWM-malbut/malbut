@@ -262,3 +262,30 @@ def test_worker_sends_boxes_after_the_clip_and_only_with_the_clip_flag(tmp_path,
     for _ in range(2):
         assert worker.main(args + ['--upload-clips']) == 0
     assert calls == ['clip', 'people']
+
+
+def test_with_person_numbers_one_person_is_one_row_across_track_changes():
+    """SWM25-267: the fall rules say who each YOLO track is; the yellow box follows them."""
+    rec = recorder()
+    rec.assign('pose:0:a', 'r1:P1', 100.0)
+    rec.assign('pose:0:x', 'r1:P2', 100.0)
+    feed(rec, 100.0, 101.0, (('pose:0:a', TARGET), ('pose:0:x', OTHER)))
+    rec.assign('pose:0:b', 'r1:P1', 101.2)  # YOLO gave the same person a new track.
+    feed(rec, 101.2, 102.0, (('pose:0:b', TARGET), ('pose:0:x', OTHER)))
+    rec.segment('incident-1', 'r1:P1', 0, 100.0, 102.0)
+    (people,) = rec.due(110.0)
+    target, other = people.tracks
+    assert target.target and len(target.samples) == 11 and not other.target
+    rec.retarget('incident-1', 'r1:P2')  # A restarted Agent bound it to someone else.
+    (again,) = rec.due(120.0)
+    assert {t.key: t.target for t in again.tracks} == {
+        rec._key('r1:P1'): False, rec._key('r1:P2'): True}
+
+
+def test_without_person_numbers_tracks_are_rows_as_before():
+    rec = recorder()
+    rec.assign('pose:0:z', 'r1:P9', 100.0)  # Another track only.
+    feed(rec, 100.0, 101.0)
+    rec.segment('incident-1', 'pose:0:a', 0, 100.0, 101.0)
+    (people,) = rec.due(110.0)
+    assert people.tracks[0].target

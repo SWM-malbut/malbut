@@ -190,15 +190,33 @@ def test_a_fall_motion_keeps_its_moment_from_4_s_before_to_1_s_after(robot):
     assert 1 < len(frames) <= 12 and frames[-1].captured_at <= clock.value
 
 
-def test_people_in_view_are_reported_every_2_s_and_standing_up_at_once(robot):
+def test_people_in_view_and_standing_up_go_as_frames_not_sightings(robot):
+    """SWM25-267: the Agent's person tracking decides who stood up, from the frames."""
     sensor, clock, _, _ = robot
     for _ in range(5):
         poses(sensor, clock)
         clock.value += 0.5
-    seen = [m['sighting']['kind'] for m in messages(sensor, 'fall_sighting')]
-    assert seen == ['seen', 'seen']
     poses(sensor, clock, SubjectCheckState.CLEAR)
-    assert [m['sighting']['kind'] for m in messages(sensor, 'fall_sighting')] == ['up']
+    sent = messages(sensor)
+    assert not [m for m in sent if m['kind'] == 'fall_sighting']
+    assert [m['people'][0]['state'] for m in sent if m['kind'] == 'fall_people'][-2:] == [
+        'suspected', 'clear']
+
+
+def test_the_agents_person_numbers_name_the_people_boxes(robot):
+    sensor, clock, _, journal = robot
+    advance(sensor, clock, 4)
+    sensor._sight('low', clock.value, box=BOX, point=SPOT, photo=True)
+    sighting = messages(sensor, 'fall_sighting')[0]['sighting']
+    record(sensor, 'incident_opened', 'pose_sustained_low_posture',
+           sighting_id=sighting['sighting_id'])
+    sensor.apply(dict(action='people', incidents={'i1': 'r1:P1'}))
+    sensor.apply(dict(action='people', at=clock.value, tracks={'pose:1:a': 'r1:P1'}))
+    assert sensor._incident('i1').person == 'r1:P1'
+    assert sensor._people._who('pose:1:a', clock.value) == 'r1:P1'
+    assert sensor._people._segments[('i1', 0)].target == 'r1:P1'  # The yellow box.
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='people', tracks={'pose:1:a': 'r1:P1'}))  # No time.
 
 
 class NoDepth(Places):

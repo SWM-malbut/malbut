@@ -2,8 +2,7 @@
 
 With Bringup ``fall_flow`` on, this replaces CloudFallMonitor's judgment. It tells
 the Agent's fall rules (fall_rules/fall_flow.py) what it sees, as sightings:
-YOLO-Pose candidates, Cloud's periodic finds, someone standing up, and every
-two seconds each person still in view. It runs the Cloud looks the rules ask
+YOLO-Pose candidates and Cloud's periodic finds. It runs the Cloud looks the rules ask
 for (first filter, arrival comparison, what left, posture) and writes their
 records and notifications in the journal for the web, as they say. It keeps the
 photos those looks need, in memory only: the first sight of each suspicion, the
@@ -35,7 +34,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     ArrivalCheckRequest, CandidateKind, CloudAnalysisExplanation, CloudFallReply,
     CloudFallRequest, DepartureCheckRequest, FallCandidate, FallRuntimePolicy, FrameWindow,
     PersonCheckRequest, PersonObservation, PersonVisibility, PostureCheckRequest, RgbFrame,
-    SubjectCheckState, SubjectFrame, VideoAssessment, identifier, timestamp,
+    SubjectFrame, VideoAssessment, identifier, timestamp,
 )
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
@@ -53,8 +52,6 @@ RUNTIME_CLOUD_BLOCKS = frozenset({
     'runtime_error', 'cloud_consent_missing', 'settings_pending',
     'server_settings_unavailable', 'server_settings_stale',
 })
-# Each person in view is reported this often, so the rules know who is still there.
-SEEN_EVERY_S = 2.0
 # The moment of a fall seen by YOLO-Pose: 4 s before to 1 s after, 12 frames (design 5).
 MOMENT_BEFORE_S, MOMENT_AFTER_S, MOMENT_FRAMES = 4.0, 1.0, 12
 # The current look of the whole body: 3 frames over 2 s (unchanged).
@@ -129,6 +126,7 @@ class FlowIncident:
     check_round: int = 1
     middle: list = field(default_factory=list)
     middle_at: float = -math.inf
+    person: Optional[str] = None   # the Agent's person number: the yellow box (SWM25-267)
     # While the robot works on a round: [check round, since, last grown] (SWM25-268).
     check_clip: Optional[list] = None
 
@@ -223,8 +221,6 @@ class FallFlowSensor:
         self._pending_moments = {}       # fall moment id -> the fall's time
         self._sightings = OrderedDict()  # sighting id -> (message, evidence start, end)
         self._incidents = {}
-        self._seen_at = {}
-        self._postures = {}
         self._view = 0
         self._moving = True
         self._storage_failed = False
@@ -274,8 +270,6 @@ class FallFlowSensor:
             self._subjects.clear()
             self._people.clear_history()
             self._person = self._last_person_seen = None
-            self._seen_at.clear()
-            self._postures.clear()
             self._view += 1
         elif not (previous[0] and previous[1]):
             self._scan_anchor = self._now()  # A new periodic interval, not a delayed scan.
@@ -316,7 +310,6 @@ class FallFlowSensor:
 
     def invalidate_subject_input(self):
         self._subjects.clear()
-        self._postures.clear()
         self._view += 1
 
     def ingest_subject_frame(self, frame: SubjectFrame) -> bool:
@@ -336,23 +329,8 @@ class FallFlowSensor:
         self._moving = moving
         self._people_call(self._people.observe, frame.observed_at, tuple(
             (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
+        # Who is still there and who stood up: the Agent's person tracking (SWM25-267).
         self._messages.append(self._people_frame(frame))
-        for pose in frame.subjects:
-            before = self._postures.get(pose.subject_key)
-            self._postures[pose.subject_key] = pose.state
-            if pose.box is None:
-                continue
-            if (before is SubjectCheckState.SUSPECTED and pose.state is SubjectCheckState.CLEAR):
-                self._sight('up', frame.observed_at, track=pose.subject_key, box=pose.box)
-                self._seen_at[pose.subject_key] = frame.observed_at
-            elif (frame.observed_at - self._seen_at.get(pose.subject_key, -math.inf)
-                  >= SEEN_EVERY_S):
-                self._seen_at[pose.subject_key] = frame.observed_at
-                self._sight('seen', frame.observed_at, track=pose.subject_key, box=pose.box)
-        while len(self._postures) > 256:
-            self._postures.pop(next(iter(self._postures)))
-        while len(self._seen_at) > 256:
-            self._seen_at.pop(next(iter(self._seen_at)))
         return True
 
     def _people_frame(self, frame):
@@ -509,6 +487,8 @@ class FallFlowSensor:
             incident = self._incidents.get(_id(data.get('incident_id'), optional=False))
             if sighting is not None and incident is not None:
                 self._clip_from(incident, sighting)
+        elif action == 'people':
+            self._people_numbers(data)
         elif action == 'clip':
             incident = self._incident(_id(data.get('incident_id'), optional=False))
             if incident is None or data.get('mark') not in CLIP_MARKS:
@@ -677,10 +657,9 @@ class FallFlowSensor:
                        fall_moment=fall_moment,
                        # Torso height above the floor by depth (YOLO candidates): for the log.
                        floor=None if floor is None else round(float(floor), 3))
-        if kind != 'seen':
-            self._sightings[sighting_id] = (message, *(evidence or (at, at)))
-            while len(self._sightings) > 512:
-                self._sightings.popitem(last=False)
+        self._sightings[sighting_id] = (message, *(evidence or (at, at)))
+        while len(self._sightings) > 512:
+            self._sightings.popitem(last=False)
         self._messages.append(dict(kind='fall_sighting', sighting=message))
         return sighting_id
 
@@ -744,6 +723,24 @@ class FallFlowSensor:
         self._record_clip(incident, start, end, anchor_kind=anchor,
                           found_down=message['kind'] != 'motion')
 
+    def _people_numbers(self, data):
+        """Who each YOLO track is from now on, and whose each incident is (the Agent decides)."""
+        tracks, incidents = data.get('tracks') or {}, data.get('incidents') or {}
+        if not isinstance(tracks, dict) or not isinstance(incidents, dict):
+            raise ValueError('invalid people numbers')
+        at = data.get('at')
+        if tracks and (isinstance(at, bool) or not isinstance(at, (int, float))
+                       or not math.isfinite(at)):
+            raise ValueError('invalid people numbers')
+        for track, person in tracks.items():
+            self._people_call(self._people.assign, _id(track, optional=False),
+                              _id(person, optional=False), float(at))
+        for incident_id, person in incidents.items():
+            incident = self._incident(_id(incident_id, optional=False))
+            if incident is not None and person is not None:
+                incident.person = _id(person, optional=False)
+                self._people_call(self._people.retarget, incident.incident_id, incident.person)
+
     def _check_clip(self, incident, mark, round_):
         """A mark of the robot's check: a range starts now, or ends (at a wait as it
         begins, 5 s after the judgment)."""
@@ -783,8 +780,8 @@ class FallFlowSensor:
             fixed = self._clip_offsets.setdefault(
                 (incident.incident_id, segment.segment_index), offset)
             self._people_call(self._people.segment, incident.incident_id,
-                              incident.first.get('track'), segment.segment_index,
-                              segment.start, segment.end)
+                              incident.person or incident.first.get('track'),
+                              segment.segment_index, segment.start, segment.end)
             clip = RecordedClip(
                 incident.incident_id, incident.boot_id, segment.segment_index, segment.revision,
                 segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
