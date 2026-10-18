@@ -1,0 +1,24 @@
+schema_version: 1
+capability:
+  id: backup
+  title: 후진
+  description: 기존 Nav2 BackUp으로 지정한 거리만큼 후진한다.
+command:
+  kind: ACTION
+  name: /backup
+  type: nav2_msgs/action/BackUp
+input:
+  fields:
+    target:
+      type: geometry_msgs/Point
+      description: 후진 거리, x는 양수 거리(m)
+    speed:
+      type: float32
+      description: 서버가 지정한 속도(m/s)
+    time_allowance:
+      type: builtin_interfaces/Duration
+      description: 서버가 계산한 제한 시간
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]

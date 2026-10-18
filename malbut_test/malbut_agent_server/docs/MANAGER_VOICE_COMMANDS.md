@@ -3,7 +3,7 @@
 음성 실행을 켜면 STT 원문 → LLM 의미 해석·도구 제안 → 서버의 도구·인자·전송 조건 검사 →
 대화 저장 → ROS 스레드의 `ManagerClient` → `/malbut/mission/execute`로 연결한다.
 Agent는 Nav2나 속도 토픽을 직접 호출하지 않는다. Manager가 기능 등록,
-준비 상태, 지도 모드, 자원 충돌과 실행·취소를 관리한다.
+자원 충돌과 실행·취소를 관리하며, 기존 Bringup이 기능별 준비를 담당한다.
 
 | 발화 예 | LLM 도구 | Manager 요청 |
 | --- | --- | --- |
@@ -16,10 +16,17 @@ Agent는 Nav2나 속도 토픽을 직접 호출하지 않는다. Manager가 기�
 | 수동 조작 켜줘 | `request_manual_control()` | `manual_drive` (속도 명령 없음) |
 | Bringup 복구해줘 | `request_recovery()` | 기존 `recovery` Action |
 | 멈춰 / 취소해 | `cancel_voice_mission()` | 관측된 전면 작업과 음성 접수 대기 Goal의 표준 취소 |
+| 왼쪽으로 90도 돌아 | `request_rotation(direction="left", angle_deg=90)` | 기존 Nav2 `/spin` |
+| 30 cm 뒤로 가 | `request_backup(distance_m=0.3)` | 기존 Nav2 `/backup` |
+| 지도 좌표 (1, 2)로 가 | `request_navigation_point(map_revision=…, x=1, y=2, yaw_deg=null)` | 기존 `navigate_to_pose` |
+| 거실 다음 주방으로 가 | `request_waypoints(map_revision=…, waypoints=[…])` | 기존 Nav2 `/follow_waypoints` 한 번 |
 
-따라오기 대상은 발화자로 인증된 사람이 아니다. 임의 사람 ID·좌표·속도·
-Behavior Tree·기능 ID를 모델이 정할 수 없다. 상대 이동(앞으로/뒤로/회전)은
-현재 등록된 음성 도구에 없으며 장소 이동으로 바꾸어 추측하지 않는다.
+따라오기 대상은 발화자로 인증된 사람이 아니다. 임의 사람 ID·속도·
+Behavior Tree·기능 ID를 모델이 정할 수 없다. 사용자 요청 범위 안에서 RGB와 현재 위치·방향,
+등록 장소 좌표를 함께 보고 회전각·이동거리·지도 목표·경유점을 선택할 수 있다.
+사용자가 수치를 지정하면 우선하며, 없더라도 현재 정보로 정할 수 있으면 합리적인 추정값을 사용한다.
+회전은 1~360도, 후진은 0.05~1 m이며 속도(후진 0.1 m/s)와 시간 제한은 서버가 정한다.
+직접 전진 도구나 사진 픽셀을 지도 좌표로 바꾸는 기하 변환은 추가하지 않는다.
 실제 음성 명령의 의미는 LLM이 판단한다. 서버가 정규식이나 키워드 허용 목록으로
 표현을 제한하지 않으며, 바꿔 말하기·사투리·구어체·인식 오탈자도 의미를 기준으로 처리한다.
 인용·부정·가정과 실행 요청을 구분하고 복합 작업이나 모호한 목적지의 후보를 해석하는 책임은 LLM에 있다.
@@ -31,7 +38,7 @@ Behavior Tree·기능 ID를 모델이 정할 수 없다. 상대 이동(앞으로
 기억이나 오래된 대화만으로 새 작업을 시작하지 않는다.
 
 현재 선택된 지도에 등록된 목적지 이름을 `navigation_context.locations`로 LLM에 제공한다.
-좌표와 지도 경로는 전달하지 않는다. 모델은 등록 이름으로만 이동을 제안하며,
+기존 이름 기반 도구는 등록 이름으로 이동을 제안하며,
 서버가 원래 발화의 장소 이름과 후보를 비교한다. `기실로 가`를 `거실`로 해석한 경우처럼
 이름이 비슷하고 다른 후보와 분명히 구분되면 추가 질문 없이 요청한다.
 이름이 크게 다르거나 비슷한 후보가 여러 개라 구분하기 어려우면 먼저 목적지를 확인한다.
@@ -49,6 +56,57 @@ Behavior Tree·기능 ID를 모델이 정할 수 없다. 상대 이동(앞으로
 
 `와바라`, `이리 오너라`의 의미를 이해해도 현재는 발화자의 지도상 위치와 일회성 접근 기능이 없다.
 `어느 장소로 갈까요?`처럼 등록된 목적지를 확인하며 좌표를 추측하거나 지속 따라오기로 대체하지 않는다.
+
+## 발화별 이미지와 상태 (SWM25-222)
+
+기존 `agent_communication` 노드가 RGB(depth=1, BEST_EFFORT), TF, Manager 상태와
+카메라/클라우드 동의 snapshot을 읽는다. 새 ROS 노드·프로세스·비전 모델은 추가하지 않는다.
+각 일반 대화의 주 LLM 요청에 최신 RGB 한 장을 최대 640×400 JPEG, `detail=low`로 첨부한다.
+원본 버퍼는 한 장만 유지하고 발화 시점에 압축한다. 수신/촬영 시점 기준 2초를 넘긴 사진,
+미래 시각, 변환 실패는 이미지 없이 대화를 계속한다. 부분 STT·호출 대상 분류에는 붙이지 않는다.
+
+`scene_context_untrusted`에는 촬영 시각/age, 지도 ID/revision/해상도/원점/크기,
+최대 32개 장소 이름과 대표 좌표, 최신 TF의 `x,y,yaw_deg`, 작업 상태를 넣는다.
+TF가 오래되거나 없으면 `pose=null`이다. 실제 위치를 원점으로 대체하지 않는다.
+작업 상태는 하트비트가 아닌 마지막 상태 전환 관측이므로 age와 출처를 함께 표시하고,
+상태 publisher가 없으면 전달하지 않는다. 실행 중이라는 확정 근거로 사용하지 않는다.
+지도 원본 OccupancyGrid, 깊이 영상, 파일 절대 경로는 LLM에 보내지 않는다.
+모델은 사진의 방향 단서와 제공된 위치·장소 좌표를 조합해 적절한 이동 목표를 판단할 수 있다.
+사소한 불확실성 때문에 매번 각도나 거리를 되묻지 않으며, 판단에 꼭 필요한 정보가 없을 때만 확인한다.
+RGB 기반 거리·각도는 추정치이므로 무리한 이동은 피하고 후방 안전을 확인했다고 단정하지 않도록 짧게 주의한다.
+
+사진 bytes/Base64는 요청 JSON·SQLite·입력 trace·대화 이력에 저장하지 않으며,
+같은 요청의 재시도는 같은 사진만 재사용한다. 재전송 직전 freshness/동의를 재확인한다.
+요약·기억 추출·기억 원문 검증 요청에는 사진과 장면 context를 붙이지 않는다.
+관측으로 생성한 대화 답변 자체는 기존 대화 저장 정책을 그대로 따른다.
+
+`HOMECAM_BACKEND_URL`이 있으면 `/malbut/falls/settings/snapshot`의 최근 30초 내
+확인된 `camera_enabled && cloud_consent`가 있어야 사진을 전송한다. 낙상 enabled는
+사진 동의와 무관하다. OFF·조회 실패·동의 만료 시 사진을 보내지 않는다.
+클라우드 설정을 쓰지 않는 단독 실행에서는 이미지 전송이 기본 ON이며,
+관측한 OFF 설정은 단독 실행에서도 존중한다. 끄려면 Bringup의
+`speech_scene_images_enabled:=false`, 단독 `speech.launch.py`의
+`scene_images_enabled:=false` 또는 노드 parameter `scene_images_enabled=false`를 사용한다.
+RGB topic과 로봇 frame은 기존 Bringup 설정을 재사용한다.
+
+## Nav2 툴 확장 경계
+
+Agent의 툴 schema·인자 변환과 `malbut_interfaces/capabilities`의 등록 YAML만 확장한다.
+Manager Python 코드는 변경하지 않는다. 모든 이동은 기존 `/malbut/mission/execute`를 사용한다.
+기존 Bringup 준비 목록에 `spin/backup`은 motion, `follow_waypoints`는 motion+planning을 등록한다.
+이미지를 Nav2로 보내거나 Agent가 속도 토픽을 발행하지 않는다.
+
+좌표/경유점 요청의 `map_revision`은 발화에 제공된 값을 복사한다. 준비 전과 실제 전송 전에
+지도·장소 revision을 재검사하고, 좌표는 지도 범위·free cell·0.22 m 여유를 확인한다.
+이는 도착점 검증이지 경로 계획이 아니다. 실제 경로/장애물/이동 성공 여부는 Nav2가 판단한다.
+카메라 한 장으로 정확한 깊이·화자 위치·후방 안전을 안다고 가정하지 않는다.
+
+경유점은 1~16개이며 각 항목은
+`{"location":"거실","x":null,"y":null,"yaw_deg":null}` 또는
+`{"location":null,"x":1,"y":2,"yaw_deg":null}` 형식이다.
+한 목록을 하나의 `FollowWaypoints` Goal로 보내므로 취소·선점도 기존 미션 하나로 처리한다.
+`waypoint_follower.stop_on_failure=true`로 중간 실패 시 중단하며, 실패한 구간 뒤를 성공한 것으로
+안내하지 않는다. 기존 낙상 중 이동 차단·세션/만료 검증·한 번만 전송하는 경계도 유지한다.
 
 ## 설정
 

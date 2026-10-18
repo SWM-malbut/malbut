@@ -11,6 +11,11 @@ FUNCTION_STARTS = {
     'request_relocalization': '네, 현재 위치 확인을 시작하겠습니다.',
     'request_manual_control': '네, 수동 조작을 준비하겠습니다.',
     'request_recovery': '네, 복구 작업을 시작하겠습니다.',
+    # Reuse the shipped receipt recording; no new TTS assets/models are needed.
+    'request_rotation': '요청을 접수했어요.',
+    'request_backup': '요청을 접수했어요.',
+    'request_navigation_point': '요청을 접수했어요.',
+    'request_waypoints': '요청을 접수했어요.',
     'get_homecam_status': '네, 홈캠 상태를 확인하겠습니다.',
     'get_homecam_events': '네, 홈캠에서 감지한 기록을 조회하겠습니다.',
     'get_homecam_recordings': '네, 홈캠 녹화 목록을 조회하겠습니다.',

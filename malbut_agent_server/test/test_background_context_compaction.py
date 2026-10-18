@@ -154,13 +154,21 @@ def test_threshold_background_reply_order_and_restart_keep_all_raw_turns(tmp_pat
 
 
 def test_summary_api_excludes_recent_correction_and_current_but_keeps_raw_history(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     from malbut_agent_server.semantic_summary import OpenAISemanticSummarizer
 
     lab = _Lab(tmp_path / 'summary-boundary.sqlite3', '모임은 일요일이에요.')
     entered, release = threading.Event(), threading.Event()
-    payloads = []
+    payloads, counted_summaries = [], []
+
+    def count_summary(text):
+        counted_summaries.append(text)
+        return lab.counter(text)
+
+    # This checks the API/context boundary, not tokenizer loading. A cold
+    # tiktoken vocabulary download must not consume the worker's join deadline.
+    monkeypatch.setattr('malbut_agent_server.semantic_summary.count_tokens', count_summary)
 
     def transport(url, headers, payload, timeout):
         payloads.append(payload)
@@ -211,6 +219,7 @@ def test_summary_api_excludes_recent_correction_and_current_but_keeps_raw_histor
         release.set()
         lab.compactor._thread.join(timeout=2)
         assert not lab.compactor._thread.is_alive()
+        assert counted_summaries == ['일요일 모임의 장소를 정했어요.']
 
         lab.counter.estimate = 0
         following = '그럼 이야기를 이어가 주세요.'

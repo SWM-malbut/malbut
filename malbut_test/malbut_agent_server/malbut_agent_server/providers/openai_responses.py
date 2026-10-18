@@ -1,11 +1,13 @@
 """OpenAI Responses API adapter using only the Python standard library."""
 
 import copy
+import base64
 import hashlib
 import json
 import time
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
 from malbut_agent_server.automatic_memory_extractor import (
@@ -33,6 +35,7 @@ from malbut_agent_server.prompting import (
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
     PreparedModelInput,
+    SCENE_INSTRUCTIONS,
     prepare_model_input,
     system_instructions_for_tools,
 )
@@ -342,6 +345,15 @@ class OpenAIResponsesProvider(AgentProvider):
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
         memory_mode = memory_context.get('mode') if memory_context else None
+        image = getattr(request, 'turn_image', None)
+        include_image = (memory_mode not in {'automatic_extraction', 'source_review'}
+                         and image is not None and image.usable())
+        if getattr(request, 'scene_context', None) is not None and not include_image:
+            scene = copy.deepcopy(request.scene_context)
+            if scene.get('image', {}).get('available'):
+                scene['image'] = {'available': False, 'reason': 'stale_or_permission_changed'}
+                request = replace(request, scene_context=scene)
+                prepared = None
         if memory_mode == 'automatic_extraction' and (
             memories or conversation_turns or tools or request.available_tools
             or conversation_summary is not None
@@ -368,7 +380,10 @@ class OpenAIResponsesProvider(AgentProvider):
             'parallel_tool_calls': False,
             'tool_choice': 'auto',
             'store': False,
-            'max_output_tokens': self.max_output_tokens,
+            # A bounded 16-point structured call can exceed the text reply budget.
+            'max_output_tokens': (max(self.max_output_tokens, 1536)
+                                  if any(tool.name == 'request_waypoints' for tool in tools)
+                                  else self.max_output_tokens),
             'safety_identifier': self._safety_identifier(
                 request.user_id
             ),
@@ -416,6 +431,9 @@ class OpenAIResponsesProvider(AgentProvider):
                 'name': 'malbut_memory_decision', 'schema': schema,
             })
             payload['instructions'] += '\n\n' + MEMORY_INSTRUCTIONS
+        if (getattr(request, 'scene_context', None) is not None
+                and memory_mode not in {'automatic_extraction', 'source_review'}):
+            payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS
         if self.include_reasoning:
             payload['reasoning'] = {
                 'effort': self.reasoning_effort,
@@ -459,7 +477,7 @@ class OpenAIResponsesProvider(AgentProvider):
                     'token_counter must return a non-negative integer',
                 )
             # Local estimates include schemas; reserve API envelope overhead too.
-            if input_tokens + 1024 > self.max_input_tokens:
+            if input_tokens + 1024 + (512 if include_image else 0) > self.max_input_tokens:
                 from malbut_agent_server.providers.reliable import (
                     ContextBudgetExceeded,
                 )
@@ -467,6 +485,14 @@ class OpenAIResponsesProvider(AgentProvider):
                 raise ContextBudgetExceeded()
         if memory_mode == 'source_review':
             payload['instructions'] += '\n\n' + SOURCE_REVIEW_SCOPE_INSTRUCTIONS
+        if include_image:
+            # Count only the text/schema above, not the Base64 representation.
+            # low-detail is <=512x512; reserve 512 image tokens conservatively.
+            payload['input'] = [{'role': 'user', 'content': [
+                {'type': 'input_text', 'text': payload['input']},
+                {'type': 'input_image', 'detail': 'low',
+                 'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image.jpeg).decode('ascii')},
+            ]}]
         return payload
 
     def _preserve_conversation(self, memory_mode: Optional[str]) -> bool:

@@ -21,6 +21,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from malbut_interfaces.action import ExecuteMission, FollowPerson
 from malbut_interfaces.msg import SystemState
 from nav2_msgs.action import NavigateToPose
+from malbut_system_manager.models import MissionRecord
 from malbut_system_manager.system_manager_node import (
     SystemManagerNode,
     _require_positive_finite,
@@ -197,6 +198,22 @@ def _wait_future(future, timeout=TIMEOUT_S):
     return future.result()
 
 
+def _wait_for_downstream_actions(manager, *capability_ids):
+    """Prime the real cached clients before testing mission transitions."""
+    for capability_id in capability_ids:
+        mission = MissionRecord(
+            mission_id=f'discovery-{capability_id}',
+            capability=manager._registry.get(capability_id),
+            arguments={},
+        )
+        client = manager._executor_bridge._client_for(mission)
+        # Discovering ExecuteMission does not mean that the manager's separate
+        # downstream Action clients have discovered their fake servers yet.
+        assert client.wait_for_server(timeout_sec=TIMEOUT_S), (
+            f'Test downstream Action {capability_id} was not discovered'
+        )
+
+
 def test_execute_preempt_finishes_old_goal_and_transient_state():
     """Replacing a mission finishes its public goal without client cancel."""
     rclpy.init()
@@ -217,6 +234,7 @@ def test_execute_preempt_finishes_old_goal_and_transient_state():
 
     try:
         assert client.wait_for_server(timeout_sec=TIMEOUT_S)
+        _wait_for_downstream_actions(manager, 'follow_person', 'navigate_to_pose')
 
         default_feedback = []
         default_goal = ExecuteMission.Goal()
@@ -340,6 +358,7 @@ def test_pending_cancel_waits_for_rclpy_cancel_transition():
 
     try:
         assert client.wait_for_server(timeout_sec=TIMEOUT_S)
+        _wait_for_downstream_actions(manager, 'follow_person', 'navigate_to_pose')
         blocker = ExecuteMission.Goal()
         blocker.capability_id = 'follow_person'
         blocker.arguments_yaml = 'target_person_id: first\n'
@@ -482,6 +501,7 @@ def test_resource_preemption_keeps_unrelated_foreground_running(tmp_path):
 
     try:
         assert client.wait_for_server(timeout_sec=TIMEOUT_S)
+        _wait_for_downstream_actions(manager, 'base_first', 'base_next', 'speaker')
         first_handle = send('base_first')
         _wait_until(lambda: len(first.starts) == 1)
         speaker_handle = send('speaker')

@@ -1,10 +1,12 @@
 """High-level robot tools exposed to language models."""
 
 import copy
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 
 from malbut_agent_server.schemas import ValidationError
+from malbut_agent_server.speech_nav2 import NAV2_TOOL_DEFINITIONS
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ SPEECH_MISSION_TOOLS = (
     'request_navigation', 'request_follow_person', 'request_patrol',
     'cancel_voice_mission', 'request_mapping', 'request_relocalization',
     'request_manual_control', 'request_recovery',
+    *NAV2_TOOL_DEFINITIONS,
 )
 
 HOMECAM_QUERY_TOOLS = (
@@ -277,6 +280,12 @@ for _name, (_description, _properties) in _ADDITIONAL_TOOLS.items():
         'required': list(_properties), 'additionalProperties': False,
     })
 
+for _name, (_description, _properties) in NAV2_TOOL_DEFINITIONS.items():
+    TOOL_SPECS[_name] = ToolSpec(_name, _description, {
+        'type': 'object', 'properties': _properties,
+        'required': list(_properties), 'additionalProperties': False,
+    })
+
 
 def select_tool_specs(names: Iterable[str]) -> List[ToolSpec]:
     """Return registered specs in request order, ignoring unknown names."""
@@ -371,6 +380,19 @@ def _validate_schema_value(
         if (type(value) is not int
                 or not schema.get('minimum', 0) <= value <= schema.get('maximum', 1000)):
             raise ValidationError(f'{field_name} is outside its integer bounds')
+        return
+    if non_null_types == ['number']:
+        if (type(value) not in (int, float)
+                or not schema.get('minimum', -10000) <= value <= schema.get('maximum', 10000)
+                or not math.isfinite(value)):
+            raise ValidationError(f'{field_name} is outside its numeric bounds')
+        return
+    if non_null_types == ['array']:
+        if (not isinstance(value, list)
+                or not schema.get('minItems', 0) <= len(value) <= schema.get('maxItems', 128)):
+            raise ValidationError(f'{field_name} is outside its array bounds')
+        for index, item in enumerate(value):
+            _validate_schema_value(schema['items'], item, f'{field_name}[{index}]', depth=depth + 1)
         return
     raise RuntimeError(
         f'unsupported Tool schema type for {field_name}: {expected!r}'

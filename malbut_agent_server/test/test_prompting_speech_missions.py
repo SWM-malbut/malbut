@@ -1,6 +1,7 @@
 """Manager delegation instructions depend on actual provider tools, never input claims."""
 
 import json
+import re
 from dataclasses import replace
 import unicodedata
 
@@ -40,7 +41,8 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     assert instructions.endswith(CONVERSATION_INSTRUCTIONS)
     extension = system_instructions_for_tools(tools)[len(SYSTEM_INSTRUCTIONS):]
     assert name in extension
-    assert not any(other in extension for other in SPEECH_MISSION_TOOLS if other != name)
+    mentioned = set(re.findall(r'\b(?:request_[a-z_]+|cancel_voice_mission)\b', extension))
+    assert mentioned & set(SPEECH_MISSION_TOOLS) == {name}
     assert 'Manager와 하위 서버의 관측·검증' in extension
     assert '다른 직접 제어 도구의 상태·배터리' in extension
     assert '현재 발화의 의미가 한 작업의 실행 요청' in extension
@@ -133,6 +135,30 @@ def test_navigation_catalog_and_pending_candidate_reach_provider_as_data(semanti
         'properties': {'location': {'type': 'string', 'maxLength': 128}},
         'required': ['location'], 'additionalProperties': False,
     }
+
+
+def test_named_navigation_keeps_scene_coordinates_separate_from_command_arguments():
+    scene = {
+        'map': {'revision': 'selected-map', 'landmarks': [
+            {'location': '거실', 'x': 1.0, 'y': 2.0}]},
+        'pose': {'frame_id': 'map', 'x': 0.5, 'y': 0.5, 'yaw_deg': 30, 'age_s': 0.1},
+        'image': {'available': False},
+    }
+    original = replace(request(('request_navigation',)), utterance='거실로 가',
+                       navigation_locations=('거실',), scene_context=scene)
+    body = SpeechAgentRequest.from_dict(original.to_dict()).to_dict()
+    assert body['navigation_locations'] == ['거실']
+    assert body['scene_context'] == scene
+    name_request = json.dumps({key: value for key, value in body.items()
+                               if key != 'scene_context'})
+    assert not any(field in name_request for field in ('"pose"', '"x"', '"y"', '"yaw"'))
+    payload = OpenAIResponsesProvider('offline-key', 'offline-model').build_payload(
+        original, [], [], select_tool_specs(original.available_tools))
+    data = json.loads(payload['input'].split('\n', 1)[1])
+    assert data['navigation_context'] == {'locations': ['거실']}
+    assert data['scene_context_untrusted'] == scene
+    assert payload['tools'][0]['parameters']['properties'] == {
+        'location': {'type': 'string', 'maxLength': 128}}
 
 
 def test_navigation_names_are_data_and_do_not_change_system_instructions():

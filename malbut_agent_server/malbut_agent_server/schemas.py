@@ -261,9 +261,17 @@ class SpeechAgentRequest(AgentRequest):
     max_utterance_chars: ClassVar[int] = MAX_SPEECH_TRANSCRIPT_LENGTH
     navigation_locations: Optional[Tuple[str, ...]] = None
     navigation_confirmation: str = ''
+    scene_context: Optional[Dict[str, Any]] = None
+    turn_image: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate server-owned names independently of the public HTTP schema."""
+        if self.scene_context is not None:
+            import json
+
+            if (type(self.scene_context) is not dict
+                    or len(json.dumps(self.scene_context, ensure_ascii=False, allow_nan=False)) > 32768):
+                raise ValidationError('scene context must be a bounded JSON object')
         locations = self.navigation_locations
         if locations is not None:
             if not isinstance(locations, (list, tuple)) or len(locations) > 128:
@@ -295,10 +303,12 @@ class SpeechAgentRequest(AgentRequest):
         body = dict(value)
         locations = body.pop('navigation_locations', None)
         confirmation = body.pop('navigation_confirmation', '')
+        scene = body.pop('scene_context', None)
         return replace(
             super().from_dict(body),
             navigation_locations=locations,
             navigation_confirmation=confirmation,
+            scene_context=scene,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -308,7 +318,17 @@ class SpeechAgentRequest(AgentRequest):
             value['navigation_locations'] = list(self.navigation_locations)
         if self.navigation_confirmation:
             value['navigation_confirmation'] = self.navigation_confirmation
+        if self.scene_context is not None:
+            value['scene_context'] = self.scene_context
         return value
+
+
+def copy_request(source, values):
+    """Preserve an ephemeral speech image across validated in-process copies only."""
+    request = type(source).from_dict(values)
+    if isinstance(source, SpeechAgentRequest):
+        request = replace(request, turn_image=source.turn_image)
+    return request
 
 
 @dataclass

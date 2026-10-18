@@ -497,7 +497,7 @@ teleop_behavior_server:
 waypoint_follower:
   ros__parameters:
     loop_rate: 20
-    stop_on_failure: false
+    stop_on_failure: true
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"

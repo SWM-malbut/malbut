@@ -118,7 +118,7 @@ class DialogueWorker:
 
     def __init__(
         self, runtime_factory: Callable, user_id: str, capacity: int = 10,
-        *, missions=None,
+        *, missions=None, scene_source=None,
     ):
         """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
@@ -127,6 +127,7 @@ class DialogueWorker:
             raise ValueError('capacity must be a positive integer')
         self._factory = runtime_factory
         self._missions = missions
+        self._scene_source = scene_source
         self._navigation_confirmation = None
         self._user_id = validate_user_id(user_id)
         self._capacity = capacity
@@ -418,13 +419,20 @@ class DialogueWorker:
                     navigation_binding = (self._missions.prepare(
                         request_id, 'request_navigation', {'location': locations[0]},
                     ) if locations else None)
+                    scene, image = None, None
+                    if self._scene_source is not None:
+                        try:
+                            scene, image = self._scene_source.snapshot()
+                        except Exception:
+                            scene = {'image': {'available': False}, 'map': None, 'pose': None}
                     request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
                         conversation_id=conversation_id,
                         turn_id='speech-turn-' + digest,
                         utterance=text,
-                        robot_state=RobotState(),
+                        robot_state=RobotState(camera_available=image is not None),
+                        scene_context=scene, turn_image=image,
                         available_tools=tuple(getattr(runtime, 'speech_mission_tools', ()))
                         + tuple(getattr(runtime, 'homecam_query_tools', ())) + (
                             ('get_weather', 'set_weather_location')
@@ -573,6 +581,10 @@ class DialogueWorker:
         )
 
         def guard():
+            if decision.tool_name in {'request_navigation_point', 'request_waypoints'}:
+                revision = ((request.scene_context or {}).get('map') or {}).get('revision')
+                if revision is None or not self._missions.map_matches(revision):
+                    return NAVIGATION_CHANGED_RESPONSE
             if (decision.tool_name == 'request_navigation' and navigation_binding is not None
                     and not self._missions.navigation_matches(navigation_binding)):
                 return NAVIGATION_CHANGED_RESPONSE

@@ -1,0 +1,21 @@
+schema_version: 1
+capability:
+  id: spin
+  title: 제자리 회전
+  description: 기존 Nav2 Spin으로 지정한 상대 각도만큼 회전한다.
+command:
+  kind: ACTION
+  name: /spin
+  type: nav2_msgs/action/Spin
+input:
+  fields:
+    target_yaw:
+      type: float32
+      description: 상대 회전 각도(rad), 양수는 반시계 방향
+    time_allowance:
+      type: builtin_interfaces/Duration
+      description: 서버가 계산한 제한 시간
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]

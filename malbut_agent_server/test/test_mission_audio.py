@@ -50,7 +50,7 @@ def test_voice_functions_keep_one_start_and_cancellation_receipt():
              | {'get_weather', 'set_weather_location'}) - {'cancel_voice_mission'}
     assert set(FUNCTION_STARTS) == tools
     for tool in tools:
-        assert CATALOG[f'function.{tool}.starting'] == FUNCTION_STARTS[tool]
+        assert CATALOG[TEXT_IDS[FUNCTION_STARTS[tool]]] == FUNCTION_STARTS[tool]
     assert CATALOG['cancel.requested'] == '취소를 요청했어요.'
     assert CATALOG['cancel.unknown'] == '취소 여부를 확인하지 못했어요.'
     assert CATALOG['operation.canceled'] == '작업이 취소됐어요.'

@@ -9,6 +9,7 @@ from malbut_agent_server.conversation_progress import (
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
 from malbut_agent_server.situation_dialogue import FALL_CONFIRMATION_QUESTION
+from malbut_agent_server.speech_nav2 import NAV2_TOOL_DEFINITIONS
 
 
 CATALOG = {
@@ -19,7 +20,8 @@ CATALOG = {
     'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,
     'situation.fall.confirmation': FALL_CONFIRMATION_QUESTION,
     'situation.resolved': '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.',
-    **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()},
+    **{f'function.{tool}.starting': text for tool, text in FUNCTION_STARTS.items()
+       if tool not in NAV2_TOOL_DEFINITIONS},
 }
 TEXT_IDS = {text: audio_id for audio_id, text in CATALOG.items()}
 # Existing detailed command replies use the same concise recording at publication.

@@ -17,9 +17,10 @@ from malbut_agent_server.speech_navigation import matches_navigation_location
 from malbut_agent_server.tools import (
     SPEECH_MISSION_TOOLS, TOOL_SPECS, validate_tool_arguments,
 )
+from malbut_agent_server.speech_nav2 import MAP_TOOLS
 
 
-POLICY_REVISION = 'speech-manager-structured-v4'
+POLICY_REVISION = 'speech-manager-structured-v5'
 
 
 class SpeechMissionPolicy:
@@ -52,6 +53,13 @@ class SpeechMissionPolicy:
         if (type(decision.expires_in_ms) is not int or decision.expires_in_ms <= 0
                 or decision.expires_in_ms > self._base.maximum_action_ttl_ms):
             return SafetyResult(False, 'ttl_too_long', '실행 요청의 유효 시간이 올바르지 않아요.')
+        if decision.tool_name in MAP_TOOLS:
+            scene = getattr(request, 'scene_context', None) or {}
+            current_map = scene.get('map') or {}
+            if (not current_map.get('revision')
+                    or decision.arguments['map_revision'] != current_map['revision']):
+                return SafetyResult(False, 'navigation_unavailable',
+                                    '현재 지도와 위치를 확인한 뒤 다시 이동을 요청해 주세요.')
         if (decision.tool_name == 'request_navigation'
                 and isinstance(request, SpeechAgentRequest)
                 and request.navigation_locations is not None):
