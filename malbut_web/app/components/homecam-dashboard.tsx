@@ -1274,7 +1274,7 @@ export function HomecamDashboard({
                 <div className="ui-chips">
                   <span className={selectedDevice.cameraEnabled ? "is-ok" : ""}>{selectedDevice.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}</span>
                   {selectedDevice.cameraEnabled && (
-                    <span className={selectedDevice.microphoneEnabled ? "is-ok" : ""}>{selectedDevice.microphoneEnabled ? "말벗 마이크 켜짐" : "말벗 마이크 꺼짐"}</span>
+                    <span className={selectedDevice.microphoneEnabled ? "is-ok" : ""}>{selectedDevice.microphoneEnabled ? "영상 소리 켜짐" : "영상 소리 꺼짐"}</span>
                   )}
                 </div>
               )}
@@ -1395,8 +1395,8 @@ export function HomecamDashboard({
                     <strong className={selectedDevice.cameraEnabled ? "is-good" : ""}>{selectedDevice.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
                   ))}
                 </div>
-                {/* 마이크 = my voice to 말벗 (목업 20번), for every guardian. 말벗이 집 안 소리를
-                    보낼지는 설정 › 홈캠 설정 › 말벗 마이크. */}
+                {/* 마이크 = my voice to 말벗 (목업 20번), for every guardian. 영상에 집 안 소리를
+                    보낼지는 설정 › 홈캠 설정 › 영상 소리(목업 52번). */}
                 <div className="ui-row-stack">
                   <div className="ui-row-stack-head">
                     <span className="ui-row-label">마이크<small>내 목소리를 말벗에게 보내기</small></span>
@@ -1453,7 +1453,7 @@ export function HomecamDashboard({
               </article>
               <p className="ui-caption homecam-talk-caption">
                 마이크를 켜면 스피커도 같이 켜져 통화처럼 서로 말할 수 있어요. 마이크는 보호자 누구나 켤 수 있고,
-                한 번에 한 명만 쓸 수 있어요. 말벗이 집 안 소리를 보낼지는 설정 › 홈캠 설정 › 말벗 마이크에서 정해요(소유자).
+                한 번에 한 명만 쓸 수 있어요. 영상에 집 안 소리를 보낼지는 설정 › 홈캠 설정 › 영상 소리에서 정해요(소유자).
               </p>
 
               <OpenIncidentsCard incidents={openIncidents} loading={incidentsLoading} onOpenAll={() => setTab("events")}
@@ -1530,7 +1530,7 @@ export function HomecamDashboard({
               <span className="ui-group-title">우리 집 말벗</span>
               <div className="ui-card ui-list">
                 <button type="button" onClick={() => setSettingsView("homecam")}>
-                  <span><strong>홈캠 설정</strong><small>카메라 · 연속 녹화 · 낙상 감지 · 클라우드 AI · 말벗 마이크</small></span>
+                  <span><strong>홈캠 설정</strong><small>카메라 · 연속 녹화 · 낙상 감지 · 클라우드 AI · 영상 소리</small></span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
                 <button type="button" onClick={() => setSettingsView("guardians")}>

@@ -86,8 +86,8 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
       checked: fall?.settings.cloudConsent ?? false, needsCamera: true, busy: !fall || busy === "cloudConsent",
       onChange: () => void updateFall("cloudConsent", !fall?.settings.cloudConsent) },
     // Not in the mockup: the existing live microphone switch is kept so the feature does not disappear.
-    // 말벗 마이크는 실시간 보기에서만 소리를 보내고, 카메라가 꺼지면 실시간 보기를 열 수 없다.
-    { title: "말벗 마이크", desc: "실시간 보기에서 집 안의 소리를 보호자에게 전해요.", checked: microphoneEnabled,
+    // 영상 소리(목업 52번, 예전 "말벗 마이크")는 실시간 보기에서만 소리를 보내고, 카메라가 꺼지면 실시간 보기를 열 수 없다.
+    { title: "영상 소리", desc: "실시간 보기에서 집 안 소리도 함께 들려요.", checked: microphoneEnabled,
       needsCamera: true, busy: settingBusy, onChange: () => onUpdateSetting("microphoneEnabled", !microphoneEnabled) },
   ];
 

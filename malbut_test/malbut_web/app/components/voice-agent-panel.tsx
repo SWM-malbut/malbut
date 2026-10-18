@@ -50,14 +50,14 @@ export function VoiceAgentPanel({ deviceId, isOwner = false, settings = false }:
     } catch (caught) { setError(caught instanceof Error ? caught.message : "음성으로 홈캠 사용을 저장하지 못했어요."); }
     finally { setBusy(false); }
   }
-  // 홈캠 설정 스위치 목록의 마지막 줄(목업 51번): 말벗 마이크 아래, 같은 모양.
+  // 홈캠 설정 스위치 목록의 마지막 줄(목업 51번): 영상 소리 아래, 같은 모양.
   if (settings) {
     const enabled = view?.delegation.enabled ?? false;
     return <div className={`fall-settings-row ${!isOwner ? "is-dim" : ""}`}>
       <span>
         <strong>음성으로 홈캠 사용</strong>
-        <small>말벗 가까이에서 말하면 홈캠 상태와 기록을 듣고, 카메라·말벗 마이크·연속 녹화·낙상 감지를 켜고 끌 수 있어요.</small>
-        <small className="fall-voice-note ui-lines">{"끄면 기다리던 음성 요청도 취소돼요.\n보호자 관리와 클라우드 AI 확인 동의는 웹에서만 바꿀 수 있어요.\n말벗 마이크를 꺼도 말벗은 계속 말을 알아들어요."}</small>
+        <small>말벗 가까이에서 말하면 홈캠 상태와 기록을 듣고, 카메라·영상 소리·연속 녹화·낙상 감지를 켜고 끌 수 있어요.</small>
+        <small className="fall-voice-note ui-lines">{"끄면 기다리던 음성 요청도 취소돼요.\n보호자 관리와 클라우드 AI 확인 동의는 웹에서만 바꿀 수 있어요.\n영상 소리를 꺼도 말벗은 계속 말을 알아들어요."}</small>
         {error && <small className="fall-voice-note is-danger" role="alert">{error}</small>}
       </span>
       {/* 홈캠 설정의 다른 줄과 같은 스위치 모양(fall-switch). */}
