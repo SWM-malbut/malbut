@@ -68,12 +68,12 @@ test("contract: the new records and their reasons, nothing else", () => {
 test("contract: four new alerts with fixed levels and copy", () => {
   const { parseFallEvent } = moduleLoader()("app/fall-contract.ts");
   const copy = {
-    robot_could_not_confirm: ["urgent", "말벗이 낙상 의심 상황을 직접 확인하지 못했습니다. 즉시 확인해 주세요."],
+    robot_could_not_confirm: ["urgent", "말벗이 넘어진 것 같은 분을 직접 확인하지 못했어요.\n지금 바로 확인해 주세요."],
     revisit_same_person_off_floor: ["info",
-      "말벗이 다시 확인했을 때 같은 분으로 보이는 분이 바닥이 아닌 곳에 있었습니다. 괜찮아 보이지만 확인해 주세요."],
+      "말벗이 다시 가 보니 처음 본 분으로 보이는 분이 바닥이 아닌 곳에 있었어요.\n괜찮아 보이지만 확인해 주세요."],
     revisit_person_unclear_off_floor: ["check",
-      "말벗이 다시 확인했을 때 바닥이 아닌 곳에 있는 분이 있었지만 같은 분인지 알 수 없습니다. 상태를 확인해 주세요."],
-    revisit_nobody_there: ["check", "말벗이 다시 확인했을 때 그 자리에 사람이 없었습니다. 상태를 확인해 주세요."],
+      "말벗이 다시 가 보니 바닥이 아닌 곳에 누군가 있었어요.\n처음 본 분인지 몰라서, 상태를 확인해 주세요."],
+    revisit_nobody_there: ["check", "말벗이 다시 가 보니 그 자리에 아무도 없었어요.\n상태를 확인해 주세요."],
   };
   for (const [reason, [level, body]] of Object.entries(copy)) {
     const alert = notCheckedAlert({ reason, notificationLevel: level });
@@ -92,7 +92,7 @@ test("contract: a fine answer the robot cannot tie to the person seen alerts onc
   assert.equal(parseFallEvent({ ...alert, notificationLevel: "urgent" }), null);
   assert.equal(buildFallNotification({ deviceId: "robot-a", notificationId: alert.eventId,
     incidentId: alert.incidentId, level: "check", reason: alert.reason, occurredAt: alert.occurredAt }).body,
-  "누군가 괜찮다고 답했지만, 쓰러진 분인지 확인하지 못했습니다. 상태를 확인해 주세요.");
+  "누군가 괜찮다고 답했지만, 쓰러진 분인지는 모르겠어요.\n상태를 확인해 주세요.");
   await withRepo(async ({ h, events }) => {
     const [opened, unconfirmed, help] = journal([
       ["incident_opened", "target_unidentified"],
@@ -220,7 +220,7 @@ test("reminders: 직접 확인하지 못함 runs the urgent cycle; a later 도�
     // [재발신] keeps the reason's copy.
     assert.equal(buildFallNotification({ deviceId: "robot-a", notificationId: randomUUID(), incidentId,
       level: "urgent", reason: "robot_could_not_confirm", occurredAt: T0, resend: true }).body,
-    "[재발신] 말벗이 낙상 의심 상황을 직접 확인하지 못했습니다. 즉시 확인해 주세요.");
+    "[재발신] 말벗이 넘어진 것 같은 분을 직접 확인하지 못했어요.\n지금 바로 확인해 주세요.");
     await events.storeFallEvent("robot-a", helpAlert({ incidentId, sequence: 3 }));
     const help = new Date((await h.db.query(
       "SELECT created_at FROM fall_push_outbox WHERE reason='help_requested'")).rows[0].created_at).getTime();
@@ -255,7 +255,7 @@ test("처리 완료 reaches the robot until it stops; then the incident is not c
     assert.deepEqual(await review.listFallIncidentSummaries("robot-a", "normal"), []);
     const detail = await review.getFallIncidentDetail("robot-a", id);
     const { fallHistoryLines } = moduleLoader()("app/fall-event-label.ts");
-    assert.equal(fallHistoryLines(detail.robotEvents).at(-1).label, "처리 완료 → 말벗이 확인을 멈춤");
+    assert.equal(fallHistoryLines(detail.robotEvents).at(-1).label, "말벗: 보호자가 처리 완료해 확인을 멈춤");
     // Robot already resolved, a reopened one, an old one, and a missed-fall report are not sent.
     const closed = async (minutesAgo, state = "recheck_required") => {
       const e = event({ state });
@@ -329,16 +329,16 @@ test("incident screen: each mockup 28 state", async () => {
     revisit: { title: "서 있음 · 같은 분으로 보임", subtitle: "다시 가 보니 같은 분으로 보이는 분이 서 있음",
       note: "AI가 처음 장면과 옷차림을 비교했어요(참고): 회색 상의와 검은 바지가 같아 보임. 같은 분인지는 직접 확인해 주세요." } });
   assert.deepEqual(lines.slice(1), [
-    "확인하러 가려 했지만 수동 조작 중 → 끝나면 확인",
-    "1분째 확인하지 못함 → 긴급 알림",
-    "수동 조작 끝남 → 묻기 전에 넘어진 것 같은 자리로 다시 감",
-    "의심 장소 1 m 앞에 다시 도착",
-    "가까이에서 다시 확인: 사람 · 몸 일부만 보임",
-    "몸 전체가 보이는 자리로 옮김",
-    "몸 전체 확인: 서 있음",
-    "처음 장면과 비교: 같은 분으로 보임 (AI: 회색 상의와 검은 바지가 같아 보임)",
-    "묻지 않음 · 일반 알림 · 사건은 열어 둠",
-    "원래 자리로 돌아옴",
+    "말벗: 확인하러 가려 했지만 수동 조작 중 → 끝나면 확인",
+    "말벗: 1분째 확인하지 못함 → 긴급 알림",
+    "말벗: 수동 조작 끝남 → 묻기 전에 넘어진 것 같은 자리로 다시 감",
+    "말벗: 넘어진 것 같은 자리 1 m 앞에 다시 도착",
+    "클라우드 AI: 가까이에서 다시 보니 사람 · 몸 일부만 보임",
+    "말벗: 몸 전체가 보이는 자리로 옮김",
+    "클라우드 AI: 몸 전체를 보니 서 있음",
+    "클라우드 AI: 처음 장면과 비교하니 같은 분으로 보임 (회색 상의와 검은 바지가 같아 보임)",
+    "알림: 일반 · 묻지 않음 · 사건은 열어 둠",
+    "말벗: 원래 자리로 돌아옴",
   ]);
 
   ({ check } = view([...waitedStart, ["posture_check_completed", "sitting_off_floor"],
@@ -353,7 +353,7 @@ test("incident screen: each mockup 28 state", async () => {
     ["notification_requested", "revisit_nobody_there", { state: "recheck_required", notificationLevel: "check" }]]));
   assert.equal(check.revisit.title, "그 자리에 사람이 없음");
   assert.match(check.revisit.note, /그래서 "사람 아님"으로 닫지 않아요\.$/);
-  assert.deepEqual(lines.slice(-2), ["가까이에서 다시 확인: 그 자리에 사람이 없음", "묻지 않음 · 확인 필요 알림 · 사건은 열어 둠"]);
+  assert.deepEqual(lines.slice(-2), ["클라우드 AI: 가까이에서 다시 보니 그 자리에 사람이 없음", "알림: 확인 필요 · 묻지 않음 · 사건은 열어 둠"]);
 
   // 바닥: 묻는 일이 비교를 기다리지 않고, 비교는 뒤이어 기록된다.
   ({ check } = view([...waitedStart, ["posture_check_completed", "on_floor"], ["question_requested", null],
@@ -364,7 +364,7 @@ test("incident screen: each mockup 28 state", async () => {
   ({ check, lines } = view([...waitedStart.slice(0, 4),
     ["agent_check_failed", "time_limit", { state: "recheck_required" }]]));
   assert.deepEqual([check.waited, check.stopped, check.revisit], [true, true, null]);
-  assert.equal(lines.at(-1), "막혀서 10분 동안 확인하지 못함 → 확인을 멈춤");
+  assert.equal(lines.at(-1), "말벗: 막혀서 10분 동안 확인하지 못함 → 확인을 멈춤");
 
   ({ check, lines } = view([["incident_opened", "cloud_crosscheck"], ["posture_check_completed", "on_floor"],
     ["question_requested", null],
@@ -372,7 +372,7 @@ test("incident screen: each mockup 28 state", async () => {
     ["notification_requested", "robot_could_not_confirm", { state: "recheck_required", notificationLevel: "urgent" }]]));
   assert.deepEqual(check, { reason: "말벗 음성이 꺼져 있어 물을 수 없음", waited: false, stopped: false,
     failed: "말벗 음성이 꺼져 있어 묻지 못함", revisit: null });
-  assert.equal(lines.at(-1), "말벗 음성이 꺼져 있어 물을 수 없음 → 바로 긴급 알림");
+  assert.equal(lines.at(-1), "말벗: 음성이 꺼져 있어 물을 수 없음 → 바로 긴급 알림");
 
   // 예전 질문 실패와 평소 사건은 이 상자를 띄우지 않는다.
   assert.equal(view([["incident_opened", "cloud_crosscheck"], ["agent_check_failed", "agent_failed"]]).check, null);
@@ -456,13 +456,13 @@ test("contract: '그만' during the check stops it without a question and alerts
     answer: "failed" });
   assert.ok(parseFallEvent(stopped));
   assert.equal(parseFallEvent({ ...stopped, reason: "other" }), null);
-  assert.equal(fallEventLabel(stopped), "'그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)");
+  assert.equal(fallEventLabel(stopped), "말벗: '그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)");
   const alert = notCheckedAlert({ reason: "check_stopped_by_user", notificationLevel: "check", answer: "failed" });
   assert.ok(parseFallEvent(alert));
   assert.equal(parseFallEvent({ ...alert, notificationLevel: "urgent" }), null);
   assert.equal(buildFallNotification({ deviceId: "robot-a", notificationId: alert.eventId,
     incidentId: alert.incidentId, level: "check", reason: alert.reason, occurredAt: alert.occurredAt }).body,
-  "말벗이 확인하러 가던 중 '그만'이라는 말을 듣고 멈췄습니다. 상태를 확인해 주세요.");
+  "말벗이 확인하러 가다가 '그만'이라는 말을 듣고 멈췄어요.\n상태를 확인해 주세요.");
   await withRepo(async ({ h, events }) => {
     const [opened, stop, notice, help] = journal([
       ["incident_opened", "cloud_crosscheck"],

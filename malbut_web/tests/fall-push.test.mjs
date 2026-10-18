@@ -99,7 +99,7 @@ test("broker checks signatures and fall schema before forwarding to web push", a
   }) };
   assert.equal((await broker.request(confirmation)).statusCode, 200);
   assert.equal(broker.sends[2].options.urgency, "high");
-  assert.match(broker.sends[2].body.body, /도움이 필요한 것으로 판단/);
+  assert.match(broker.sends[2].body.body, /도움이 필요해 보여요/);
   assert.doesNotMatch(broker.sends[2].body.body, /대상자가 도움을 요청|답변이 없습니다|낙상 확정/);
 });
 

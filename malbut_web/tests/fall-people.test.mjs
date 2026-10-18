@@ -180,7 +180,7 @@ test("사람 표시 screen: off by choice is remembered, boxes load only on play
   const { readFile } = await import("node:fs/promises");
   const panel = await readFile(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
   for (const text of ["사람 표시", "이 사건의 사람", "다른 사람", "클라우드 AI 추정 위치", "AI 추정",
-    "로봇 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."]) assert.ok(panel.includes(text), text);
+    "말벗 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."]) assert.ok(panel.includes(text), text);
   assert.match(panel, /localStorage\.getItem\(OVERLAY_KEY\) !== "off"/);
   assert.match(panel, /if \(!wanted \|\| !showPeople \|\| !clip\.hasPeople \|\| loaded\) return;/);
 });

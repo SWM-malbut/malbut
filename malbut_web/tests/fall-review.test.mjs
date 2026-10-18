@@ -787,16 +787,18 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
 
 test("사건 screen: incidents replace general events; demo API only for the local demo device", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [panel, dashboard, header] = await Promise.all([
+  const [panel, view, dashboard, header] = await Promise.all([
     readFile(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/fall-incident-view.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/homecam-header.tsx", import.meta.url), "utf8"),
   ]);
-  for (const text of ["가장 먼저 확인할 사건", "아무도 확인하지 않음", "AI 판정 실패", "검수 전",
-    "넘어진 순간은 녹화되지 않았을 수 있음", "의견을 남기면 모든 사용자에게 가는 [재발신]이 멈춰요",
-    "참고 답변 · 판정 결과에는 반영되지 않아요", "자동 판정 기록", "알림 이력", "처리 완료"]) {
+  for (const text of ['<div className="fall-group">응답 없음</div>',
+    "이미 쓰러진 모습을 본 때부터라, 넘어지는 순간은 없을 수 있어요.", "의견을 남기면 모두에게 가던 재발신이 멈춰요.",
+    "참고 답변 · 판정 결과에는 반영되지 않아요", "자동 판정 기록", "알림 이력"]) {
     assert.ok(panel.includes(text), text);
   }
+  for (const text of ['"응답 없음"', '"AI 판정 실패"', '"검토 전"', '"처리 완료"']) assert.ok(view.includes(text), text);
   // 처리 완료 needs at least one opinion (anyone's).
   assert.match(panel, /disabled=\{busy === "close" \|\| detail\.opinions\.length === 0\}/);
   // Toggle buttons: pressing the selected label again clears it.
