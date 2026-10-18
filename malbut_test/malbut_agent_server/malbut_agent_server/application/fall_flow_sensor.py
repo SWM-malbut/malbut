@@ -9,6 +9,11 @@ records and notifications in the journal for the web, as they say. It keeps the
 photos those looks need, in memory only: the first sight of each suspicion, the
 moment of a fall, and frames of the spot while the robot waits and drives there.
 
+Every YOLO-Pose frame also goes to the Agent as numbers only (``fall_people``,
+SWM25-267): each person's YOLO track, box, posture and map place by depth, where
+the robot was and whether it stood still. Who is the same person is decided by
+the Agent's person tracking, not here (input, judgment and action, 2026-10-19).
+
 The only filtering left here is a measurement, as in the detector: a Cloud find
 whose body rests higher than its floor height (a bed or sofa) is not reported
 (2026-10-09). Consent and connection still stop Cloud here; a look asked while
@@ -331,6 +336,7 @@ class FallFlowSensor:
         self._moving = moving
         self._people_call(self._people.observe, frame.observed_at, tuple(
             (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
+        self._messages.append(self._people_frame(frame))
         for pose in frame.subjects:
             before = self._postures.get(pose.subject_key)
             self._postures[pose.subject_key] = pose.state
@@ -348,6 +354,31 @@ class FallFlowSensor:
         while len(self._seen_at) > 256:
             self._seen_at.pop(next(iter(self._seen_at)))
         return True
+
+    def _people_frame(self, frame):
+        """One frame for the Agent's person tracking; a frame with nobody is sent too."""
+        at = frame.observed_at
+        robot = None
+        if self._place is not None:
+            try:
+                camera = self._place.camera_near(at)
+            except Exception:
+                camera = None
+            robot = camera[0] if camera is not None else None
+        people = []
+        for pose in frame.subjects:
+            if pose.box is None:
+                continue
+            point = None
+            if self._place is not None:
+                try:
+                    point = self._place.locate_near(at, pose.box)
+                except Exception:
+                    point = None  # No depth (under a table, too close): no map place.
+            people.append(dict(track=pose.subject_key, box=[round(v, 4) for v in pose.box],
+                               point=_point(point), state=pose.state.value))
+        return dict(kind='fall_people', at=at, view=self._view,
+                    stationary=frame.camera_stationary, robot=_point(robot), people=people)
 
     def candidate(self, candidate: FallCandidate) -> Optional[str]:
         """A YOLO-Pose suspicion, reported as it is; the rules filter it with Cloud."""
