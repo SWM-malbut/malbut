@@ -183,3 +183,49 @@ def test_no_more_than_64_people_are_remembered(robot):
         robot.wait(SHORT_GONE_S + 1)
     assert len(robot.tracker.people) == MAX_PEOPLE
     assert 'test:P1' not in robot.tracker.people  # The longest unseen went first.
+
+
+# ------------------------------------------------------------ ReID splits (decision 10)
+
+
+def reappeared(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)))
+    robot.wait(600)
+    robot.frame(seen('z', (3.3, 1.0)))
+    request, = robot.tracker.take_requests()
+    return request
+
+
+def test_someone_reappearing_where_one_was_is_them_until_reid_says_otherwise(robot):
+    request = reappeared(robot)
+    assert request['a']['track'] == 'a' and request['b']['track'] == 'z'
+    assert robot.tracker.uncertain('test:P1') and robot.tracker.person_of('z') == 'test:P1'
+    assert robot.tracker.answer(request['request_id'], 0.80) is None  # Alike: the same.
+    assert not robot.tracker.uncertain('test:P1')
+
+
+def test_clearly_unlike_splits_off_someone_new_and_restores_who_was_unseen(robot):
+    request = reappeared(robot)
+    old, new, since = robot.tracker.answer(request['request_id'], 0.50)
+    assert (old, new) == ('test:P1', 'test:P2') and since == robot.t
+    assert robot.tracker.person_of('z') == 'test:P2'
+    assert robot.tracker.people['test:P1'].point == (3.0, 1.0)  # Where P1 was last seen.
+    assert robot.frame(seen('z', (3.3, 1.0))).assignments == {'z': 'test:P2'}
+
+
+def test_no_answer_or_none_goes_by_place(robot):
+    request = reappeared(robot)
+    assert robot.tracker.answer(request['request_id'], None) is None
+    assert not robot.tracker.uncertain('test:P1')
+    robot.wait(600)
+    robot.frame(seen('y', (3.3, 1.0)))
+    robot.tracker.take_requests()
+    robot.frames(6.0, seen('y', (3.3, 1.0)))  # Unanswered for 5 s.
+    assert not robot.tracker.uncertain('test:P1') and robot.tracker.pending == {}
+
+
+def test_reid_is_not_asked_when_two_could_be_them(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.0, 1.8), BOX_B))
+    robot.wait(60)
+    robot.frame(seen('c', (3.0, 1.4)))
+    assert robot.tracker.take_requests() == []  # Uncertain; ReID never chooses (only splits).

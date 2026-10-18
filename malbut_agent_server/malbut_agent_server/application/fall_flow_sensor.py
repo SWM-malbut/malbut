@@ -27,6 +27,7 @@ import time
 from typing import Callable, Optional
 from uuid import uuid4
 
+from malbut_agent_server.application.fall_appearance import FallAppearance
 from malbut_agent_server.application.fall_clip_planner import FallClipPlanner, RecordedClip
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_people_recorder import FallPeopleRecorder
@@ -82,6 +83,9 @@ GUARDIAN_AGAIN_S = 10.0
 # growing after ten minutes.
 CLIP_MARKS = ('start', 'pause', 'end')
 CHECK_CLIP_AFTER_S, CHECK_CLIP_EVERY_S, CHECK_CLIP_MAX_S = 5.0, 5.0, 600.0
+# A ReID question waits for the second look of the one who reappeared (a second later),
+# then is answered with what there is (SWM25-267 decision 10).
+COMPARE_WAIT_S = 3.0
 # The web's assessment shown beside a look's explanation (display only).
 SHOWN = {'same_person': VideoAssessment.SUSPECTED_FALL,
          'person_unsure': VideoAssessment.SUSPECTED_FALL,
@@ -183,7 +187,7 @@ class FallFlowSensor:
                  wall_clock: Callable[[], float] = time.time,
                  clip_planner: Optional[FallClipPlanner] = None,
                  people_recorder: Optional[FallPeopleRecorder] = None,
-                 place_locator=None, flow_log=None) -> None:
+                 place_locator=None, flow_log=None, appearance=None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -199,6 +203,9 @@ class FallFlowSensor:
         self.people_storage_failures = 0
         self._place = place_locator
         self._flow_log = flow_log  # FallFlowLog: what went to and came from the rules
+        # ReID descriptors for the person tracking's splits (SWM25-267 decision 10).
+        self._appearance = appearance or FallAppearance()
+        self._comparisons = OrderedDict()   # request id -> (before, after, asked at)
         self._subjects = FallSubjectEvidence(retention_s=buffer.retention_s,
                                              max_frames=buffer.max_frames)
         self._enabled = self._camera = self._consent = self._connected = False
@@ -331,7 +338,29 @@ class FallFlowSensor:
             (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
         # Who is still there and who stood up: the Agent's person tracking (SWM25-267).
         self._messages.append(self._people_frame(frame))
+        self._describe(frame)
         return True
+
+    def _describe(self, frame):
+        """What each person in view looks like, every few seconds (ReID, decision 10)."""
+        people = [(p.subject_key, p.box) for p in frame.subjects if p.box is not None]
+        if not any(self._appearance.due(track, frame.observed_at) for track, _ in people):
+            return
+        shot = self._frames(frame.observed_at, 1.0, 1)
+        if shot:
+            self._appearance.observe(frame.observed_at, shot[-1].jpeg, people)
+        self._answer_comparisons()
+
+    def _answer_comparisons(self):
+        now = self._now()
+        for request_id, (before, after, asked) in list(self._comparisons.items()):
+            if not self._appearance.ready(after) and now - asked < COMPARE_WAIT_S:
+                continue  # Its second look comes a second after it showed up.
+            del self._comparisons[request_id]
+            similarity = self._appearance.compare(before, after)
+            self._messages.append(dict(kind='fall_appearance', request_id=request_id,
+                                       similarity=None if similarity is None
+                                       else round(similarity, 4)))
 
     def _people_frame(self, frame):
         """One frame for the Agent's person tracking; a frame with nobody is sent too."""
@@ -412,6 +441,7 @@ class FallFlowSensor:
                 if frames:
                     self._moments[moment] = Photo(frames, None, at)
         self._collect_middle(now)
+        self._answer_comparisons()
         for incident in self._incidents.values():
             clip = incident.check_clip
             if clip is None or now - clip[2] < CHECK_CLIP_EVERY_S:
@@ -489,6 +519,19 @@ class FallFlowSensor:
                 self._clip_from(incident, sighting)
         elif action == 'people':
             self._people_numbers(data)
+        elif action == 'compare':
+            request_id = _id(data.get('request_id'), optional=False)
+            sides = []
+            for side in (data.get('a'), data.get('b')):
+                at = side.get('at') if isinstance(side, dict) else None
+                if (isinstance(at, bool) or not isinstance(at, (int, float))
+                        or not math.isfinite(at)):
+                    raise ValueError('invalid appearance comparison')
+                sides.append((_id(side.get('track'), optional=False), float(at)))
+            self._comparisons[request_id] = (*sides, self._now())
+            while len(self._comparisons) > 32:
+                self._comparisons.popitem(last=False)
+            self._answer_comparisons()
         elif action == 'clip':
             incident = self._incident(_id(data.get('incident_id'), optional=False))
             if incident is None or data.get('mark') not in CLIP_MARKS:

@@ -922,3 +922,24 @@ def test_a_grouped_alert_does_not_count_as_urgent_sent():
     flow._notify(first, 'help_requested')
     flow._notify(second, 'help_requested')
     assert first.urgent_sent and not second.urgent_sent  # No closed_after_alert for b later.
+
+
+# ------------------------------------------------------------ ReID splits (SWM25-267)
+
+
+def test_a_reappearance_asks_the_vlm_and_an_unlike_answer_splits_off_someone_else():
+    robot = Robot()
+    robot.frame(person('a', (3.0, 1.0)))
+    robot.wait(600)
+    out = robot.frame(person('z', (3.3, 1.0)))
+    compare, = kinds(out, 'compare')
+    assert compare['a']['track'] == 'a' and compare['b']['track'] == 'z'
+    s, out = robot.see(track='z', point=(3.3, 1.0))  # Uncertain meanwhile: filtered.
+    robot.filter(s, 'suspect')
+    incident = robot.only()
+    assert incident.uncertain and incident.person == robot.flow.tracker.person_of('z')
+    robot.flow.appearance(compare['request_id'], 0.4, robot.now)
+    out = robot.take()
+    new = robot.flow.tracker.person_of('z')
+    assert new != compare['a'] and incident.person == new
+    assert {'kind': 'people', 'at': compare['b']['at'], 'tracks': {'z': new}} in out
