@@ -20,7 +20,7 @@ test("virtual walls are drawn by tapping two points, snapping within 25 cm of a 
   assert.equal(source.match(/if \(mapMode !== "zones" \|\| zoneCreateMode === "wall"\) return;/g)?.length, 2);
   assert.equal(source.match(/if \(mapMode !== "zones" \|\| zoneCreateMode === "wall" \|\| !isOwner \|\| busy\) return;/g)?.length, 2);
   for (const text of [
-    "시작점을 누르세요. 벽에서 25cm 안이면 벽에 붙어요.", "끝점을 누르세요.",
+    "시작점을 눌러 주세요. 벽에서 25cm 안이면 벽에 붙어요.", "끝점을 눌러 주세요.",
     "가상 벽이 생겼어요. 가운데 점을 끌면 꺾여요.", "ㄱ자로 꺾었어요. 점을 끌어 계속 고칠 수 있어요.",
     "마지막 선 되돌리기", "모두 지우기", "긋기 끝",
   ]) assert.ok(source.includes(text), text);

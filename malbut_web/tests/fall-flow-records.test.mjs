@@ -259,7 +259,7 @@ test("목업 31번: a recheck is a new round, marked in the history and the resu
   assert.equal(lines.at(-1).label, "1분째 확인하지 못함 → 긴급 알림");
   const result = fallCheckResult(blocked);
   assert.equal(result.round, 2);
-  assert.equal(result.title, "2회차: 직접 움직이기 중이라 1분 안에 묻지 못함");
+  assert.equal(result.title, "2회차: 수동 조작 중이라 1분 안에 묻지 못함");
 
   const checking = blocked.slice(0, 8);
   assert.equal(fallCheckResult(checking).looking, "다시 확인하러 가는 중");
@@ -300,6 +300,6 @@ test("목업 32번: the map card reads the one check's step and why it goes", ()
   assert.equal(card({ phase: "approach", step: "approach", purpose: "approach" }).detail, "처음 본 쪽에서 1 m 앞까지 가요.");
   // Waiting keeps 목업 27번; the older robot sends no step.
   assert.equal(card({ phase: "wait", step: "approach", waiting_for: "manual_drive" }).title,
-    "직접 움직이기가 끝나면 낙상 확인을 이어 가요");
+    "수동 조작이 끝나면 낙상 확인을 이어 가요");
   assert.equal(card({ phase: "approach" }).title, "낙상 의심 장소를 확인하러 가고 있어요");
 });

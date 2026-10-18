@@ -52,7 +52,7 @@ self.addEventListener("push", (event) => {
     payload = { body: event.data ? event.data.text() : "" };
   }
 
-  const title = typeof payload.title === "string" ? payload.title : "MALBUT 홈캠";
+  const title = typeof payload.title === "string" ? payload.title : "말벗 홈캠";
   const body = typeof payload.body === "string" ? payload.body : "새로운 홈캠 이벤트가 있습니다.";
   const payloadData =
     payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)

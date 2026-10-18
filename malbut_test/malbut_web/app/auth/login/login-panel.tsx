@@ -29,13 +29,13 @@ const STEP_COPY: Record<
   credentials: {
     eyebrow: "MEMBER ACCESS",
     title: "홈캠에 로그인",
-    description: "초대받은 계정으로 우리 집 홈캠에 안전하게 연결하세요.",
+    description: "초대받은 계정으로 우리 집 홈캠에 안전하게 연결해 주세요.",
     submit: "로그인",
   },
   new_password: {
     eyebrow: "FIRST SIGN IN",
     title: "새 비밀번호 설정",
-    description: "처음 로그인했습니다. 앞으로 사용할 비밀번호를 정해 주세요.",
+    description: "처음 로그인했어요. 앞으로 쓸 비밀번호를 정해 주세요.",
     submit: "비밀번호 변경",
   },
   mfa: {
@@ -71,7 +71,7 @@ export function LoginPanel({ returnTo }: LoginPanelProps) {
 
     if (step === "new_password" && newPassword !== confirmPassword) {
       setMessageTone("error");
-      setMessage("새 비밀번호가 서로 일치하지 않습니다.");
+      setMessage("새 비밀번호가 서로 달라요.");
       return;
     }
     if (step === "mfa" && !/^\d{6}$/.test(mfaCode)) {
@@ -126,13 +126,13 @@ export function LoginPanel({ returnTo }: LoginPanelProps) {
         responseMessage(
           payload,
           response.status === 429
-            ? "로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요."
+            ? "로그인 시도가 많아요. 잠시 뒤 다시 해 주세요."
             : "이메일 또는 비밀번호를 확인해 주세요.",
         ),
       );
     } catch {
       setMessageTone("error");
-      setMessage("서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+      setMessage("서버에 연결하지 못했어요. 네트워크를 확인한 뒤 다시 해 주세요.");
     } finally {
       setBusy(false);
     }
@@ -152,7 +152,7 @@ export function LoginPanel({ returnTo }: LoginPanelProps) {
     <main className="homecam-login-shell">
       <section className="homecam-login-panel" aria-labelledby="homecam-login-title">
         <header className="homecam-login-header">
-          <Link className="homecam-login-brand" href="/" aria-label="MALBUT 홈캠">
+          <Link className="homecam-login-brand" href="/" aria-label="말벗 홈캠">
             <strong>/MALBUT</strong>
             <small>HOME CAMERA</small>
           </Link>
@@ -304,8 +304,8 @@ export function LoginPanel({ returnTo }: LoginPanelProps) {
         </div>
 
         <footer className="homecam-login-footer">
-          <span>초대받은 소유자와 보호자만 이용할 수 있습니다.</span>
-          <span>영상과 음성은 허용된 계정에만 연결됩니다.</span>
+          <span>초대받은 소유자와 보호자만 쓸 수 있어요.</span>
+          <span>영상과 음성은 허용된 계정에만 연결돼요.</span>
         </footer>
       </section>
     </main>

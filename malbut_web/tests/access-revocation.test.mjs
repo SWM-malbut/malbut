@@ -32,5 +32,5 @@ test("family revocation blocks new grants and closes the cooperative live client
   // Every HLS resource request re-checks membership, so a revoked guardian loses playback.
   assert.match(hlsRoute, /userCanViewDevice\(deviceId, userId\)/);
   assert.match(page, /window\.setInterval\(\(\) => void verifyAccess\(\), 5_000\)/);
-  assert.match(page, /홈캠 접근 권한이 해제되었습니다/);
+  assert.match(page, /이 말벗을 볼 권한이 없어졌어요/);
 });

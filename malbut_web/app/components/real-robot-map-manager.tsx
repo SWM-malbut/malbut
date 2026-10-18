@@ -284,7 +284,7 @@ export function RealRobotMapManager({
   );
 }
 
-/** 지도 탭 › 직접 움직이기 (목업 19번): 개발자 화면 패드와 같은 입력 처리. */
+/** 지도 탭 › 수동 조작 (목업 19번): 개발자 화면 패드와 같은 입력 처리. */
 export function MapDrivePad({ drive, enabled }: {
   drive: (velocity: ManualVelocity) => Promise<string>;
   enabled: boolean;
@@ -292,10 +292,10 @@ export function MapDrivePad({ drive, enabled }: {
   const { padProps, knob, active, sent, error } = useManualDrive(drive, enabled);
   return (
     <article className="ui-card ui-map-drive">
-      <h2>직접 움직이기</h2>
+      <h2>수동 조작</h2>
       <span className="ui-caption">소유자만 볼 수 있어요.</span>
       <div {...padProps} className={`ui-map-drive-pad${enabled ? "" : " is-disabled"}${active ? " is-active" : ""}`}
-        role="application" aria-label="직접 움직이기 패드: 누른 채 끄는 방향으로 움직여요. 방향키나 W·A·S·D로도 움직여요.">
+        role="application" aria-label="수동 조작 패드: 누른 채 끄는 방향으로 움직여요. 방향키나 W·A·S·D로도 움직여요.">
         <span className="is-front" aria-hidden="true">앞</span>
         <span className="is-back" aria-hidden="true">뒤</span>
         <span className="is-left" aria-hidden="true">왼쪽 회전</span>
@@ -308,7 +308,7 @@ export function MapDrivePad({ drive, enabled }: {
             : "멈춤"}
       </p>
       {error && <p className="ui-note is-danger" role="alert">말벗에 전달하지 못했어요: {error}</p>}
-      <p className="ui-note">패드를 누른 채 끄는 만큼 빨라져요(최대 0.15m/s). 손을 떼면 바로 멈춰요. 컴퓨터에서는 패드를 누른 뒤 방향키나 W·A·S·D로도 움직여요. 처음 움직이면 하던 자율 이동·순찰·따라가기는 멈춰요. 장애물 앞에서는 말벗이 스스로 멈춰요.</p>
+      <p className="ui-note ui-lines">패드를 누른 채 끄는 만큼 빨라져요(최대 0.15m/s).{"\n"}컴퓨터에서는 패드를 누른 뒤 방향키나 W·A·S·D로도 움직여요.{"\n"}손을 떼면 바로 멈추고, 장애물 앞에서는 말벗이 스스로 멈춰요.{"\n"}처음 움직이면 하던 목적지 이동·순찰·따라가기는 멈춰요.</p>
     </article>
   );
 }

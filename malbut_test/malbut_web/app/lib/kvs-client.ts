@@ -225,7 +225,7 @@ function connectKvsP2pViewer(input: {
       await peer.setLocalDescription(offer);
       if (peer.localDescription) signaling.sendSdpOffer(peer.localDescription);
     } catch (error) {
-      input.callbacks.onError(toError(error, "AWS 연결 제안을 만들지 못했습니다."));
+      input.callbacks.onError(toError(error, "영상 연결을 준비하지 못했어요."));
     }
   });
 
@@ -238,7 +238,7 @@ function connectKvsP2pViewer(input: {
         await peer.addIceCandidate(candidate);
       }
     } catch (error) {
-      input.callbacks.onError(toError(error, "카메라 응답을 처리하지 못했습니다."));
+      input.callbacks.onError(toError(error, "카메라 응답을 처리하지 못했어요."));
     }
   });
 
@@ -273,7 +273,7 @@ function connectKvsP2pViewer(input: {
   return {
     storageMode: false,
     async attachMicrophone(track) {
-      if (closed) throw new Error("홈캠 연결이 닫혔어요.");
+      if (closed) throw new Error("영상 연결이 닫혔어요.");
       await audio.sender.replaceTrack(track);
     },
     close() {
@@ -342,7 +342,7 @@ function connectKvsStorageParticipant(input: StorageParticipantInput): KvsConnec
     try {
       const config = await input.refreshConfig(controller.signal);
       if (!config.storageMode) {
-        throw new Error("AWS 저장 모드가 더 이상 활성화되어 있지 않습니다.");
+        throw new Error("영상 저장 연결이 이미 끝났어요.");
       }
       if (closed || generation !== currentGeneration) return;
 
@@ -356,7 +356,7 @@ function connectKvsStorageParticipant(input: StorageParticipantInput): KvsConnec
       scheduleRenewal(STORAGE_RENEW_MS);
     } catch (error) {
       if (closed || controller.signal.aborted || generation !== currentGeneration) return;
-      input.callbacks.onError(toError(error, "AWS 저장 연결을 갱신하지 못했습니다."));
+      input.callbacks.onError(toError(error, "영상 저장 연결을 갱신하지 못했어요."));
       scheduleRenewal(STORAGE_RENEW_RETRY_MS);
     } finally {
       if (renewalAbortController === controller) renewalAbortController = null;
@@ -450,7 +450,7 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
     try {
       await input.requestStorageJoin(controller.signal);
     } catch (error) {
-      failure = toError(error, "AWS 저장 세션 참가 요청에 실패했습니다.");
+      failure = toError(error, "영상 저장 연결에 들어가지 못했어요.");
     } finally {
       if (joinRequestTimer !== null) window.clearTimeout(joinRequestTimer);
       joinRequestTimer = null;
@@ -460,7 +460,7 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
     if (closed || offerReceived) return;
     if (joinAttempts >= STORAGE_JOIN_MAX_ATTEMPTS) {
       input.callbacks.onError(
-        failure ?? new Error("AWS 저장 세션에서 연결 제안을 받지 못했습니다."),
+        failure ?? new Error("영상 저장 연결 정보를 받지 못했어요."),
       );
       requestReconnect();
       return;
@@ -516,7 +516,7 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
           `storage-ice-${crypto.randomUUID()}`,
         );
       } catch (error) {
-        input.callbacks.onError(toError(error, "AWS에 ICE 후보를 보내지 못했습니다."));
+        input.callbacks.onError(toError(error, "영상 연결 정보를 보내지 못했어요."));
       }
     };
     nextPeer.ontrack = ({ track }) => {
@@ -566,7 +566,7 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
       );
     } catch (error) {
       if (closed || peer !== nextPeer) return;
-      input.callbacks.onError(toError(error, "AWS 저장 세션 제안을 처리하지 못했습니다."));
+      input.callbacks.onError(toError(error, "영상 저장 연결 정보를 처리하지 못했어요."));
       requestReconnect();
     }
   });
@@ -576,7 +576,7 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
     if (peer?.remoteDescription) {
       peer.addIceCandidate(candidate).catch((error) => {
         if (!closed) {
-          input.callbacks.onError(toError(error, "AWS ICE 후보를 적용하지 못했습니다."));
+          input.callbacks.onError(toError(error, "영상 연결 정보를 적용하지 못했어요."));
         }
       });
     } else {
@@ -625,7 +625,7 @@ function getStorageLocalTracks(role: KvsRole, stream: MediaStream | null) {
     const videoTrack = stream?.getVideoTracks()[0];
     const audioTrack = stream?.getAudioTracks()[0];
     if (!videoTrack || !audioTrack) {
-      throw new Error("AWS 영상 저장에는 카메라와 마이크 입력이 모두 필요합니다.");
+      throw new Error("영상 저장에는 카메라와 마이크 입력이 모두 필요해요.");
     }
     return [videoTrack, audioTrack];
   }
@@ -653,7 +653,7 @@ function configureStorageTransceivers(
       (codec) => codec.mimeType.toLowerCase() === mimeType,
     );
     if (!codecs?.length) {
-      throw new Error(`${kind === "video" ? "H.264" : "Opus"} 코덱을 지원하지 않습니다.`);
+      throw new Error(`${kind === "video" ? "H.264" : "Opus"} 코덱을 지원하지 않아요.`);
     }
     transceiver.setCodecPreferences(codecs);
   }
@@ -665,7 +665,7 @@ async function limitStorageSenders(peer: RTCPeerConnection) {
     if (kind !== "video" && kind !== "audio") continue;
     const parameters = sender.getParameters();
     if (!parameters.encodings.length) {
-      throw new Error("WebRTC 송출 비트레이트를 제한하지 못했습니다.");
+      throw new Error("영상 보내는 속도를 제한하지 못했어요.");
     }
     for (const encoding of parameters.encodings) {
       encoding.maxBitrate =
@@ -710,7 +710,7 @@ async function requestAuthorizedDeviceSession(
     | null;
   const roomCode = payload?.activeSession?.roomCode;
   if (!response.ok || !payload || !roomCode) {
-    throw new Error(payload?.error ?? "홈캠 실시간 연결 정보를 받지 못했습니다.");
+    throw new Error(payload?.error ?? "실시간 영상 연결 정보를 받지 못했어요.");
   }
   return { ...payload, roomCode };
 }
@@ -730,9 +730,9 @@ async function loadKvsSdk(): Promise<KvsSdk> {
       script.onload = () => {
         const sdk = (window as typeof window & { KVSWebRTC?: KvsSdk }).KVSWebRTC;
         if (sdk) resolve(sdk);
-        else reject(new Error("AWS KVS WebRTC SDK를 불러오지 못했습니다."));
+        else reject(new Error("영상 연결 기능을 불러오지 못했어요."));
       };
-      script.onerror = () => reject(new Error("AWS KVS WebRTC SDK 파일을 불러오지 못했습니다."));
+      script.onerror = () => reject(new Error("영상 연결 기능 파일을 불러오지 못했어요."));
       document.head.appendChild(script);
     });
   }
@@ -749,7 +749,7 @@ function requireRtcPeerConnection(): typeof RTCPeerConnection {
     browserWindow.RTCPeerConnection ?? browserWindow.webkitRTCPeerConnection;
   if (typeof PeerConnection !== "function") {
     throw new Error(
-      "WebRTC 연결 기능을 찾지 못했습니다. AdGuard 등 확장 프로그램의 WebRTC 차단을 끈 뒤 새로고침해 주세요.",
+      "영상 연결 기능을 찾지 못했어요. AdGuard 같은 확장 프로그램의 WebRTC 차단을 끈 뒤 새로고침해 주세요.",
     );
   }
   return PeerConnection;

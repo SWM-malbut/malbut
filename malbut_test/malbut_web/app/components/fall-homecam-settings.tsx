@@ -60,10 +60,10 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
         body: JSON.stringify({ expectedRevision: fall.settings.settingsRevision, [field]: value }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "설정을 저장하지 못했습니다.");
+      if (!response.ok) throw new Error(body.error ?? "설정을 저장하지 못했어요.");
       setMessage("저장했어요. 말벗이 적용하면 상태가 바뀌어요.");
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "설정을 저장하지 못했습니다.");
+      setMessage(reason instanceof Error ? reason.message : "설정을 저장하지 못했어요.");
     } finally {
       await load();
       setBusy("");
@@ -79,12 +79,13 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
     { title: "낙상 감지", desc: "말벗이 낙상을 살펴요. 끄면 녹화와 실시간 보기는 그대로예요.",
       checked: fall?.settings.enabled ?? false, needsCamera: true, busy: !fall || busy === "enabled",
       onChange: () => void updateFall("enabled", !fall?.settings.enabled) },
-    { title: "클라우드 AI 확인 동의", desc: "낙상이 의심될 때, 그리고 사용자가 신고한 순간을 외부 AI로 보내 한 번 더 확인해요.",
+    { title: "클라우드 AI 확인 동의", desc: "낙상이 의심될 때, 그리고 직접 신고한 순간을 외부 AI로 보내 한 번 더 확인해요.",
       checked: fall?.settings.cloudConsent ?? false, needsCamera: true, busy: !fall || busy === "cloudConsent",
       onChange: () => void updateFall("cloudConsent", !fall?.settings.cloudConsent) },
     // Not in the mockup: the existing live microphone switch is kept so the feature does not disappear.
+    // 말벗 마이크는 실시간 보기에서만 소리를 보내고, 카메라가 꺼지면 실시간 보기를 열 수 없다.
     { title: "말벗 마이크", desc: "실시간 보기에서 집 안의 소리를 보호자에게 전해요.", checked: microphoneEnabled,
-      needsCamera: false, busy: settingBusy, onChange: () => onUpdateSetting("microphoneEnabled", !microphoneEnabled) },
+      needsCamera: true, busy: settingBusy, onChange: () => onUpdateSetting("microphoneEnabled", !microphoneEnabled) },
   ];
 
   return (

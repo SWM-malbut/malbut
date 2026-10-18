@@ -58,7 +58,7 @@ const second = (ms: number) => Math.floor(ms / 1000) * 1000;
 async function json(response: Response) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(typeof body.error === "string" ? body.error : "요청을 처리하지 못했습니다.");
+    const error = new Error(typeof body.error === "string" ? body.error : "요청을 처리하지 못했어요.");
     (error as Error & { reason?: string }).reason = body.reason;
     throw error;
   }
@@ -154,7 +154,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
     alignedRef.current = 0;
     window.queueMicrotask(() => {
       setVideoAt(null);
-      setVideoMessage(end <= start ? "이 시간의 녹화 영상이 없습니다." : "녹화를 불러오는 중입니다…");
+      setVideoMessage(end <= start ? "이 시간의 녹화 영상이 없어요." : "녹화를 불러오는 중이에요…");
     });
     if (end <= start) return;
     void request(`${base}/recording-playback`, {
@@ -164,14 +164,14 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
       alignedRef.current = Date.parse(body.alignedStartAt);
       if (video.canPlayType("application/vnd.apple.mpegurl")) { video.src = body.playbackUrl; video.load(); return; }
       const { default: Hls } = await import("hls.js");
-      if (!Hls.isSupported()) throw new Error("이 브라우저는 HLS 재생을 지원하지 않습니다.");
+      if (!Hls.isSupported()) throw new Error("이 브라우저에서는 녹화를 재생할 수 없어요.");
       const player = new Hls({ enableWorker: true });
-      player.on(Hls.Events.ERROR, (_name, data) => { if (data.fatal) setVideoMessage("녹화를 재생하지 못했습니다."); });
+      player.on(Hls.Events.ERROR, (_name, data) => { if (data.fatal) setVideoMessage("녹화를 재생하지 못했어요."); });
       player.loadSource(body.playbackUrl);
       player.attachMedia(video);
       dispose = () => player.destroy();
     }).catch((reason) => {
-      if (!controller.signal.aborted) setVideoMessage(reason instanceof Error ? reason.message : "녹화를 불러오지 못했습니다.");
+      if (!controller.signal.aborted) setVideoMessage(reason instanceof Error ? reason.message : "녹화를 불러오지 못했어요.");
     });
     return () => {
       controller.abort();
@@ -219,10 +219,10 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ momentAt: new Date(moment).toISOString() }),
       }));
-      setResult({ kind: "recheck", ai: true, text: "검토 진행 중 · 결과는 원래 사건에 기록돼요", incidentId: recheck.incidentId });
+      setResult({ kind: "recheck", ai: true, text: "AI가 확인하는 중 · 결과는 원래 사건에 기록돼요", incidentId: recheck.incidentId });
     } catch (reason) {
       if ((reason as Error & { reason?: string }).reason === "outside_incident") setOutsideServer(true);
-      else setError(reason instanceof Error ? reason.message : "AI 검토를 요청하지 못했습니다.");
+      else setError(reason instanceof Error ? reason.message : "AI 확인을 요청하지 못했어요.");
     } finally { setBusy(""); }
   };
   const submitReport = async (withAi: boolean) => {
@@ -237,11 +237,11 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
       const aiError = body.aiReview?.error as string | undefined;
       setResult({ kind: "report", ai: withAi && !aiError, incidentId: body.incidentId,
         text: "놓친 낙상 신고로 사건 목록에 추가됐어요. 다른 사용자에게 알림은 가지 않아요." +
-          (aiError === "consent_off" ? " 클라우드 분석 동의가 꺼져 있어 AI 검토는 보내지 않았어요."
-            : aiError === "key_missing" ? " 클라우드 AI 키가 없어 AI 검토는 보내지 않았어요."
-              : aiError ? " AI 검토는 시작하지 못했어요." : "") });
+          (aiError === "consent_off" ? " 클라우드 AI 확인 동의가 꺼져 있어 AI 확인은 보내지 않았어요."
+            : aiError === "key_missing" ? " 클라우드 AI 키가 없어 AI 확인은 보내지 않았어요."
+              : aiError ? " AI 확인은 시작하지 못했어요." : "") });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "신고하지 못했습니다.");
+      setError(reason instanceof Error ? reason.message : "신고하지 못했어요.");
     } finally { setBusy(""); }
   };
 
@@ -280,7 +280,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
         <p className="fall-hint is-center">최근 7일까지 볼 수 있어요</p>
 
         <div className="fall-card is-flat">
-          <div className="fall-sub">24시간 타임라인 · 표시는 사건 위치</div>
+          <div className="fall-sub">24시간 · 세로 줄은 사건이 있던 때</div>
           <div className="fall-tl-track" role="slider" tabIndex={0} aria-label="녹화 시각 고르기"
             aria-valuemin={0} aria-valuemax={1440} aria-valuenow={Math.round((moment - day0) / 60_000)}
             aria-valuetext={hms(moment)}
@@ -357,9 +357,9 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
 
         {recheck && (
           <div className="fall-card is-flat is-blue">
-            <h2>사건 다시 검토</h2>
+            <h2>AI에게 다시 확인 받기</h2>
             <div className="fall-sub">{recheck.title} 사건이에요. 넘어진 순간을 확인하고 필요하면 고쳐 주세요.</div>
-            {momentField("넘어지기 시작한 순간 (사건 의심 시점으로 채워짐)")}
+            {momentField("넘어지기 시작한 순간 (처음엔 사건 시각이 들어가 있어요)")}
             <div className="fall-tl-box">원래 사건 구간: {hms(rangeStart)} ~ {hms(rangeEnd)} · 이 안에서 고치면 결과가 원래 사건에 붙어요</div>
             {outside && (
               <div className="fall-tl-warn">
@@ -371,7 +371,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
                 </div>
               </div>
             )}
-            <div className="fall-hint">찍은 순간부터 5초 후까지에서 같은 간격으로 12장을 사진만으로 보내 판정받아요.</div>
+            <div className="fall-hint">고른 순간부터 5초 동안의 사진 12장을 AI에게 보내요.</div>
             {result?.kind === "recheck" ? (
               <>
                 <div className="fall-tl-progress"><i />{result.text}</div>
@@ -379,7 +379,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
               </>
             ) : (
               <button type="button" className="fall-button is-blue is-large" disabled={outside || busy === "recheck"}
-                onClick={() => void submitRecheck()}>{busy === "recheck" ? "보내는 중…" : "AI에게 다시 검토 받기"}</button>
+                onClick={() => void submitRecheck()}>{busy === "recheck" ? "보내는 중…" : "AI에게 다시 확인 받기"}</button>
             )}
           </div>
         )}
@@ -387,7 +387,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
         {!recheck && !result && (
           <div className="fall-card is-flat is-purple">
             <h2>놓친 낙상 신고</h2>
-            <div className="fall-sub">자동으로 감지되지 않은 낙상을 남겨요. 영상을 움직여 넘어지기 시작한 순간을 찍어 주세요.</div>
+            <div className="fall-sub">자동으로 감지되지 않은 낙상을 남겨요. 영상을 움직여 넘어지기 시작한 순간을 골라 주세요.</div>
             {momentField("넘어지기 시작한 순간")}
             <div className="fall-tl-box">장면 영상: {hms(moment - PRE_MS)} ~ {hms(moment + POST_MS)} (순간 10초 전 ~ 20초 후)</div>
             <label className="fall-tl-field">메모 (선택)
@@ -397,10 +397,10 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
               <button type="button" className="fall-button is-purple-line is-large" disabled={Boolean(busy)}
                 onClick={() => void submitReport(false)}>{busy === "report" ? "남기는 중…" : "신고만 남기기"}</button>
               <button type="button" className="fall-button is-purple is-large" disabled={Boolean(busy)}
-                onClick={() => void submitReport(true)}>{busy === "report-ai" ? "보내는 중…" : "신고하고 AI에게 검토 받기"}</button>
-              <div className="fall-hint">AI 검토를 고르면 찍은 순간부터 5초 후까지({hms(moment)} ~ {hms(moment + REVIEW_MS)})에서 같은 간격으로 12장을 사진만으로 보내 판정받아요. 결과는 기록만 되고 알림은 가지 않아요.</div>
+                onClick={() => void submitReport(true)}>{busy === "report-ai" ? "보내는 중…" : "신고하고 AI에게 확인 받기"}</button>
+              <div className="fall-hint">AI 확인을 고르면 고른 순간부터 5초 동안({hms(moment)} ~ {hms(moment + REVIEW_MS)})의 사진 12장을 AI에게 보내요. 결과는 기록만 되고 알림은 가지 않아요.</div>
             </div>
-            <div className="fall-hint">다른 사용자에게 알림은 가지 않고, 사건 목록에 &quot;사용자 신고&quot;로 기록돼요.</div>
+            <div className="fall-hint">다른 사용자에게 알림은 가지 않고, 사건 목록에 &quot;직접 신고&quot;로 기록돼요.</div>
           </div>
         )}
 
@@ -408,7 +408,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
           <div className="fall-card is-flat is-purple">
             <h2>신고를 남겼어요</h2>
             <div className="fall-sub">{result.text}</div>
-            {result.ai && <div className="fall-tl-progress"><i />AI 검토 진행 중 · 결과가 나올 때까지 다시 요청할 수 없어요</div>}
+            {result.ai && <div className="fall-tl-progress"><i />AI가 확인하는 중 · 결과가 나올 때까지 다시 요청할 수 없어요</div>}
             <div className="fall-two-buttons">
               <button type="button" className="fall-button is-soft" onClick={onBack}>사건 목록 보기</button>
               <button type="button" className="fall-button is-soft" onClick={() => { setResult(null); setMemo(""); }}>다른 구간 신고</button>

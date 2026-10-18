@@ -39,7 +39,7 @@ export async function POST(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanViewDevice(deviceId, userId))) {
-    return noStore({ error: "이 홈캠을 볼 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗을 볼 권한이 없어요." }, 403);
   }
   const payload = (await request.json().catch(() => null)) as {
     clientId?: unknown;
@@ -59,7 +59,7 @@ export async function POST(
   const state = await getDeviceSettings(deviceId);
   const activeSession = await getActiveMediaSession(deviceId, "p2p");
   if (!state.cameraEnabled || !activeSession) {
-    return noStore({ error: "홈캠이 현재 송출 중이 아닙니다." }, 409);
+    return noStore({ error: "말벗이 지금 영상을 보내고 있지 않아요." }, 409);
   }
   const mode = "p2p" as const;
   const canIssueCredentials = await consumeRequestRateLimit({
@@ -87,7 +87,7 @@ export async function POST(
   }
   const expectedChannelArn = expectedKvsChannel(resources, mode);
   if (!expectedChannelArn) {
-    return noStore({ error: "요청한 AWS 홈캠 리소스가 설정되지 않았습니다." }, 503);
+    return noStore({ error: "요청한 영상 연결 자원이 설정되지 않았어요." }, 503);
   }
 
   try {
@@ -98,14 +98,14 @@ export async function POST(
       channelMode: mode,
     });
     if (broker.channelArn !== expectedChannelArn) {
-      return noStore({ error: "AWS 홈캠 채널 설정이 일치하지 않습니다." }, 503);
+      return noStore({ error: "영상 연결 채널 설정이 맞지 않아요." }, 503);
     }
     if (
       !(await userCanViewDevice(deviceId, userId)) ||
       (await getActiveMediaSession(deviceId, "p2p"))?.id !== activeSession.id
     ) {
       return noStore(
-        { error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." },
+        { error: "말벗을 볼 권한이나 영상 연결이 바뀌었어요." },
         403,
       );
     }

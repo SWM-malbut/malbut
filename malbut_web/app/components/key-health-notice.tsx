@@ -8,8 +8,8 @@ type Problem = { service: Service; problem: "missing" | "invalid" | "quota" };
 const COPY: Record<Service, { name: string; title: string; body: string; urgent: boolean }> = {
   openai: { name: "대화 키", title: "말벗이 지금 대화를 할 수 없어요", body: "대화용 OpenAI 키가 없거나 쓸 수 없어요.", urgent: true },
   fall: { name: "낙상 AI 키", title: "낙상 AI 확인을 할 수 없어요",
-    body: "클라우드 AI 키가 없거나 쓸 수 없어요. 낙상 감지와 알림은 그대로 계속되지만, AI 재확인이 빠져 정확도가 떨어질 수 있어요.", urgent: true },
-  kma: { name: "날씨 키", title: "말벗이 날씨를 확인할 수 없어요", body: "기상청 키가 없거나 쓸 수 없어요. 대화는 그대로 할 수 있어요.", urgent: false },
+    body: "클라우드 AI 키가 없거나 쓸 수 없어요.\n낙상 감지와 알림은 그대로 계속되지만, AI 확인이 빠져 정확도가 떨어질 수 있어요.", urgent: true },
+  kma: { name: "날씨 키", title: "말벗이 날씨를 확인할 수 없어요", body: "기상청 키가 없거나 쓸 수 없어요.\n대화는 그대로 할 수 있어요.", urgent: false },
 };
 
 const asProblems = (value: unknown): Problem[] => Array.isArray(value)
@@ -53,7 +53,8 @@ export function KeyHealthNotice({ deviceId, isOwner, onOpenKeys, demo = false }:
     <article className={`ui-card ui-key-notice ${copy.urgent ? "is-urgent" : "is-warn"}`} role="alert">
       <span className={`ui-badge ${copy.urgent ? "is-danger" : "is-warn"}`}>{copy.name} 확인 필요</span>
       <strong>{copy.title}</strong>
-      <p>{copy.body} {isOwner ? "키를 확인해 주세요." : "소유자에게 키를 확인해 달라고 알려 주세요."}</p>
+      {/* 문장마다 줄을 나눔: 문제 / 영향 / 할 일. */}
+      <p className="ui-lines">{copy.body}{"\n"}{isOwner ? "키를 확인해 주세요." : "소유자에게 키를 확인해 달라고 알려 주세요."}</p>
       {others.length > 0 && <small>{others.map((other) => COPY[other.service].name).join(", ")}도 확인이 필요해요.</small>}
       {isOwner && <button type="button" className="ui-button is-strong" onClick={onOpenKeys}>키 확인하기</button>}
     </article>

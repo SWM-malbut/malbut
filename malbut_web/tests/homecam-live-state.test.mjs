@@ -27,7 +27,7 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(app, /onReleaseLive=\{closeInlineViewer\}/);
   assert.match(app, /device\?\.id === inlineViewerDevice\.id/);
   assert.match(app, /"playing",[\s\S]*"timeupdate",[\s\S]*"resize"/);
-  assert.match(dashboard, /const displayedMediaReady = liveViewer/);
+  assert.match(dashboard, /liveViewer \? \(liveMediaReady \? \["연결됨", "is-good"\] : \["연결 중", "is-pending"\]\)/);
   assert.match(dashboard, /const liveViewerActive = Boolean\(liveViewer\)/);
   assert.match(dashboard, /LOCAL_DEMO_DEVICE_ID = "local-demo-homecam"/);
   assert.match(dashboard, /setDevices\(\[LOCAL_DEMO_DEVICE\]\)/);

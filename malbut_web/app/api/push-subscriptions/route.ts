@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     return noStore({ error: "Web Push 구독 형식을 확인해 주세요." }, 400);
   }
   if (!(await userCanViewDevice(payload.deviceId, userId))) {
-    return noStore({ error: "이 홈캠의 알림을 구독할 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗의 알림을 받을 권한이 없어요." }, 403);
   }
   const subscription = await upsertPushSubscription({
     deviceId: payload.deviceId,

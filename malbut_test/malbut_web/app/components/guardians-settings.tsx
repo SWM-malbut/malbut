@@ -199,7 +199,7 @@ export function GuardiansSettings({ deviceId, isOwner, myUserId, family, loading
                 <button type="button" className="ui-button is-strong" onClick={() => void shareLink()} disabled={linkBusy}>공유하기</button>
               </div>
               <button type="button" className="ui-button is-danger-line ui-invite-cancel" onClick={() => void cancelLink()} disabled={linkBusy}>링크 취소</button>
-              <small className="ui-note">단톡방 밖으로 링크가 퍼졌다면 바로 취소하세요. 이미 들어온 보호자는 그대로 남아요.</small>
+              <small className="ui-note">단톡방 밖으로 링크가 퍼졌다면 바로 취소해 주세요. 이미 들어온 보호자는 그대로 남아요.</small>
             </>
           )}
           {error && <p className="ui-register-error" role="alert">{error}</p>}

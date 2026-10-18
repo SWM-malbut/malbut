@@ -106,9 +106,9 @@ test("bounded event clips keep privacy deletion and direct destination navigatio
       readFile(new URL("../infra/aws/kvs-broker/index.mjs", import.meta.url), "utf8"),
       readFile(new URL("../infra/cdk/lib/homecam-dev-stack.ts", import.meta.url), "utf8"),
     ]);
-  // Home sends the robot directly: the hero button and each room tile open 목적지 선택.
+  // Home sends the robot directly: the hero button opens 목적지 선택, each room button with that room picked (목업 40번).
   assert.match(dashboard, /onClick=\{\(\) => openMap\("navigate"\)\}>지도에서 보내기/);
-  assert.match(dashboard, /onClick=\{\(\) => onOpenMap\("navigate"\)\} aria-label=\{`\$\{room\.name\}/);
+  assert.match(dashboard, /onClick=\{\(\) => onOpenMap\("navigate", room\.id\)\} aria-label=\{`\$\{withRo\(room\.name\)\} 보내기`\}/);
   // General event clips were replaced by fall incidents: no per-clip delete,
   // the recording expires after 7 days (spec 6).
   assert.doesNotMatch(dashboard, /homecam-event-delete-button/);

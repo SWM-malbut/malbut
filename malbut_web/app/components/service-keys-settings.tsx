@@ -35,7 +35,7 @@ const CARDS: Array<{
   {
     service: "fall", title: "낙상 AI 확인 · Ollama", desc: "낙상이 의심될 때 장면을 AI에게 한 번 더 보여 줘요.",
     placeholder: "Ollama 키", link: { label: "Ollama에서 키 만들기 ›", href: "https://ollama.com/settings/keys" },
-    without: "낙상 감지와 알림은 계속하지만, AI 재확인이 빠져 정확도가 떨어질 수 있어요.",
+    without: "낙상 감지와 알림은 계속하지만, AI 확인이 빠져 정확도가 떨어질 수 있어요.",
     quota: "사용량을 넘었어요.",
     note: "AI 확인을 쓸지는 설정 › 홈캠 설정의 \"클라우드 AI 확인 동의\"에서 정해요.",
   },

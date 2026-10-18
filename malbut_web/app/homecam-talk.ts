@@ -64,7 +64,7 @@ export function talkNote(
     return {
       tone: "neutral",
       title: "마이크가 꺼졌어요",
-      text: "화면을 떠났거나 홈캠 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
+      text: "화면을 떠났거나 영상 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
     };
   }
   return null;

@@ -30,7 +30,7 @@ export async function POST(
   if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   if (!(await userCanViewDevice(deviceId, userId))) {
-    return noStore({ error: "이 홈캠을 볼 권한이 없습니다." }, 403);
+    return noStore({ error: "이 말벗을 볼 권한이 없어요." }, 403);
   }
 
   const [state, session] = await Promise.all([
@@ -38,7 +38,7 @@ export async function POST(
     getActiveMediaSession(deviceId, "storage"),
   ]);
   if (!state.cameraEnabled || !session) {
-    return noStore({ error: "홈캠이 현재 송출 중이 아닙니다." }, 409);
+    return noStore({ error: "말벗이 지금 영상을 보내고 있지 않아요." }, 409);
   }
   if (
     session.mode !== "storage" ||
@@ -86,7 +86,7 @@ export async function POST(
       !(await userCanViewDevice(deviceId, userId)) ||
       (await getActiveMediaSession(deviceId, "storage"))?.id !== session.id
     ) {
-      return noStore({ error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." }, 403);
+      return noStore({ error: "말벗을 볼 권한이나 영상 연결이 바뀌었어요." }, 403);
     }
     const proxy = await createDeviceLivePlaybackProxy(
       {

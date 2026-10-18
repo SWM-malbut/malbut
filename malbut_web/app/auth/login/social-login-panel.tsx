@@ -48,7 +48,7 @@ export function SocialLoginPanel({
       <header className="ui-login-head">
         <span className="ui-login-mark" aria-hidden="true">말</span>
         <h1>말벗 홈캠</h1>
-        <p>로그인하고 우리 집 말벗의 상태와 사건을 확인하세요.</p>
+        <p>로그인하고 우리 집 말벗의 상태와 사건을 확인해 보세요.</p>
       </header>
 
       {message && <p className="ui-login-error" role="alert">{message}</p>}
@@ -56,12 +56,12 @@ export function SocialLoginPanel({
       <SocialProviderButtons returnTo={returnTo} enabled={enabled} />
 
       <div className="ui-login-note">
-        <strong>처음 가입한 방법으로 로그인하세요</strong>
+        <strong>처음 가입한 방법으로 로그인해 주세요</strong>
         <span>다른 방법으로 들어오면 새 계정이 만들어져서, 지금 보던 말벗이 보이지 않아요.</span>
       </div>
 
       <footer className="ui-login-foot">
-        <span>영상과 음성은 허용된 계정에만 연결됩니다.</span>
+        <span>영상과 음성은 허용된 계정에만 연결돼요.</span>
         <a href={`/auth/login?${query}&method=email`}>기존 이메일로 로그인</a>
       </footer>
     </main>

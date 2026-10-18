@@ -47,7 +47,7 @@ test("an idle heartbeat does not close a provisioned device session", async () =
     /getActiveMediaSession\(device\.deviceId, mode\)/,
   );
   assert.match(sessionRoute, /confirmedSession\?\.id !== session\.id/);
-  assert.match(dashboard, /const displayedMediaReady = liveViewer[\s\S]*selectedDevice\?\.online && selectedDevice\.p2pHealthy/);
+  assert.match(dashboard, /const videoLink[\s\S]*!selectedDevice\?\.online \? \["준비 안 됨", ""\][\s\S]*selectedDevice\.p2pHealthy \? \["준비됨", "is-good"\]/);
   assert.match(
     database,
     /stream_sessions\.id = COALESCE\(\?, device_state\.active_session_id\)/,

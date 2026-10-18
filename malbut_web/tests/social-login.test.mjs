@@ -212,5 +212,5 @@ test("the home page asks for a name first, and email login stays until registrat
   assert.match(home, /if \(!user\.chosenName\) redirect\(`\/auth\/name\?/);
   assert.match(login, /first\(params\.method\) === "email"\) return <LoginPanel/);
   for (const label of ["카카오로 계속하기", "네이버로 계속하기", "Google로 계속하기", "기존 이메일로 로그인",
-    "처음 가입한 방법으로 로그인하세요"]) assert.ok(social.includes(label), label);
+    "처음 가입한 방법으로 로그인해 주세요"]) assert.ok(social.includes(label), label);
 });

@@ -99,7 +99,7 @@ test("the microphone notice under the switch follows mockup 20", async () => {
   assert.equal(talkNote({ ...base, ended: "timeout" }).title, "3분이 지나 마이크를 껐어요");
   assert.deepEqual(talkNote({ ...base, ended: "dropped" }), {
     tone: "neutral", title: "마이크가 꺼졌어요",
-    text: "화면을 떠났거나 홈캠 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
+    text: "화면을 떠났거나 영상 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
   });
   // A specific failure explains more than the generic stop.
   assert.equal(talkNote({ ...base, ended: "dropped", error: "말하기 연결이 끊겼어요. 다시 켜 주세요." }).tone, "danger");

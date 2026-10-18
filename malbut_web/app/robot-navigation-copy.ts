@@ -9,8 +9,8 @@ export const NAVIGATION_ESCAPING_NOTE = "말벗이 금지 구역 안에 있다�
 
 const FAILURES: Record<string, string> = {
   blocked_start: "주변이 막혀 출발하지 못했어요. 말벗 둘레의 물건을 치우거나 말벗을 조금 옮긴 뒤 다시 보내 주세요.",
-  zone_stuck: "금지 구역에서 나갈 길이 막혔어요. 직접 움직이기로 말벗을 구역 밖으로 옮긴 뒤 다시 보내 주세요.",
-  manual_drive: "직접 움직이기 중이라 출발하지 못했어요.",
+  zone_stuck: "금지 구역에서 나갈 길이 막혔어요. 수동 조작으로 말벗을 구역 밖으로 옮긴 뒤 다시 보내 주세요.",
+  manual_drive: "수동 조작 중이라 출발하지 못했어요.",
   fall_check: "낙상 확인 중이라 출발하지 못했어요.",
   fall_check_started: "낙상 확인이 시작돼 이동을 멈췄어요.",
   localization_lost: "말벗이 지도에서 위치를 잃었어요. 위치 다시 찾기를 한 뒤 보내 주세요.",

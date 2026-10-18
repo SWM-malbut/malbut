@@ -10,6 +10,6 @@ export async function GET(request: Request) {
   try {
     return noStore({ devices: await listHomecamDevices(userId) }, 200);
   } catch {
-    return noStore({ error: "홈캠 목록을 불러오지 못했습니다." }, 500);
+    return noStore({ error: "말벗 목록을 불러오지 못했어요." }, 500);
   }
 }
