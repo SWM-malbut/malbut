@@ -363,6 +363,11 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 않습니다. 기존 Manager 요청 경로, 재생 큐, pause/resume/stop을 사용합니다.
 중지는 진행 중인 한 문장의 ONNX 계산이 끝나는 시점에 반영됩니다.
 
+음성용 전처리에서 짝이 맞는 `**강조**`, `*강조*`, `__강조__`, `_강조_`와
+줄 시작의 별표 목록 기호를 제거합니다. 따라서 LLM 답변의 강조용 별표를 읽지
+않습니다. 대화 원문은 유지하고 괄호 안 내용·숫자·단위는 기존 발음 규칙을
+따릅니다. 단독 별표와 `2 * 3` 같은 수식은 일괄 삭제하지 않습니다.
+
 음성 런타임에 `requirements-piper.txt`를 설치하고 로컬 `.onnx`와
 `.onnx.json` 파일을 함께 배치합니다. 선택 모델은 `rhasspy/piper-voices`의
 `ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx`이며 SHA-256은

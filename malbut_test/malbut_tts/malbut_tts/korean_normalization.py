@@ -1,8 +1,9 @@
 """Local Korean normalization for the existing Piper KSS voice.
 
 N2gk+ source is pinned in vendor/n2gk.py (see vendor/NOTICE.md). The adapter preserves
-parenthetical text, protects configured loanwords, and avoids splitting mixed-case
-English words into a mixture of Hangul letter names and Latin characters.
+parenthetical text, removes Markdown emphasis, protects configured loanwords,
+and avoids splitting mixed-case English words into a mixture of Hangul letter
+names and Latin characters.
 No network inference or text-result cache is used.
 """
 from pathlib import Path
@@ -11,6 +12,24 @@ import re
 import unicodedata
 
 ROOT = Path(__file__).resolve().parent
+
+_EMPHASIS = (
+    re.compile(r'(?<![\\*])(\*{1,3})(?![\s*])([^*\n]*?\S)(?<!\*)\1(?!\*)'),
+    re.compile(r'(?<![\\A-Za-z0-9_])(_{1,3})(?![\s_])([^_\n]*?\S)(?<!_)\1(?![A-Za-z0-9_])'),
+)
+
+
+def _remove_markdown_emphasis(text):
+    """Remove paired emphasis and star bullets only from the spoken copy.
+
+    Keep arithmetic, intra-word underscores and parenthetical content.
+    This is a speech cleanup for common LLM emphasis, not a Markdown renderer.
+    """
+    text = re.sub(r'(?m)^[ \t]*(?:\*[ \t]*){3,}$', '', text)
+    text = re.sub(r'(?m)^([ \t]*)\*[ \t]+', r'\1', text)
+    for pattern in _EMPHASIS:
+        text = pattern.sub(r'\2', text)
+    return text
 
 
 class KoreanNormalizer:
@@ -74,6 +93,7 @@ class KoreanNormalizer:
 
     def __call__(self, text):
         text = unicodedata.normalize('NFC', text)
+        text = _remove_markdown_emphasis(text)
         text = self.pattern.sub(lambda m: self.lookup[' '.join(m.group().split()).casefold()], text)
         text = self.prepare_numeric_readings(text)
         return self.normalizer(text)
