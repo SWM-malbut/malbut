@@ -201,6 +201,36 @@ def test_people_in_view_are_reported_every_2_s_and_standing_up_at_once(robot):
     assert [m['sighting']['kind'] for m in messages(sensor, 'fall_sighting')] == ['up']
 
 
+class NoDepth(Places):
+    """Depth unreadable (under a table, black clothes): no map place for any box."""
+
+    def locate_near(self, observed_at, box, *, tolerance_s=0.25):
+        return None
+
+
+def test_every_pose_frame_goes_to_the_agent_as_numbers_only(robot):
+    """SWM25-267: who is where in each frame; the Agent decides who is the same person."""
+    sensor, clock, _, _ = robot
+    poses(sensor, clock)
+    frame, = messages(sensor, 'fall_people')
+    assert frame == dict(kind='fall_people', at=clock.value, view=0, stationary=True,
+                         robot=[0.0, 0.0], people=[dict(track='pose:1:a', box=list(BOX),
+                                                        point=list(SPOT), state='suspected')])
+    clock.value += 0.2
+    sensor.ingest_subject_frame(SubjectFrame(clock.value, (), 1.0, camera_stationary=False))
+    frame, = messages(sensor, 'fall_people')
+    assert frame['people'] == [] and frame['stationary'] is False  # Nobody in view is news too.
+    assert frame['view'] == 1  # The robot started moving: boxes compare only within a view.
+    sensor._place = NoDepth()
+    clock.value += 0.2
+    poses(sensor, clock, SubjectCheckState.CLEAR, key='pose:1:b')
+    frame, = messages(sensor, 'fall_people')
+    assert frame['people'] == [dict(track='pose:1:b', box=list(BOX), point=None, state='clear')]
+    sensor.configure(enabled=False, camera_enabled=True, cloud_consent=True, connected=True)
+    poses(sensor, clock)
+    assert messages(sensor, 'fall_people') == []
+
+
 def test_a_periodic_cloud_find_is_reported_but_not_one_resting_on_a_bed(robot):
     sensor, clock, cloud, _ = robot
     advance(sensor, clock, 4)
@@ -435,6 +465,9 @@ def test_what_goes_to_and_comes_from_the_rules_is_logged_with_the_torso_height(t
     decision = dict(action='link', sighting_id=sighting_id, incident_id='i-1')
     sensor.apply(decision)
     assert ('from_rules', decision) in log.rows
+    # Each pose frame is in the log too: the person tracking can be replayed on a real day.
+    assert [data['people'][0]['point'] for direction, data in log.rows
+            if direction == 'to_rules' and data['kind'] == 'fall_people'] == [list(SPOT)]
 
 
 # ------------------------------------------------------------ the check's video (SWM25-268)

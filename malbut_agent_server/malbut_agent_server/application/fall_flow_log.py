@@ -1,13 +1,14 @@
 """Local log of what the one fall check saw and decided (SWM25-261, 2026-10-18).
 
-Every message the VLM sends to the Agent's fall rules (sightings, Cloud answers) and every
-decision it gets back, one JSON line each with the wall time. Numbers only, no pixels: a
-sighting's screen box, track, map place and torso height above the floor (both measured
-with depth, which is not kept anywhere else) and where the robot was. With it, a change of
-the rules can be replayed on a real day; the recording has no depth (10-17 21:31~22:22:
-사람2 hidden in 사람1's incident could not be replayed). Kept seven days like the
-recording; a day file stops growing at its size cap. Never raises: a full disk loses log
-lines, never a fall check.
+Every message the VLM sends to the Agent's fall rules (sightings, Cloud answers, and
+since SWM25-267 every pose frame) and every decision it gets back, one JSON line each with
+the wall time. Numbers only, no pixels: a sighting's or frame's screen box, track, map place
+and torso height above the floor (both measured with depth, which is not kept anywhere
+else) and where the robot was. Pose frames come five a second, about 100-250 bytes each.
+With it, a change of the rules can be replayed on a real day; the recording has no
+depth (10-17 21:31~22:22: 사람2 hidden in 사람1's incident could not be replayed). Kept
+seven days like the recording; a day file stops growing at its size cap. Never raises:
+a full disk loses log lines, never a fall check.
 """
 
 import json
