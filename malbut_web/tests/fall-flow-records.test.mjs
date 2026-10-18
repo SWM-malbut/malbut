@@ -53,16 +53,21 @@ test("the robot sends the check round and the new kinds; a recheck must be a lat
   }
 });
 
-test("[다시 확인] marks the second round's notification and survives the broker check", () => {
+test("[재확인 · N회차] marks a later round's notification and survives the broker check", () => {
   const base = { deviceId: "robot-a", notificationId: randomUUID(), incidentId: randomUUID(), level: "urgent",
     reason: "robot_could_not_confirm", occurredAt: T0 };
-  const again = buildFallNotification({ ...base, recheck: true });
-  assert.equal(again.body, "[다시 확인] 말벗이 낙상 의심 상황을 직접 확인하지 못했습니다. 즉시 확인해 주세요.");
-  assert.equal(again.data.recheck, "true");
+  const again = buildFallNotification({ ...base, checkRound: 2 });
+  assert.equal(again.body, "[재확인 · 2회차] 말벗이 넘어진 것 같은 분을 직접 확인하지 못했어요.\n지금 바로 확인해 주세요.");
+  assert.equal(again.data.checkRound, "2");
   assert.ok(isFallNotification(again));
-  assert.ok(buildFallNotification({ ...base, resend: true, recheck: true }).body.startsWith("[재발신] [다시 확인] "));
-  assert.equal(buildFallNotification({ ...base, recheck: "yes" }), null);
-  assert.ok(!buildFallNotification(base).body.includes("다시 확인"));
+  assert.ok(buildFallNotification({ ...base, resend: true, checkRound: 3 }).body.startsWith("[재발신] [재확인 · 3회차] "));
+  assert.equal(buildFallNotification({ ...base, checkRound: "yes" }), null);
+  assert.equal(buildFallNotification({ ...base, checkRound: 0 }), null);
+  // The first round has no mark and no round in the data.
+  const first = buildFallNotification({ ...base, checkRound: 1 });
+  assert.ok(!first.body.includes("재확인"));
+  assert.equal(first.data.checkRound, undefined);
+  assert.ok(isFallNotification(first));
 });
 
 async function withRepo(work) {
@@ -130,15 +135,16 @@ test("목업 29번: the one check's history and result (바닥 → 물어봄, �
     ["confirmation_completed", "resolved", { state: "resolved", answer: "okay" }],
     ["incident_resolved", "response_completed", { state: "resolved", answer: "okay" }],
   ]);
+  // 줄마다 "누가: 무엇", AI 판정과 말벗 결정은 줄을 나눔(웹 용어 F).
   assert.deepEqual(labels(floor).slice(1), [
-    "순찰을 멈추고 확인하러 감",
-    "처음 본 쪽에서 의심 장소 1 m 앞에 도착",
-    "도착 비교: 처음 본 분이 그대로 있음 (AI: 회색 상의가 같아 보임)",
-    "몸 전체가 보이는 자리로 옮김",
-    "몸 전체 확인: 바닥에 있음 → 물어봄",
-    "로봇 확인 질문 요청",
-    "질문에 대한 답 (괜찮다고 응답)",
-    "말벗이 확인을 마침: 괜찮다고 응답 · 30분 뒤 다시 확인",
+    "말벗: 순찰을 멈추고 확인하러 감",
+    "말벗: 넘어진 것 같은 자리 1 m 앞에 도착 (처음 본 방향)",
+    "클라우드 AI: 처음 본 분이 그대로 있음 (회색 상의가 같아 보임)",
+    "말벗: 몸 전체가 보이는 자리로 옮김",
+    "클라우드 AI: 몸 전체를 보니 바닥에 있음",
+    "말벗: 물어봄",
+    "대답: 괜찮다고 함",
+    "말벗: 확인을 마침 · 30분 뒤 다시 확인",
   ]);
   assert.equal(fallCheckResult(floor).title, "바닥에 있음 · 괜찮다고 답함");
   assert.equal(fallCheckResult(floor).looking, null);
@@ -156,14 +162,16 @@ test("목업 29번: the one check's history and result (바닥 → 물어봄, �
     ["confirmation_completed", "resolved", { state: "resolved", answer: "okay" }],
     ["incident_resolved", "response_completed", { state: "resolved", answer: "okay" }],
   ]);
-  assert.deepEqual(labels(up).slice(3, 8), [
-    "도착 비교: 사람은 있는데 같은 분인지 모름 → 몸 전체가 보이는 자리에서 다시 비교",
-    "몸 전체가 보이는 자리로 옮김",
-    "도착 비교: 처음 본 분이 그대로 있음",
-    "몸 전체 확인: 서 있음",
-    "넘어지는 장면 다시 보기: 넘어진 것으로 보임 → 일어났어도 물어봄",
+  assert.deepEqual(labels(up).slice(3, 10), [
+    "클라우드 AI: 사람은 있는데 같은 분인지 모름",
+    "말벗: 몸 전체가 보이는 자리에서 다시 비교",
+    "말벗: 몸 전체가 보이는 자리로 옮김",
+    "클라우드 AI: 처음 본 분이 그대로 있음",
+    "클라우드 AI: 몸 전체를 보니 서 있음",
+    "클라우드 AI: 넘어지는 장면을 다시 보니 넘어진 것으로 보임",
+    "말벗: 물어봄 (넘어지는 장면을 봐서 일어났어도)",
   ]);
-  assert.equal(labels(up).at(-1), "말벗이 확인을 마침: 괜찮다고 응답");
+  assert.equal(labels(up).at(-1), "말벗: 확인을 마침");
   assert.equal(fallCheckResult(up).title, "서 있음 · 넘어진 것으로 보여 물어봄 · 괜찮다고 답함");
 
   const self = journal([
@@ -176,8 +184,8 @@ test("목업 29번: the one check's history and result (바닥 → 물어봄, �
     ["incident_resolved", "off_floor_verified", { state: "resolved" }],
   ]);
   assert.deepEqual(labels(self).slice(4, 6), [
-    "넘어지는 장면 다시 보기: 스스로 앉거나 누운 동작으로 보임",
-    "몸 전체 확인: 침대나 의자에 앉아 있음 (AI 두 번 모두 같음)",
+    "클라우드 AI: 넘어지는 장면을 다시 보니 스스로 앉거나 누운 동작으로 보임",
+    "클라우드 AI: 몸 전체를 다시 보니 침대나 의자에 앉아 있음 (두 번 모두 같음)",
   ]);
   assert.equal(fallCheckResult(self).title, "침대나 의자에 앉아 있음 · 스스로 앉은 동작으로 보임 → 묻지 않음");
 });
@@ -193,11 +201,12 @@ test("목업 29·30번: a different person keeps it open; an empty spot is looke
     ["posture_check_completed", "standing"],
   ]);
   assert.deepEqual(labels(other).slice(2), [
-    "도착 비교: 처음 본 분과 다른 분이 있음",
-    "확인 필요 알림: 처음 본 분과 다를 수 있음",
-    "몸 전체가 보이는 자리로 옮김",
-    "몸 전체 확인: 서 있음",
-    "몸 전체 확인: 서 있음 (AI 두 번 모두 같음) → 다른 분이라 묻지 않음 · 사건은 열어 둠",
+    "클라우드 AI: 처음 본 분과 다른 분이 있음",
+    "알림: 확인 필요 · 처음 본 분과 다를 수 있음",
+    "말벗: 몸 전체가 보이는 자리로 옮김",
+    "클라우드 AI: 몸 전체를 보니 서 있음",
+    "클라우드 AI: 몸 전체를 다시 보니 서 있음 (두 번 모두 같음)",
+    "말벗: 다른 분이라 묻지 않음 · 사건은 열어 둠",
   ]);
   assert.equal(fallCheckResult(other).title, "다른 분이 서 있음 · 처음 본 분은 아직 확인하지 못함");
 
@@ -211,11 +220,13 @@ test("목업 29·30번: a different person keeps it open; an empty spot is looke
     ["incident_resolved", "left_the_spot", { state: "resolved" }],
   ]);
   assert.deepEqual(labels(walked).slice(2), [
-    "도착 비교: 처음 본 자리가 비어 있음 → 처음 본 자리로 가서 다시 봄",
-    "처음 본 자리로 가서 같은 방향으로 다시 봄",
-    "도착 비교: 처음 본 자리가 비어 있음 → 떠난 것 확인",
-    "떠난 것 확인: 사람이 걸어서 떠남 (AI: 일어나 오른쪽으로 걸어 나갔음)",
-    "로봇이 사건 종료: 그 자리를 떠남 · 묻지 않음",
+    "클라우드 AI: 처음 본 자리가 비어 있음",
+    "말벗: 처음 본 자리로 가서 다시 봄",
+    "말벗: 처음 본 자리로 가서 같은 방향으로 다시 봄",
+    "클라우드 AI: 처음 본 자리가 비어 있음",
+    "말벗: 떠났는지 확인",
+    "클라우드 AI: 사람이 걸어서 떠남 (일어나 오른쪽으로 걸어 나갔음)",
+    "말벗: 사건 종료 · 그 자리를 떠남 (묻지 않음)",
   ]);
   assert.equal(fallCheckResult(walked).summary, "그 자리를 걸어서 떠남");
 
@@ -225,7 +236,7 @@ test("목업 29·30번: a different person keeps it open; an empty spot is looke
     ["departure_reviewed", "person_crawled"],
     ["notification_requested", "person_crawled_away", { state: "recheck_required", notificationLevel: "check" }],
   ]);
-  assert.equal(labels(crawled).at(-1), "확인 필요 알림: 바닥을 기어서 옮김");
+  assert.equal(labels(crawled).at(-1), "알림: 확인 필요 · 바닥을 기어서 옮김");
   assert.equal(fallCheckResult(crawled).title, "그 자리에 없음 · 바닥을 기어서 옮긴 것으로 보임");
 
   const animal = journal([
@@ -254,9 +265,9 @@ test("목업 31번: a recheck is a new round, marked in the history and the resu
   ]);
   const lines = fallHistoryLines(blocked);
   assert.deepEqual(lines.filter((l) => l.divider).map((l) => [l.divider, l.label]), [
-    ["1회차", "클라우드 AI 발견: 낙상 의심"], ["2회차", "다시 확인 시작: 바닥에서 확인을 마친 지 30분"]]);
-  assert.ok(lines.some((l) => l.label === "일반 알림: 앞서 알린 상황의 확인을 마침"));
-  assert.equal(lines.at(-1).label, "1분째 확인하지 못함 → 긴급 알림");
+    ["1회차", "클라우드 AI: 낙상 의심 발견"], ["2회차", "말벗: 다시 확인 시작 (바닥에서 확인을 마친 지 30분)"]]);
+  assert.ok(lines.some((l) => l.label === "알림: 일반 · 앞서 알린 상황의 확인을 마침"));
+  assert.equal(lines.at(-1).label, "말벗: 1분째 확인하지 못함 → 긴급 알림");
   const result = fallCheckResult(blocked);
   assert.equal(result.round, 2);
   assert.equal(result.title, "2회차: 수동 조작 중이라 1분 안에 묻지 못함");
@@ -270,7 +281,7 @@ test("목업 31번: a recheck is a new round, marked in the history and the resu
 test("the older check keeps its labels (no round on its events)", () => {
   const older = journal([["approach_started", "patrol_stopped"], ["approach_completed", "arrived"]])
     .map((e) => { const rest = { ...e }; delete rest.checkRound; return rest; });
-  assert.deepEqual(labels(older), ["순찰을 멈추고 확인하러 감 (사람인지 확실하지 않음)", "의심 장소 1 m 앞에 도착"]);
+  assert.deepEqual(labels(older), ["말벗: 순찰을 멈추고 확인하러 감 (사람인지 확실하지 않음)", "말벗: 넘어진 것 같은 자리 1 m 앞에 도착"]);
   assert.equal(fallCheckResult(older), null);
 });
 

@@ -43,8 +43,8 @@ export async function dispatchFallPush(input: {
   reason: string;
   occurredAt: string;
   resend?: true;
-  /** The robot's second or later check round (목업 31번). */
-  recheck?: true;
+  /** The robot's check round; from 2 the push reads "[재확인 · N회차]" (목업 31·37번). */
+  checkRound?: number;
 }, hooks: PushDispatchHooks = {}) {
   const notification = buildFallNotification(input);
   if (!notification) throw new Error("FALL_NOTIFICATION_INVALID");

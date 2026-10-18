@@ -4,39 +4,15 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 import { fallHistoryLines } from "../fall-event-label";
-import type { FallCheckResult, FallHistoryEvent, FallRobotCheck } from "../fall-event-label";
+import type { FallHistoryEvent } from "../fall-event-label";
+import { clock, dayLabel, incidentBadges, incidentExtras, incidentSubtitle, incidentTitle, when } from "../fall-incident-view";
+import type { BadgeTone, IncidentSummary, OpinionLabel, SceneState } from "../fall-incident-view";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
 // a list page and a detail page in one column. The automatic judgment (robot /
 // Cloud AI) is shown but never edited here.
 
 export type IncidentFilter = "all" | "check" | "closed" | "normal" | "report";
-type OpinionLabel = "fall" | "suspected_fall" | "normal";
-type SceneState = "preparing" | "available" | "partial" | "unavailable" | "expired";
-
-type IncidentSummary = {
-  incidentId: string; origin: "robot" | "user_report";
-  category: "check" | "normal" | "report" | "merged" | "not_person" | "off_floor";
-  mergedIntoIncidentIds?: string[];
-  state: string | null; fallSeen: boolean; assessment: string | null; answer: string | null;
-  notificationRank: number; occurredAt: string; updatedAt: string; reviewState: "open" | "closed";
-  closedAt: string | null; closedBy: string | null; closedByName: string | null; reopenedAt: string | null;
-  needsCheck: boolean; aiFailed: boolean; unacknowledged: boolean; reviewPending: boolean;
-  foundDown: boolean; reportedBy: string | null; reportedByName: string | null; reportedMomentAt: string | null;
-  opinionCounts: Partial<Record<OpinionLabel, number>>;
-  sceneState?: SceneState | null; linkedCount?: number;
-  notification?: { level: string; sent: number; total: number } | null;
-  /** 말벗이 다가가 확인한 마지막 단계(목업 22·25번). */
-  approach?: { kind: string; reason: string | null } | null;
-  /** 사람에게 물었거나 알렸음: 말벗이 보는 중이 아님. */
-  asked?: boolean;
-  /** 말벗이 직접 확인하지 못함(목업 28번): 이유, 다시 가서 본 결과. */
-  robotCheck?: FallRobotCheck | null;
-  /** 하나로 합친 확인의 결과(목업 29~31번). 예전 확인의 사건은 null. */
-  checkResult?: FallCheckResult | null;
-  /** 말벗이 닫은 마지막 이유. */
-  closeReason?: string | null;
-};
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
   clockStepped: boolean; playbackState: SceneState; hasPeople?: boolean;
@@ -64,7 +40,7 @@ type IncidentDetail = IncidentSummary & {
 };
 
 const FILTERS: Array<[IncidentFilter, string]> = [
-  ["all", "전체"], ["check", "확인 필요"], ["closed", "처리 완료"], ["normal", "정상으로 확인됨"], ["report", "사용자 신고"],
+  ["all", "전체"], ["check", "우선 확인"], ["closed", "처리 완료"], ["normal", "정상"], ["report", "직접 신고"],
 ];
 const OPINIONS: Array<[OpinionLabel, string]> = [["fall", "낙상"], ["suspected_fall", "낙상 의심"], ["normal", "정상"]];
 const OPINION_LABEL: Record<string, string> = Object.fromEntries(OPINIONS);
@@ -73,136 +49,19 @@ const ASSESSMENT: Record<string, [string, string]> = {
   normal_activity: ["정상", "is-normal"], unobservable: ["판단 불가", "is-neutral"],
 };
 const LEVEL_LABEL: Record<string, string> = { urgent: "긴급", check: "확인 필요", info: "일반" };
-const ANSWER_LABEL: Record<string, string> = {
-  help_request: "본인이 도움을 요청함", okay: "괜찮다고 답함", unclear: "답이 불분명", no_response: "무응답", failed: "질문 실패",
-};
 const SCENE: Record<SceneState, [string, string]> = {
   preparing: ["영상 준비 중", "is-warn"], available: ["영상 재생 가능", "is-ok"],
   partial: ["영상 일부 누락", "is-warn"], unavailable: ["영상 없음", "is-off"],
   expired: ["보관 기간 만료 (7일)", "is-off"],
 };
 const AI_ERROR_LABEL: Record<string, string> = {
-  cloud_consent_off: "클라우드 분석 동의가 꺼져 있음", key_missing: "클라우드 AI 키 없음", model_unknown: "로봇 모델 정보 없음",
+  cloud_consent_off: "클라우드 AI 확인 동의가 꺼져 있음", key_missing: "클라우드 AI 키 없음", model_unknown: "말벗 모델 정보 없음",
   frames_unavailable: "녹화 사진을 충분히 찾지 못함", cloud_quota_exhausted: "AI 사용 한도 초과",
   cloud_auth_required: "AI 키 인증 실패", cloud_timeout: "AI 응답 시간 초과", worker_lost: "처리 중단",
   frames_unavailable_yet: "녹화 사진이 아직 준비되지 않음", kvs_unavailable: "녹화 사진을 가져오지 못함",
   kvs_request_invalid: "녹화 사진 요청이 거절됨", cloud_transport_error: "AI 연결 오류",
   cloud_http_error: "AI 서버 오류",
 };
-
-const clock = (value: string, seconds = false) => new Date(value).toLocaleTimeString("ko-KR",
-  { hour: "2-digit", minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}), hour12: false });
-function dayLabel(value: string) {
-  const date = new Date(value), today = new Date();
-  const yesterday = new Date(today.getTime() - 86_400_000);
-  if (date.toDateString() === today.toDateString()) return "오늘";
-  if (date.toDateString() === yesterday.toDateString()) return "어제";
-  return date.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
-}
-const when = (value: string) => `${dayLabel(value)} ${clock(value)}`;
-
-/** 말벗이 보고 있는 단계(목업 25번). 묻기 전에는 "낙상 의심"이라는 말을 쓰지 않는다. */
-const LOOKING: Record<string, string> = {
-  approach_started: "가까이 가는 중", "approach_completed:arrived": "가까이에서 보는 중",
-  "person_check_completed:partial_body": "몸 전체가 보이는 자리로 옮기는 중", "view_completed:arrived": "몸 전체를 보는 중",
-  "person_check_completed:whole_body": "몸 전체를 보는 중",
-};
-
-function looking(i: IncidentSummary) {
-  if (i.checkResult) return i.reviewState === "open" && i.category === "check" ? i.checkResult.looking : null;
-  const a = i.approach;
-  if (i.reviewState !== "open" || i.category !== "check" || !a || i.asked) return null;
-  return LOOKING[a.kind] ?? LOOKING[`${a.kind}:${a.reason}`] ?? null;
-}
-
-function title(i: IncidentSummary) {
-  if (i.origin === "user_report") return "놓친 낙상 신고";
-  if (i.category === "off_floor" && i.closeReason === "left_the_spot") return "말벗이 확인: 그 자리를 떠남";
-  if (i.category === "off_floor") {
-    return i.approach?.reason === "standing" ? "말벗이 확인: 서 있음"
-      : i.approach?.reason === "active_on_floor" ? "말벗이 확인: 바닥에 앉아 활동 중"
-        : "말벗이 확인: 침대나 의자에 앉아 있음";
-  }
-  if (looking(i)) return "말벗이 확인하는 중";
-  return i.fallSeen || i.assessment === "observed_fall" ? "낙상" : "낙상 의심";
-}
-
-const POSTURE_TEXT: Record<string, string> = {
-  on_floor: "몸 일부만 보여 가서 확인 · 바닥에 있음", body_unseen: "몸 일부만 보여 가서 확인 · 몸 전체를 못 봄",
-  judgements_differ: "몸 일부만 보여 가서 확인 · 판단이 엇갈림",
-  posture_unconfirmed: "몸 일부만 보여 가서 확인 · 자세를 확인하지 못함",
-};
-
-/** 다가가 확인한 결과(목업 22·25번). 보는 중은 제목·배지로 보여 준다. */
-function approachText(i: IncidentSummary) {
-  if (i.checkResult) return i.checkResult.summary;
-  if (i.category === "not_person") return "말벗이 가서 확인: 사람 아님";
-  if (i.category === "off_floor") return "몸 일부만 보여 가서 확인 · 묻지 않음";
-  const look = looking(i);
-  if (look) return look;
-  const a = i.approach;
-  if (a?.kind === "person_check_completed") {
-    return a.reason === "not_a_person" ? "말벗이 가서 확인: 사람 아님" : "말벗이 가서 확인: 사람";
-  }
-  if (a?.kind === "approach_completed" && a.reason !== "arrived") return "가까이 가지 못함";
-  if (a?.kind === "view_completed" && a.reason !== "arrived") return "몸 일부만 보여 가서 확인 · 몸 전체를 못 봄";
-  if (a?.kind === "posture_check_completed") return POSTURE_TEXT[a.reason ?? ""] ?? null;
-  return null;
-}
-
-function subtitle(i: IncidentSummary) {
-  if (i.origin === "user_report") {
-    return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedByName ?? "사용자"} 신고`;
-  }
-  const check = i.robotCheck;
-  const reason = check?.stopped ? "막혀서 10분 동안 확인하지 못해 멈춤"
-    : check?.failed ? check.failed
-    : i.aiFailed ? "AI가 시간 안에 답하지 못함"
-    : i.answer ? ANSWER_LABEL[i.answer] ?? null : i.foundDown ? "이미 쓰러진 모습 발견" : null;
-  // 목업 28번: 1분째 확인 못 함 · 다시 가 보니 무엇이 있었는지.
-  if (i.checkResult) {
-    // 목업 29~31번: 회차 · 이번 회차의 결과.
-    const round = i.checkResult.round > 1 ? `${i.checkResult.round}회차` : null;
-    return [when(i.occurredAt), round, i.checkResult.summary].filter(Boolean).join(" · ");
-  }
-  return [when(i.occurredAt), check?.waited ? "1분째 확인 못 함" : null, check?.revisit?.subtitle ?? approachText(i),
-    reason].filter(Boolean).join(" · ");
-}
-
-function badges(i: IncidentSummary): Array<[string, string]> {
-  const list: Array<[string, string]> = [];
-  if (i.unacknowledged) {
-    list.push(["is-alert", "아무도 확인하지 않음"]);
-    if (i.notification) list.push(["is-alert-soft", `알림: ${LEVEL_LABEL[i.notification.level]} · ${i.notification.sent}/${i.notification.total}회 발송`]);
-  } else if (looking(i)) {
-    list.push(["is-info", "말벗이 확인하는 중"]);
-    if ((i.checkResult?.round ?? 1) > 1) list.push(["is-info", `다시 확인 · ${i.checkResult!.round}회차`]);
-  }
-  else {
-    // 말벗이 직접 확인하지 못하면 언제나 긴급 알림을 보낸다(목업 28번).
-    if (i.reviewState === "open" && i.robotCheck) list.push(["is-alert-soft", "긴급 알림 보냄"]);
-    if (i.reviewState === "open" && i.needsCheck) list.push(["is-check", "확인 필요"]);
-  }
-  if (i.category === "normal") list.push(["is-ok", "정상으로 확인됨"]);
-  if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
-  if (i.category === "not_person") list.push(["is-neutral", "처리 완료"], ["is-neutral", "사람 아님"]);
-  if (i.category === "off_floor") {
-    list.push(["is-neutral", "처리 완료"], ["is-neutral", i.closeReason === "left_the_spot" ? "그 자리를 떠남"
-      : i.approach?.reason === "standing" ? "서 있음"
-      : i.approach?.reason === "active_on_floor" ? "바닥에서 활동 중" : "앉아 있음"]);
-  }
-  if (i.category === "report") list.push(["is-report", "사용자 신고"], ["is-neutral", "자동 감지 아님"]);
-  if (i.reviewState === "closed") list.push(["is-neutral", "처리 완료"]);
-  else if (i.reviewPending) list.push(["is-neutral", "검수 전"]);
-  if (i.reopenedAt && i.reviewState === "open") list.push(["is-neutral", "다시 열림"]);
-  if (i.aiFailed) list.push(["is-neutral", "AI 판정 실패"]);
-  if (Object.keys(i.opinionCounts).length > 1) list.push(["is-neutral", "의견이 엇갈림"]);
-  if (!i.unacknowledged && i.reviewState === "open" && i.notification && i.notification.sent > 1) {
-    // Same count as 알림 이력: this send / all sends of the level.
-    list.push(["is-neutral", `[재발신] ${i.notification.sent}/${i.notification.total}회`]);
-  }
-  return list;
-}
 
 /** 로봇이 스스로 닫은 사건: 사람 아님, 바닥에 있지 않음. */
 const robotChecked = (i: IncidentSummary) => i.category === "not_person" || i.category === "off_floor";
@@ -213,13 +72,13 @@ function robotClosedAt(detail: IncidentDetail) {
   return closed?.occurredAt ?? detail.updatedAt;
 }
 
-function Badges({ items }: { items: Array<[string, string]> }) {
+function Badges({ items }: { items: Array<[BadgeTone, string]> }) {
   return <div className="fall-badges">{items.map(([tone, text]) => <span key={text} className={tone}>{text}</span>)}</div>;
 }
 
 async function json(response: Response) {
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "요청을 처리하지 못했습니다.");
+  if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "요청을 처리하지 못했어요.");
   return body;
 }
 
@@ -330,24 +189,24 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, play
           end = start + (Number(body.durationSeconds) || Number.POSITIVE_INFINITY);
           return body.playbackUrl as string;
         }
-        if (response.status !== 425) throw new Error(body.error ?? "장면 영상을 불러오지 못했습니다.");
-        setMessage("장면 영상을 저장하고 있습니다…");
+        if (response.status !== 425) throw new Error(body.error ?? "장면 영상을 불러오지 못했어요.");
+        setMessage("장면 영상을 저장하고 있어요…");
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
-      throw new Error("장면 영상 준비 시간이 초과되었습니다.");
+      throw new Error("장면 영상 준비 시간이 지났어요.");
     };
-    setMessage("장면 영상을 불러오는 중입니다…");
+    setMessage("장면 영상을 불러오는 중이에요…");
     void run().then(async (playbackUrl) => {
       if (video.canPlayType("application/vnd.apple.mpegurl")) { video.src = playbackUrl; video.load(); return; }
       const { default: Hls } = await import("hls.js");
-      if (!Hls.isSupported()) throw new Error("이 브라우저는 HLS 재생을 지원하지 않습니다.");
+      if (!Hls.isSupported()) throw new Error("이 브라우저에서는 장면 영상을 재생할 수 없어요.");
       const player = new Hls({ enableWorker: true });
-      player.on(Hls.Events.ERROR, (_name, data) => { if (data.fatal) setMessage("장면 영상을 재생하지 못했습니다."); });
+      player.on(Hls.Events.ERROR, (_name, data) => { if (data.fatal) setMessage("장면 영상을 재생하지 못했어요."); });
       player.loadSource(playbackUrl);
       player.attachMedia(video);
       dispose = () => player.destroy();
     }).catch((error) => {
-      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "장면 영상을 불러오지 못했습니다.");
+      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "장면 영상을 불러오지 못했어요.");
     });
     return () => {
       controller.abort();
@@ -441,10 +300,10 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
           {scene.cloud.length > 0 && <span><i className="is-cloud" />클라우드 AI 추정 위치</span>}
         </div>
       )}
-      {clip.foundDown && <p className="fall-hint">넘어진 순간은 녹화되지 않았을 수 있음 · 이미 쓰러진 모습을 발견한 시점 기준이에요.</p>}
+      {clip.foundDown && <p className="fall-hint">이미 쓰러진 모습을 본 때부터라, 넘어지는 순간은 없을 수 있어요.</p>}
       {clip.clockStepped && <p className="fall-hint">{clip.hasPeople && showPeople
-        ? "로봇 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."
-        : "로봇 시계가 바뀌어 시각이 정확하지 않을 수 있어요."}</p>}
+        ? "말벗 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."
+        : "말벗 시계가 바뀌어 시각이 정확하지 않을 수 있어요."}</p>}
       {/* 장면 영상은 위 영상 칸을 눌러 본다(정지 사진·재생 표시). */}
       <button type="button" className="fall-button fall-wide-button" disabled={!onOpenLive} onClick={onOpenLive}>
         지금 실시간으로 보기
@@ -459,7 +318,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   initialIncidentId?: string;
   onIncidentChange?: (incidentId: string | null) => void;
   onOpenLive?: () => void;
-  /** 연속 녹화 화면; with an incident it opens "AI에게 다시 검토 받기" pre-filled. */
+  /** 연속 녹화 화면; with an incident it opens "AI에게 다시 확인 받기" pre-filled. */
   onOpenTimeline?: (incident?: { incidentId: string; momentAt: string; title: string;
     rangeStart: string; rangeEnd: string }) => void;
   /** The tab top shared by every tab (화면 이름 · 연결 상태 · 연결된 말벗); shown above the list only. */
@@ -492,7 +351,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       setIncidents(Array.isArray(body.incidents) ? body.incidents : []);
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "사건 목록을 불러오지 못했습니다.");
+      setError(reason instanceof Error ? reason.message : "사건 목록을 불러오지 못했어요.");
     } finally { setLoading(false); }
   }, [base, deviceId, filter, request]);
 
@@ -509,7 +368,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       }
     } catch (reason) {
       setDetail(null);
-      setNotice(reason instanceof Error ? reason.message : "사건을 불러오지 못했습니다.");
+      setNotice(reason instanceof Error ? reason.message : "사건을 불러오지 못했어요.");
     }
   }, [base, request]);
 
@@ -547,7 +406,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       setNotice(done(body));
       await loadDetail(detail.incidentId, name === "question");
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "요청을 처리하지 못했습니다.");
+      setNotice(reason instanceof Error ? reason.message : "요청을 처리하지 못했어요.");
     } finally { setBusy(""); }
   };
   const post = (body: unknown, method = "POST"): RequestInit =>
@@ -558,7 +417,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       return (
         <div className="fall-page">
           <div className="fall-topbar"><button type="button" className="fall-link" onClick={back}>‹ 사건 목록</button></div>
-          <p className="fall-empty" role="status">{notice || "사건을 불러오는 중입니다…"}</p>
+          <p className="fall-empty" role="status">{notice || "사건을 불러오는 중이에요…"}</p>
         </div>
       );
     }
@@ -574,9 +433,10 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       <div className="fall-page">
         <div className="fall-topbar"><button type="button" className="fall-link" onClick={back}>‹ 사건 목록</button></div>
         <header className="fall-head">
-          <Badges items={badges(detail)} />
-          <h1>{title(detail)}</h1>
-          <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedByName} 신고` : ""}</div>
+          <Badges items={incidentBadges(detail)} />
+          <h1>{incidentTitle(detail)}</h1>
+          <div className="fall-sub">{[`${when(moment)}${detail.reportedBy ? ` · ${detail.reportedByName} 신고` : ""}`,
+            ...incidentExtras(detail)].join(" · ")}</div>
           {(detail.mergedIntoIncidentIds ?? []).map((id) => (
             <button type="button" key={`merged-${id}`} className="fall-linked" onClick={() => open(id)}>
               사람 연결을 확인했어요. 이어서 처리하는 사건 보기 ›
@@ -587,28 +447,29 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
               같은 시간대의 관련 사건 보기 ›
             </button>
           ))}
+          {/* 결과 상자는 흰 머리 칸 안, 관련 사건 링크 바로 밑(목업 46번). */}
+          {detail.checkResult && (
+            <section className="fall-robot-check">
+              <span>말벗이 확인한 결과</span>
+              <strong>{detail.checkResult.title}</strong>
+              {detail.checkResult.note && <p>{detail.checkResult.note}</p>}
+            </section>
+          )}
+          {!detail.checkResult && detail.robotCheck && (
+            <section className="fall-robot-check is-alert">
+              <span>말벗이 직접 확인하지 못한 이유</span>
+              <strong>{detail.robotCheck.reason}</strong>
+            </section>
+          )}
+          {!detail.checkResult && detail.robotCheck?.revisit && (
+            <section className="fall-robot-check">
+              <span>말벗이 다시 가서 본 결과</span>
+              <strong>{detail.robotCheck.revisit.title}</strong>
+              {detail.robotCheck.revisit.note && <p>{detail.robotCheck.revisit.note}</p>}
+            </section>
+          )}
         </header>
         {notice && <p className="fall-notice" role="status">{notice}</p>}
-        {detail.checkResult && (
-          <section className="fall-robot-check">
-            <span>말벗이 확인한 결과</span>
-            <strong>{detail.checkResult.title}</strong>
-            {detail.checkResult.note && <p>{detail.checkResult.note}</p>}
-          </section>
-        )}
-        {!detail.checkResult && detail.robotCheck && (
-          <section className="fall-robot-check is-alert">
-            <span>말벗이 직접 확인하지 못한 이유</span>
-            <strong>{detail.robotCheck.reason}</strong>
-          </section>
-        )}
-        {!detail.checkResult && detail.robotCheck?.revisit && (
-          <section className="fall-robot-check">
-            <span>말벗이 다시 가서 본 결과</span>
-            <strong>{detail.robotCheck.revisit.title}</strong>
-            {detail.robotCheck.revisit.note && <p>{detail.robotCheck.revisit.note}</p>}
-          </section>
-        )}
 
         <section className="fall-scene-section">
           {detail.clips.length > 1 && (
@@ -629,7 +490,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
 
         <section className="fall-card">
           <h2>사용자 의견</h2>
-          <p className="fall-hint">의견은 기록만 하며, 사건은 &quot;처리 완료&quot;를 눌러야 닫혀요.</p>
+          <p className="fall-hint">의견을 남겨도 사건은 닫히지 않아요. &quot;처리 완료&quot;를 눌러야 닫혀요.</p>
           {detail.opinions.map((o) => (
             <div className="fall-opinion" key={o.userId}>
               <div><strong>{who(o)} · {clock(o.updatedAt)}</strong>
@@ -646,7 +507,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
                   onClick={() => setDraftLabel(draftLabel === key ? null : key)}>{label}</button>
               ))}
             </div>
-            <p className="fall-hint">{draftLabel ? "선택됨 · \"의견 남기기\"를 누르면 기록돼요" : "하나를 눌러 고르세요. 다시 누르면 선택이 풀려요"}</p>
+            <p className="fall-hint">{draftLabel ? "선택됨 · \"의견 남기기\"를 누르면 기록돼요" : "하나를 눌러 골라 주세요. 다시 누르면 풀려요."}</p>
           </div>
           <label className="fall-field">메모 (선택)
             <input type="text" maxLength={500} placeholder="상황을 적어 주세요" value={draftMemo} disabled={!draftLabel}
@@ -658,35 +519,35 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
               (body) => body.reopened ? "다른 의견이라 사건을 다시 열고 모두에게 알렸어요." : draftLabel ? "의견을 남겼어요." : "의견을 지웠어요.")}>
             {busy === "opinion" ? "남기는 중…" : draftLabel === null && mine ? "내 의견 지우기" : "의견 남기기"}
           </button>
-          <p className="fall-hint">의견을 남기면 모든 사용자에게 가는 [재발신]이 멈춰요.</p>
+          <p className="fall-hint">의견을 남기면 모두에게 가던 재발신이 멈춰요.</p>
         </section>
 
         <section className="fall-card">
-          <h2>AI 검토</h2>
+          <h2>AI 확인</h2>
           {latest ? (
             <div className="fall-ai-result">
               {latest.status === "completed" && latest.assessment
                 ? <span className={`fall-pill ${ASSESSMENT[latest.assessment]?.[1] ?? "is-neutral"}`}>{ASSESSMENT[latest.assessment]?.[0] ?? latest.assessment}</span>
                 : <span className="fall-pill is-neutral">{latest.status === "failed"
-                  ? `검토 실패 · ${AI_ERROR_LABEL[latest.errorCode ?? ""] ?? latest.errorCode}`
+                  ? `확인 실패 · ${AI_ERROR_LABEL[latest.errorCode ?? ""] ?? latest.errorCode}`
                   // A queued review keeps its last failure while it waits to try again.
                   : latest.errorCode
-                    ? `다시 시도 중 · ${AI_ERROR_LABEL[latest.errorCode] ?? latest.errorCode}` : "검토 진행 중"}</span>}
+                    ? `다시 시도 중 · ${AI_ERROR_LABEL[latest.errorCode] ?? latest.errorCode}` : "AI가 확인하는 중"}</span>}
               <span className="fall-sub">사진만으로 받은 판정 · {clock(latest.completedAt ?? latest.createdAt, true)}</span>
               {latest.explanation && <p>{latest.explanation}</p>}
             </div>
-          ) : <p className="fall-hint">아직 AI 검토를 받지 않았어요.</p>}
+          ) : <p className="fall-hint">아직 AI 확인을 받지 않았어요.</p>}
           {onOpenTimeline && (
             <>
               <button type="button" className="fall-button"
                 onClick={() => onOpenTimeline({
                   incidentId: detail.incidentId, momentAt: moment,
-                  title: `${title(detail)} · ${when(moment)}`,
+                  title: `${incidentTitle(detail)} · ${when(moment)}`,
                   // The original scene range: inside it, the result attaches to this incident.
                   rangeStart: detail.clips[0]?.startAt ?? new Date(Date.parse(moment) - 10_000).toISOString(),
                   rangeEnd: detail.clips.at(-1)?.endAt ?? new Date(Date.parse(moment) + 20_000).toISOString(),
-                })}>AI에게 다시 검토 받기 ›</button>
-              <p className="fall-hint">연속 녹화에서 이 사건의 순간을 확인하고 고친 뒤 보내요.</p>
+                })}>AI에게 다시 확인 받기 ›</button>
+              <p className="fall-hint">연속 녹화에서 이 사건의 순간을 다시 골라 AI에게 보내요.</p>
             </>
           )}
           {latest?.status === "completed" && (
@@ -722,11 +583,11 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
 
         <details className="fall-card fall-fold">
           <summary>자동 판정 기록</summary>
-          <p className="fall-hint">로봇과 AI의 판단이에요. 사용자 의견으로 바뀌지 않아요.</p>
-          <p className="fall-hint">AI 이유는 모델이 작성한 설명이에요. 주기 확인의 이유는 장면 전체에 대한 설명이며, 실제 원인이 확인됐다는 뜻은 아니에요.</p>
+          <p className="fall-hint">말벗과 AI의 판정이에요. 사용자 의견으로 바뀌지 않아요.</p>
+          <p className="fall-hint">괄호 안 이유는 AI가 쓴 설명이라, 실제와 다를 수 있어요.</p>
           <div className="fall-log">
-            {fallHistoryLines(detail.robotEvents).map(({ event: e, label, divider }) => (
-              <Fragment key={e.sequence}>
+            {fallHistoryLines(detail.robotEvents).map(({ event: e, label, divider }, index) => (
+              <Fragment key={`${e.sequence}-${index}`}>
                 {divider && <div className="fall-log-round"><span /><span>— {divider} —</span></div>}
                 <div>
                   <span>{clock(e.occurredAt, true)}</span>
@@ -791,7 +652,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     );
   }
 
-  // List page: "가장 먼저 확인할 사건", then 오늘 / 어제 / 지난 기록.
+  // List page: "응답 없음", then 오늘 / 어제 / 지난 기록.
   const first = incidents.filter((i) => i.unacknowledged);
   const rest = incidents.filter((i) => !i.unacknowledged);
   const groups: Array<[string, IncidentSummary[]]> = [];
@@ -804,11 +665,14 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   const card = (i: IncidentSummary) => (
     <button type="button" key={i.incidentId} onClick={() => open(i.incidentId)}
       className={`fall-incident-card ${i.unacknowledged ? "is-urgent" : i.origin === "user_report" ? "is-report" : ""}`}>
-      <Badges items={badges(i)} />
-      <strong>{title(i)}</strong>
-      <span className="fall-sub">{subtitle(i)}</span>
-      {i.sceneState && (
-        <span className={`fall-scene-state ${SCENE[i.sceneState][1]}`}><i />{SCENE[i.sceneState][0]}</span>
+      <Badges items={incidentBadges(i)} />
+      <strong>{incidentTitle(i)}</strong>
+      <span className="fall-sub">{incidentSubtitle(i)}</span>
+      {/* 아래 줄: 영상 상태 + 덧붙는 것(알림 횟수 · 다시 열림 · AI 판정 실패, 목업 36번). */}
+      {(i.sceneState || incidentExtras(i).length > 0) && (
+        <span className={`fall-scene-state ${i.sceneState ? SCENE[i.sceneState][1] : "is-off"}`}>
+          {i.sceneState && <i />}{[i.sceneState ? SCENE[i.sceneState][0] : null, ...incidentExtras(i)].filter(Boolean).join(" · ")}
+        </span>
       )}
       {(i.linkedCount ?? 0) > 0 && <span className="fall-card-link">같은 시간에 다른 사람 사건 {i.linkedCount}건</span>}
     </button>
@@ -829,11 +693,11 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
         </div>
         <div className="fall-list">
           {error && <p className="fall-notice" role="alert">{error}</p>}
-          {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중입니다…</p>}
+          {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중이에요…</p>}
           {!loading && !error && incidents.length === 0 && (
             <p className="fall-empty">표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
           )}
-          {first.length > 0 && <div className="fall-group">가장 먼저 확인할 사건</div>}
+          {first.length > 0 && <div className="fall-group">응답 없음</div>}
           {first.map(card)}
           {groups.map(([label, items]) => (
             <div className="fall-group-block" key={label}>

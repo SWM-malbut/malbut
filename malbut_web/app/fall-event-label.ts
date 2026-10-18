@@ -17,9 +17,12 @@ export type FallHistoryEvent = {
 const ASSESSMENT: Record<string, string> = {
   observed_fall: "낙상", suspected_fall: "낙상 의심", normal_activity: "정상", unobservable: "판단 불가",
 };
+// 기록 줄은 "누가: 무엇"(웹 용어 F): 말벗 · 클라우드 AI · 대답(집 안 사람의 답) · 알림(보호자에게 보낸 것).
+type Who = "말벗" | "클라우드 AI" | "대답" | "알림";
+const line = (who: Who, what: string) => `${who}: ${what}`;
 const ANSWER: Record<string, string> = {
-  help_request: "도움 요청", okay: "괜찮다고 응답", unclear: "응답 불분명",
-  no_response: "응답 없음", failed: "질문 실패",
+  help_request: "도움 요청", okay: "괜찮다고 함", unclear: "잘 알아듣지 못함",
+  no_response: "대답 없음", failed: "질문 실패",
 };
 const POSE_REASON: Record<string, string> = {
   pose_rapid_posture_change: "급격한 자세 변화",
@@ -29,12 +32,12 @@ const POSE_REASON: Record<string, string> = {
 };
 const EVENT: Record<string, string> = {
   incident_opened: "사건 생성", incident_updated: "새 근거로 사건 갱신",
-  voice_result: "질문에 대한 답", decision_required: "추가 판단 필요",
-  notification_requested: "알림", agent_check_failed: "질문 중 오류가 나 물을 수 없음",
-  analysis_completed: "클라우드 AI", analysis_unavailable: "클라우드 AI 분석 실패",
-  stale_analysis_result: "늦게 도착한 분석 결과", recheck_unavailable: "재확인 실패",
-  incident_resolved: "로봇이 사건 종료", confirmation_completed: "질문에 대한 답",
-  incident_merged: "사람 연결 완료 · 연결된 사건에서 계속 확인",
+  decision_required: "추가 판단 필요", incident_resolved: "사건 종료",
+  incident_merged: "다른 사건에 병합 · 그 사건에서 계속 확인",
+};
+const CLOUD_EVENT: Record<string, string> = {
+  analysis_unavailable: "판정 실패", stale_analysis_result: "늦게 도착한 판정 (쓰지 않음)",
+  recheck_unavailable: "다시 확인하지 못함",
 };
 
 /**
@@ -59,41 +62,44 @@ const APPROACH_START: Record<string, string> = {
 const APPROACH_BLOCKED: Record<string, string> = {
   no_map: "지도 없음", no_path: "갈 길 없음", timeout: "시간 초과", failed: "이동 실패", rejected: "이동 실패",
 };
+const blocked = (reason: string) => APPROACH_BLOCKED[reason] ?? "이동 실패";
+const SPOT = "넘어진 것 같은 자리";
 
-const POSTURE: Record<string, string> = {
-  sitting_off_floor: "몸 전체 확인: 침대나 의자에 앉아 있음",
-  standing: "몸 전체 확인: 서 있음",
-  active_on_floor: "몸 전체 확인: 바닥에 앉아 활동 중",
-  on_floor: "몸 전체 확인: 바닥에 있음 → 물어봄",
-  body_unseen: "몸 전체를 못 봄 → 이 자리에서 물어봄",
-  judgements_differ: "로봇이 잰 값과 클라우드 AI 판단이 다름 → 물어봄",
-  posture_unconfirmed: "자세를 확인하지 못함 → 물어봄",
+// 예전 확인(회차 없음)의 몸 전체 확인. 묻는 것은 다음 줄 "말벗: 물어봄"이 말한다.
+const POSTURE: Record<string, [Who, string]> = {
+  sitting_off_floor: ["클라우드 AI", "몸 전체를 보니 침대나 의자에 앉아 있음"],
+  standing: ["클라우드 AI", "몸 전체를 보니 서 있음"],
+  active_on_floor: ["클라우드 AI", "몸 전체를 보니 바닥에 앉아 활동 중"],
+  on_floor: ["클라우드 AI", "몸 전체를 보니 바닥에 있음"],
+  body_unseen: ["말벗", "몸 전체를 못 봄 → 이 자리에서 물어봄"],
+  judgements_differ: ["말벗", "잰 값과 클라우드 AI 판정이 다름 → 물어봄"],
+  posture_unconfirmed: ["클라우드 AI", "자세를 확인하지 못함"],
 };
 
 // 목업 28번: 바로 묻지 못한 이유, 1분, 다시 가서 보기, 처음 장면과 비교.
 const CHECK_WAITING: Record<string, string> = {
   manual_drive: "확인하러 가려 했지만 수동 조작 중 → 끝나면 확인",
-  busy: "확인하러 가려 했지만 말벗이 다른 일을 하는 중 → 끝나면 확인",
+  busy: "확인하러 가려 했지만 다른 일을 하는 중 → 끝나면 확인",
 };
 const REVISIT_START: Record<string, string> = {
-  manual_drive: "수동 조작 끝남 → 묻기 전에 넘어진 것 같은 자리로 다시 감",
-  busy: "다른 일이 끝남 → 묻기 전에 의심 장소로 다시 감",
+  manual_drive: `수동 조작 끝남 → 묻기 전에 ${SPOT}로 다시 감`,
+  busy: `다른 일이 끝남 → 묻기 전에 ${SPOT}로 다시 감`,
 };
 const CHECK_FAILED: Record<string, string> = {
-  speech_unavailable: "말벗 음성이 꺼져 있어 물을 수 없음",
+  speech_unavailable: "음성이 꺼져 있어 물을 수 없음",
   question_error: "질문 중 오류가 나 물을 수 없음",
   time_limit: "막혀서 10분 동안 확인하지 못함 → 확인을 멈춤",
 };
-// 알림 줄은 "단계 알림: 무엇"으로 통일한다(목업 28번 "긴급 알림: 도움 요청").
+// 알림 줄은 "알림: 단계 · 무엇"(푸시 문장과 같은 뜻).
 const LEVEL: Record<string, string> = { urgent: "긴급", check: "확인 필요", info: "일반" };
 const NOTICE: Record<string, [string, string]> = {
-  fall_observed_person_okay: ["info", "넘어졌지만 괜찮다고 응답"],
-  person_no_response: ["check", "질문에 응답 없음"],
-  check_required_not_confirmed_fall: ["check", "낙상 의심을 확인하지 못함"],
+  fall_observed_person_okay: ["info", "넘어졌지만 괜찮다고 함"],
+  person_no_response: ["check", "물어봤지만 대답이 없음"],
+  check_required_not_confirmed_fall: ["check", "넘어졌는지 확실하지 않음"],
   help_requested: ["urgent", "도움 요청"],
-  confirmation_help_required: ["urgent", "상황 확인 결과 도움 필요"],
+  confirmation_help_required: ["urgent", "도움이 필요해 보임"],
   robot_could_not_confirm: ["urgent", "말벗이 직접 확인하지 못함"],
-  scene_answer_unconfirmed: ["check", "괜찮다는 답, 쓰러진 분인지 모름"],
+  scene_answer_unconfirmed: ["check", "괜찮다는 대답, 쓰러진 분인지 모름"],
   check_stopped_by_user: ["check", "'그만'을 듣고 확인을 멈춤"],
   person_may_differ: ["check", "처음 본 분과 다를 수 있음"],
   left_unseen: ["check", "떠나는 모습을 못 봄"],
@@ -105,9 +111,9 @@ const SAME_PERSON: Record<string, string> = {
   same: "같은 분으로 보임", different: "다른 분으로 보임", unclear: "같은 분인지 알 수 없음",
 };
 const REVISIT_NOTICE: Record<string, string> = {
-  revisit_same_person_off_floor: "묻지 않음 · 일반 알림 · 사건은 열어 둠",
-  revisit_person_unclear_off_floor: "묻지 않음 · 확인 필요 알림 · 사건은 열어 둠",
-  revisit_nobody_there: "묻지 않음 · 확인 필요 알림 · 사건은 열어 둠",
+  revisit_same_person_off_floor: "info",
+  revisit_person_unclear_off_floor: "check",
+  revisit_nobody_there: "check",
 };
 
 // 하나로 합친 확인 순서(SWM25-261, 목업 29~31번). 로봇은 이 확인의 모든 기록에
@@ -116,11 +122,10 @@ const ARRIVAL: Record<string, string> = {
   same_person: "처음 본 분이 그대로 있음", person_unsure: "사람은 있는데 같은 분인지 모름",
   different_person: "처음 본 분과 다른 분이 있음", same_object: "처음 본 물건이 그대로 있음",
   gone: "처음 본 자리가 비어 있음", not_visible: "처음 본 자리가 안 보임",
-  failed: "AI가 비교하지 못함 → 사람이 있는 것으로 보고 계속",
 };
 const DEPARTURE: Record<string, string> = {
   animal_left: "동물이 떠남", person_walked: "사람이 걸어서 떠남", person_crawled: "사람이 기어서 떠남",
-  not_seen: "떠나는 모습이 안 보임", failed: "AI가 확인하지 못함",
+  not_seen: "떠나는 모습이 안 보임", failed: "떠났는지 확인하지 못함",
 };
 const MOMENT: Record<string, string> = {
   fall: "넘어진 것으로 보임", self: "스스로 앉거나 누운 동작으로 보임", unknown: "알 수 없음",
@@ -140,63 +145,73 @@ const ASKS = new Set(["on_floor", "posture_unconfirmed"]);
 /** An incident of the one check: its events carry the check round. */
 export const isFlowIncident = (events: FallHistoryEvent[]) => events.some((e) => e.checkRound != null);
 const roundOf = (e: FallHistoryEvent) => e.checkRound ?? 1;
-const aiText = (e: FallHistoryEvent, sep = " ") =>
-  e.analysis?.explanation ? `${sep}(AI: ${nounEnding(e.analysis.explanation)})` : "";
+/** AI가 쓴 이유는 괄호 안에(사건 상세 안내: "괄호 안 이유는 AI가 쓴 설명"). */
+const aiWhy = (e: FallHistoryEvent) => e.analysis?.explanation ? ` (${nounEnding(e.analysis.explanation)})` : "";
 
 /** What came before in the same round, for the one check's labels. Display only. */
 type RoundContext = {
   reverified: boolean; viewedAfterUnsure: boolean; lastArrival: string | null;
   postures: string[]; differ: boolean;
+  /** 다음 "말벗: 물어봄" 줄에 붙일 묻는 이유(AI 판정 줄과 말벗 결정 줄을 나눔). */
+  askReason: string | null;
 };
 const newRound = (): RoundContext => ({
-  reverified: false, viewedAfterUnsure: false, lastArrival: null, postures: [], differ: false,
+  reverified: false, viewedAfterUnsure: false, lastArrival: null, postures: [], differ: false, askReason: null,
 });
 
-function flowLabel(event: FallHistoryEvent, round: RoundContext): string | null {
+function flowLines(event: FallHistoryEvent, round: RoundContext): string[] | null {
   const reason = event.reason ?? "";
   const kind = event.eventKind;
   const lastPosture = round.postures.at(-1) ?? null;
-  if (kind === "recheck_started") return `다시 확인 시작: ${RECHECK[reason] ?? "다시 봄"}`;
-  if (kind === "approach_started") return APPROACH_START[reason] ?? "확인하러 감";
+  if (kind === "recheck_started") return [line("말벗", `다시 확인 시작 (${RECHECK[reason] ?? "다시 봄"})`)];
+  if (kind === "approach_started") return [line("말벗", APPROACH_START[reason] ?? "확인하러 감")];
   if (kind === "approach_completed") {
-    if (reason === "arrived") return "처음 본 쪽에서 의심 장소 1 m 앞에 도착";
-    if (reason === "no_map") return "가까이 가지 못함: 지도 없음 → 이 자리에서 물어봄";
-    return `1 m 앞까지 못 감: ${APPROACH_BLOCKED[reason] ?? "이동 실패"} → 갈 수 있는 자리에서 봄`;
+    if (reason === "arrived") return [line("말벗", `${SPOT} 1 m 앞에 도착 (처음 본 방향)`)];
+    if (reason === "no_map") return [line("말벗", "가까이 가지 못함 (지도 없음) → 이 자리에서 물어봄")];
+    return [line("말벗", `1 m 앞까지 못 감 (${blocked(reason)}) → 갈 수 있는 자리에서 봄`)];
   }
   if (kind === "arrival_compared") {
-    let next = "";
-    if (reason === "person_unsure" && !round.viewedAfterUnsure) next = " → 몸 전체가 보이는 자리에서 다시 비교";
-    else if ((reason === "gone" || reason === "not_visible") && !round.reverified) next = " → 처음 본 자리로 가서 다시 봄";
-    else if (reason === "gone") next = " → 떠난 것 확인";
-    return `도착 비교: ${ARRIVAL[reason] ?? ARRIVAL.failed}${next}${aiText(event)}`;
+    if (!Object.hasOwn(ARRIVAL, reason)) {
+      return [line("클라우드 AI", `처음 장면과 비교하지 못함${aiWhy(event)}`), line("말벗", "사람이 있는 것으로 보고 계속")];
+    }
+    const lines = [line("클라우드 AI", `${ARRIVAL[reason]}${aiWhy(event)}`)];
+    if (reason === "person_unsure" && !round.viewedAfterUnsure) lines.push(line("말벗", "몸 전체가 보이는 자리에서 다시 비교"));
+    else if ((reason === "gone" || reason === "not_visible") && !round.reverified) lines.push(line("말벗", "처음 본 자리로 가서 다시 봄"));
+    else if (reason === "gone") lines.push(line("말벗", "떠났는지 확인"));
+    return lines;
   }
   if (kind === "reverify_completed") {
-    return reason === "arrived" ? "처음 본 자리로 가서 같은 방향으로 다시 봄"
-      : `처음 본 자리로 못 감: ${APPROACH_BLOCKED[reason] ?? "이동 실패"}`;
+    return [line("말벗", reason === "arrived" ? "처음 본 자리로 가서 같은 방향으로 다시 봄" : `처음 본 자리로 못 감 (${blocked(reason)})`)];
   }
-  if (kind === "departure_reviewed") return `떠난 것 확인: ${DEPARTURE[reason] ?? DEPARTURE.failed}${aiText(event)}`;
+  if (kind === "departure_reviewed") return [line("클라우드 AI", `${DEPARTURE[reason] ?? DEPARTURE.failed}${aiWhy(event)}`)];
   if (kind === "posture_check_completed") {
-    const what = FLOW_POSTURE[reason] ?? POSTURE[reason] ?? "몸 전체 확인";
-    if (ASKS.has(reason)) return `몸 전체 확인: ${what} → 물어봄${aiText(event)}`;
+    const what = FLOW_POSTURE[reason] ?? FLOW_POSTURE.posture_unconfirmed;
     const before = round.postures.at(-2);
-    if (before === undefined) return `몸 전체 확인: ${what}${aiText(event)}`;
+    if (ASKS.has(reason) || before === undefined) return [line("클라우드 AI", `몸 전체를 보니 ${what}${aiWhy(event)}`)];
     if (before !== reason && (OFF_FLOOR.has(before) !== OFF_FLOOR.has(reason))) {
-      return `몸 전체 확인: ${what} → 두 번 본 자세가 달라 물어봄${aiText(event)}`;
+      round.askReason = "두 번 본 자세가 달라서";
+      return [line("클라우드 AI", `몸 전체를 다시 보니 ${what}${aiWhy(event)}`)];
     }
-    return `몸 전체 확인: ${what} (AI 두 번 모두 같음)${round.differ ? " → 다른 분이라 묻지 않음 · 사건은 열어 둠" : ""}`;
+    const lines = [line("클라우드 AI", `몸 전체를 다시 보니 ${what} (두 번 모두 같음)`)];
+    if (round.differ) lines.push(line("말벗", "다른 분이라 묻지 않음 · 사건은 열어 둠"));
+    return lines;
   }
   if (kind === "fall_moment_reviewed") {
-    let next = "";
-    if (lastPosture && OFF_FLOOR.has(lastPosture) && reason !== "self") next = " → 일어났어도 물어봄";
-    else if (lastPosture === "active_on_floor") next = " → 넘어지는 장면을 봐서 물어봄";
-    return `넘어지는 장면 다시 보기: ${MOMENT[reason] ?? MOMENT.unknown}${next}`;
+    if (lastPosture && OFF_FLOOR.has(lastPosture) && reason !== "self") round.askReason = "넘어지는 장면을 봐서 일어났어도";
+    else if (lastPosture === "active_on_floor") round.askReason = "넘어지는 장면을 봐서";
+    return [line("클라우드 AI", `넘어지는 장면을 다시 보니 ${MOMENT[reason] ?? MOMENT.unknown}`)];
+  }
+  if (kind === "question_requested") {
+    const why = round.askReason;
+    round.askReason = null;
+    return [line("말벗", `물어봄${why ? ` (${why})` : ""}`)];
   }
   if (kind === "incident_resolved" && (reason === "response_completed" || reason === "risk_cleared")) {
     // The one check looks again 30 minutes after a close anywhere but off the floor.
-    return `말벗이 확인을 마침: 괜찮다고 응답${lastPosture && OFF_FLOOR.has(lastPosture) ? "" : " · 30분 뒤 다시 확인"}`;
+    return [line("말벗", `확인을 마침${lastPosture && OFF_FLOOR.has(lastPosture) ? "" : " · 30분 뒤 다시 확인"}`)];
   }
-  if (kind === "incident_resolved" && reason === "left_the_spot") return "로봇이 사건 종료: 그 자리를 떠남 · 묻지 않음";
-  if (kind === "incident_resolved" && reason === "guardian_closed") return "처리 완료 → 말벗이 이 분을 다시 확인하지 않음";
+  if (kind === "incident_resolved" && reason === "left_the_spot") return [line("말벗", "사건 종료 · 그 자리를 떠남 (묻지 않음)")];
+  if (kind === "incident_resolved" && reason === "guardian_closed") return [line("말벗", "보호자가 처리 완료해 이 분을 다시 확인하지 않음")];
   return null;
 }
 
@@ -210,119 +225,125 @@ function updateRound(round: RoundContext, event: FallHistoryEvent) {
 }
 
 /** 다시 가서 본 기록(revisit_started 뒤)은 "다시"를 붙인다. 표시 전용. */
-function revisitLabel(event: FallHistoryEvent): string | null {
+function revisitLines(event: FallHistoryEvent): string[] | null {
   const reason = event.reason ?? "";
   if (event.eventKind === "approach_completed") {
-    return reason === "arrived" ? "의심 장소 1 m 앞에 다시 도착"
-      : `다시 가지 못함: ${APPROACH_BLOCKED[reason] ?? "이동 실패"} → 이 자리에서 물어봄`;
+    return [line("말벗", reason === "arrived" ? `${SPOT} 1 m 앞에 다시 도착` : `다시 가지 못함 (${blocked(reason)}) → 이 자리에서 물어봄`)];
   }
   if (event.eventKind === "person_check_completed") {
-    if (reason === "nobody_there") return "가까이에서 다시 확인: 그 자리에 사람이 없음";
-    if (reason === "person") return "가까이에서 다시 확인: 사람 (사람 확인됨)";
-    if (reason === "partial_body") return "가까이에서 다시 확인: 사람 · 몸 일부만 보임";
-    if (reason === "whole_body") return "가까이에서 다시 확인: 사람 · 몸 전체 보임";
+    if (reason === "nobody_there") return [line("클라우드 AI", "가까이에서 다시 보니 그 자리에 사람이 없음")];
+    if (reason === "person") return [line("클라우드 AI", "가까이에서 다시 보니 사람")];
+    if (reason === "partial_body") return [line("클라우드 AI", "가까이에서 다시 보니 사람 · 몸 일부만 보임")];
+    if (reason === "whole_body") return [line("클라우드 AI", "가까이에서 다시 보니 사람 · 몸 전체 보임")];
   }
   return null;
 }
 
-/** 말벗이 의심 장소로 다가가 확인한 기록. 목업 22·25번 문구, 음슴체. */
-function approachLabel(event: FallHistoryEvent): string | null {
+/** 말벗이 넘어진 것 같은 자리로 다가가 확인한 기록(예전 확인과 함께 쓰는 줄). 목업 22·25번. */
+function approachLines(event: FallHistoryEvent): string[] | null {
   const reason = event.reason ?? "";
-  if (event.eventKind === "check_waiting") return CHECK_WAITING[reason] ?? "확인하러 가려 했지만 아직 갈 수 없음";
-  if (event.eventKind === "check_not_confirmed") return "1분째 확인하지 못함";
-  if (event.eventKind === "check_stopped") return "'그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)";
-  if (event.eventKind === "revisit_started") return REVISIT_START[reason] ?? "묻기 전에 의심 장소로 다시 감";
-  if (event.eventKind === "same_person_compared") {
-    const ai = event.analysis?.explanation ? ` (AI: ${nounEnding(event.analysis.explanation)})` : "";
-    return `처음 장면과 비교: ${SAME_PERSON[reason] ?? SAME_PERSON.unclear}${ai}`;
+  const kind = event.eventKind;
+  if (kind === "check_waiting") return [line("말벗", CHECK_WAITING[reason] ?? "확인하러 가려 했지만 아직 갈 수 없음")];
+  if (kind === "check_not_confirmed") return [line("말벗", "1분째 확인하지 못함")];
+  if (kind === "check_stopped") return [line("말벗", "'그만'이라는 말을 듣고 확인을 멈춤 (묻지 않음)")];
+  if (kind === "revisit_started") return [line("말벗", REVISIT_START[reason] ?? `묻기 전에 ${SPOT}로 다시 감`)];
+  if (kind === "same_person_compared") {
+    return [line("클라우드 AI", `처음 장면과 비교하니 ${SAME_PERSON[reason] ?? SAME_PERSON.unclear}${aiWhy(event)}`)];
   }
-  if (event.eventKind === "agent_check_failed") {
+  if (kind === "agent_check_failed") {
     // 예전 이유(confirmation_transport_failed, agent_failed)도 질문 중 오류다.
-    return Object.hasOwn(CHECK_FAILED, reason) ? CHECK_FAILED[reason] : CHECK_FAILED.question_error;
+    return [line("말벗", Object.hasOwn(CHECK_FAILED, reason) ? CHECK_FAILED[reason] : CHECK_FAILED.question_error)];
   }
-  if (event.eventKind === "notification_requested" && Object.hasOwn(REVISIT_NOTICE, reason)) {
-    return REVISIT_NOTICE[reason];
+  if (kind === "notification_requested" && Object.hasOwn(REVISIT_NOTICE, reason)) {
+    return [line("알림", `${LEVEL[REVISIT_NOTICE[reason]]} · 묻지 않음 · 사건은 열어 둠`)];
   }
-  if (event.eventKind === "notification_requested") {
+  if (kind === "notification_requested") {
     const [defaultLevel, what] = Object.hasOwn(NOTICE, reason) ? NOTICE[reason] : ["", ""];
     const level = LEVEL[event.notificationLevel ?? defaultLevel] ?? "";
-    return [level ? `${level} 알림` : "알림", what].filter(Boolean).join(": ");
+    return [line("알림", [level, what].filter(Boolean).join(" · ") || "보냄")];
   }
-  if (event.eventKind === "voice_result" || event.eventKind === "confirmation_completed") {
-    // 답 줄은 "질문에 대한 답 (답)"으로 통일한다. 영상 판정은 붙이지 않는다.
-    // 영상만 본 장면에서 괜찮다는 답은 누운 분의 답인지 몰라 answer가 unclear다.
-    if (reason === "scene_answer_unassociated") return "질문에 대한 답 (괜찮다고 답함 · 쓰러진 분인지 모름)";
-    return event.answer ? `질문에 대한 답 (${ANSWER[event.answer] ?? event.answer})` : "질문에 대한 답";
+  if (kind === "voice_result" || kind === "confirmation_completed") {
+    // 영상만 본 장면에서 괜찮다는 대답은 누운 분의 대답인지 몰라 answer가 unclear다.
+    if (reason === "scene_answer_unassociated") return [line("대답", "괜찮다고 함 · 쓰러진 분인지 모름")];
+    if (event.answer === "failed") return [line("말벗", "질문 실패")];
+    if (event.answer === "no_response") return [line("대답", "없음")];
+    return [line("대답", event.answer ? ANSWER[event.answer] ?? event.answer : "기록 없음")];
   }
-  if (event.eventKind === "incident_resolved" && reason === "guardian_closed") return "처리 완료 → 말벗이 확인을 멈춤";
-  if (event.eventKind === "approach_started") {
-    return `${APPROACH_START[reason] ?? "확인하러 감"} (사람인지 확실하지 않음)`;
+  if (kind === "incident_resolved" && reason === "guardian_closed") return [line("말벗", "보호자가 처리 완료해 확인을 멈춤")];
+  if (kind === "approach_started") return [line("말벗", `${APPROACH_START[reason] ?? "확인하러 감"} (사람인지 확실하지 않음)`)];
+  if (kind === "approach_completed") {
+    return [line("말벗", reason === "arrived" ? `${SPOT} 1 m 앞에 도착` : `가까이 가지 못함 (${blocked(reason)}) → 이 자리에서 물어봄`)];
   }
-  if (event.eventKind === "approach_completed") {
-    return reason === "arrived" ? "의심 장소 1 m 앞에 도착"
-      : `가까이 가지 못함: ${APPROACH_BLOCKED[reason] ?? "이동 실패"} → 이 자리에서 물어봄`;
+  if (kind === "person_check_completed") {
+    if (reason === "person") return [line("클라우드 AI", "가까이에서 보니 사람")];
+    if (reason === "partial_body") return [line("클라우드 AI", "가까이에서 보니 사람 · 몸 일부만 보임")];
+    if (reason === "whole_body") return [line("클라우드 AI", "가까이에서 보니 사람 · 몸 전체 보임")];
+    return [line("클라우드 AI", `가까이에서 보니 사람 아님${aiWhy(event)}`)];
   }
-  if (event.eventKind === "person_check_completed") {
-    if (reason === "person") return "가까이에서 확인: 사람 (사람 확인됨)";
-    if (reason === "partial_body") return "가까이에서 확인: 사람 · 몸 일부만 보임";
-    if (reason === "whole_body") return "가까이에서 확인: 사람 · 몸 전체 보임";
-    const ai = event.analysis?.explanation ? ` · AI: ${nounEnding(event.analysis.explanation)}` : "";
-    return `가까이에서 확인: 사람 아님 (사람 확인 불가${ai})`;
+  if (kind === "view_completed") {
+    return [line("말벗", reason === "arrived" ? "몸 전체가 보이는 자리로 옮김" : `몸 전체가 보이는 자리로 못 감 (${blocked(reason)})`)];
   }
-  if (event.eventKind === "view_completed") {
-    return reason === "arrived" ? "몸 전체가 보이는 자리로 옮김"
-      : `몸 전체가 보이는 자리로 못 감: ${APPROACH_BLOCKED[reason] ?? "이동 실패"}`;
+  if (kind === "posture_check_completed") {
+    const [who, what] = POSTURE[reason] ?? ["클라우드 AI", "몸 전체를 봄"];
+    return [line(who, `${what}${who === "클라우드 AI" ? aiWhy(event) : ""}`)];
   }
-  if (event.eventKind === "posture_check_completed") {
-    const ai = event.analysis?.explanation ? ` (AI: ${nounEnding(event.analysis.explanation)})` : "";
-    return `${POSTURE[reason] ?? "몸 전체 확인"}${ai}`;
-  }
-  if (event.eventKind === "approach_returned") {
-    return reason === "returned" ? "원래 자리로 돌아옴" : "원래 자리로 돌아가지 못함";
-  }
-  if (event.eventKind === "incident_resolved" && reason === "not_a_person") return "로봇이 사건 종료: 사람 아님";
-  if (event.eventKind === "incident_resolved" && reason === "off_floor_verified") {
-    return "로봇이 사건 종료: 바닥에 있지 않음 · 묻지 않음";
-  }
-  if (event.eventKind === "incident_resolved" && reason === "floor_activity_verified") {
-    return "로봇이 사건 종료: 바닥에 앉아 활동 중 · 묻지 않음";
+  if (kind === "approach_returned") return [line("말벗", reason === "returned" ? "원래 자리로 돌아옴" : "원래 자리로 돌아가지 못함")];
+  if (kind === "incident_resolved" && reason === "not_a_person") return [line("말벗", "사건 종료 · 사람 아님")];
+  if (kind === "incident_resolved" && reason === "off_floor_verified") return [line("말벗", "사건 종료 · 바닥에 있지 않음 (묻지 않음)")];
+  if (kind === "incident_resolved" && reason === "floor_activity_verified") {
+    return [line("말벗", "사건 종료 · 바닥에 앉아 활동 중 (묻지 않음)")];
   }
   return null;
 }
 
-export function fallEventLabel(event: FallHistoryEvent): string {
-  // A request is not proof that audio played. No hard-coded speech transcript.
-  if (event.eventKind === "question_requested") return "로봇 확인 질문 요청";
-  const approach = approachLabel(event);
-  if (approach) return approach;
+const cloudOpening = (event: FallHistoryEvent) =>
+  (event.eventKind === "incident_opened" || event.eventKind === "incident_updated") &&
+  (event.reason === "cloud_crosscheck" || event.reason === "target_unidentified");
 
+function genericLine(event: FallHistoryEvent): string {
+  // A request is not proof that audio played. No hard-coded speech transcript.
+  if (event.eventKind === "question_requested") return line("말벗", "물어봄");
   const opening = event.eventKind === "incident_opened" || event.eventKind === "incident_updated";
   const poseReason = event.reason && Object.hasOwn(POSE_REASON, event.reason) ? POSE_REASON[event.reason] : undefined;
   if (opening && poseReason) {
     // Pose creates a suspicion, not a VLM classification. A carried-over old
     // assessment/answer must not label a newly observed Pose candidate.
-    return `자세 분석: 낙상 의심 (${poseReason})`;
+    return line("말벗", `낙상 의심 발견 (자세 분석: ${poseReason})`);
   }
-  let label = EVENT[event.eventKind] ?? event.eventKind;
-  if (opening && (event.reason === "cloud_crosscheck" || event.reason === "target_unidentified")) {
-    label = event.eventKind === "incident_opened" ? "클라우드 AI 발견" : "클라우드 AI 근거 갱신";
+  if (cloudOpening(event)) {
+    const what = ASSESSMENT[event.assessment ?? ""] ?? "낙상 의심";
+    return line("클라우드 AI", event.eventKind === "incident_opened" ? `${what} 발견` : `${what} · 근거 갱신`);
   }
   // The incident can retain a stronger past judgment. Show THIS request's
   // classification beside its explanation, not that retained judgment.
-  const analysis = event.eventKind === "analysis_completed" ? event.analysis : null;
-  const assessment = analysis?.assessment ?? event.assessment;
-  if (assessment) label += `: ${ASSESSMENT[assessment] ?? assessment}`;
   if (event.eventKind === "analysis_completed") {
-    return `${label} (${analysis?.explanation ? nounEnding(analysis.explanation) : "판단 이유 기록 없음"})`;
+    const assessment = event.analysis?.assessment ?? event.assessment ?? "";
+    const why = event.analysis?.explanation ? nounEnding(event.analysis.explanation) : "AI 이유 없음";
+    return line("클라우드 AI", `${ASSESSMENT[assessment] ?? (assessment || "판정")} (${why})`);
   }
-  if (!opening && event.answer) label += ` (${ANSWER[event.answer] ?? event.answer})`;
-  return label;
+  if (Object.hasOwn(CLOUD_EVENT, event.eventKind)) return line("클라우드 AI", CLOUD_EVENT[event.eventKind]);
+  if (event.eventKind === "notification_requested") return line("알림", "보냄");
+  let what = EVENT[event.eventKind] ?? event.eventKind;
+  if (event.assessment) what += ` · ${ASSESSMENT[event.assessment] ?? event.assessment}`;
+  if (!opening && event.answer) what += ` (${ANSWER[event.answer] ?? event.answer})`;
+  return line("말벗", what);
+}
+
+function eventLines(event: FallHistoryEvent, round: RoundContext | null, revisit: boolean): string[] {
+  return (round ? flowLines(event, round) : null) ?? (revisit ? revisitLines(event) : null) ??
+    approachLines(event) ?? [genericLine(event)];
+}
+
+/** 한 기록의 줄(여러 줄이면 " / "로 이음). 표시 전용. */
+export function fallEventLabel(event: FallHistoryEvent): string {
+  return eventLines(event, event.checkRound != null ? newRound() : null, false).join(" / ");
 }
 
 /**
  * History lines in order (목업 28번): after revisit_started the close look reads
  * "다시", and the alert right after "1분째 확인하지 못함" or a failed question
- * joins that line instead of repeating it. Display only.
+ * joins that line instead of repeating it. Each line reads "누가: 무엇"; an AI
+ * judgment and the robot's decision after it are separate lines. Display only.
  */
 export function fallHistoryLines<T extends FallHistoryEvent>(events: T[]):
   Array<{ event: T; label: string; divider?: string }> {
@@ -332,19 +353,14 @@ export function fallHistoryLines<T extends FallHistoryEvent>(events: T[]):
   const rounds = flow && events.some((e) => e.eventKind === "recheck_started");
   let revisit = false, round = newRound();
   for (const event of events) {
-    if (flow) {
-      const divider = rounds && (lines.length === 0 || event.eventKind === "recheck_started")
-        ? `${roundOf(event)}회차` : undefined;
-      if (event.eventKind === "recheck_started") round = newRound();
-      updateRound(round, event);
-      const label = flowLabel(event, round);
-      if (label !== null || divider) {
-        lines.push({ event, label: label ?? fallEventLabel(event), ...(divider ? { divider } : {}) });
-        continue;
-      }
-    }
-    if (event.eventKind === "revisit_started" && !flow) revisit = true;
     const previous = lines.at(-1);
+    // 클라우드 AI가 찾은 사건: 발견 줄과 바로 뒤 같은 판정의 이유를 한 줄로.
+    if (event.eventKind === "analysis_completed" && previous && cloudOpening(previous.event) &&
+        previous.event.eventKind === "incident_opened" && event.analysis?.explanation &&
+        (event.analysis.assessment ?? event.assessment) === (previous.event.assessment ?? event.analysis.assessment)) {
+      previous.label += ` (${nounEnding(event.analysis.explanation)})`;
+      continue;
+    }
     if (event.eventKind === "notification_requested" && event.reason === "robot_could_not_confirm" && previous) {
       const kind = previous.event.eventKind, reason = previous.event.reason ?? "";
       if (kind === "check_not_confirmed") { previous.label += " → 긴급 알림"; continue; }
@@ -353,7 +369,15 @@ export function fallHistoryLines<T extends FallHistoryEvent>(events: T[]):
         continue;
       }
     }
-    lines.push({ event, label: (revisit ? revisitLabel(event) : null) ?? fallEventLabel(event) });
+    let divider: string | undefined;
+    if (flow) {
+      divider = rounds && (lines.length === 0 || event.eventKind === "recheck_started") ? `${roundOf(event)}회차` : undefined;
+      if (event.eventKind === "recheck_started") round = newRound();
+      updateRound(round, event);
+    } else if (event.eventKind === "revisit_started") revisit = true;
+    eventLines(event, flow ? round : null, revisit).forEach((label, index) => {
+      lines.push({ event, label, ...(divider && index === 0 ? { divider } : {}) });
+    });
   }
   return lines;
 }
@@ -523,12 +547,12 @@ export function fallCheckResult(events: FallHistoryEvent[]): FallCheckResult | n
       } else if (reason === "response_completed" || reason === "risk_cleared") {
         const off = p !== null && OFF_FLOOR.has(p);
         outcome = { title: `${posture() ?? "자세를 확인하지 못함"}${off ? " · 넘어진 것으로 보여 물어봄" : ""} · 괜찮다고 답함`,
-          note: off ? NOTE.fallAsked : NOTE.floorOkay, summary: `${posture() ?? "물어봄"} · 괜찮다고 응답` };
+          note: off ? NOTE.fallAsked : NOTE.floorOkay, summary: `${posture() ?? "물어봄"} · 괜찮다고 답함` };
       }
     } else if (e.eventKind === "confirmation_completed" && e.answer === "help_request") {
       outcome = { title: `${posture() ?? "물어봄"} · 도움 필요`, note: NOTE.open };
     } else if (e.eventKind === "voice_result" && e.answer === "no_response") {
-      outcome = { title: `${posture() ?? "물어봄"} · 응답 없음`, note: NOTE.open };
+      outcome = { title: `${posture() ?? "물어봄"} · 대답 없음`, note: NOTE.open };
     } else if (e.eventKind === "agent_check_failed" && Object.hasOwn(FAILED_REASON, reason)) {
       outcome = { title: FAILED_REASON[reason][0], note: NOTE.open, summary: FAILED_REASON[reason][1] };
     } else if (e.eventKind === "check_stopped") {

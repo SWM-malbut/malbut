@@ -4117,6 +4117,9 @@ a:focus-visible {
 .fall-badges .is-ok { font-weight: 700; color: var(--ui-ok); background: var(--ui-ok-soft); }
 .fall-badges .is-report { font-weight: 700; color: var(--ui-report); background: var(--ui-report-soft); }
 .fall-badges .is-info { font-weight: 700; color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+/* 위 배지(목업 35번): 긴급은 굵게, 처리 단계(검토 전·처리 전·의견 다름)는 흰 바탕 테두리. */
+.fall-badges .is-urgent { font-weight: 700; color: var(--ui-danger); background: var(--ui-danger-soft); }
+.fall-badges .is-step { color: var(--ui-text); background: var(--ui-surface); box-shadow: inset 0 0 0 1px var(--ui-control-border); }
 .fall-scene-state { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .fall-scene-state i { width: 8px; height: 8px; border-radius: 4px; }
 .fall-scene-state.is-ok { color: var(--ui-ok); } .fall-scene-state.is-ok i { background: var(--ui-ok); }
@@ -4142,6 +4145,9 @@ a:focus-visible {
 .fall-robot-check p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ui-text-muted); }
 .fall-robot-check.is-alert { border-color: transparent; background: var(--ui-danger-soft); }
 .fall-robot-check.is-alert span, .fall-robot-check.is-alert strong { color: var(--ui-danger); }
+/* 목업 46번: 결과 상자는 흰 머리 칸 안, 관련 사건 링크 바로 밑. */
+.fall-head .fall-robot-check { margin: 0; border-color: transparent; background: var(--ui-bg); }
+.fall-head .fall-robot-check.is-alert { background: var(--ui-danger-soft); }
 .fall-scene-section { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-segments { display: flex; gap: 8px; flex-wrap: wrap; }
 .fall-segments button {
@@ -4442,6 +4448,11 @@ a:focus-visible {
 .ui-badge.is-danger { color: var(--ui-on-strong); background: var(--ui-danger); }
 .ui-badge.is-warn { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
 .ui-badge.is-accent { color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+/* 홈·홈캠 "확인이 필요해요" 카드 배지(목업 34번): 사건 탭 배지와 같은 색. */
+.ui-badges { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.ui-badge.is-urgent { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.ui-badge.is-report { color: var(--ui-report); background: var(--ui-report-soft); }
+.ui-badge.is-step { font-weight: 500; color: var(--ui-text); background: var(--ui-surface); box-shadow: inset 0 0 0 1px var(--ui-control-border); }
 .ui-loading { display: flex; align-items: center; gap: 0.5rem; padding: 1rem; font-size: 0.875rem; color: var(--ui-text-muted); }
 .ui-notice {
   margin: 0 1rem 1rem; padding: 0.75rem; border-radius: 10px; display: flex; align-items: center; gap: 0.5rem;

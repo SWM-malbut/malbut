@@ -26,6 +26,7 @@ import { UiTabBar } from "./ui-tab-bar";
 import { DisplayNameForm } from "./display-name-form";
 import { talkNote, type LiveTalk } from "../homecam-talk";
 import { withRo } from "../korean-particle";
+import { incidentBadges, incidentTitle, type BadgeTone, type IncidentSummary } from "../fall-incident-view";
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
@@ -344,6 +345,43 @@ function normalizeDevice(value: unknown): HomecamDevice | null {
   };
 }
 
+const CARD_BADGE: Record<BadgeTone, string> = {
+  "is-alert": "is-danger", "is-info": "is-accent", "is-urgent": "is-urgent", "is-check": "is-warn",
+  "is-ok": "is-ok", "is-report": "is-report", "is-neutral": "", "is-step": "is-step",
+};
+
+/** 홈 탭·홈캠 탭 "확인이 필요해요" 카드(목업 34번): 사건 탭과 같은 배지·제목 규칙. */
+function OpenIncidentsCard({ incidents, loading, onOpenAll, onOpen }: {
+  incidents: IncidentSummary[];
+  loading: boolean;
+  onOpenAll: () => void;
+  onOpen: (incidentId: string) => void;
+}) {
+  return (
+    <article className="ui-card ui-incidents">
+      <div className="ui-card-head">
+        <h2>확인이 필요해요 <span>{incidents.length}건</span></h2>
+        <button type="button" className="ui-text-button" onClick={onOpenAll}>전체 보기</button>
+      </div>
+      {loading && incidents.length === 0 && <p className="ui-hint">사건을 확인하고 있어요…</p>}
+      {!loading && incidents.length === 0 && (
+        <p className="ui-safe"><CheckCircle size={20} weight="bold" aria-hidden="true" /> 확인할 사건이 없어요</p>
+      )}
+      {incidents.slice(0, 3).map((incident) => (
+        <button type="button" key={incident.incidentId}
+          className={`ui-incident ${incident.unacknowledged ? "is-urgent" : ""}`}
+          onClick={() => onOpen(incident.incidentId)}>
+          <span className="ui-badges">
+            {incidentBadges(incident).map(([tone, text]) => <span key={text} className={`ui-badge ${CARD_BADGE[tone]}`}>{text}</span>)}
+          </span>
+          <strong>{incidentTitle(incident)}</strong>
+          <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 판정 실패" : ""}</small>
+        </button>
+      ))}
+    </article>
+  );
+}
+
 function formatIncidentTime(value: string) {
   const date = new Date(value);
   const sameDay = date.toDateString() === new Date().toDateString();
@@ -520,9 +558,7 @@ export function HomecamDashboard({
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   // Fall incidents needing a human: shown on home/live; the 사건 tab has the full list.
-  const [openIncidents, setOpenIncidents] = useState<Array<{
-    incidentId: string; occurredAt: string; unacknowledged: boolean; aiFailed: boolean; fallSeen: boolean;
-  }>>([]);
+  const [openIncidents, setOpenIncidents] = useState<IncidentSummary[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
   const [focusedIncidentId, setFocusedIncidentId] = useState("");
   const [timelineMode, setTimelineMode] = useState<TimelineMode | null>(null);
@@ -842,16 +878,11 @@ export function HomecamDashboard({
         { cache: "no-store" },
       );
       const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "사건을 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(stringValue(payload.error) ?? "사건을 불러오지 못했어요.");
       const rows = Array.isArray(payload.incidents) ? payload.incidents.map(asRecord) : [];
-      setOpenIncidents(rows.flatMap((row) => {
-        const incidentId = stringValue(row.incidentId);
-        const occurredAt = stringValue(row.occurredAt);
-        return incidentId && occurredAt ? [{
-          incidentId, occurredAt, unacknowledged: row.unacknowledged === true,
-          aiFailed: row.aiFailed === true, fallSeen: row.fallSeen === true,
-        }] : [];
-      }));
+      // 사건 탭과 같은 요약(배지·제목 규칙을 같이 쓴다).
+      setOpenIncidents(rows.flatMap((row) => stringValue(row.incidentId) && stringValue(row.occurredAt)
+        ? [{ opinionCounts: {}, ...row } as IncidentSummary] : []));
     } catch {
       setOpenIncidents([]);
     } finally {
@@ -1267,27 +1298,8 @@ export function HomecamDashboard({
               </span>
             </button>
 
-            <article className="ui-card ui-incidents">
-              <div className="ui-card-head">
-                <h2>확인이 필요해요 <span>{openIncidents.length}건</span></h2>
-                <button type="button" className="ui-text-button" onClick={() => setTab("events")}>전체 보기</button>
-              </div>
-              {incidentsLoading && openIncidents.length === 0 && <p className="ui-hint">사건을 확인하고 있어요…</p>}
-              {!incidentsLoading && openIncidents.length === 0 && (
-                <p className="ui-safe"><CheckCircle size={20} weight="bold" aria-hidden="true" /> 확인할 사건이 없어요</p>
-              )}
-              {openIncidents.slice(0, 3).map((incident) => (
-                <button type="button" key={incident.incidentId}
-                  className={`ui-incident ${incident.unacknowledged ? "is-urgent" : ""}`}
-                  onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
-                  <span className={`ui-badge ${incident.unacknowledged ? "is-danger" : "is-warn"}`}>
-                    {incident.unacknowledged ? "아무도 확인하지 않음" : "확인 필요"}
-                  </span>
-                  <strong>{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
-                  <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 판정 실패" : ""}</small>
-                </button>
-              ))}
-            </article>
+            <OpenIncidentsCard incidents={openIncidents} loading={incidentsLoading} onOpenAll={() => setTab("events")}
+              onOpen={(incidentId) => { setFocusedIncidentId(incidentId); setTab("events"); }} />
 
             <HomeMapSummary device={selectedDevice} robotSnapshot={homeRobot.robotSnapshot} semantics={homeRobot.semantics} onOpenMap={openMap} />
 
@@ -1444,24 +1456,8 @@ export function HomecamDashboard({
                 한 번에 한 명만 쓸 수 있어요. 말벗이 집 안 소리를 보낼지는 설정 › 홈캠 설정 › 말벗 마이크에서 정해요(소유자).
               </p>
 
-              <article className="ui-card ui-incidents">
-                <div className="ui-card-head">
-                  <h2>확인이 필요한 사건</h2>
-                  <button type="button" className="ui-text-button" onClick={() => setTab("events")}>전체 보기</button>
-                </div>
-                {openIncidents.length === 0 && <p className="ui-hint">확인할 사건이 없어요.</p>}
-                {openIncidents.slice(0, 2).map((incident) => (
-                  <button type="button" key={incident.incidentId}
-                    className={`ui-incident ${incident.unacknowledged ? "is-urgent" : ""}`}
-                    onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
-                    <span className={`ui-badge ${incident.unacknowledged ? "is-danger" : "is-warn"}`}>
-                      {incident.unacknowledged ? "아무도 확인하지 않음" : "확인 필요"}
-                    </span>
-                    <strong>{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
-                    <small>{formatIncidentTime(incident.occurredAt)}</small>
-                  </button>
-                ))}
-              </article>
+              <OpenIncidentsCard incidents={openIncidents} loading={incidentsLoading} onOpenAll={() => setTab("events")}
+                onOpen={(incidentId) => { setFocusedIncidentId(incidentId); setTab("events"); }} />
             </div>
           </section>
         )}
