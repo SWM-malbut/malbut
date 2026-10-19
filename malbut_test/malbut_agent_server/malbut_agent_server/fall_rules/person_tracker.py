@@ -18,9 +18,15 @@ Without a map place only someone near counts: the same view's box overlapping, o
 someone just gone from another view, whose box cannot be compared (design decision 2).
 It clears when one of them stayed put while the other came and left, when depth comes
 back for a number made without it at the last place of one of them (decision 2, as
-reappearing within 1 m), or when the other is forgotten (30 minutes unseen). Nothing
-else clears it; Cloud's "same person" does not (it told different people apart 1 of 8
-times on 10-18).
+reappearing within 1 m), when for a minute only one of them was seen and in one place
+(SOLO_S), or when the other is forgotten (30 minutes unseen). Nothing else clears it;
+Cloud's "same person" does not (it told different people apart 1 of 8 times on 10-18).
+
+A new number counts as someone else only once it was seen in SETTLE_HITS frames: until
+then it makes no one uncertain and is no one's rival (10-19 18:28 robot test: one
+person entering at the screen edge got boxes for a frame or two that became 18 more
+numbers and one uncertain group that never cleared; tentative tracks as in DeepSORT,
+and an ambiguity committed after a horizon as in MHT's N-scan pruning).
 
 ReID only splits (decision 10): someone reappearing where one unseen person was is that
 person, uncertain until the VLM says how alike the two looked (two looks against two);
@@ -54,6 +60,8 @@ RESOLVE_M = 0.5         # after they part, the one observation near that place i
 # two against two, 10-17 pairs (10-19): 5 of 8 others split, 0 of 9 same people.
 REID_SPLIT = 0.62
 REID_WAIT_S = 5.0       # no answer by then: by place alone
+SETTLE_HITS = 3         # frames a new number is seen in before it counts as someone else
+SOLO_S = 60.0           # uncertain, but only one of them seen, in one place, this long: clear
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,8 @@ class Person:
     posture: str = 'unknown'
     places: deque = field(default_factory=lambda: deque(maxlen=64))  # (at, point)
     unplaced: bool = False   # made without a map place while uncertain: recovered by place
+    hits: int = 0            # frames seen in
+    waiting: tuple = ()      # who could be this one, made uncertain once it settles
 
 
 @dataclass
@@ -95,6 +105,11 @@ class Group:
     members: set
     since: float
     anchors: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    # Only one of them seen since: who, since when, last seen, and where (place, view, box).
+    solo: Optional[str] = None
+    solo_since: float = 0.0
+    solo_last: float = 0.0
+    solo_where: tuple = (None, None, None)
 
 
 @dataclass
@@ -154,10 +169,12 @@ class PersonTracker:
             taken[id(obs)] = person
             if self._apply(person, obs, t, frame.view):
                 stood_up.append(person.person_id)
+            person.hits += 1
         seen = [(obs, taken[id(obs)]) for obs in frame.people if id(obs) in taken]
+        self._settle(seen, t)
         merged = self._recover(seen, t)
         self._merge(seen, t)
-        self._release(seen)
+        self._release(seen, t, frame.view)
         # After a release may have swapped two people: each one's track now.
         assignments = {person.track: person.person_id for _, person in seen if person.track}
         changed = {k: v for k, v in assignments.items() if self._sent.get(k) != v}
@@ -183,6 +200,11 @@ class PersonTracker:
 
     def _reach(self, person, t):
         return min(MAX_M, BASE_M + WALK_MPS * max(0.0, t - person.point_at))
+
+    @staticmethod
+    def _settled(person):
+        """Seen in enough frames to count as someone else (not a box for a moment)."""
+        return person.hits >= SETTLE_HITS
 
     def _match(self, observations, t, view):
         """Each observation with its person (an existing one or a new one)."""
@@ -212,7 +234,8 @@ class PersonTracker:
                 continue
             obs = rest[i]
             rivals = [p for d, j, p in pairs if j == i and p is not person
-                      and p.person_id not in used and d - distance < AMBIGUOUS_M]
+                      and p.person_id not in used and d - distance < AMBIGUOUS_M
+                      and self._settled(p)]
             placed.add(i)
             used.add(person.person_id)
             result.append((obs, person))
@@ -249,7 +272,8 @@ class PersonTracker:
             if not near:
                 return self._new(obs, t)
             person = near[0][1]
-            rivals = [p for d, p in near[1:] if d - near[0][0] < AMBIGUOUS_M]
+            rivals = [p for d, p in near[1:]
+                      if d - near[0][0] < AMBIGUOUS_M and self._settled(p)]
             if rivals:
                 self._group([person, *rivals], t)
             elif self.reid and person.track and obs.track:
@@ -263,6 +287,8 @@ class PersonTracker:
         # seconds anywhere on screen.)
         plausible = []
         for p in gone:
+            if not self._settled(p):
+                continue  # A box for a moment is no one's rival.
             if obs.box and p.box and p.view == view:
                 if _iou(obs.box, p.box) > 0:
                     plausible.append(p)
@@ -270,8 +296,9 @@ class PersonTracker:
                 plausible.append(p)
         person = self._new(obs, t)
         if plausible:
+            # Uncertain with them once it is seen in SETTLE_HITS frames (_settle).
             person.unplaced = True
-            self._group([person, *plausible], t)
+            person.waiting = tuple(p.person_id for p in plausible)
         return person
 
     def _ask_appearance(self, person, obs, t):
@@ -329,6 +356,21 @@ class PersonTracker:
         return stood_up
 
     # ------------------------------------------------------------ uncertain
+
+    def _settle(self, seen, t):
+        """A new number seen in SETTLE_HITS frames now counts: uncertain with whoever
+        could be it and is still unseen."""
+        here = {p.person_id for _, p in seen}
+        for _, person in seen:
+            if not person.waiting or not self._settled(person):
+                continue
+            others = [self.people[i] for i in person.waiting
+                      if i in self.people and i not in here]
+            person.waiting = ()
+            if others:
+                self._group([person, *others], t)
+            else:
+                person.unplaced = False
 
     def _recover(self, seen, t):
         """Depth back for a number made without it while uncertain (design decision 2):
@@ -398,14 +440,16 @@ class PersonTracker:
                     close = math.dist(a.point, b.point) <= MERGE_M
                 else:
                     close = bool(a.box and b.box) and _iou(a.box, b.box) >= MERGE_IOU
-                if close and not self._together(pa.person_id, pb.person_id):
+                if (close and self._settled(pa) and self._settled(pb)
+                        and not self._together(pa.person_id, pb.person_id)):
                     self._group([pa, pb], t)
 
     def _together(self, a, b):
         return any(a in g.members and b in g.members for g in self.groups)
 
-    def _release(self, seen):
-        """Clear a group once they parted and the one who stayed put is plain to see."""
+    def _release(self, seen, t, view):
+        """Clear a group once they parted and the one who stayed put is plain to see, or
+        when for SOLO_S only one of them was seen and in one place."""
         here = {p.person_id: obs for obs, p in seen}
         for group in list(self.groups):
             visible = [here[m] for m in group.members if m in here]
@@ -424,6 +468,30 @@ class PersonTracker:
                 group.anchors.pop(member, None)
             if len(group.members) < 2 and group in self.groups:
                 self.groups.remove(group)
+            elif group in self.groups:
+                self._alone(group, [(obs, p) for obs, p in seen
+                                    if p.person_id in group.members], t, view)
+
+    def _alone(self, group, members, t, view):
+        """Only one of them seen, unseen for at most SHORT_GONE_S, near where that began
+        (1 m, or the same view's box overlapping): after SOLO_S, no longer uncertain."""
+        if len(members) != 1:
+            if members or t - group.solo_last > SHORT_GONE_S:
+                group.solo = None
+            return
+        obs, person = members[0]
+        point, where_view, box = group.solo_where
+        near = bool(obs.point and point and math.dist(obs.point, point) <= REAPPEAR_M)
+        overlap = bool(obs.box and box and view == where_view and _iou(obs.box, box) > 0)
+        if (group.solo != person.person_id or t - group.solo_last > SHORT_GONE_S
+                or not (near or overlap)):
+            group.solo, group.solo_since = person.person_id, t
+            group.solo_where = (obs.point, view, obs.box)
+        elif point is None and obs.point:
+            group.solo_where = (obs.point, where_view, box)
+        group.solo_last = t
+        if t - group.solo_since >= SOLO_S:
+            self.groups.remove(group)
 
     def _swap(self, a, b):
         """The tracking had them the other way round: exchange what each was last seen as."""

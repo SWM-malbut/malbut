@@ -4,7 +4,7 @@ five a second; unit tests, not robot checks. Replay on recorded days comes later
 import pytest
 
 from malbut_agent_server.fall_rules.person_tracker import (
-    FORGET_S, MAX_PEOPLE, SHORT_GONE_S, Frame, Observation, PersonTracker,
+    FORGET_S, MAX_PEOPLE, SHORT_GONE_S, SOLO_S, Frame, Observation, PersonTracker,
 )
 
 DT = 0.2
@@ -101,7 +101,7 @@ def test_without_depth_someone_gone_elsewhere_in_view_is_not_near(robot):
 def test_without_depth_someone_just_gone_from_another_view_could_be_them(robot):
     robot.frames(1.0, seen('a', None, BOX_A))
     robot.view = 1  # The robot moved: boxes do not compare, so 'a' could be anyone now.
-    result = robot.frame(seen('b', None, BOX_B))
+    result = robot.frames(0.6, seen('b', None, BOX_B))  # Seen in three frames: counts.
     assert result.assignments == {'b': 'test:P2'}
     assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
 
@@ -109,7 +109,7 @@ def test_without_depth_someone_just_gone_from_another_view_could_be_them(robot):
 def test_without_depth_a_box_overlapping_where_someone_was_is_uncertain(robot):
     robot.frames(1.0, seen('a', None, BOX_A))
     robot.wait(1.0)
-    robot.frame(seen('b', None, NUDGED))  # Overlaps BOX_A, less than BOX_IOU.
+    robot.frames(0.6, seen('b', None, NUDGED))  # Overlaps BOX_A, less than BOX_IOU.
     assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
 
 
@@ -120,7 +120,7 @@ def lost_depth(robot):
     """P1 measured at (3.0, 1.0) for a second, then a new track without depth beside it."""
     robot.frames(1.0, seen('a', (3.0, 1.0)))  # Too short for a stayed-put anchor.
     robot.wait(1.0)
-    robot.frame(seen('b', None, NUDGED))
+    robot.frames(0.6, seen('b', None, NUDGED))
     assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
 
 
@@ -152,7 +152,7 @@ def test_depth_back_further_than_1_m_stays_uncertain(robot):
 def test_depth_back_between_two_who_were_there_stays_uncertain(robot):
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('c', (3.0, 1.6), BOX_B))
     robot.wait(1.0)
-    robot.frame(seen('b', None, (0.25, 0.40, 0.65, 0.80)))  # Overlaps both boxes.
+    robot.frames(0.6, seen('b', None, (0.25, 0.40, 0.65, 0.80)))  # Overlaps both boxes.
     result = robot.frame(seen('b', (3.0, 1.3), (0.25, 0.40, 0.65, 0.80)))
     assert result.merged == {} and robot.tracker.uncertain('test:P3')
 
@@ -202,6 +202,44 @@ def test_a_helper_who_came_and_left_clears_once_apart(robot):
     assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
     # The one at the floor spot is the person who lay there (P1), whatever YOLO calls it now.
     assert robot.tracker.person_of('help') == 'test:P1'
+
+
+def test_a_box_for_a_frame_or_two_makes_no_one_uncertain(robot):
+    """10-19 18:28: boxes on one person for a frame or two at the screen edge."""
+    robot.frames(1.0, seen('a', None, BOX_A))
+    robot.wait(1.0)
+    robot.frames(0.4, seen('b', None, NUDGED))  # Two frames, then gone.
+    robot.frames(1.0, seen('a', None, BOX_A))
+    assert not robot.tracker.uncertain('test:P1') and robot.tracker.groups == []
+    robot.frames(0.4, seen('a', (3.0, 1.0)), seen('dup', (3.1, 1.0)))  # A double, twice...
+    assert not robot.tracker.uncertain('test:P1')
+    robot.frame(seen('a', (3.0, 1.0)), seen('dup', (3.1, 1.0)))  # ...and a third frame:
+    assert robot.tracker.uncertain('test:P1')  # two people this close, uncertain.
+
+
+def test_one_of_them_alone_in_one_place_for_a_minute_clears_it(robot):
+    """10-19 18:28: one person lay still for five minutes, uncertain 94% of the time."""
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    assert robot.tracker.uncertain('test:P1')
+    robot.frames(SOLO_S - 1, seen('a', (3.0, 1.0)))  # 'b' never seen again.
+    assert robot.tracker.uncertain('test:P1')
+    robot.frames(2.0, seen('a', (3.1, 1.0)))
+    assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
+
+
+def test_not_alone_long_enough_keeps_it_uncertain(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    robot.frames(30.0, seen('a', (3.0, 1.0)))
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.7, 1.0), BOX_B))  # 'b' back.
+    robot.frames(40.0, seen('a', (3.0, 1.0)))
+    assert robot.tracker.uncertain('test:P1')  # Alone 40 s since, not 60.
+
+
+def test_alone_but_walking_away_keeps_it_uncertain(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    for step in range(int(SOLO_S / DT) + 10):  # Alone, walking across the room.
+        robot.frame(Observation('a', None, (3.0 + step * 0.05, 1.0)))
+    assert robot.tracker.uncertain('test:P1')
 
 
 def test_two_people_who_crossed_while_walking_stay_uncertain(robot):
