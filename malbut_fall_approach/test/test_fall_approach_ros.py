@@ -36,11 +36,14 @@ class FakeNav2:
 
     ``follow`` lists the outcomes of successive drives (then they succeed);
     ``detour(x, y)`` makes the path to that goal go 3 m out of the way first;
-    a backup takes ``backup_s`` unless canceled, like the robot backing slowly.
+    a backup takes ``backup_s`` unless canceled, like the robot backing slowly;
+    ``spun(turn)`` runs before a turn succeeds (to move the fake robot).
     """
 
-    def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None, backup_s=0.0):
+    def __init__(self, node, *, plan=True, backup=True, follow=(), detour=None, backup_s=0.0,
+                 spun=None):
         self.plan, self.driven, self.turns, self.backups = plan, [], [], []
+        self.spun = spun
         self.backup, self.follow, self.detour = backup, list(follow), detour
         self.backup_s, self.backup_canceled = backup_s, False
         self.planned, self.navigated = [], []
@@ -88,6 +91,8 @@ class FakeNav2:
 
     def _spin(self, handle):
         self.turns.append(handle.request.target_yaw)
+        if self.spun is not None:
+            self.spun(handle.request.target_yaw)
         handle.succeed()
         return nav2.Spin.Result()
 
@@ -122,12 +127,12 @@ def ros():
     fake = Node('fake_nav2_and_tf')
     broadcaster = tf2_ros.StaticTransformBroadcaster(fake)
 
-    def place(x=0.0, y=0.0):
-        """Put the fake robot at (x, y) on the map, facing +x."""
+    def place(x=0.0, y=0.0, yaw=0.0):
+        """Put the fake robot at (x, y) on the map, facing +x (or ``yaw``)."""
         pose = TransformStamped()
         pose.header.frame_id, pose.child_frame_id = 'map', 'base_footprint'
         pose.transform.translation.x, pose.transform.translation.y = x, y
-        pose.transform.rotation.w = 1.0
+        pose.transform.rotation.z, pose.transform.rotation.w = math.sin(yaw / 2), math.cos(yaw / 2)
         broadcaster.sendTransform(pose)
 
     place()
@@ -383,12 +388,6 @@ def _end(nav, index=-1):
     return end.x, end.y
 
 
-def _around(turn_deg, radius=1.5):
-    """A view place around the spot (1, 0), the robot at the origin on its 180-degree side."""
-    side = math.pi + math.radians(turn_deg)
-    return 1.0 + radius * math.cos(side), radius * math.sin(side)
-
-
 def view(send, request_id='v1', standoff_m=3.0):
     # The spot is 1 m straight ahead of the fake robot, as after an approach.
     return send(request_id=request_id, phase='view', x=1.0, y=0.0, standoff_m=standoff_m)
@@ -425,63 +424,45 @@ def test_backing_away_stops_once_the_torso_is_in_view(ros, camera):
     assert nav.driven == []
 
 
-def test_a_blocked_backup_tries_places_nearest_first_and_a_failed_drive_moves_on(ros, camera):
-    _, fake, send, _, costmap = ros
-    costmap({})
-    nav = FakeNav2(fake, backup=False, follow=[False])
-    camera['show'] = lambda: [person(TORSO if len(nav.driven) >= 2 else LEGS)]
-    result = view(send)
-    assert (result.outcome, result.detail) == ('arrived', 'torso in view')
-    assert len(nav.backups) == 1 and len(nav.driven) == 2
-    assert _end(nav, 0) == pytest.approx(_around(0.0), abs=1e-6)  # Straight back, 1.5 m.
-    # The drive failed; the next nearest is 30 degrees round, the first side.
-    assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
+NOT_IN_VIEW = 'the torso never came into view: backed away only'
 
 
-def test_places_a_wall_hides_the_spot_from_are_skipped(ros, camera):
-    _, fake, send, _, costmap = ros
-    # A cupboard between the places straight back and the spot.
-    costmap({(-0.2, y / 10): 254 for y in range(-3, 4)})
-    nav = FakeNav2(fake, backup=False)
-    camera['show'] = lambda: [person(TORSO if nav.driven else LEGS)]
-    assert view(send).outcome == 'arrived'
-    assert len(nav.driven) == 1
-    assert _end(nav) == pytest.approx(_around(30.0), abs=1e-6)
-
-
-def test_places_more_than_twice_the_straight_line_away_are_skipped(ros, camera):
-    _, fake, send, _, costmap = ros
-    costmap({(-0.2, y / 10): 254 for y in range(-3, 4)})
-    # The way to every place on the first side (y < 0) goes 3 m round: the other side.
-    nav = FakeNav2(fake, backup=False, detour=lambda x, y: y < 0.0)
-    camera['show'] = lambda: [person(TORSO if nav.driven else LEGS)]
-    assert view(send).outcome == 'arrived'
-    assert len(nav.driven) == 1
-    assert _end(nav) == pytest.approx(_around(-30.0), abs=1e-6)
-
-
-def test_never_in_view_goes_back_to_where_the_body_was_seen_best(ros, camera, monkeypatch):
-    monkeypatch.setattr(fall_approach_node, 'VIEW_PLANS', 2)
+def test_a_blocked_backup_judges_from_where_it_stands(ros, camera):
+    """2026-10-19: driving round to places about the spot failed in narrow rooms."""
     _, fake, send, _, costmap = ros
     costmap({})
     nav = FakeNav2(fake, backup=False)
-
-    placed = {}
-
-    def show():
-        drives = len(nav.driven)
-        if drives in (1, 2) and drives not in placed:
-            fake.place(*((-0.5, 0.0) if drives == 1 else (-0.3, 0.75)))
-            placed[drives] = time.monotonic()
-        if drives == 1 and time.monotonic() - placed[1] > 0.3:
-            return [person(LEGS)]  # At the first place the legs were seen best.
-        return [person(('left_ankle',))]
-
-    camera['show'] = show
+    camera['show'] = lambda: [person(LEGS)]
     result = view(send)
-    assert (result.outcome, result.detail) == ('arrived', 'where the body was best in view')
-    assert len(nav.driven) == 3
-    assert _end(nav) == pytest.approx((-0.5, 0.0), abs=1e-6)
+    assert (result.outcome, result.detail) == ('arrived', NOT_IN_VIEW)  # Cloud judges there.
+    assert len(nav.backups) == 1 and nav.planned == [] and nav.driven == []
+
+
+def test_still_out_of_view_after_backing_it_goes_nowhere_else(ros, camera):
+    _, fake, send, _, costmap = ros
+    costmap({})
+    nav = FakeNav2(fake)
+    camera['show'] = lambda: [person(LEGS)]
+    result = view(send)
+    assert (result.outcome, result.detail) == ('arrived', NOT_IN_VIEW)
+    assert nav.backups == [pytest.approx((2.0, 0.1))]
+    assert nav.planned == [] and nav.driven == []
+
+
+def test_turned_away_it_faces_the_spot_then_backs_away(ros, camera):
+    _, fake, send, _, _ = ros
+
+    def spun(turn):
+        fake.place(0.0, 0.0, yaw=turn)
+        time.sleep(0.3)  # Until the node's TF has the turned robot.
+
+    nav = FakeNav2(fake, spun=spun)
+    camera['show'] = lambda: [person(LEGS)]
+    # The spot is 1 m behind the robot facing +x.
+    result = send(request_id='behind', phase='view', x=-1.0, y=0.0, standoff_m=3.0)
+    assert (result.outcome, result.detail) == ('arrived', NOT_IN_VIEW)
+    assert abs(nav.turns[0]) == pytest.approx(math.pi, abs=1e-3)
+    assert nav.backups == [pytest.approx((2.0, 0.1))] and nav.driven == []
 
 
 UNSEEN = 'the person was not picked out: backed away only'
