@@ -1,8 +1,11 @@
 """ReID descriptors for the person tracking's splits (SWM25-267 decision 10). A fake
 encoder and decoder; unit tests, not a model check (that ran on the Jetson, 10-19)."""
 
+import sys
+import types
+
 from malbut_agent_server.application.fall_appearance import (
-    EVERY_S, KEEP_S, PAIR_GAP_S, FallAppearance,
+    EVERY_S, KEEP_S, PAIR_GAP_S, FallAppearance, _load_encoder,
 )
 
 BOX = (0.25, 0.5, 0.5, 1.0)
@@ -57,6 +60,29 @@ def test_without_the_encoder_or_model_the_answer_is_none():
     seen = FallAppearance(loader=missing)
     seen.observe(100.0, b'jpeg', [('a', BOX)])
     assert not seen.available and seen.compare(('a', 100.0), ('a', 100.0)) is None
+
+
+def test_the_encoder_runs_on_the_cpu_with_opencv(monkeypatch):
+    """10-19: "auto" took TensorRT on the robot (1.3-1.5 GB more); 0.62 was set on the CPU."""
+    made = {}
+
+    class Encoder:
+        def __init__(self, path, **options):
+            made.update(path=path, **options)
+
+        def encode(self, image, detections):
+            return [None] * len(detections)
+
+    modules = {name: types.ModuleType(name) for name in (
+        'malbut_reid', 'malbut_reid.models', 'malbut_reid.reid', 'malbut_reid.reid.osnet_encoder')}
+    modules['malbut_reid.models'].BoundingBox = lambda *box: box
+    modules['malbut_reid.models'].ImageDetection = lambda box, score: (box, score)
+    modules['malbut_reid.reid.osnet_encoder'].OsNetPersonEncoder = Encoder
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    encode = _load_encoder('model.onnx')
+    assert made == dict(path='model.onnx', dnn_target='cpu', inference_backend='opencv')
+    assert encode(Image(), [(0, 0, 10, 20)]) == [None]
 
 
 def test_a_broken_frame_loses_a_look_never_the_fall_check():

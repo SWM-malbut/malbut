@@ -24,11 +24,17 @@ MODEL = '~/.cache/malbut_perception/osnet_ain_x1_0_msmt17.onnx'
 
 
 def _load_encoder(model_path):
-    """malbut_reid's OSNet encoder as encode(bgr, pixel boxes) -> vectors (or ImportError)."""
+    """malbut_reid's OSNet encoder as encode(bgr, pixel boxes) -> vectors (or ImportError).
+
+    On the CPU with OpenCV, as REID_SPLIT was set on the Jetson (10-19). The encoder's
+    "auto" took TensorRT on the robot: 1.3-1.5 GB more in this process with 485 MB of
+    memory left, and minutes of engine building at the first start. On the CPU a look
+    took about 47 ms, two per person every five seconds.
+    """
     from malbut_reid.models import BoundingBox, ImageDetection
     from malbut_reid.reid.osnet_encoder import OsNetPersonEncoder
 
-    encoder = OsNetPersonEncoder(model_path)
+    encoder = OsNetPersonEncoder(model_path, dnn_target='cpu', inference_backend='opencv')
 
     def encode(image, boxes):
         return encoder.encode(image, [ImageDetection(BoundingBox(*box), 1.0) for box in boxes])
