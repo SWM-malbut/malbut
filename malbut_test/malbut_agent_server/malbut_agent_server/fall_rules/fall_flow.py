@@ -77,7 +77,6 @@ NOTICES = {
     'robot_could_not_confirm': URGENT,     # a minute of waiting, or no question possible
     'help_requested': URGENT,              # "도와줘" during the check
     'confirmation_help_required': URGENT,  # the answer needs help
-    'person_no_response': CHECK,          # a played question received no answer
     'scene_answer_unconfirmed': CHECK,     # someone answered, maybe not this person
     'check_stopped_by_user': CHECK,        # "그만" during the check
     'person_may_differ': CHECK,            # a different person at the spot (design 6)
@@ -485,7 +484,7 @@ class FallFlow:
         elif answer == 'no_response':
             incident.answer, incident.idle = 'no_response', 'person'
             self._record('voice_result', incident, 'no_response')
-            self._idle(incident, 'person', 'person_no_response', now)
+            self._idle(incident, 'person', None, now)
         else:
             incident.answer, incident.idle = 'failed', 'person'
             self._record('agent_check_failed', incident,

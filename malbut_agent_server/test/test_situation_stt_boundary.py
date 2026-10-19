@@ -88,13 +88,14 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(
     h.complete_work()
     assert len(h.outcomes) == 1
     outcome = h.outcomes[0]
-    assert outcome.help_needed is (recognition != 'answer')
+    assert outcome.help_needed is (recognition == 'help')
     assert outcome.situation_assessment == ('resolved' if recognition == 'answer' else 'unknown')
     assert not pipeline.session.active
     assert all(uid for _, uid, state in statuses if state == 'failed')
     assert h.session.no_response is silent
     if silent:
-        assert h.events[-1][1] == '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
+        assert h.session.done
+        assert len([event for event in h.events if event[0] == 'speak']) == 1
     h.session.playback(h.session.playback_id, 'finished')
     assert h.finishes == [('succeeded', outcome)]
 
@@ -141,8 +142,8 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(
         assert records and all(row['answer'] == expected for row in records)
         if silent:
             assert any(row['eventKind'] == 'voice_result' for row in records)
-            notice, = [row for row in records if row['eventKind'] == 'notification_requested']
-            assert (notice['reason'], notice['notificationLevel']) == ('person_no_response', 'check')
+            assert not any(row['eventKind'] in ('notification_requested', 'question_requested')
+                           for row in records)
             assert not any(row['state'] == 'help_required' for row in records)
     finally:
         journal.close()

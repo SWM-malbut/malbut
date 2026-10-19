@@ -139,17 +139,21 @@ def test_the_whole_check_runs_through_the_manager_until_the_question(rig, silent
     decisions(rig.link)
     _, result = accept(rig, rig.goals[-1])
     rig.link.confirmation_answers.remember(
-        arguments['request_id'], SituationResult('unknown', True), no_response=silent)
-    succeed(result, situation_assessment='unknown', help_needed=True)
+        arguments['request_id'], SituationResult('unknown', not silent), no_response=silent)
+    succeed(result, situation_assessment='unknown', help_needed=not silent)
     out = decisions(rig.link)
     done = next(d for d in out if d.get('event') == (
         'voice_result' if silent else 'confirmation_completed'))
     assert (done['state'], done['answer'], done['reason']) == (
         ('recheck_required', 'no_response', 'no_response') if silent
         else ('help_required', 'help_request', 'unknown'))
-    notice, = [d for d in out if d['action'] == 'notify']
-    assert (notice['reason'], notice['level']) == (
-        ('person_no_response', 'check') if silent else ('confirmation_help_required', 'urgent'))
+    notices = [d for d in out if d['action'] == 'notify']
+    if silent:
+        assert not notices
+        assert not any(d['action'] == 'ask' for d in out)
+    else:
+        notice, = notices
+        assert (notice['reason'], notice['level']) == ('confirmation_help_required', 'urgent')
     assert not any(d.get('event') == 'agent_check_failed' for d in out)
     for command in out:
         if command['action'] in ('record', 'notify', 'left_open'):

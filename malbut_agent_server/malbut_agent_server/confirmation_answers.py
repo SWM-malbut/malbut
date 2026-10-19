@@ -8,7 +8,7 @@ class ConfirmationAnswers:
     """Share completed answers between dialogue and fall-rule executor threads.
 
     Manager still receives the existing two-field Action result. A matching
-    successful result may use this receipt to distinguish silence from help.
+    successful result uses this receipt to distinguish silence from a reply.
     Transport errors never consult these receipts.
     """
 
@@ -20,7 +20,7 @@ class ConfirmationAnswers:
     def remember(self, request_id, outcome, *, no_response):
         if (not isinstance(request_id, str) or not request_id
                 or type(no_response) is not bool
-                or (no_response and not outcome.help_needed)):
+                or (no_response and outcome.help_needed)):
             raise ValueError('invalid confirmation answer receipt')
         answer = 'no_response' if no_response else 'help' if outcome.help_needed else 'okay'
         value = (outcome.situation_assessment, outcome.help_needed, answer)

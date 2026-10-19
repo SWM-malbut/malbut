@@ -123,7 +123,7 @@ def ending(assessment='unknown', help_needed=True):
 
 
 def test_answer_timeout_starts_only_at_actual_playback_completion():
-    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('unknown', False))
     h.begin_question()
     h.now = 40
     h.session.tick()
@@ -137,7 +137,7 @@ def test_answer_timeout_starts_only_at_actual_playback_completion():
     assert h.session.phase == 'thinking'
     h.complete_work()
     assert [call[0] for call in h.calls] == ['start', 'no_response']
-    assert h.outcomes == [SituationResult('unknown', True)]
+    assert h.outcomes == [SituationResult('unknown', False)]
 
 
 def test_speech_start_before_ten_seconds_allows_transcript_after_ten_seconds():
@@ -158,7 +158,7 @@ def test_speech_start_before_ten_seconds_allows_transcript_after_ten_seconds():
 
 @pytest.mark.parametrize('rejected_at', [3.0, 12.0])
 def test_non_speech_restores_original_silence_deadline(rejected_at):
-    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('unknown', False))
     h.begin_question()
     h.played()
     sid = h.session.session_id
@@ -177,13 +177,13 @@ def test_non_speech_restores_original_silence_deadline(rejected_at):
     h.session.tick()
     h.complete_work()
     assert [call[0] for call in h.calls] == ['start', 'no_response']
-    assert h.outcomes == [SituationResult('unknown', True)]
+    assert h.outcomes == [SituationResult('unknown', False)]
     h.session.playback(h.session.playback_id, 'finished')
-    assert h.finishes == [('succeeded', SituationResult('unknown', True))]
+    assert h.finishes == [('succeeded', SituationResult('unknown', False))]
 
 
 def test_non_speech_during_opening_does_not_reserve_an_answer():
-    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('unknown', False))
     h.begin_question()
     h.session.playback(h.session.playback_id, 'finished')
     sid = h.session.session_id
@@ -217,7 +217,7 @@ def test_real_answer_after_non_speech_still_completes_confirmation():
 
 
 def test_non_speech_on_followup_uses_that_questions_ack_deadline():
-    h = Harness(SituationTurn('넘어지셨나요?'), SituationTurn('도움이 필요하세요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), SituationTurn('도움이 필요하세요?'), ending('unknown', False))
     h.begin_question()
     h.played()
     h.now = 3
@@ -261,7 +261,7 @@ def test_input_before_question_finishes_cannot_stop_it_or_become_an_answer(playb
 
 
 def test_only_matching_final_finished_opens_input_once_and_ack_starts_answer_timeout():
-    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('unknown', False))
     h.begin_question()
     pid = h.session.playback_id
     h.session.playback('old-playback', 'finished')
@@ -674,7 +674,7 @@ def test_stt_restart_missing_original_session_aborts_instead_of_no_response():
 
 
 def test_verified_active_session_is_closed_before_no_response_judgment():
-    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('unknown', False))
     h.begin_question()
     h.played()
     sid = h.session.session_id

@@ -95,6 +95,10 @@ class SituationSpeechSession:
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
                     if self.on_result is not None:
                         self.on_result(self._outcome)
+                    if self.no_response:
+                        # Silence only completes the record; it adds no speech.
+                        self._finish('succeeded', self._outcome)
+                        return
                 else:
                     self.phase = 'speaking'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS

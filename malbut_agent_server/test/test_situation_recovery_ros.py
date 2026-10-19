@@ -126,8 +126,7 @@ def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
             assert monitor.agent_reply(parse_agent_reply(received[-1]))
             assert monitor.incident(iid).answer.value == 'no_response'
             notices = [e for e in monitor.drain_events() if e.kind == 'notification_requested']
-            assert [(e.reason, e.notification_level.value) for e in notices] == [
-                ('person_no_response', 'check')]
+            assert notices == []
         else:
             assert apply_decision(monitor, received[-1])
             if answer == 'failure':
@@ -139,7 +138,7 @@ def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
                     'help_request' if answer == 'help' else 'okay')
         assert not monitor.pending_questions()
         rig.spin_until(lambda: not rig.agent.situation.active)
-        assert len(rig.spoken) == (1 if answer == 'failure' else 2)
+        assert len(rig.spoken) == (1 if answer in ('silent', 'failure') else 2)
     finally:
         link.destroy()
         rig.executor.remove_node(manager)
@@ -177,9 +176,11 @@ def test_manager_result_reaches_unified_flow_journal(rig, mission_manager, robot
     owner = Node('flow_confirmation_record_test')
     link = FallFlowLink(owner, confirmation_answers=rig.agent.situation.answers)
     rig.executor.add_node(owner)
+    commands = []
 
     def record(message):
         command = json.loads(message.data)
+        commands.append(command)
         if command['action'] in ('record', 'notify', 'left_open'):
             sensor.apply(command)
 
@@ -190,7 +191,7 @@ def test_manager_result_reaches_unified_flow_journal(rig, mission_manager, robot
                        and link.decisions.get_subscription_count() > 0 and rig.agent.dialogue.ready)
         first = Sighting('sighting', time.monotonic(), 'low', point=(1.0, 0.0))
         link.flow.incidents[iid] = Incident(
-            iid, first, 'person', time.monotonic(), step='ask', asked=True)
+            iid, first, 'person', time.monotonic(), step='ask', asked=True, clip_open=True)
         link.flow.active = iid
         link.step = dict(kind='ask', incident_id=iid, fall_seen=False)
         link.ready = True
@@ -204,23 +205,29 @@ def test_manager_result_reaches_unified_flow_journal(rig, mission_manager, robot
         else:
             rig.inputs.publish(SpeechInputStatus(
                 session_id=rig.session_id, utterance_id='', state='failed'))
-        rig.spin_until(lambda: any(row['eventKind'] == 'notification_requested'
-                                  for row in stored(journal)))
+        rig.spin_until(lambda: not rig.agent.situation.active and link.step is None
+                       and any(command['action'] == 'clip' and command.get('mark') == 'end'
+                               for command in commands))
         rows = [row for row in stored(journal) if row['eventKind'] != 'incident_opened']
         for row in rows:
             web_accepts(row)
-        expected = {'silent': ('no_response', 'voice_result', 'person_no_response', 'check'),
+        expected = {'silent': ('no_response', 'voice_result', None, None),
                     'help': ('help_request', 'confirmation_completed',
                              'confirmation_help_required', 'urgent'),
                     'failure': ('failed', 'agent_check_failed', 'robot_could_not_confirm', 'urgent')}
         recorded_answer, event_kind, reason, level = expected[answer]
         assert all(row['answer'] == recorded_answer for row in rows)
         assert any(row['eventKind'] == event_kind for row in rows)
-        notice, = [row for row in rows if row['eventKind'] == 'notification_requested']
-        assert (notice['reason'], notice['notificationLevel']) == (reason, level)
+        notices = [row for row in rows if row['eventKind'] == 'notification_requested']
         if answer == 'silent':
+            assert not notices
+            assert len(rig.spoken) == 1
+            assert not any(row['eventKind'] == 'question_requested' for row in rows)
             assert all(row['state'] != 'help_required' and row['reason'] != 'question_error'
                        and row['eventKind'] != 'agent_check_failed' for row in rows)
+        else:
+            notice, = notices
+            assert (notice['reason'], notice['notificationLevel']) == (reason, level)
         rig.spin_until(lambda: not rig.agent.situation.active and link.step is None)
     finally:
         link.destroy()
