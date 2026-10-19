@@ -96,6 +96,9 @@ class SqliteFallJournal:
                 'PRAGMA table_info(incident_events)')}
             if 'closure_evidence' not in columns:
                 self._db.execute('ALTER TABLE incident_events ADD COLUMN closure_evidence TEXT')
+            columns = {row['name'] for row in self._db.execute('PRAGMA table_info(flow_incidents)')}
+            if 'left_open' not in columns:  # Left open for the guardian (10-19).
+                self._db.execute('ALTER TABLE flow_incidents ADD COLUMN left_open TEXT')
             identities = self._db.execute('SELECT device_id FROM identity').fetchall()
             if identities and (len(identities) != 1 or identities[0]['device_id'] != device_id):
                 raise ValueError('journal belongs to a different device')
@@ -194,25 +197,29 @@ class SqliteFallJournal:
     def flow_incident(self, incident_id):
         with self._lock:
             row = self._db.execute(
-                'SELECT boot_id,payload,open,check_round FROM flow_incidents WHERE incident_id=?',
-                (incident_id,)).fetchone()
+                'SELECT boot_id,payload,open,check_round,left_open FROM flow_incidents '
+                'WHERE incident_id=?', (incident_id,)).fetchone()
         if row is None:
             return None
         return dict(boot_id=row['boot_id'], payload=json.loads(row['payload']),
-                    open=bool(row['open']), check_round=row['check_round'])
+                    open=bool(row['open']), check_round=row['check_round'],
+                    left=row['left_open'])
 
-    def mark_flow_incident(self, incident_id, *, open, check_round):
+    def mark_flow_incident(self, incident_id, *, open, check_round, left=None):
+        """``left``: left open for the guardian (nobody or person), None while checked."""
         with self._lock, self._db:
-            self._db.execute('UPDATE flow_incidents SET open=?,check_round=? WHERE incident_id=?',
-                             (int(bool(open)), check_round, incident_id))
+            self._db.execute(
+                'UPDATE flow_incidents SET open=?,check_round=?,left_open=? WHERE incident_id=?',
+                (int(bool(open)), check_round, left, incident_id))
 
     def open_flow_incidents(self, limit=64):
         with self._lock:
             rows = self._db.execute(
-                'SELECT incident_id,boot_id,payload,check_round FROM flow_incidents WHERE open=1 '
-                'ORDER BY rowid DESC LIMIT ?', (limit,)).fetchall()
+                'SELECT incident_id,boot_id,payload,check_round,left_open FROM flow_incidents '
+                'WHERE open=1 ORDER BY rowid DESC LIMIT ?', (limit,)).fetchall()
         return [dict(incident_id=r['incident_id'], boot_id=r['boot_id'],
-                     payload=json.loads(r['payload']), check_round=r['check_round'])
+                     payload=json.loads(r['payload']), check_round=r['check_round'],
+                     left=r['left_open'])
                 for r in reversed(rows)]
 
     def append_flow_note(self, payload):

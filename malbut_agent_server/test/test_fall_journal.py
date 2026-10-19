@@ -153,6 +153,24 @@ def test_journal_adds_optional_proof_column_to_existing_database(tmp_path):
         journal.close()
 
 
+def test_journal_adds_the_left_open_column_to_existing_flow_incidents(tmp_path):
+    path = tmp_path / 'private' / 'fall.sqlite'
+    path.parent.mkdir(mode=0o700)
+    path.touch(mode=0o600)
+    with sqlite3.connect(path) as db:  # A journal from before 10-19, one incident open.
+        db.execute('''CREATE TABLE flow_incidents(incident_id TEXT PRIMARY KEY,
+            boot_id TEXT NOT NULL, payload TEXT NOT NULL, open INTEGER NOT NULL DEFAULT 1,
+            check_round INTEGER NOT NULL DEFAULT 1)''')
+        db.execute("INSERT INTO flow_incidents(incident_id,boot_id,payload) VALUES('i','b','{}')")
+    journal = SqliteFallJournal(path, device_id='robot')
+    try:
+        assert journal.open_flow_incidents()[0]['left'] is None  # Checked again, as before.
+        journal.mark_flow_incident('i', open=True, check_round=1, left='nobody')
+        assert journal.flow_incident('i')['left'] == 'nobody'
+    finally:
+        journal.close()
+
+
 def test_wrong_device_and_insecure_paths_rejected_without_changing_identity(tmp_path):
     path = tmp_path / 'private' / 'fall.sqlite'
     journal = SqliteFallJournal(path, device_id='robot')
