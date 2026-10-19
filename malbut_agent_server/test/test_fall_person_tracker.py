@@ -4,7 +4,8 @@ five a second; unit tests, not robot checks. Replay on recorded days comes later
 import pytest
 
 from malbut_agent_server.fall_rules.person_tracker import (
-    FORGET_S, MAX_PEOPLE, SHORT_GONE_S, SOLO_S, Frame, Observation, PersonTracker,
+    FORGET_S, LINK_S, MAX_PEOPLE, REID_WAIT_S, SHORT_GONE_S, SOLO_S, Frame, Observation,
+    PersonTracker,
 )
 
 DT = 0.2
@@ -219,6 +220,7 @@ def test_a_box_for_a_frame_or_two_makes_no_one_uncertain(robot):
 
 def test_one_of_them_alone_in_one_place_for_a_minute_clears_it(robot):
     """10-19 18:28: one person lay still for five minutes, uncertain 94% of the time."""
+    robot.tracker.reid = False  # The rule by place; ReID's check is tested below.
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
     assert robot.tracker.uncertain('test:P1')
     robot.frames(SOLO_S - 1, seen('a', (3.0, 1.0)))  # 'b' never seen again.
@@ -228,6 +230,7 @@ def test_one_of_them_alone_in_one_place_for_a_minute_clears_it(robot):
 
 
 def test_not_alone_long_enough_keeps_it_uncertain(robot):
+    robot.tracker.reid = False  # The rule by place; ReID's check is tested below.
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
     robot.frames(40.0, seen('a', (3.0, 1.0)))
     assert robot.tracker.uncertain('test:P1')  # Alone and apart 40 s, not 60.
@@ -254,6 +257,7 @@ def test_meeting_again_renews_and_who_stayed_put_is_told_when_they_part(robot):
 
 def test_two_who_do_not_meet_again_for_a_minute_are_apart(robot):
     """As MHT commits after its horizon: both seen apart, never close again (10-17)."""
+    robot.tracker.reid = False  # The rule by place; ReID's check is tested below.
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
     robot.frames(50.0, seen('a', (3.0, 1.0)), seen('b', (6.0, 1.0), BOX_B))
     assert robot.tracker.uncertain('test:P1') and robot.tracker.uncertain('test:P2')
@@ -262,6 +266,7 @@ def test_two_who_do_not_meet_again_for_a_minute_are_apart(robot):
 
 
 def test_a_group_splits_where_its_links_were_not_renewed(robot):
+    robot.tracker.reid = False  # The rule by place; ReID's check is tested below.
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))  # a-b now.
     for step in range(15):  # 'b' walks off.
         robot.frame(seen('a', (3.0, 1.0)), seen('b', (3.4 + step * 0.2, 1.0), BOX_B))
@@ -274,6 +279,43 @@ def test_a_group_splits_where_its_links_were_not_renewed(robot):
                  seen('c', (6.4, 1.0), BOX_A))  # b and c stay together.
     assert not robot.tracker.uncertain('test:P1')  # a-b not renewed for a minute.
     assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P3')
+
+
+def apart_a_minute(robot):
+    """Two close, then both seen apart for a minute: their link is due."""
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    for step in range(15):  # 'b' walks off.
+        robot.frame(seen('a', (3.0, 1.0)), seen('b', (3.4 + step * 0.2, 1.0), BOX_B))
+    robot.frames(LINK_S - 4, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    assert robot.tracker.take_requests() == []
+    robot.frames(3.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))  # A minute on.
+    requests = robot.tracker.take_requests()
+    assert {r['a']['track'] for r in requests} == {'a', 'b'}  # Each: then against now.
+    assert robot.tracker.uncertain('test:P1')  # Not committed while ReID is asked.
+    return requests
+
+
+def test_before_committing_reid_checks_each_still_looks_as_when_linked(robot):
+    for request in apart_a_minute(robot):
+        robot.tracker.answer(request['request_id'], 0.80)
+    robot.frame(seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
+
+
+def test_clearly_unlike_under_a_number_keeps_them_uncertain_a_minute_more(robot):
+    first, second = apart_a_minute(robot)
+    robot.tracker.answer(first['request_id'], 0.80)
+    robot.tracker.answer(second['request_id'], 0.40)  # Maybe swapped while close.
+    robot.frames(30.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    assert robot.tracker.uncertain('test:P1') and robot.tracker.uncertain('test:P2')
+    robot.frames(31.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    assert len(robot.tracker.take_requests()) == 2  # Asked again a minute later.
+
+
+def test_no_reid_answer_commits_by_place_after_the_wait(robot):
+    apart_a_minute(robot)
+    robot.frames(REID_WAIT_S + 1, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
 
 
 def test_two_people_who_crossed_while_walking_stay_uncertain(robot):
