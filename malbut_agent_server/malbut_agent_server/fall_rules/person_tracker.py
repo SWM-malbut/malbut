@@ -14,9 +14,13 @@ A frame's observations go to people in this order (design decision 3):
   5. otherwise a new person.
 Two people too close to tell apart are "uncertain" (decision 4): the tracking goes on
 with the likeliest one, and the fall rules check a suspicion of either separately.
-It clears when one of them stayed put while the other came and left, or when the other
-is forgotten (30 minutes unseen). Nothing else clears it; Cloud's "same person" does not
-(it told different people apart 1 of 8 times on 10-18).
+Without a map place only someone near counts: the same view's box overlapping, or
+someone just gone from another view, whose box cannot be compared (design decision 2).
+It clears when one of them stayed put while the other came and left, when depth comes
+back for a number made without it at the last place of one of them (decision 2, as
+reappearing within 1 m), or when the other is forgotten (30 minutes unseen). Nothing
+else clears it; Cloud's "same person" does not (it told different people apart 1 of 8
+times on 10-18).
 
 ReID only splits (decision 10): someone reappearing where one unseen person was is that
 person, uncertain until the VLM says how alike the two looked (two looks against two);
@@ -81,6 +85,7 @@ class Person:
     last_seen: float
     posture: str = 'unknown'
     places: deque = field(default_factory=lambda: deque(maxlen=64))  # (at, point)
+    unplaced: bool = False   # made without a map place while uncertain: recovered by place
 
 
 @dataclass
@@ -97,6 +102,7 @@ class FrameResult:
     assignments: Dict[str, str]                         # YOLO track -> person in this frame
     changed: Dict[str, str]                             # tracks whose person changed
     stood_up: List[str]                                 # posture suspected -> clear
+    merged: Dict[str, str] = field(default_factory=dict)  # retired number -> that person
 
 
 def _iou(a, b):
@@ -149,13 +155,14 @@ class PersonTracker:
             if self._apply(person, obs, t, frame.view):
                 stood_up.append(person.person_id)
         seen = [(obs, taken[id(obs)]) for obs in frame.people if id(obs) in taken]
+        merged = self._recover(seen, t)
         self._merge(seen, t)
         self._release(seen)
         # After a release may have swapped two people: each one's track now.
         assignments = {person.track: person.person_id for _, person in seen if person.track}
         changed = {k: v for k, v in assignments.items() if self._sent.get(k) != v}
         self._sent.update(changed)
-        return FrameResult(assignments, changed, stood_up)
+        return FrameResult(assignments, changed, stood_up, merged)
 
     def expire(self, t):
         """ReID questions unanswered for REID_WAIT_S: by place alone."""
@@ -248,12 +255,22 @@ class PersonTracker:
             elif self.reid and person.track and obs.track:
                 self._ask_appearance(person, obs, t)
             return person
-        # No map place: anyone who could be this one makes it uncertain (exception "else
-        # decision 4"); only when nobody could be is it simply a new person.
-        plausible = [p for p in gone if t - p.last_seen <= SHORT_GONE_S
-                     or (obs.box and p.box and p.view == view and _iou(obs.box, p.box) > 0)]
+        # No map place: anyone near who could be this one makes it uncertain (exception
+        # "else decision 4"); only when nobody could be is it simply a new person. Near
+        # is the same view's last box overlapping; boxes from another view do not
+        # compare (the robot moved), so there anyone gone within five seconds could be.
+        # (10-19, design decision 2 "근처": it had counted anyone gone within five
+        # seconds anywhere on screen.)
+        plausible = []
+        for p in gone:
+            if obs.box and p.box and p.view == view:
+                if _iou(obs.box, p.box) > 0:
+                    plausible.append(p)
+            elif t - p.last_seen <= SHORT_GONE_S:
+                plausible.append(p)
         person = self._new(obs, t)
         if plausible:
+            person.unplaced = True
             self._group([person, *plausible], t)
         return person
 
@@ -312,6 +329,44 @@ class PersonTracker:
         return stood_up
 
     # ------------------------------------------------------------ uncertain
+
+    def _recover(self, seen, t):
+        """Depth back for a number made without it while uncertain (design decision 2):
+        the one unseen member of its group last measured within 1 m is that person, as
+        reappearing (decision 3), checked by ReID the same way. Two such members closer
+        than AMBIGUOUS_M to each other: still uncertain. Returns {retired: person}."""
+        merged = {}
+        here = {p.person_id for _, p in seen}
+        for i, (obs, person) in enumerate(seen):
+            if not person.unplaced or obs.point is None:
+                continue
+            person.unplaced = False
+            group = next((g for g in self.groups if person.person_id in g.members), None)
+            if group is None:
+                continue
+            near = sorted(((math.dist(obs.point, self.people[m].point), self.people[m])
+                           for m in group.members
+                           if m not in here and m in self.people and self.people[m].point
+                           and math.dist(obs.point, self.people[m].point) <= REAPPEAR_M),
+                          key=lambda x: x[0])
+            if not near or (len(near) > 1 and near[1][0] - near[0][0] < AMBIGUOUS_M):
+                continue
+            old = near[0][1]
+            if self.reid and old.track and obs.track:
+                self._ask_appearance(old, obs, t)
+            for name in ('track', 'point', 'point_at', 'box', 'view', 'posture'):
+                setattr(old, name, getattr(person, name))
+            old.last_seen = max(old.last_seen, person.last_seen)
+            old.places.extend(person.places)
+            group.members -= {person.person_id, old.person_id}
+            group.anchors.pop(old.person_id, None)
+            if len(group.members) < 2:
+                self.groups.remove(group)
+            self._drop(person.person_id)
+            merged[person.person_id] = old.person_id
+            here.add(old.person_id)
+            seen[i] = (obs, old)
+        return merged
 
     def _stayed(self, person, t):
         """Where this person stayed for the last STAY_S, or None."""

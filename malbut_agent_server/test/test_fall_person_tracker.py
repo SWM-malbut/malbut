@@ -10,6 +10,7 @@ from malbut_agent_server.fall_rules.person_tracker import (
 DT = 0.2
 BOX_A = (0.10, 0.40, 0.30, 0.80)
 BOX_B = (0.60, 0.40, 0.80, 0.80)
+NUDGED = (0.25, 0.40, 0.45, 0.80)  # overlaps BOX_A by 0.14 (< BOX_IOU)
 
 
 class Clock:
@@ -87,12 +88,73 @@ def test_without_depth_the_same_view_box_continues_and_keeps_the_last_place(robo
     assert robot.tracker.people['test:P1'].point == (3.0, 1.0)
 
 
-def test_a_new_track_without_depth_where_someone_just_was_is_uncertain(robot):
+def test_without_depth_someone_gone_elsewhere_in_view_is_not_near(robot):
+    """Design decision 2 "근처": 사람2 lost for a moment on the other side of the screen
+    is not who a new box under the table could be."""
     robot.frames(1.0, seen('a', None, BOX_A))
     robot.wait(1.0)  # 'a' unseen for a second; a new track with no box overlap and no place.
     result = robot.frame(seen('b', None, BOX_B))
     assert result.assignments == {'b': 'test:P2'}
+    assert not robot.tracker.uncertain('test:P2') and not robot.tracker.uncertain('test:P1')
+
+
+def test_without_depth_someone_just_gone_from_another_view_could_be_them(robot):
+    robot.frames(1.0, seen('a', None, BOX_A))
+    robot.view = 1  # The robot moved: boxes do not compare, so 'a' could be anyone now.
+    result = robot.frame(seen('b', None, BOX_B))
+    assert result.assignments == {'b': 'test:P2'}
     assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
+
+
+def test_without_depth_a_box_overlapping_where_someone_was_is_uncertain(robot):
+    robot.frames(1.0, seen('a', None, BOX_A))
+    robot.wait(1.0)
+    robot.frame(seen('b', None, NUDGED))  # Overlaps BOX_A, less than BOX_IOU.
+    assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
+
+
+# ------------------------------------------------------------ depth back (decision 2)
+
+
+def lost_depth(robot):
+    """P1 measured at (3.0, 1.0) for a second, then a new track without depth beside it."""
+    robot.frames(1.0, seen('a', (3.0, 1.0)))  # Too short for a stayed-put anchor.
+    robot.wait(1.0)
+    robot.frame(seen('b', None, NUDGED))
+    assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P1')
+
+
+def test_depth_back_at_the_last_place_turns_the_new_number_back_into_that_person(robot):
+    robot.tracker.reid = False
+    lost_depth(robot)
+    result = robot.frame(seen('b', (3.2, 1.0), NUDGED))
+    assert result.assignments == result.changed == {'b': 'test:P1'}
+    assert result.merged == {'test:P2': 'test:P1'} and 'test:P2' not in robot.tracker.people
+    assert not robot.tracker.uncertain('test:P1') and robot.tracker.groups == []
+    assert robot.frame(seen('b', (3.2, 1.0), NUDGED)).assignments == {'b': 'test:P1'}
+
+
+def test_depth_back_asks_reid_as_reappearing_does(robot):
+    lost_depth(robot)
+    robot.frame(seen('b', (3.2, 1.0), NUDGED))
+    request, = robot.tracker.take_requests()
+    assert request['a']['track'] == 'a' and request['b']['track'] == 'b'
+    assert robot.tracker.answer(request['request_id'], 0.80) is None
+    assert not robot.tracker.uncertain('test:P1')
+
+
+def test_depth_back_further_than_1_m_stays_uncertain(robot):
+    lost_depth(robot)
+    result = robot.frame(seen('b', (4.5, 1.0), NUDGED))  # Moved: cannot tell.
+    assert result.merged == {} and robot.tracker.uncertain('test:P2')
+
+
+def test_depth_back_between_two_who_were_there_stays_uncertain(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('c', (3.0, 1.6), BOX_B))
+    robot.wait(1.0)
+    robot.frame(seen('b', None, (0.25, 0.40, 0.65, 0.80)))  # Overlaps both boxes.
+    result = robot.frame(seen('b', (3.0, 1.3), (0.25, 0.40, 0.65, 0.80)))
+    assert result.merged == {} and robot.tracker.uncertain('test:P3')
 
 
 def test_two_candidates_equally_near_make_it_uncertain(robot):

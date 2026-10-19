@@ -750,6 +750,28 @@ def test_the_10_17_layout_is_two_incidents():
     assert second.person != robot.flow.incidents[first].person and not second.uncertain
 
 
+def test_depth_back_moves_what_the_new_number_had_to_that_person():
+    """Design decision 2: a suspicion while uncertain was checked separately under a new
+    number; depth back at the person's last place, it is theirs again."""
+    robot = Robot()
+    robot.flow.tracker.reid = False
+    for _ in range(5):
+        robot.frame(person('a', (3.0, 1.0), LEFT))
+        robot.now += 0.2
+    robot.now += 1.0
+    nudged = (0.36, 0.24, 0.62, 0.49)  # Overlaps LEFT a little, no depth.
+    robot.frame(person('b', None, nudged))
+    s, out = robot.see(track='b', point=None, box=nudged)
+    assert looks(out, 'filter')
+    robot.filter(s, 'suspect')
+    incident = robot.only()
+    retired = incident.person
+    assert incident.uncertain and retired != robot.flow.tracker.person_of('a')
+    out = robot.frame(person('b', (3.2, 1.0), nudged))
+    assert incident.person != retired and incident.person == robot.flow.tracker.person_of('b')
+    assert {'kind': 'people', 'incidents': {incident.incident_id: incident.person}} in out
+
+
 def test_a_track_handed_to_someone_far_away_does_not_join_the_first_incident():
     robot = Robot()
     robot.open(track='95bd', point=(3.0, 1.0))
