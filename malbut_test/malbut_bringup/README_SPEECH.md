@@ -141,6 +141,61 @@ ros2 launch malbut_bringup bringup.launch.py --show-args
 고정하므로, 장치 점유 중 PortAudio 목록 순서가 바뀌어도 다른 마이크를 선택하지 않는다.
 시스템 기본 입력·출력은 바꾸지 않는다.
 
+### 재부팅·USB 재연결 시 로봇 오디오 복구
+
+시작 시 지정한 `PULSE_SOURCE`만으로는 USB 재연결 후 PulseAudio가 다른 입력에
+옮긴 기존 스트림까지 복구하지 못한다. 로봇 전용 사용자에서 아래 서비스를 별도로
+설치하면 XFM(`2207:0001`) 입력과 GeneralPlus USB 스피커(`1b3f:2008`) 출력을 유지한다.
+장치 번호나 USB 포트·일련번호 대신 제품 식별자를 사용한다. Bringup 자체는 이
+서비스를 설치하거나 켜지 않는다.
+
+저장소 루트에서 로봇 오디오 사용자(`ubuntu`)로 실행한다. 기존 설치를 갱신할 때도
+같은 명령을 사용하며, ROS 빌드나 Bringup 재시작은 필요하지 않다.
+
+```bash
+install -Dm644 malbut_bringup/malbut_bringup/audio_routing.py \
+  "$HOME/.local/lib/malbut/audio_routing.py"
+install -Dm644 malbut_bringup/config/malbut-audio-routing.service \
+  "$HOME/.config/systemd/user/malbut-audio-routing.service"
+systemctl --user daemon-reload
+systemctl --user enable malbut-audio-routing.service
+systemctl --user restart malbut-audio-routing.service
+sudo loginctl enable-linger "$USER"
+```
+
+`linger`는 로그인 전에도 사용자 서비스를 시작한다. 오디오 사용자는 장치 접근 권한이
+있어야 한다(로봇의 `ubuntu`는 `audio` 그룹 소속). PulseAudio와 `pactl`, Python 3가
+필요하다. 서비스는 시작 시와 장치·스트림 변경 시 설정을 검사하고, PulseAudio 연결이
+끊어지면 3초 뒤 다시 연결한다. XFM은 입력 전용, USB 스피커는 아날로그 출력 전용
+프로필로 맞춰 스피커의 사용하지 않는 마이크 포트가 입력 후보로 나타나지 않게 한다.
+
+이 서비스는 **해당 사용자의 기본 입력·출력과 기존 녹음·재생 스트림**에 적용된다.
+출력 모니터를 녹음하는 명시적 루프백은 옮기지 않는다. 볼륨·음소거와 Piper 모델·안내
+음성은 변경하지 않는다. 대상이 없거나 동일 제품이 둘 이상이면 그 방향은 선택하지
+않고 다음 장치 변경을 기다린다. 장치가 빠져 있는 동안 PulseAudio가 임시로 고른
+대체 장치는 재연결 후 복구되며, 빠진 동안 놓친 음성이나 종료된 앱까지 재시작하지는
+않는다. 별도 ALSA 장치 번호로 직접 열린 스트림은 이 서비스의 대상이 아니다.
+
+```bash
+systemctl --user is-enabled malbut-audio-routing.service
+systemctl --user status malbut-audio-routing.service
+loginctl show-user "$USER" -p Linger
+pactl get-default-source
+pactl get-default-sink
+pactl list short source-outputs
+pactl list short sink-inputs
+journalctl --user -u malbut-audio-routing.service -n 30
+```
+
+실제 USB를 분리·재연결하거나 재부팅한 뒤 위 기본 장치와 **실행 중인 스트림**을
+함께 확인한다. 소프트웨어 프로필 off/on 시험은 재열거 검증이며 실제 재부팅 또는
+케이블 재연결 검증과 구분한다. 서비스 중단은
+`systemctl --user disable --now malbut-audio-routing.service`로 한다. 이 명령은
+이미 선택된 장치·프로필을 되돌리지 않는다. 이전 PulseAudio 프로필과 기본 장치를
+복원하려면 설치 전 값을 기록해 두고 `pactl set-card-profile`, `set-default-source`,
+`set-default-sink`로 복구한다. `linger`도 이번 설치에서 처음 켰을 때만 필요에 따라
+`sudo loginctl disable-linger "$USER"`로 되돌린다.
+
 공유에는 `pulseaudio pulseaudio-utils libasound2-plugins`가 필요하며
 `malbut_test/setup.sh`에서 설치한다. 기존 설치에는 아래 명령을 한 번 실행한다.
 
