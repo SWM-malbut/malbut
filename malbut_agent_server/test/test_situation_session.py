@@ -156,6 +156,87 @@ def test_speech_start_before_ten_seconds_allows_transcript_after_ten_seconds():
     assert h.outcomes == [SituationResult('resolved', False)]
 
 
+@pytest.mark.parametrize('rejected_at', [3.0, 12.0])
+def test_non_speech_restores_original_silence_deadline(rejected_at):
+    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h.begin_question()
+    h.played()
+    sid = h.session.session_id
+    h.now = 1
+    h.session.input_status(sid, 'noise', 'started')
+    h.now = rejected_at
+    h.session.input_status(sid, 'noise', 'discarded')
+    assert h.session.phase == 'listening' and not h.session.utterance_id
+    assert not h.session.transcript(sid, 'noise', '늦은 잘못된 전사')
+    h.session.input_status(sid, 'noise', 'started')
+    if h.now < 10:
+        h.now = 9.999
+        h.session.tick()
+        assert h.session.phase == 'listening'
+    h.now = max(10, rejected_at)
+    h.session.tick()
+    h.complete_work()
+    assert [call[0] for call in h.calls] == ['start', 'no_response']
+    assert h.outcomes == [SituationResult('unknown', True)]
+    h.session.playback(h.session.playback_id, 'finished')
+    assert h.finishes == [('succeeded', SituationResult('unknown', True))]
+
+
+def test_non_speech_during_opening_does_not_reserve_an_answer():
+    h = Harness(SituationTurn('넘어지셨나요?'), ending())
+    h.begin_question()
+    h.session.playback(h.session.playback_id, 'finished')
+    sid = h.session.session_id
+    h.session.input_status(sid, 'noise', 'started')
+    h.session.input_status(sid, 'noise', 'discarded')
+    h.now = 2
+    h.ready_input()
+    assert h.session.phase == 'listening' and not h.session.utterance_id
+    h.now = 12
+    h.session.tick()
+    h.complete_work()
+    assert [call[0] for call in h.calls] == ['start', 'no_response']
+
+
+def test_real_answer_after_non_speech_still_completes_confirmation():
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('resolved', False))
+    h.begin_question()
+    h.played()
+    sid = h.session.session_id
+    h.session.input_status(sid, 'noise', 'started')
+    h.session.input_status(sid, 'noise', 'discarded')
+    h.now = 9
+    h.session.input_status(sid, 'answer', 'started')
+    h.session.input_status(sid, 'unrelated', 'discarded')
+    h.session.input_status('old-session', 'answer', 'discarded')
+    h.now = 15
+    assert h.session.transcript(sid, 'answer', '그냥 누워 있었어요')
+    h.complete_work()
+    assert [call[0] for call in h.calls] == ['start', 'answer']
+    assert h.outcomes == [SituationResult('resolved', False)]
+
+
+def test_non_speech_on_followup_uses_that_questions_ack_deadline():
+    h = Harness(SituationTurn('넘어지셨나요?'), SituationTurn('도움이 필요하세요?'), ending())
+    h.begin_question()
+    h.played()
+    h.now = 3
+    assert h.session.transcript(h.session.session_id, 'answer', '넘어졌어요')
+    h.complete_work()
+    h.now = 20
+    h.played()
+    sid = h.session.session_id
+    h.session.input_status(sid, 'noise', 'started')
+    h.now = 22
+    h.session.input_status(sid, 'noise', 'discarded')
+    h.session.tick()
+    assert h.session.phase == 'listening' and h.session._deadline == 30
+    h.now = 30
+    h.session.tick()
+    h.complete_work()
+    assert [call[0] for call in h.calls] == ['start', 'answer', 'no_response']
+
+
 @pytest.mark.parametrize('playback_started', [False, True])
 def test_input_before_question_finishes_cannot_stop_it_or_become_an_answer(playback_started):
     h = Harness(SituationTurn('넘어지셨나요?'), ending())

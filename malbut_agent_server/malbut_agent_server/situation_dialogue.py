@@ -45,16 +45,19 @@ class SituationRequest:
 
 @dataclass(frozen=True)
 class SituationResult:
-    """The two final fields visible to Manager."""
+    """Final judgment and whether no usable answer arrived before the deadline."""
 
     situation_assessment: str
     help_needed: bool
+    no_response: bool = False
 
     def __post_init__(self):
         if self.situation_assessment not in ASSESSMENTS:
             raise ValueError('unsupported situation assessment')
         if type(self.help_needed) is not bool:
             raise ValueError('help_needed must be a boolean')
+        if type(self.no_response) is not bool or (self.no_response and not self.help_needed):
+            raise ValueError('no_response must be a boolean and requires help_needed')
 
 
 @dataclass(frozen=True)
@@ -245,7 +248,7 @@ class SituationDialogue:
         else:
             closing = '알겠어요. 도움이 필요하지 않으신 것으로 확인했어요.'
         self._last_turn = SituationTurn(closing, SituationResult(
-            self.situation_assessment, help_needed,
+            self.situation_assessment, help_needed, no_response=reason == 'no_response',
         ))
         return self._last_turn
 

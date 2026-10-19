@@ -931,7 +931,25 @@ def test_failed_command_sound_guard_does_not_wait_for_agent_playback(harness, te
     assert harness.failure_chimes == ['failure']
 
 
-@pytest.mark.parametrize('text,error', [('', None), (None, 'ValueError')])
+@pytest.mark.parametrize('text,error', [
+    (None, 'SileroNonSpeech'), (None, 'InsufficientSpeechEvidence'), ('', None), ('  ', None),
+])
+def test_confirmation_discarded_input_retracts_onset_without_reporting_failure(harness, text, error):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('confirmation')
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    pipeline._accept_result('command', pipeline._generation, uid, text, error)
+    assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'discarded')]
+    assert pipeline.session_is_active('confirmation')
+    assert pipeline.session.utterance_id is None
+    assert harness.transcripts == [] and harness.failure_chimes == []
+
+
+@pytest.mark.parametrize('text,error', [
+    (None, 'ValueError'), (None, 'SileroGateError'), (None, 'TimeoutError'), (None, None),
+])
 def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))

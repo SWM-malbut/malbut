@@ -644,7 +644,7 @@ Agent의 수신 기록이 만들어졌다는 의미다. Topic 발행만으로 �
 
 Manager에서 시작하는 이상 상황 확인 대화는 [대화 명세](docs/fall/agent_fall_interaction.md)와
 [구현·실행 조건](docs/fall/agent_fall_implementation.md)을 따른다. 낙상 확인은
-`/malbut/agent/confirm_situation` Action으로 받고, 최종 판단 두 필드만 반환한다.
+`/malbut/agent/confirm_situation` Action으로 받고, 최종 상황 판단·도움 필요·무응답 여부를 반환한다.
 
 `agent_communication`은 STT 최종 발화를 기존 대화 처리에 전달하고, 생성한
 응답을 Manager의 발화 Topic으로 보내는 실행 모드다. 같은 대화 DB와 `--user-id`를

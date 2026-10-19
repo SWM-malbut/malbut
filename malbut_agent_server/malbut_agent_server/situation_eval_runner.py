@@ -48,11 +48,13 @@ class SituationEvaluationCase:
                 or any(provider not in ('mock', 'openai') for provider in providers)
                 or 'openai' not in providers or len(set(providers)) != len(providers)
                 or not isinstance(expected, dict)
-                or set(expected) != {'situation_assessment', 'help_needed', 'question_count'}
+                or set(expected) - {'no_response'} != {
+                    'situation_assessment', 'help_needed', 'question_count'}
                 or type(expected['question_count']) is not int
                 or not 1 <= expected['question_count'] <= 6):
             raise ValueError('invalid evaluation expectation')
-        outcome = SituationResult(expected['situation_assessment'], expected['help_needed'])
+        outcome = SituationResult(expected['situation_assessment'], expected['help_needed'],
+                                  no_response=expected.get('no_response', False))
         return cls(identifier, value['situation_type'], value['summary'], tuple(answers),
                    tuple(providers), outcome, expected['question_count'])
 
@@ -80,7 +82,7 @@ def run_evaluation(cases, engine_factory, *, provider='mock'):
     rows = []
     for case in cases:
         row = dict(id=case.id, status='skipped_live_only', situation_assessment=None,
-                   help_needed=None, question_count=0)
+                   help_needed=None, no_response=None, question_count=0)
         if provider not in case.providers:
             rows.append(row)
             continue
@@ -99,7 +101,7 @@ def run_evaluation(cases, engine_factory, *, provider='mock'):
             result = turn.result
             if result is not None:
                 row.update(situation_assessment=result.situation_assessment,
-                           help_needed=result.help_needed)
+                           help_needed=result.help_needed, no_response=result.no_response)
             passed = (result == case.expected and consumed == len(case.answers)
                       and row['question_count'] == case.question_count)
             row['status'] = 'passed' if passed else 'failed'

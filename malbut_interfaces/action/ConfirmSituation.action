@@ -11,5 +11,8 @@ string RESOLVED=resolved
 string UNKNOWN=unknown
 string situation_assessment
 bool help_needed
+# True only after a played question and an active listening session timed out.
+# Preserve silence separately from an explicit help request or an Action failure.
+bool no_response
 ---
 # No conversational progress is sent to Manager.

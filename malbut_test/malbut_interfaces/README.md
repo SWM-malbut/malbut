@@ -10,10 +10,10 @@
 | 방향 | 방식·이름 | 타입 정본 | 역할 |
 |---|---|---|---|
 | Agent 낙상 규칙 → Manager → Agent 낙상 규칙 | Action `/malbut/mission/execute` | [ExecuteMission](action/ExecuteMission.action) | `fall_confirmation` capability로 확인을 요청하고 하위 Action의 최종 결과를 받음 |
-| Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 등록된 capability를 실행해 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요 여부를 받음 |
+| Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 등록된 capability를 실행해 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요·무응답 여부를 받음 |
 | Agent → STT → Agent | Service `/malbut/speech/session_control` | [ControlSpeechSession](srv/ControlSpeechSession.srv) | 호출어 없는 청취 세션의 시작·종료·생존 조회 |
 | 홈캠 미디어 → STT → 홈캠 미디어 | Service `/malbut/speech/web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 웹 말하기 중 입력 차단·갱신·종료. 입력 및 이전 인식 결과 차단 후 접수 응답 |
-| STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
+| STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 발화 시작·확인 세션의 비음성 철회·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |
 | Agent → Manager | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화, 재생·요청 ID, 소유 미션의 하위 `owner_goal_id` |
@@ -22,6 +22,11 @@
 | Manager → TTS | Topic `/malbut/tts/request` | [SpeechRequest](msg/SpeechRequest.msg) | 검증된 발화의 실행 |
 | Manager → TTS | Service `/malbut/tts/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 하위 재생 제어 |
 | TTS → Manager | Topic `/malbut/tts/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 시작·중단·완료·실패 |
+
+확인 세션의 `SpeechInputStatus.DISCARDED`는 비음성·전사 품질 필터 탈락이나
+정상 인식의 빈 문자열에 해당하는 VAD 시작을 철회한다. 비어 있지 않은 세션·발화 ID가 필요하며, Agent는 해당 입력을
+답변이나 인식 오류로 처리하지 않고 청취 시작 ACK 기준의 기존 답변 대기 기한을 유지한다.
+실제 인식기 오류나 마이크 단절은 기존 실패 경로를 따른다.
 
 `SpeechInputStatus`의 빈 `session_id`는 일반 대화이며, `STARTED`·`FAILED` 모두
 비어 있지 않은 `utterance_id`를 사용한다. 빈 최종 인식 결과는 전사나 `FAILED` 없이
@@ -39,8 +44,8 @@
 호출어 감지 뒤 알림음의 잔향 차단이 끝난 시점부터 `start_timeout_s`(기본 5초) 안에
 유효한 발화 시작이 없으면 전사나 안내 음성 없이 호출어 대기로 돌아간다.
 비어 있지 않은 `session_id`는 Agent 주도 확인 세션이 소유하며, 세션 전체의
-`FAILED`에는 빈 `utterance_id`를 허용한다. 확인 세션의 빈 최종 결과와 인식 예외는
-기존처럼 `FAILED`로 알리고 Agent가 종료를 결정한다. AEC가 있는 일반 끼어들기로
+`FAILED`에는 빈 `utterance_id`를 허용한다. 확인 세션의 실제 인식 실행 오류와 잘못된 반환 자료형은
+`FAILED`로 알리며 Agent가 종료를 결정한다. AEC가 있는 일반 끼어들기로
 기존 답변을 일시정지한 경우에는 `STARTED`를 전달하되 최종 인식 실패의 `FAILED`를
 보내지 않아 안내가 일시정지된 TTS 뒤에 쌓이지 않도록 하며, 기존 일시정지·수신 대상
 판정·다음 발화 처리를 유지한다.

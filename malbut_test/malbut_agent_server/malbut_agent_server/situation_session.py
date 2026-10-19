@@ -43,6 +43,7 @@ class SituationSpeechSession:
         self._verifying = None
         self._turn = None
         self._deadline = None
+        self._answer_deadline = None
         self._outcome = None
         self._early_started = ''
         self._early_answer = None
@@ -86,6 +87,7 @@ class SituationSpeechSession:
                 self.utterance_id = ''
                 self._early_started = ''
                 self._early_answer = None
+                self._answer_deadline = None
                 if self._outcome is not None:
                     self.phase = 'closing'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
@@ -100,6 +102,7 @@ class SituationSpeechSession:
                 opening, self._opening = self._opening, None
                 if not opening.result().accepted:
                     raise RuntimeError('microphone session rejected')
+                self._answer_deadline = self.clock() + ANSWER_WAIT_SECONDS
                 if self._early_started or self._early_answer:
                     # STT can publish a VAD event before its service ACK arrives.
                     # The question has finished; preserve its answer across the ACK race.
@@ -111,7 +114,7 @@ class SituationSpeechSession:
                         self.transcript(self.session_id, uid, text)
                 else:
                     self.phase = 'listening'
-                    self._deadline = self.clock() + ANSWER_WAIT_SECONDS
+                    self._deadline = self._answer_deadline
             if self._deadline is not None and self.clock() >= self._deadline:
                 if self.phase == 'listening':
                     # A restarted STT can be reachable while its original
@@ -163,6 +166,24 @@ class SituationSpeechSession:
         if not isinstance(utterance_id, str) or not utterance_id.strip():
             return
         if utterance_id in self._heard:
+            return
+        if state == 'discarded':
+            if self.phase == 'opening':
+                if self._early_answer or (
+                        self._early_started and self._early_started != utterance_id):
+                    return
+                self._early_started = ''
+            elif self.phase == 'hearing':
+                if self.utterance_id != utterance_id:
+                    return
+                self.utterance_id = ''
+                self._early_started = ''
+                self.phase = 'listening'
+                # Repeated noise must not restart or extend the ten-second wait.
+                self._deadline = self._answer_deadline
+            elif self.phase not in ('listening', 'checking_silence'):
+                return
+            self._heard.add(utterance_id)
             return
         if state != 'started':
             return

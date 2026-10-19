@@ -1460,7 +1460,7 @@ class CloudFallMonitor:
             self._emit('analysis_completed', incident, reply=incident.video)
 
     def confirmation_result(self, *, incident_id, question_id, subject_key,
-                            evidence_revision, situation_assessment, help_needed):
+                            evidence_revision, situation_assessment, help_needed, no_response=False):
         """Apply the Manager's final result, preserving the user's own account.
 
         No transport failure is converted into a user's silence here. The
@@ -1475,7 +1475,8 @@ class CloudFallMonitor:
         if (type(evidence_revision) is not int or evidence_revision < 1
                 or not isinstance(situation_assessment, str)
                 or situation_assessment not in {'confirmed_incident', 'resolved', 'unknown'}
-                or type(help_needed) is not bool):
+                or type(help_needed) is not bool or type(no_response) is not bool
+                or (no_response and not help_needed)):
             raise ValueError('invalid confirmation result')
         current = self._incidents.get(incident_id)
         question = self._questions.get(incident_id, current)
@@ -1489,12 +1490,32 @@ class CloudFallMonitor:
             return False
         if incident.situation_assessment is not None:
             return (incident.situation_assessment == situation_assessment
-                    and incident.help_needed == help_needed)
+                    and incident.help_needed == help_needed
+                    and (incident.answer is VoiceAnswer.NO_RESPONSE) == no_response)
         if incident.state is IncidentState.RESOLVED:
             return False
         incident.situation_assessment = situation_assessment
         incident.help_needed = help_needed
         incident.pending = False
+        if no_response:
+            # Silence is a completed check, not a question failure or spoken help request.
+            incident.answer = VoiceAnswer.NO_RESPONSE
+            incident.answer_question_played = True
+            incident.state = IncidentState.HELP_REQUIRED
+            if incident is not current:
+                incident.notification_level = current.notification_level
+                current.state = IncidentState.HELP_REQUIRED
+                if current.answer is not VoiceAnswer.HELP:
+                    current.answer = VoiceAnswer.NO_RESPONSE
+                current.help_needed = True
+            self._emit('voice_result', incident, question_id=question_id, reason='no_response')
+            self._notify(incident, NotificationLevel.CHECK, 'person_no_response')
+            if incident is not current:
+                current.notification_level = incident.notification_level
+                self._emit('incident_updated', current,
+                           reason='confirmation_finished_newer_evidence')
+            self._questions[incident_id] = replace(incident)
+            return True
         if incident is not current:
             # This answer belongs to the question's original evidence, not to
             # observations collected while the user was answering it.

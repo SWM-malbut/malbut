@@ -454,6 +454,13 @@ Agent 요청에 복사하지 않는다. 사건·대상·버전의 연결 정보�
 결과 메시지에는 `confirmation_scope`를 추가하지 않는다. 원래 사건·질문과
 `subject_key`의 일치 여부로 장면/사람별 결과를 다시 검증한다.
 
+`confirmation_result`에는 선택 필드 `no_response: boolean`도 허용한다(생략은 false).
+Agent가 실제 질문 재생 뒤 활성 청취 세션의 답변 대기 만료를 확인했을 때만 true이며,
+`help_needed=true`여야 한다. 코디네이터는 `ConfirmSituation.Result.no_response`를
+그대로 전달한다. 코어는 `voice_result`의 `answer=no_response`, `reason=no_response`로
+기록하고 `person_no_response` 확인 필요 알림을 요청한다. 도움 요청·질문 오류로
+바꾸지 않으며, 원래 질문의 근거 버전과 중복 결과 검증에도 무응답 구분을 유지한다.
+
 2026-09-27부터 대상 미연결 Cloud 의심도 확인을 시작한다. 사건의 `subject_key=null`,
 이벤트의 `confirmation_scope=scene`으로 구분하고, 코디네이터는 특정인을 지목하지 않는
 일반 확인 질문을 Manager를 통해 전달한다. 기존 사람별 질문은 `confirmation_scope=subject`이다.

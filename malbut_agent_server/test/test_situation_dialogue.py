@@ -43,7 +43,7 @@ def test_resting_answer_resolves_conflicting_summary_without_asking_for_help():
     dialogue = start(provider, summary='VLM은 실제 낙상이 발생했다고 판단함')
     final = dialogue.answer('아니, 스트레칭하려고 일부러 누운 거야.')
     assert asdict(final.result) == {
-        'situation_assessment': 'resolved', 'help_needed': False,
+        'situation_assessment': 'resolved', 'help_needed': False, 'no_response': False,
     }
     assert provider.contexts[-1].answer == '아니, 스트레칭하려고 일부러 누운 거야.'
     assert len(provider.contexts) == 2
@@ -80,7 +80,7 @@ def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assess
     assert final.result is not None
     assert asdict(final.result) == {
         'situation_assessment': 'confirmed_incident' if confirmed else 'unknown',
-        'help_needed': True,
+        'help_needed': True, 'no_response': False,
     }
     assert len(provider.contexts) == calls
     assert dialogue._history[-1].answer == answer
@@ -111,7 +111,7 @@ def test_fall_asr_help_alias_finishes_without_provider_and_keeps_original_answer
     final = dialogue.answer(answer)
     assert asdict(final.result) == {
         'situation_assessment': 'confirmed_incident' if confirmed else 'unknown',
-        'help_needed': True,
+        'help_needed': True, 'no_response': False,
     }
     assert len(provider.contexts) == calls
     assert dialogue._history[-1].answer == answer
@@ -187,6 +187,7 @@ def test_no_response_requests_help_without_inventing_or_erasing_actual_event(con
         'confirmed_incident' if confirmed else 'unknown'
     )
     assert final.result.help_needed is True
+    assert final.result.no_response is True
     assert '답변을 확인하지 못했어요' in final.text
 
 

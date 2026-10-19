@@ -218,6 +218,8 @@ def apply_decision(monitor, payload):
             fields.add('question_id')
         if action == 'confirmation_result':
             fields.update({'subject_key', 'situation_assessment', 'help_needed'})
+            if 'no_response' in data:
+                fields.add('no_response')
         if action == 'confirmation_failed':
             fields.add('reason')  # speech_unavailable | question_error | time_limit
         if (set(data) != fields or data['boot_id'] != monitor.boot_id

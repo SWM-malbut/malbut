@@ -952,11 +952,14 @@ class DialoguePipeline:
             elif not self.session.session_id:
                 self._fail_command(failure)
             else:
-                # Agent-owned confirmations retain their correlated failure policy.
-                self._input_status('failed', uid)
+                # Non-speech, rejected hallucinations and a successful empty decode
+                # provide no answer. Only operational failures abort the check.
+                discarded = error_name in ('SileroNonSpeech', 'InsufficientSpeechEvidence') or (
+                    error_name is None and isinstance(text, str) and not text.strip())
+                self._input_status('discarded' if discarded else 'failed', uid)
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
-                self.report(failure)
+                self.report('confirmation_input_discarded:' + failure if discarded else failure)
             return
         if kind == 'wake':
             command = parse_wake_phrase(text)
