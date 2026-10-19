@@ -391,3 +391,18 @@ def test_track_reports_confidence_level_for_display_only():
     missing = detector.update(PoseTrackingResult((tracked(None, "gone", "missing"),), (), ()),
                               capture_time=0.2, image_size=(640, 400), robot_motion="stationary")
     assert missing["tracks"][0]["confidenceLevel"] is None
+
+
+def test_track_reports_its_sure_torso_keypoints_for_the_map_place():
+    """SWM25-267: the Agent places a person on these, not on the box centre."""
+    pose = body()
+    output = step(FallCandidateDetector(), {"a": pose}, 0.0)
+    expected = [[round(p.x, 4), round(p.y, 4)] for p in pose.keypoints
+                if p.name.endswith(("_shoulder", "_hip"))]
+    assert output["tracks"][0]["torso"] == expected and len(expected) == 4
+    unsure = step(FallCandidateDetector(), {"a": body(point_score=0.3)}, 0.0)
+    assert unsure["tracks"][0]["torso"] == []
+    missing = FallCandidateDetector().update(
+        PoseTrackingResult((tracked(None, "gone", "missing"),), (), ()),
+        capture_time=0.0, image_size=(640, 400), robot_motion="stationary")
+    assert missing["tracks"][0]["torso"] is None

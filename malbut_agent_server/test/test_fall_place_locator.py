@@ -6,7 +6,8 @@ import pytest
 import math
 
 from malbut_agent_server.application.fall_place_locator import (
-    _rotate, FallPlaceLocator, FrameGeometry, map_point, map_point3d, mount_corrected,
+    _rotate, body_point, FallPlaceLocator, FrameGeometry, map_point, map_point3d,
+    mount_corrected,
 )
 
 # REP-103 optical (z forward, x right, y down) to a body/map frame (x forward, y left, z up).
@@ -83,6 +84,38 @@ def test_locator_keeps_recent_frames_by_monitor_time_only():
     assert locator.locate(103, (.45, .4, .55, .6)) is None    # older than 60 s
     locator.clear()
     assert locator.locate(170, (.45, .4, .55, .6)) is None
+
+
+def test_torso_keypoints_place_someone_cut_off_at_the_image_edge():
+    """SWM25-267, 10-19 20:02: only a strip of the body at the left edge; the box
+    centre fell on the wall behind (0.9 m measured as 2.4 m). The torso is on the body."""
+    g = geometry(2.4)
+    g.depth_mm[:, 0:4] = 900
+    box, torso = (0.0, 0.1, 0.09, 0.9), ((0.01, 0.3), (0.01, 0.5), (0.01, 0.7))
+    assert map_point(g, box)[0] == pytest.approx(1.0 + 2.4)
+    x, y = body_point(g, torso)
+    # u = 6.4 px, 313.6 px left of centre at 0.9 m: 0.564 m to the left (positive y).
+    assert (x, y) == pytest.approx((1.0 + 0.9, 1.0 + 0.56448))
+
+
+def test_too_few_torso_keypoints_measured_is_unknown_not_the_box():
+    """As the Pose runtime's torso height: two keypoints measured, half of those seen."""
+    g = geometry()
+    g.depth_mm[:, :] = 0
+    g.depth_mm[45:55, 75:85] = 2000
+    on, off = (0.5, 0.5), (0.1, 0.1)
+    assert body_point(g, ()) is None
+    assert body_point(g, (on,)) is None
+    assert body_point(g, (on, on, off, off, off)) is None
+    assert body_point(g, (on, on, off)) == pytest.approx((3.0, 1.0))
+
+
+def test_the_locator_places_torso_keypoints_from_the_nearest_frame():
+    locator = FallPlaceLocator()
+    locator.add(100, geometry())
+    torso = ((0.5, 0.5), (0.5, 0.6))
+    assert locator.locate_body_near(100.2, torso) == pytest.approx((3.0, 1.0))
+    assert locator.locate_body_near(100.3, torso) is None  # no nearby guessing
 
 
 def test_the_point_keeps_its_height_above_the_floor():

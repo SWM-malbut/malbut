@@ -3,6 +3,7 @@ writes the fall rules' records. Fake Cloud and places, a real journal file; thes
 unit tests, not robot checks."""
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -22,6 +23,7 @@ CONTRACT = json.loads((Path(__file__).resolve().parents[2]
                        / 'malbut_interfaces/contracts/fall_events.json').read_text())
 BOX = (0.3, 0.5, 0.7, 0.9)
 SPOT = (3.0, 1.0)
+TORSO = (2.5, 0.5)
 
 
 class Clock:
@@ -74,6 +76,9 @@ class Places:
 
     def locate_near(self, observed_at, box, *, tolerance_s=0.25):
         return SPOT
+
+    def locate_body_near(self, observed_at, points, *, tolerance_s=0.25):
+        return TORSO if len(points) >= 2 else None
 
     def locate(self, captured_at, box):
         return SPOT
@@ -179,6 +184,25 @@ def test_a_pose_candidate_is_reported_with_its_place_photo_and_view(robot):
     assert sighting['photo'] is not None and sighting['fall_moment'] is None
 
 
+def test_a_pose_person_is_placed_on_their_torso_never_the_box_centre(robot):
+    """SWM25-267, 10-19 20:02: someone cut off at the image edge had the box centre on
+    the wall behind. With torso keypoints the place is on the body; with none sure, no
+    place (as no depth), never the box centre. An older detector: the box centre."""
+    sensor, clock, _, _ = robot
+    advance(sensor, clock, 2)
+    pose = SubjectPose('pose:1:a', BOX, SubjectCheckState.SUSPECTED, True, True,
+                       ((0.4, 0.6), (0.6, 0.6)))
+    for torso, place in (((0.4, 0.6), (0.6, 0.6)), TORSO), ((), None), (None, SPOT):
+        clock.value += 0.2
+        sensor.ingest_subject_frame(SubjectFrame(
+            clock.value, (replace(pose, torso=torso),), 1.0, camera_stationary=True))
+        frame, = messages(sensor, 'fall_people')
+        assert frame['people'][0]['point'] == (None if place is None else list(place))
+        sensor.candidate(candidate(clock))
+        sighting, = (m['sighting'] for m in messages(sensor, 'fall_sighting'))
+        assert sighting['point'] == frame['people'][0]['point']
+
+
 def test_a_fall_motion_keeps_its_moment_from_4_s_before_to_1_s_after(robot):
     sensor, clock, _, _ = robot
     advance(sensor, clock, 6)
@@ -224,6 +248,9 @@ class NoDepth(Places):
     """Depth unreadable (under a table, black clothes): no map place for any box."""
 
     def locate_near(self, observed_at, box, *, tolerance_s=0.25):
+        return None
+
+    def locate_body_near(self, observed_at, points, *, tolerance_s=0.25):
         return None
 
 

@@ -377,16 +377,25 @@ class FallFlowSensor:
         for pose in frame.subjects:
             if pose.box is None:
                 continue
-            point = None
-            if self._place is not None:
-                try:
-                    point = self._place.locate_near(at, pose.box)
-                except Exception:
-                    point = None  # No depth (under a table, too close): no map place.
             people.append(dict(track=pose.subject_key, box=[round(v, 4) for v in pose.box],
-                               point=_point(point), state=pose.state.value))
+                               point=_point(self._pose_place(at, pose)),
+                               state=pose.state.value))
         return dict(kind='fall_people', at=at, view=self._view,
                     stationary=frame.camera_stationary, robot=_point(robot), people=people)
+
+    def _pose_place(self, at, pose):
+        """A Pose person's map place: on their torso keypoints (SWM25-267, 10-19 20:02:
+        the box centre of someone cut off at the image edge was on the wall behind),
+        the box centre from an older detector. None: not measured (under a table, too
+        close, no torso seen)."""
+        if self._place is None:
+            return None
+        try:
+            if pose.torso is not None:
+                return self._place.locate_body_near(at, pose.torso)
+            return self._place.locate_near(at, pose.box)
+        except Exception:
+            return None
 
     def candidate(self, candidate: FallCandidate) -> Optional[str]:
         """A YOLO-Pose suspicion, reported as it is; the rules filter it with Cloud."""
@@ -401,6 +410,9 @@ class FallFlowSensor:
             return None
         latest = self._subjects.latest(candidate.subject_key)
         box = latest[2].box if latest is not None else None
+        # Placed as in the person frames, so the rules compare like with like.
+        point = (self._pose_place(candidate.observed_at, latest[2])
+                 if latest is not None and box is not None else None)
         if candidate.kind is CandidateKind.MOTION_SEEN:
             kind = 'motion'
         elif candidate.pose_reason == 'pose_sustained_horizontal_posture':
@@ -415,8 +427,8 @@ class FallFlowSensor:
                  else candidate.observed_at)
         floor = candidate.sensors.floor_distance_m if candidate.sensors is not None else None
         return self._sight(kind, candidate.observed_at, track=candidate.subject_key, box=box,
-                           photo=True, fall_moment=moment, evidence=(start, candidate.observed_at),
-                           floor=floor)
+                           point=point, placed=True, photo=True, fall_moment=moment,
+                           evidence=(start, candidate.observed_at), floor=floor)
 
     def close_by_guardian(self, incident_id):
         """처리 완료 in the app: the rules stop and never check it again."""
@@ -686,9 +698,10 @@ class FallFlowSensor:
     # ------------------------------------------------------------ sightings
 
     def _sight(self, kind, at, *, track=None, box=None, photo=False, fall_moment=None,
-               evidence=None, point=None, frames=None, floor=None):
+               evidence=None, point=None, placed=False, frames=None, floor=None):
+        """placed: point already measured (None: no place), not from the box."""
         sighting_id = 's-' + uuid4().hex
-        if point is None and box is not None and self._place is not None:
+        if point is None and not placed and box is not None and self._place is not None:
             try:
                 point = self._place.locate_near(at, box)
             except Exception:
