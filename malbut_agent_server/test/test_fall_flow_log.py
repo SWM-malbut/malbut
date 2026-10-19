@@ -27,8 +27,24 @@ def test_each_message_is_one_line_in_the_days_file(tmp_path):
     log.write('to_rules', dict(kind='fall_sighting', sighting=dict(point=[1.2, 0.5], floor=0.21)))
     log.write('from_rules', dict(action='link', sighting_id='s-1', incident_id='i-1'))
     row1, row2 = lines(tmp_path / 'log' / '2026-10-18.jsonl')
-    assert row1['dir'] == 'to_rules' and row1['sighting'] == dict(point=[1.2, 0.5], floor=0.21)
-    assert row2['dir'] == 'from_rules' and row2['action'] == 'link' and row2['at'] == wall.value
+    assert row1['dir'] == 'to_rules'
+    assert row1['data'] == dict(kind='fall_sighting', sighting=dict(point=[1.2, 0.5], floor=0.21))
+    assert row2 == dict(logged_at=wall.value, dir='from_rules', data=dict(
+        action='link', sighting_id='s-1', incident_id='i-1'))
+
+
+def test_pose_frames_and_people_numbers_with_their_own_time_are_kept(tmp_path):
+    """10-19: their own ``at`` clashed with the wall time and every one was lost."""
+    wall = Wall()
+    log = FallFlowLog(tmp_path, wall_clock=wall)
+    frame = dict(kind='fall_people', at=12.5, view=0, stationary=True, robot=None,
+                 people=[dict(track='pose:1:a', box=[0.1, 0.2, 0.3, 0.4], point=None,
+                              state='unknown')])
+    log.write('to_rules', frame)
+    log.write('from_rules', dict(action='people', at=12.5, tracks={'pose:1:a': 'r:P1'}))
+    row1, row2 = lines(tmp_path / '2026-10-18.jsonl')
+    assert row1['data'] == frame and row2['data']['tracks'] == {'pose:1:a': 'r:P1'}
+    assert log.failures == 0
 
 
 def test_days_older_than_seven_are_removed_when_a_new_day_starts(tmp_path):

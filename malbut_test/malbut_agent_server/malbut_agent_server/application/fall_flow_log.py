@@ -1,9 +1,12 @@
 """Local log of what the one fall check saw and decided (SWM25-261, 2026-10-18).
 
 Every message the VLM sends to the Agent's fall rules (sightings, Cloud answers, and
-since SWM25-267 every pose frame) and every decision it gets back, one JSON line each with
-the wall time. Numbers only, no pixels: a sighting's or frame's screen box, track, map place
-and torso height above the floor (both measured with depth, which is not kept anywhere
+since SWM25-267 every pose frame) and every decision it gets back, one JSON line each:
+``{"logged_at": wall time, "dir": to_rules or from_rules, "data": the message}``. The
+message is nested (10-19): spread beside the wall time, a pose frame's own ``at`` clashed
+with it and every frame was lost (lines before that are flat, with ``at`` = wall time).
+Numbers only, no pixels: a sighting's or frame's screen box, track, map place and torso
+height above the floor (both measured with depth, which is not kept anywhere
 else) and where the robot was. Pose frames come five a second, about 100-250 bytes each.
 With it, a change of the rules can be replayed on a real day; the recording has no
 depth (10-17 21:31~22:22: 사람2 hidden in 사람1's incident could not be replayed). Kept
@@ -42,8 +45,8 @@ class FallFlowLog:
             if path.exists() and path.stat().st_size >= self.max_day_bytes:
                 self.dropped += 1
                 return
-            line = json.dumps(dict(at=round(now, 3), dir=direction, **data), ensure_ascii=False,
-                              allow_nan=False, separators=(',', ':'))
+            line = json.dumps(dict(logged_at=round(now, 3), dir=direction, data=data),
+                              ensure_ascii=False, allow_nan=False, separators=(',', ':'))
             with open(path, 'a', encoding='utf-8') as handle:
                 handle.write(line + '\n')
         except (OSError, TypeError, ValueError):
