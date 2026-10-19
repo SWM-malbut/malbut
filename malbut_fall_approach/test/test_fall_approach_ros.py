@@ -1,5 +1,6 @@
 """The approach node with fake Nav2 servers and a fixed map pose (real ROS)."""
 
+from contextlib import ExitStack
 import json
 import math
 import threading
@@ -120,11 +121,42 @@ class FakeNav2:
         return nav2.BackUp.Result()
 
 
+@pytest.fixture(scope='module')
+def ros_context():
+    # Keep DDS discovery alive across cases, isolated from other colcon packages.
+    rclpy.init(domain_id=87)
+    try:
+        yield
+    finally:
+        rclpy.try_shutdown()
+
+
 @pytest.fixture
-def ros():
-    rclpy.init()
+def ros(request, ros_context):
+    nodes = []
+    executor = thread = None
+
+    def cleanup():
+        if nodes:
+            nodes[0].closing.set()
+        if executor is not None:
+            executor.shutdown()
+        if thread is not None:
+            thread.join(timeout=5)
+            assert not thread.is_alive(), 'approach test executor did not stop'
+        for current in reversed(nodes):
+            # Humble's destroy_node does not destroy Action waitables.
+            for waitable in list(current.waitables):
+                if isinstance(waitable, (ActionClient, ActionServer)):
+                    waitable.destroy()
+            current.destroy_node()
+
+    # A failed setup never reaches yield; register teardown before creating ROS resources.
+    request.addfinalizer(cleanup)
     node = FallApproachNode()
+    nodes.append(node)
     fake = Node('fake_nav2_and_tf')
+    nodes.append(fake)
     broadcaster = tf2_ros.StaticTransformBroadcaster(fake)
 
     def place(x=0.0, y=0.0, yaw=0.0):
@@ -148,7 +180,7 @@ def ros():
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     client = ActionClient(fake, interfaces.FallApproach, '/malbut/falls/approach')
-    assert client.wait_for_server(timeout_sec=5)
+    assert client.wait_for_server(timeout_sec=15), 'approach action server was not discovered'
 
     def send(*, hold_s=0.0, **fields):
         """Send a goal; once it holds after its drive, wait hold_s and cancel it."""
@@ -211,11 +243,21 @@ def ros():
     while node._pose() is None and time.monotonic() < deadline:
         time.sleep(0.05)
     yield node, fake, send, statuses, costmap
-    node.closing.set()
-    executor.shutdown()
-    node.destroy_node()
-    fake.destroy_node()
-    rclpy.shutdown()
+
+
+def test_discovery_failure_does_not_poison_the_next_ros_setup(ros_context, monkeypatch):
+    with ExitStack() as cleanup, monkeypatch.context() as patch:
+        patch.setattr(ActionClient, 'wait_for_server', lambda *_args, **_kwargs: False)
+        failed = ros.__wrapped__(SimpleNamespace(addfinalizer=cleanup.callback), ros_context)
+        with pytest.raises(AssertionError, match='approach action server was not discovered'):
+            next(failed)
+
+    with ExitStack() as cleanup:
+        recovered = ros.__wrapped__(SimpleNamespace(addfinalizer=cleanup.callback), ros_context)
+        _, _, send, _, _ = next(recovered)
+        result = send(request_id='after-setup-failure', phase='hold', x=0.0, y=0.0,
+                      standoff_m=1.0)
+        assert result.held and result.still_running
 
 
 def test_drives_to_one_metre_before_the_spot_faces_it_and_goes_back(ros):
