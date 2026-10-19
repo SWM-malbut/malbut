@@ -305,7 +305,7 @@ def test_non_speech_over_dds_completes_as_no_response_not_an_aborted_action(rig)
         session_id=rig.session_id, utterance_id='noise', state='started'))
     rig.spin_until(lambda: session.phase == 'hearing')
     rig.inputs.publish(SpeechInputStatus(
-        session_id=rig.session_id, utterance_id='noise', state='discarded'))
+        session_id=rig.session_id, utterance_id='noise', state='failed'))
     rig.spin_until(lambda: session.phase == 'listening')
     assert session._deadline == deadline
     session._deadline = time.monotonic() - 1
@@ -313,7 +313,6 @@ def test_non_speech_over_dds_completes_as_no_response_not_an_aborted_action(rig)
     assert result.result().status == GoalStatus.STATUS_SUCCEEDED
     assert result.result().result.situation_assessment == 'unknown'
     assert result.result().result.help_needed is True
-    assert result.result().result.no_response is True
     assert rig.spoken[-1].text == '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
     assert len(rig.spoken) == 2
     assert any(request.check_only for request in rig.sessions)

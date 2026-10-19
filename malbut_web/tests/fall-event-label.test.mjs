@@ -80,19 +80,6 @@ test("every alert reads 알림: level · what", () => {
   }
 });
 
-test("completed silence is stored and displayed as no response, separate from faults", () => {
-  const answer = event({ eventKind: "voice_result", state: "help_required",
-    answer: "no_response", reason: "no_response" });
-  const notice = event({ eventKind: "notification_requested", state: "help_required",
-    answer: "no_response", reason: "person_no_response", notificationLevel: "check" });
-  assert.deepEqual(parseFallEvent(answer), answer);
-  assert.deepEqual(parseFallEvent(notice), notice);
-  assert.equal(fallEventLabel(answer), "대답: 없음");
-  assert.equal(fallEventLabel(notice), "알림: 확인 필요 · 물어봤지만 대답이 없음");
-  assert.equal(fallEventLabel(event({ eventKind: "agent_check_failed",
-    answer: "failed", reason: "question_error" })), "말벗: 질문 중 오류가 나 물을 수 없음");
-});
-
 test("a question request never invents spoken text, delivery or an old assessment", () => {
   assert.equal(fallEventLabel(event({ eventKind: "question_requested", answer: "unclear" })), "말벗: 물어봄");
 });

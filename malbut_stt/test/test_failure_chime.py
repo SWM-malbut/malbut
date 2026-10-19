@@ -463,7 +463,7 @@ def test_confirmation_keeps_listening_after_empty_recognition_without_failure_so
     assert p.session_is_active('fall-1') and p.session.utterance_id is None
     assert run.chimes == run.transcripts == []
     assert run.statuses == [
-        ('fall-1', discarded[2], 'started'), ('fall-1', discarded[2], 'discarded'),
+        ('fall-1', discarded[2], 'started'), ('fall-1', discarded[2], 'failed'),
     ]
     retry = final_command(run)
     reply(run, retry, '아니')

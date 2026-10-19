@@ -43,7 +43,7 @@ sequenceDiagram
     U->>S: 호출어 없이 답변
     S->>A: 발화 시작 · 인식 결과
     Note over A,U: 실제 상황 확인 후 필요한 경우 상태·도움 확인
-    A->>M: 실제 상황 판단 · 도움 필요 · 무응답 여부
+    A->>M: 실제 상황 판단 · 도움 필요 여부
     M->>F: 일반 미션 최종 결과
     F->>V: 해당 사건의 confirmation_result
     A->>S: 상황에 맞는 마무리 말
@@ -66,14 +66,13 @@ Action: `/malbut/agent/confirm_situation`
 | 요청 | `summary` | `string` | Manager가 전달하는 상황 요약, 최대 4,000자 |
 | 결과 | `situation_assessment` | `string` | Action Result의 세 상수 중 하나인 최종 상황 판단 |
 | 결과 | `help_needed` | `bool` | 도움 필요 여부 |
-| 결과 | `no_response` | `bool` | 정상 질문·청취 후 답변 대기가 만료되면 true. 이때 `help_needed`도 true |
 
 요청의 세 문자열은 모두 필수이며 공백만 있는 값은 거절한다. 줄바꿈·탭을 제외한
 32 미만 코드값의 제어 문자는 허용하지 않는다. 검증은 Agent의 Action 서버가 수행한다.
 Feedback 필드는 비어 있다. Goal 수락은 대화 완료가 아니며, Result는 아래 성공 조건에
 따라 사용한다. 세 결과 상수의 현재 값은 `confirmed_incident`, `resolved`, `unknown`이다.
 
-`situation_assessment`와 `help_needed`는 독립적이다. 실제 낙상은 확인했지만 도움을 거절했다면
+결과의 두 필드는 독립적이다. 실제 낙상은 확인했지만 도움을 거절했다면
 `confirmed_incident/false`, 발생 여부를 확인하지 못한 채 도움을 요청했다면
 `unknown/true`가 가능하다. 단순히 누워 있었다면 추가 질문 없이 `resolved/false`로
 끝내되, 같은 답변에 명시적 도움 요청이 있으면 그 요청을 반영한다.
@@ -144,9 +143,7 @@ Goal 수락 대기 5초와 결과 대기 610초는 타이머보다 응답 콜백
 - 질문 재생 완료 후 세션을 여는 동안 시작 ACK보다 완성된 답변이 먼저 오면 그
   발화 ID를 보존하며, 이후 다른 발화의 시작 신호가 먼저 받은 답변을 덮어쓰지 않는다.
 - 새 청취 세션의 시작 수락 ACK부터 답변 시작까지 10초 기다린다. 시작 신호를
-  받으면 인식 결과를 기다린다. 비음성·전사 품질 필터 탈락·빈 인식 결과가
-  `DISCARDED`로 오면 기존 10초 기한으로 돌아가며 잡음으로 기한을 연장하지 않는다.
-  실제 인식·통신 오류와 별도 처리 제한 시간 초과는 처리 오류다.
+  받으면 무응답 타이머를 해제한다. 인식·통신의 별도 제한 시간 초과는 처리 오류다.
 - 답변 또는 무응답 처리 뒤에는 이전 청취 세션 종료의 수락 ACK를 확인한 후 다음
   질문이나 마무리 안내를 발행한다. 모델 판단은 종료 요청과 병렬로 준비하되 종료
   거절·오류·시간초과이면 새 음성이나 최종 판단을 보고하지 않고 처리 오류로 끝낸다.
@@ -212,7 +209,7 @@ python3 -m malbut_agent_server.situation_eval_runner \
 OpenAI 설정이 준비된 환경에서 실제 의미 판단을 검사하려면 `--provider openai`를
 명시한다. 이 명령은 유료 API를 호출하며 TTS·마이크는 사용하지 않는다.
 `--case-id`로 일부 사례만 선택할 수 있다. 결과에는 사례 ID, 통과·실패·오류·보류,
-최종 상황 판단·도움 필요·무응답 여부, 질문 수를 남기며 질문·답변 원문과 키를 출력하지 않는다.
+최종 판단 두 필드, 질문 수를 남기며 질문·답변 원문과 키를 출력하지 않는다.
 
 ```bash
 python3 -m malbut_agent_server.situation_eval_runner --provider openai \

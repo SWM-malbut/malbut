@@ -76,7 +76,7 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkey
             captured_result(error='SileroGateError')
             assert h.finishes == [('aborted', None)]
             assert not h.outcomes
-            assert statuses[-1][2] == 'failed'
+            assert statuses[-1] == (sid, '', 'failed')
             return
     if recognition != 'answer':
         h.now = 10.0
@@ -85,10 +85,9 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkey
     assert len(h.outcomes) == 1
     outcome = h.outcomes[0]
     assert outcome.help_needed is (recognition != 'answer')
-    assert outcome.no_response is (recognition != 'answer')
     assert outcome.situation_assessment == ('resolved' if recognition == 'answer' else 'unknown')
     assert not pipeline.session.active
-    assert all(event[2] != 'failed' for event in statuses)
+    assert all(uid for _, uid, state in statuses if state == 'failed')
     if recognition != 'answer':
         assert h.events[-1][1] == '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
     h.session.playback(h.session.playback_id, 'finished')
@@ -102,11 +101,7 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkey
     monitor.drain_events()
     assert apply_decision(monitor, result(
         monitor, iid, situation_assessment=outcome.situation_assessment,
-        help_needed=outcome.help_needed, no_response=outcome.no_response))
+        help_needed=outcome.help_needed))
     events = monitor.drain_events()
     assert all(event.kind != 'agent_check_failed' for event in events)
     assert all(event.reason != 'question_error' for event in events)
-    if recognition != 'answer':
-        assert monitor.incident(iid).answer.value == 'no_response'
-        assert [(event.reason, event.notification_level.value) for event in events
-                if event.kind == 'notification_requested'] == [('person_no_response', 'check')]

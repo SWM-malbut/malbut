@@ -513,8 +513,7 @@ class FallConfirmationLink:
                         result = yaml.safe_load(response.result.result_yaml)
                         self.coordinator.complete(
                             request, situation_assessment=result['situation_assessment'],
-                            help_needed=result['help_needed'],
-                            no_response=result.get('no_response', False))
+                            help_needed=result['help_needed'])
             except Exception:
                 self.coordinator.resume(self.clock())
                 if self.mode in DRIVES:

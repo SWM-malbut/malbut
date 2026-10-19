@@ -59,18 +59,6 @@ def success():
     ))
 
 
-def test_successful_no_response_survives_manager_result_and_coordinator(rig):
-    rig.link.goal_future.set_result(rig.handle)
-    outcome = success()
-    outcome.result.result_yaml = json.dumps(dict(
-        situation_assessment='unknown', help_needed=True, no_response=True))
-    rig.result.set_result(outcome)
-    command, = commands(rig.link)
-    assert command['action'] == 'confirmation_result' and command['no_response'] is True
-    assert command['help_needed'] is True
-    assert not rig.link.coordinator.requests
-
-
 @pytest.mark.parametrize('late_by', [0.0, 0.001])
 @pytest.mark.parametrize('phase', ['result', 'manager_loss', 'agent_loss'])
 def test_late_callback_cannot_bypass_transport_deadline(rig, phase, late_by):

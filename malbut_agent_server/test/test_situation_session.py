@@ -165,7 +165,7 @@ def test_non_speech_restores_original_silence_deadline(rejected_at):
     h.now = 1
     h.session.input_status(sid, 'noise', 'started')
     h.now = rejected_at
-    h.session.input_status(sid, 'noise', 'discarded')
+    h.session.input_status(sid, 'noise', 'failed')
     assert h.session.phase == 'listening' and not h.session.utterance_id
     assert not h.session.transcript(sid, 'noise', '늦은 잘못된 전사')
     h.session.input_status(sid, 'noise', 'started')
@@ -188,7 +188,7 @@ def test_non_speech_during_opening_does_not_reserve_an_answer():
     h.session.playback(h.session.playback_id, 'finished')
     sid = h.session.session_id
     h.session.input_status(sid, 'noise', 'started')
-    h.session.input_status(sid, 'noise', 'discarded')
+    h.session.input_status(sid, 'noise', 'failed')
     h.now = 2
     h.ready_input()
     assert h.session.phase == 'listening' and not h.session.utterance_id
@@ -204,11 +204,11 @@ def test_real_answer_after_non_speech_still_completes_confirmation():
     h.played()
     sid = h.session.session_id
     h.session.input_status(sid, 'noise', 'started')
-    h.session.input_status(sid, 'noise', 'discarded')
+    h.session.input_status(sid, 'noise', 'failed')
     h.now = 9
     h.session.input_status(sid, 'answer', 'started')
-    h.session.input_status(sid, 'unrelated', 'discarded')
-    h.session.input_status('old-session', 'answer', 'discarded')
+    h.session.input_status(sid, 'unrelated', 'failed')
+    h.session.input_status('old-session', 'answer', 'failed')
     h.now = 15
     assert h.session.transcript(sid, 'answer', '그냥 누워 있었어요')
     h.complete_work()
@@ -228,7 +228,7 @@ def test_non_speech_on_followup_uses_that_questions_ack_deadline():
     sid = h.session.session_id
     h.session.input_status(sid, 'noise', 'started')
     h.now = 22
-    h.session.input_status(sid, 'noise', 'discarded')
+    h.session.input_status(sid, 'noise', 'failed')
     h.session.tick()
     assert h.session.phase == 'listening' and h.session._deadline == 30
     h.now = 30
@@ -396,6 +396,7 @@ def test_opening_completed_answer_owns_correlation_before_later_started_event():
     h.session.input_status(sid, 'next-utterance', 'started')
     assert not h.session.transcript(sid, 'next-utterance', '도와주세요')
     h.session.input_status(sid, 'next-utterance', 'failed')
+    h.session.input_status(sid, 'first-answer', 'failed')
     assert not h.session.done
     h.ready_input()
     assert h.session.phase == 'thinking'
@@ -405,15 +406,14 @@ def test_opening_completed_answer_owns_correlation_before_later_started_event():
     assert h.outcomes == [SituationResult('resolved', False)]
 
 
-@pytest.mark.parametrize('utterance_id', ['first-answer', ''])
-def test_opening_buffered_answer_preserves_matching_or_session_wide_failure(utterance_id):
+def test_opening_buffered_answer_preserves_session_wide_failure():
     h = Harness()
     h.session.start()
     h.complete_work()
     h.session.playback(h.session.playback_id, 'finished')
     sid = h.session.session_id
     assert h.session.transcript(sid, 'first-answer', '도와주세요')
-    h.session.input_status(sid, utterance_id, 'failed')
+    h.session.input_status(sid, '', 'failed')
     assert h.finishes == [('aborted', None)]
     assert h.outcomes == [] and not h.executor.jobs
 
@@ -451,7 +451,7 @@ def test_operational_failure_does_not_become_a_no_response(failure):
         h.ready_input(accepted=failure != 'opening')
         if failure == 'stt':
             h.session.input_status(h.session.session_id, 'u1', 'started')
-            h.session.input_status(h.session.session_id, 'u1', 'failed')
+            h.session.input_status(h.session.session_id, '', 'failed')
     assert h.finishes == [('aborted', None)]
     assert h.outcomes == []
     assert [call[0] for call in h.calls] == ['start']

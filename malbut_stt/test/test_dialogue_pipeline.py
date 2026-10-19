@@ -934,14 +934,14 @@ def test_failed_command_sound_guard_does_not_wait_for_agent_playback(harness, te
 @pytest.mark.parametrize('text,error', [
     (None, 'SileroNonSpeech'), (None, 'InsufficientSpeechEvidence'), ('', None), ('  ', None),
 ])
-def test_confirmation_discarded_input_retracts_onset_without_reporting_failure(harness, text, error):
+def test_confirmation_rejects_only_the_non_speech_or_empty_utterance(harness, text, error):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     assert pipeline.start_session('confirmation')
     pipeline.feed(VOICE)
     uid = pipeline.session.utterance_id
     pipeline._accept_result('command', pipeline._generation, uid, text, error)
-    assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'discarded')]
+    assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'failed')]
     assert pipeline.session_is_active('confirmation')
     assert pipeline.session.utterance_id is None
     assert harness.transcripts == [] and harness.failure_chimes == []
@@ -957,12 +957,28 @@ def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
     pipeline.feed(VOICE)
     uid = pipeline.session.utterance_id
     pipeline._accept_result('command', pipeline._generation, uid, text, error)
-    assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'failed')]
+    assert statuses == [('confirmation', uid, 'started'), ('confirmation', '', 'failed')]
     assert pipeline.session_is_active('confirmation')
     assert pipeline._reply_request_id is None
     assert harness.failure_chimes == []
     assert pipeline.stop_session('confirmation')
     assert not pipeline.session.active
+
+
+@pytest.mark.parametrize('reason', [
+    'utterance_discarded:too_long', 'utterance_discarded:buffer_overflow',
+    'transcription_queue_full', 'audio_queue_overflow',
+])
+def test_confirmation_input_abort_reports_session_failure(harness, reason):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('confirmation')
+    pipeline.feed(VOICE)
+    assert pipeline.session.utterance_id
+    pipeline._terminate(reason)
+    assert statuses[-1] == ('confirmation', '', 'failed')
+    assert not pipeline.session_is_active('confirmation')
+    assert harness.transcripts == []
 
 
 def test_wake_without_command_times_out_after_chime_guard(harness):

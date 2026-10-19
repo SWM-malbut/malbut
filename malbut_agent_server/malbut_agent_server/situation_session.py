@@ -157,17 +157,17 @@ class SituationSpeechSession:
         if (self.done or not self.session_id or session_id != self.session_id
                 or self._expire_operation()):
             return
-        if state == 'failed':
-            active_utterance = self.utterance_id or self._early_started
-            if (not utterance_id or not active_utterance
-                    or utterance_id == active_utterance):
-                self._finish('aborted')
+        if state == 'failed' and not utterance_id:
+            # The existing empty-ID failure covers the whole listening session.
+            self._finish('aborted')
             return
         if not isinstance(utterance_id, str) or not utterance_id.strip():
             return
         if utterance_id in self._heard:
             return
-        if state == 'discarded':
+        if state == 'failed':
+            # STT rejects non-speech/empty decodes for one utterance, while
+            # operational faults fail the session with an empty utterance ID.
             if self.phase == 'opening':
                 if self._early_answer or (
                         self._early_started and self._early_started != utterance_id):

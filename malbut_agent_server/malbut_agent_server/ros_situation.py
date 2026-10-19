@@ -220,7 +220,6 @@ class SituationActionServer:
             if status == 'succeeded' and outcome is not None:
                 response.situation_assessment = outcome.situation_assessment
                 response.help_needed = outcome.help_needed
-                response.no_response = outcome.no_response
                 goal.succeed()
             elif status == 'canceled' and goal.is_cancel_requested:
                 goal.canceled()

@@ -82,59 +82,6 @@ def test_unknown_help_needed_does_not_invent_a_confirmed_fall():
     assert not monitor.pending_questions()
 
 
-@pytest.mark.parametrize('newer_evidence', [False, True])
-def test_no_response_is_journaled_and_alerted_as_silence_not_question_error(tmp_path, newer_evidence):
-    from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
-
-    monitor, clock, _, iid = assessed()
-    payload = result(monitor, iid, situation_assessment='unknown', help_needed=True,
-                     no_response=True)
-    journal = SqliteFallJournal(tmp_path / 'private' / 'fall.sqlite', device_id='robot')
-    monitor._journal = journal
-    try:
-        if newer_evidence:
-            clock.value += 1
-            monitor.candidate(candidate(clock(), cid='new', change=True))
-        monitor.drain_events()
-        assert apply_decision(monitor, payload)
-        incident = monitor.incident(iid)
-        assert incident.answer is VoiceAnswer.NO_RESPONSE
-        assert incident.help_needed is True
-        assert incident.state is IncidentState.HELP_REQUIRED
-        events = monitor.drain_events()
-        reply = next(e for e in events if e.kind == 'voice_result')
-        assert reply.reason == 'no_response' and reply.evidence_revision == 1
-        assert not any(e.kind == 'agent_check_failed' for e in events)
-        assert [(e.reason, e.notification_level.value) for e in events
-                if e.kind == 'notification_requested'] == [('person_no_response', 'check')]
-        assert apply_decision(monitor, payload)
-        assert not monitor.drain_events()
-        changed = json.loads(payload) | {'no_response': False}
-        assert not apply_decision(monitor, json.dumps(changed))
-        records = []
-        while (row := journal.pending()) is not None:
-            records.append(json.loads(row['payload']))
-            journal.acknowledge(row['event_id'])
-        recorded = next(r for r in records if r['eventKind'] == 'voice_result')
-        assert recorded['answer'] == 'no_response' and recorded['reason'] == 'no_response'
-        assert not any(r['eventKind'] == 'agent_check_failed' for r in records)
-    finally:
-        journal.close()
-
-
-@pytest.mark.parametrize('changes', [
-    {'no_response': 1}, {'no_response': 'true'}, {'no_response': None},
-    {'no_response': True, 'help_needed': False},
-])
-def test_invalid_no_response_does_not_change_the_incident(changes):
-    monitor, _, _, iid = assessed()
-    with pytest.raises(ValueError):
-        apply_decision(monitor, result(
-            monitor, iid, **({'situation_assessment': 'unknown', 'help_needed': True} | changes)))
-    assert monitor.incident(iid).situation_assessment is None
-    assert monitor.incident(iid).answer is None
-
-
 @pytest.mark.parametrize('assessment,help_needed', [('resolved', True), ('unknown', False)])
 def test_actual_situation_and_explicit_help_choice_are_independent(assessment, help_needed):
     monitor, _, _, iid = assessed()

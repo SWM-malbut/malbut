@@ -483,18 +483,15 @@ class FallConfirmationCoordinator:
         self.commands.append(job.decision(outcome if outcome in RETURN_OUTCOMES else 'failed'))
         return True
 
-    def complete(self, request, *, situation_assessment, help_needed, no_response=False):
+    def complete(self, request, *, situation_assessment, help_needed):
         if self.requests.get(request.request_id) != request or self.closed:
             return False
         if (not isinstance(situation_assessment, str) or situation_assessment not in ASSESSMENTS
-                or type(help_needed) is not bool or type(no_response) is not bool
-                or (no_response and not help_needed)):
+                or type(help_needed) is not bool):
             raise ValueError('invalid final confirmation result')
         decision = request.decision('confirmation_result')
         decision.update(subject_key=request.subject_key,
                         situation_assessment=situation_assessment, help_needed=help_needed)
-        if no_response:
-            decision['no_response'] = True
         self.commands.append(decision)
         del self.requests[request.request_id]
         self.stages.pop(request.request_id, None)
