@@ -31,7 +31,11 @@ numbers and one uncertain group that never cleared; tentative tracks as in DeepS
 and an ambiguity committed after a horizon as in MHT's N-scan pruning). Groups are
 linked pairs, not a lasting whole: as MHT clusters are split once their tracks stop
 sharing measurements and JPDA forms its clusters each scan (10-17 evening replay: one
-group held both people's numbers 85% of the time, so neither was ever alone).
+group held both people's numbers 85% of the time, so neither was ever alone). Before
+either of these commits, ReID is asked whether each one still looks as when first linked
+(their track then against their track now); clearly unlike under one of the numbers
+(below REID_SPLIT, the splitting threshold) keeps them uncertain a minute more, as ReID
+only ever separates. No answer in REID_WAIT_S: committed by place alone.
 
 ReID only splits (decision 10): someone reappearing where one unseen person was is that
 person, uncertain until the VLM says how alike the two looked (two looks against two);
@@ -68,6 +72,7 @@ REID_WAIT_S = 5.0       # no answer by then: by place alone
 SETTLE_HITS = 3         # frames a new number is seen in before it counts as someone else
 SOLO_S = 60.0           # uncertain, but only one of them seen, in one place, this long: clear
 LINK_S = 60.0           # two not met again (close, or one taken for the other) this long: apart
+_WAITING = object()     # a ReID check asked, not answered yet
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,8 @@ class Group:
     solo_last: float = 0.0
     solo_where: tuple = (None, None, None)
     links: Dict[frozenset, float] = field(default_factory=dict)  # pair -> when they last met
+    refs: Dict[str, tuple] = field(default_factory=dict)  # member -> (track, at) when linked
+    check: Optional[dict] = None   # ReID asked before committing: requests, since
 
 
 @dataclass
@@ -158,6 +165,7 @@ class PersonTracker:
         self.reid = True
         self.pending: Dict[str, dict] = {}   # ReID request -> who reappeared, and as what
         self._requests: List[dict] = []
+        self._checks: Dict[str, object] = {}  # ReID request before a commit -> its answer
 
     # ------------------------------------------------------------ queries
 
@@ -331,6 +339,9 @@ class PersonTracker:
 
     def answer(self, request_id, similarity):
         """The VLM's appearance similarity; a split returns (old, new person, since)."""
+        if request_id in self._checks:
+            self._checks[request_id] = similarity  # Read before a commit (_verdict).
+            return None
         wait = self.pending.pop(request_id, None)
         person = self.people.get(wait['person']) if wait else None
         if person is None or similarity is None or similarity >= REID_SPLIT:
@@ -443,10 +454,11 @@ class PersonTracker:
                  if p.person_id != first}
         members = {p.person_id for p in people}
         joined = [g for g in self.groups if g.members & members]
-        anchors = {}
+        anchors, refs = {}, {}
         for g in joined:
             members |= g.members
             anchors.update(g.anchors)
+            refs.update(g.refs)
             for pair, at in g.links.items():
                 links[pair] = max(at, links.get(pair, at))
             self.groups.remove(g)
@@ -454,12 +466,23 @@ class PersonTracker:
             stayed = self._stayed(person, t)
             if stayed is not None and person.person_id not in anchors:
                 anchors[person.person_id] = stayed
-        self.groups.append(Group(members, t, anchors, links=links))
+            if person.person_id not in refs and person.track:
+                refs[person.person_id] = (person.track, person.last_seen)
+        self.groups.append(Group(members, t, anchors, links=links, refs=refs))
 
     def _unlink(self, t):
         """Links not renewed for LINK_S are committed; a group keeps only its members
         still linked and splits into the parts that are."""
         for group in list(self.groups):
+            expired = [pair for pair, at in group.links.items() if t - at > LINK_S]
+            if expired:
+                verdict = self._verdict(group, set().union(*expired) & group.members, t)
+                if verdict == 'wait':
+                    continue
+                if verdict == 'keep':
+                    for pair in expired:
+                        group.links[pair] = t
+                    continue
             links = {pair: at for pair, at in group.links.items()
                      if t - at <= LINK_S and pair <= group.members}
             parts = _parts(links)
@@ -469,7 +492,40 @@ class PersonTracker:
             for part in parts:
                 self.groups.append(Group(
                     part, group.since, {m: a for m, a in group.anchors.items() if m in part},
-                    links={pair: at for pair, at in links.items() if pair <= part}))
+                    links={pair: at for pair, at in links.items() if pair <= part},
+                    refs={m: r for m, r in group.refs.items() if m in part}))
+
+    def _verdict(self, group, members, t):
+        """Before committing ``members`` of ``group``: 'commit', 'wait' for ReID, or
+        'keep' them uncertain (one of them looks clearly unlike when first linked)."""
+        if not self.reid:
+            return 'commit'
+        if group.check is None:
+            requests = {}
+            for member in sorted(members):
+                ref, person = group.refs.get(member), self.people.get(member)
+                if not ref or person is None or not person.track or person.last_seen <= ref[1]:
+                    continue  # Nothing to compare: by place alone.
+                request_id = uuid4().hex
+                self._checks[request_id] = _WAITING
+                requests[request_id] = member
+                self._requests.append(dict(request_id=request_id,
+                                           a=dict(track=ref[0], at=ref[1]),
+                                           b=dict(track=person.track, at=person.last_seen)))
+            while len(self._checks) > 64:
+                self._checks.pop(next(iter(self._checks)))
+            if not requests:
+                return 'commit'
+            group.check = dict(requests=requests, since=t)
+            return 'wait'
+        answers = [self._checks.get(r) for r in group.check['requests']]
+        if any(a is _WAITING for a in answers) and t - group.check['since'] <= REID_WAIT_S:
+            return 'wait'
+        for request_id in group.check['requests']:
+            self._checks.pop(request_id, None)
+        group.check = None
+        unlike = any(a is not None and a is not _WAITING and a < REID_SPLIT for a in answers)
+        return 'keep' if unlike else 'commit'
 
     def _merge(self, seen, t):
         """Two people this close in one frame may swap: uncertain, the link renewed."""
@@ -526,7 +582,11 @@ class PersonTracker:
             group.solo_where = (obs.point, where_view, box)
         group.solo_last = t
         if t - group.solo_since >= SOLO_S:
-            self.groups.remove(group)
+            verdict = self._verdict(group, {group.solo}, t)
+            if verdict == 'commit':
+                self.groups.remove(group)
+            elif verdict == 'keep':
+                group.solo_since = t  # Clearly unlike when first linked: a minute more.
 
     def _swap(self, a, b):
         """The tracking had them the other way round: exchange what each was last seen as."""
