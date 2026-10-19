@@ -141,6 +141,82 @@ ros2 launch malbut_bringup bringup.launch.py --show-args
 고정하므로, 장치 점유 중 PortAudio 목록 순서가 바뀌어도 다른 마이크를 선택하지 않는다.
 시스템 기본 입력·출력은 바꾸지 않는다.
 
+### 로봇 오디오 기본 설정과 복원
+
+XFM과 GeneralPlus USB 스피커를 쓰는 로봇 전용 사용자에서 선택적으로 적용한다.
+스피커는 마이크 입력도 노출하므로 **출력 전용 프로필**을 선택한다. 기본 장치와
+프로필·앱별 연결은 PulseAudio의 `module-default-device-restore`,
+`module-card-restore`, `module-stream-restore`에 맡긴다. 별도 상시 서비스는 설치하지
+않으며, Bringup이나 ROS 빌드가 이 사용자 설정을 자동으로 적용하지 않는다.
+
+이전 시험용 `malbut-audio-routing.service`를 설치했다면 먼저
+`systemctl --user disable --now malbut-audio-routing.service`로 끈다.
+`~/.config/systemd/user/malbut-audio-routing.service`와
+`~/.local/lib/malbut/audio_routing.py`를 백업 후 제거하고
+`systemctl --user daemon-reload`를 실행한다. 그 서비스만을 위해 처음 켰던 linger는
+`sudo loginctl disable-linger "$USER"`로 원복한다. 다른 사용자 서비스가 필요로 하면 유지한다.
+
+로봇 오디오 사용자(`ubuntu`)로 현재 설정을 먼저 백업한다. 아래 `audio_backup` 경로를
+기록해 두고, 복원 시에도 같은 경로를 사용한다. 백업은 Git에 넣지 않는다.
+
+```bash
+audio_backup="$HOME/.local/state/malbut/pulse-before-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$audio_backup"
+if [ -d "$HOME/.config/pulse" ]; then
+  cp -a "$HOME/.config/pulse" "$audio_backup/pulse"
+fi
+pactl info > "$audio_backup/info.txt"
+pactl list > "$audio_backup/devices-and-streams.txt"
+```
+
+`pactl list short modules`에서 위 세 복원 모듈이 로드됐는지 확인한다. 아래 이름은
+예시이므로 실제 목록의 장치 이름으로 바꾼다. 카드·스트림 번호는 재연결 시 바뀐다.
+
+```bash
+pactl list short cards
+pactl set-card-profile '실제_XFM_카드_이름' input:mono-fallback
+pactl set-card-profile '실제_USB_스피커_카드_이름' output:analog-stereo
+pactl list short sources
+pactl list short sinks
+pactl set-default-source '실제_XFM_입력_이름'
+pactl set-default-sink '실제_USB_스피커_출력_이름'
+```
+
+실행 중인 STT·홈캠이 다른 입력에 연결돼 있다면 `pactl list source-outputs`에서
+해당 앱을 확인한 뒤 `pactl move-source-output '해당_스트림_번호' '실제_XFM_입력_이름'`으로
+한 번 옮긴다. 기존 재생 스트림은 `pactl list sink-inputs`와 `pactl move-sink-input`으로
+확인·변경한다. 기본 장치 선택과 앱별로 기억한 연결은 별개이므로 둘 다 확인한다.
+
+새 장치가 나타날 때 선택을 덮어쓰는 `module-switch-on-connect`를 이 사용자에서만
+해제한다. 저장소 루트 또는 로봇의 `~/ros2_ws/src/malbut`에서 실행한다. 기존
+`~/.config/pulse/default.pa`가 있으면 아래 설치 명령을 건너뛰고, 기존 내용을 유지하며
+제공된 파일의 `.nofail`부터 `.fail`까지 모듈 해제 부분만 마지막에 추가한다.
+
+```bash
+mkdir -p "$HOME/.config/pulse"
+test ! -e "$HOME/.config/pulse/default.pa" && \
+  install -m644 malbut_bringup/config/pulse-default.pa "$HOME/.config/pulse/default.pa"
+# 현재 로드된 모듈 목록에 있을 때만 실행한다. 다음 시작부터는 default.pa가 적용한다.
+pactl unload-module module-switch-on-connect
+```
+
+이 설정은 해당 사용자의 새 USB·Bluetooth 장치 자동 선택도 해제한다. 사용자가 직접
+다른 기본 장치를 고를 수 있으며, 모든 앱의 스트림을 계속 강제로 옮기지 않는다.
+[PulseAudio 모듈 설명](https://wiki.freedesktop.org/www/Software/PulseAudio/Documentation/User/Modules/)
+및 [기본 장치와 앱별 연결](https://wiki.freedesktop.org/www/Software/PulseAudio/Documentation/User/DefaultDevice/)을 참고한다.
+
+서비스를 끈 상태에서 실제 재부팅과 USB 분리·재연결 후 `pactl get-default-source`,
+`pactl get-default-sink`, `pactl list short source-outputs`, `pactl list short sink-inputs`를
+확인한다. Bringup은 평소 절차로 다시 켜고 실제 입력·스피커 재생도 시험한다.
+프로필 off/on 시험이나 기본 장치 이름만으로 실제 USB 재연결·청취 검증을 대신하지 않는다.
+
+복원할 때는 `info.txt`와 `devices-and-streams.txt`를 보고 이전 카드 프로필·기본 장치를
+위 `set-card-profile`, `set-default-source`, `set-default-sink` 명령으로 되돌린다.
+앱별 연결도 현재 스트림 번호를 다시 확인해 `move-source-output`/`move-sink-input`으로
+돌린다. 백업에 `pulse/default.pa`가 있으면 해당 파일을 원래 위치에 복원하고, 없었다면
+이번에 새로 만든 `default.pa`만 제거한다. PulseAudio를 다시 시작하거나 재로그인하면
+이전 시작 설정이 적용된다. 재시작 중에는 오디오가 끊기므로 앱도 다시 연결한다.
+
 공유에는 `pulseaudio pulseaudio-utils libasound2-plugins`가 필요하며
 `malbut_test/setup.sh`에서 설치한다. 기존 설치에는 아래 명령을 한 번 실행한다.
 
