@@ -13,6 +13,10 @@ APPROACH_LIMIT_S = 60.0
 # from, so the photos before and after show the same side (the user, 2026-10-17).
 # Looking again from where it was first seen asks for that whole distance.
 APPROACH_STANDOFF_MAX_M = 10.0
+# Already inside a stop circle this small, the robot looks from where it stands
+# (the user, 2026-10-19): 22:33 it saw the person 0.6 m away, turned round to
+# drive back out to 1 m in a narrow room, failed and stopped 1.35 m off to the side.
+NEAR_M = 1.0
 RETURN_LIMIT_S = 60.0
 # Only part of the body was seen from 1 m (2026-10-11): move back to the
 # distance the fall rules ask for, within the user's one minute.
@@ -171,6 +175,15 @@ def approach_places(reference, target, standoff_m):
     """
     return [place for radius in (standoff_m, *(r for r in VIEW_RADII_M if r > standoff_m + 1e-9))
             for place in ring_places(reference, target, radius)]
+
+
+def already_near(robot, target, standoff_m):
+    """Inside the stop circle already: look from here, no drive.
+
+    Only for a circle of at most 1 m: looking again from where it was first seen
+    farther away still goes there.
+    """
+    return standoff_m <= NEAR_M and math.dist((robot.x, robot.y), target) <= standoff_m
 
 
 def within_detour(robot, goal, length):
