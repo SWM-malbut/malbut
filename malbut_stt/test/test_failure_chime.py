@@ -453,16 +453,18 @@ def test_web_lease_blocks_silence_feedback_and_requires_fresh_wake_after_release
     assert_local_failure(run)
 
 
-def test_confirmation_keeps_silence_and_recognition_failure_policy(run):
+def test_confirmation_keeps_listening_after_empty_recognition_without_failure_sound(run):
     p = run.pipeline
     assert p.start_session('fall-1')
     p.feed(QUIET * 750)
     assert p.session_is_active('fall-1') and run.chimes == run.statuses == []
-    failed = final_command(run)
-    reply(run, failed)
+    discarded = final_command(run)
+    reply(run, discarded)
     assert p.session_is_active('fall-1') and p.session.utterance_id is None
     assert run.chimes == run.transcripts == []
-    assert run.statuses[-1] == ('fall-1', failed[2], 'failed')
+    assert run.statuses == [
+        ('fall-1', discarded[2], 'started'), ('fall-1', discarded[2], 'discarded'),
+    ]
     retry = final_command(run)
     reply(run, retry, '아니')
     assert run.transcripts == [(retry[2], '아니')]
