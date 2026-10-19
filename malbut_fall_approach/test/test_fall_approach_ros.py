@@ -318,6 +318,26 @@ def test_with_no_place_reached_it_faces_the_spot_from_where_it_is(ros):
     assert nav.turns[-1] == pytest.approx(math.pi / 2, abs=1e-3)
 
 
+def test_already_inside_the_1_m_circle_it_only_faces_the_spot(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    # 2026-10-19 22:32: 0.6 m away, driving back out to 1 m failed in a narrow room.
+    result = send(request_id='near', phase='approach', x=0.0, y=0.6, standoff_m=1.0)
+    assert (result.outcome, result.detail) == ('arrived', 'already 0.6 m from the spot')
+    assert not nav.planned and not nav.driven
+    assert nav.turns == [pytest.approx(math.pi / 2, abs=1e-3)]
+    assert result.held
+
+
+def test_looking_again_from_farther_where_it_was_first_seen_still_drives_there(ros):
+    _, fake, send, _, _ = ros
+    nav = FakeNav2(fake)
+    result = send(request_id='again', phase='approach', x=0.8, y=0.0, standoff_m=2.0,
+                  from_x=-1.2, from_y=0.0)
+    assert (result.outcome, result.detail) == ('arrived', '')
+    assert _end(nav) == pytest.approx((-1.2, 0.0), abs=0.01)
+
+
 NAMES = ('nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_shoulder',
          'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist', 'left_hip',
          'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle')

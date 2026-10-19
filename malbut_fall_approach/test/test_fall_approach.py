@@ -5,8 +5,8 @@ import math
 import pytest
 
 from malbut_fall_approach.fall_approach import (
-    Pose2D, StartPoses, approach_places, facing_turn, first_seen, goal_error, returning_turn,
-    ring_places,
+    Pose2D, StartPoses, already_near, approach_places, facing_turn, first_seen, goal_error,
+    returning_turn, ring_places,
 )
 
 
@@ -69,3 +69,13 @@ def test_wider_circles_follow_the_standoff_circle():
     # Looking again from where it was first seen: that point itself comes first.
     again = approach_places((0.0, 4.0), (3.0, 0.0), 5.0)
     assert len(again) == 12 and again[0] == pytest.approx((0.0, 4.0))
+
+
+def test_inside_the_1_m_circle_already_the_robot_stays():
+    robot = Pose2D(-0.244, 0.983, 0.0)
+    # 2026-10-19 22:32: the person lay 0.6 m away.
+    assert already_near(robot, (-0.6, 0.53), 1.0)
+    assert not already_near(robot, (-0.6, 0.53), 0.5)
+    assert not already_near(robot, (-1.0, 0.0), 1.0)
+    # Looking again from where it was first seen, 2.5 m away, still goes there.
+    assert not already_near(robot, (-0.6, 0.53), 2.5)

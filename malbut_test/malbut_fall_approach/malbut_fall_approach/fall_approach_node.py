@@ -33,8 +33,8 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from malbut_fall_approach.fall_approach import (
     APPROACH_LIMIT_S, BACKUP_SPEED_MPS, CAMERA_HFOV_RAD,
     HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid,
-    Pose2D, StartPoses, TorsoWatch, approach_places, backup_distance, can_stand, facing_turn,
-    first_seen, goal_error, returning_turn, route_length, sight_clear, target_pose,
+    Pose2D, StartPoses, TorsoWatch, already_near, approach_places, backup_distance, can_stand,
+    facing_turn, first_seen, goal_error, returning_turn, route_length, sight_clear, target_pose,
     UNSEEN_VIEW_M, view_places, within_detour,
 )
 
@@ -183,13 +183,19 @@ class FallApproachNode(Node):
         side, then the wider circles of the view. A place has to stand clear and
         see the spot on the costmap; a failed drive moves on to the next one.
         With none reached the robot faces the spot from where it is, and the
-        fall rules decide what to do there.
+        fall rules decide what to do there. Already inside the 1 m circle, it only
+        faces the spot (the user, 2026-10-19).
         """
         robot = self._pose()
         if robot is None:
             return 'no_map', 'no robot pose on the map'
         self.starts.remember(request.request_id, robot)
         target = (request.x, request.y)
+        if already_near(robot, target, request.standoff_m):
+            if self._turn_to(handle, target, deadline) is not True:
+                return 'arrived', 'could not turn to face the spot'
+            gap = math.dist((robot.x, robot.y), target)
+            return 'arrived', f'already {gap:.1f} m from the spot'
         places = approach_places(first_seen(request.from_x, request.from_y, robot), target,
                                  request.standoff_m)
         grid = self.grid
