@@ -1,4 +1,4 @@
-"""Where the drive goes to see the whole body, and which view goals it takes."""
+"""Backing away to see the whole body, the places an approach may stop, and the goals."""
 
 import math
 
@@ -6,7 +6,7 @@ import pytest
 
 from malbut_fall_approach.fall_approach import (
     INSCRIBED_COST, LETHAL_COST, CostGrid, Pose2D, backup_distance, can_stand, goal_error,
-    sight_clear, view_places, within_detour,
+    sight_clear,
 )
 
 # The farthest the Agent's fall rules let the view go (VIEW_MAX_M there).
@@ -30,22 +30,6 @@ def wall(x, y_from, y_to, cost=LETHAL_COST):
     return {(x, y_from + i * 0.05): cost for i in range(int((y_to - y_from) / 0.05) + 1)}
 
 
-def test_view_places_go_round_the_spot_nearest_ring_first_up_to_the_asked_distance():
-    places = view_places((3.0, 1.0), (2.0, 1.0), VIEW_MAX_M)
-    assert len(places) == 48  # Four rings of twelve.
-    assert sorted({round(math.dist(p, (2.0, 1.0)), 6) for p in places}) == [1.5, 2.0, 2.5, 3.0]
-    first = places[:12]
-    assert all(math.dist(p, (2.0, 1.0)) == pytest.approx(1.5) for p in first)
-    assert first[0] == pytest.approx((3.5, 1.0))  # Straight back from the spot.
-    # 30 degrees apart, alternating sides, ending opposite the robot.
-    assert first[1] == pytest.approx((2.0 + 1.5 * math.cos(math.radians(30)),
-                                      1.0 + 1.5 * math.sin(math.radians(30))))
-    assert first[2][1] == pytest.approx(1.0 - 1.5 * math.sin(math.radians(30)))
-    assert first[-1] == pytest.approx((0.5, 1.0))
-    # Never farther than asked.
-    assert len(view_places((3.0, 1.0), (2.0, 1.0), 2.0)) == 24
-
-
 def test_a_wall_between_blocks_sight_but_unknown_and_inflation_do_not():
     spot = (0.0, 0.0)
     assert sight_clear(grid({}), (2.5, 0.0), spot)
@@ -66,11 +50,6 @@ def test_the_robot_must_stand_on_known_floor_clear_of_obstacles():
     assert not can_stand(floor, (3.0, 3.0))
     assert can_stand(floor, (4.0, 4.0))  # Near a wall but outside the footprint.
     assert not can_stand(floor, (6.0, 0.0))  # Off the costmap.
-
-
-def test_a_path_may_be_at_most_twice_the_straight_line():
-    assert within_detour((0.0, 0.0), (2.0, 0.0), 4.0)
-    assert not within_detour((0.0, 0.0), (2.0, 0.0), 4.2)
 
 
 def test_backs_up_only_when_facing_the_spot_and_short_of_the_distance():

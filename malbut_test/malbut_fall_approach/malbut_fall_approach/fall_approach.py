@@ -25,13 +25,12 @@ VIEW_LIMIT_S = 60.0
 # drove off to a far place, losing the person; the camera showed the whole body
 # from 1.23 m on the way back. The view now watches the detector and stops once
 # the person's torso is in view (the user, 2026-10-13), at most the asked distance
-# from the spot. When the robot cannot back away, places around the spot are
-# tried nearest first: they have to see the spot on the costmap and be near by
-# path (at most twice the straight line, judged once, from where the view began).
+# from the spot. It only backs straight away facing the spot (the user,
+# 2026-10-19): turning round to drive to places around it failed in narrow rooms
+# (10-12 16:31, 10-13 16:51, 10-19 22:33). The rings are the approach's wider
+# circles when the 1 m one is blocked; the widest is the view's longest distance.
 VIEW_RADII_M = (1.5, 2.0, 2.5, 3.0)
 VIEW_TURN_STEP_DEG = 30.0
-VIEW_DETOUR_FACTOR = 2.0
-VIEW_DETOUR_SLACK_M = 0.05
 # The person lies around the spot and is an obstacle on the costmap: sight is
 # checked up to this far from it.
 BODY_CLEAR_M = 1.0
@@ -156,16 +155,6 @@ def ring_places(reference, target, radius):
              target[1] + radius * math.sin(base + math.radians(turn))) for turn in turns]
 
 
-def view_places(robot, target, distance):
-    """Where the body may be seen from, nearest ring first, at most ``distance`` away.
-
-    Each ring starts straight back from the spot (seen from the robot's side)
-    and goes around it both ways.
-    """
-    return [place for radius in VIEW_RADII_M if BODY_CLEAR_M < radius <= distance + 1e-9
-            for place in ring_places(robot, target, radius)]
-
-
 def approach_places(reference, target, standoff_m):
     """Where to stop: the standoff circle from the first-seen side, then wider circles.
 
@@ -186,11 +175,6 @@ def already_near(robot, target, standoff_m):
     return standoff_m <= NEAR_M and math.dist((robot.x, robot.y), target) <= standoff_m
 
 
-def within_detour(robot, goal, length):
-    """Check the path is at most twice the straight line (the user, 2026-10-12)."""
-    return length <= VIEW_DETOUR_FACTOR * math.dist(robot, goal) + VIEW_DETOUR_SLACK_M
-
-
 def backup_distance(robot, target, distance):
     """How far to back straight away from the spot, or 0 when not facing it."""
     gap = math.hypot(target[0] - robot.x, target[1] - robot.y)
@@ -199,10 +183,6 @@ def backup_distance(robot, target, distance):
     off = normalize_angle(math.atan2(target[1] - robot.y, target[0] - robot.x) - robot.yaw)
     back = distance - gap
     return back if abs(off) <= BACKUP_FACING_RAD and back >= BACKUP_MIN_M else 0.0
-
-
-def route_length(points):
-    return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
 
 
 def facing_turn(robot, target):
@@ -326,7 +306,7 @@ def view_score(pose):
 
 
 class TorsoWatch:
-    """Whether the torso has stayed in view, and where the body was seen best."""
+    """Whether the torso has stayed in view, and whether the person was picked out."""
 
     def __init__(self):
         self.reset()

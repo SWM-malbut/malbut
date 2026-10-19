@@ -100,7 +100,7 @@ approach_target 있음 → fall_approach(phase=approach) 미션: 금지 구역�
 
 ```
 person_check_completed
-  ├ partial_body(사람) → fall_approach(phase=view, standoff 최대 3 m): 몸통이 보이면 멈춤(바라본 채 후진, 안 되면 주변 자리), 끝까지 안 보이면 가장 잘 보인 자리
+  ├ partial_body(사람) → fall_approach(phase=view, standoff 최대 3 m): 몸통이 보이면 멈춤(바라본 채 후진만), 끝까지 안 보이면 그 자리(10-19)
   │    └ view_result → 런타임이 Cloud 자세 확인 2번(2.5초 간격) → posture_check_completed
   └ posture_check_completed
        ├ sitting_off_floor · standing → 질문 없음. 런타임이 off_floor_verified로 종료 → return(reason=off_floor)
