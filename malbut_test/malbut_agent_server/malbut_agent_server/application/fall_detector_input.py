@@ -214,9 +214,14 @@ class FallDetectorInput:
                 level = track.get('confidenceLevel')
                 if level not in (None, 'strong', 'weak'):
                     raise ValueError('invalid subject confidence level')
+                torso = track.get('torso')
+                if torso is not None and (not isinstance(torso, list) or not all(
+                        isinstance(p, list) for p in torso)):
+                    raise ValueError('invalid subject torso')
                 subjects.append(SubjectPose(
                     track['targetTrackId'], tuple(box) if isinstance(box, list) else box,
-                    check, usable, None if level is None else level == 'strong'))
+                    check, usable, None if level is None else level == 'strong',
+                    None if torso is None else tuple(tuple(p) for p in torso)))
             # Validate duplicate identities and full payload before side effects.
             SubjectFrame(capture, tuple(subjects), data['subjectCheckMaxGapSec'])
         prepared = []
@@ -300,7 +305,7 @@ class FallDetectorInput:
             self.monitor.ingest_subject_frame(SubjectFrame(
                 observed_frame, tuple(SubjectPose(
                     f'pose:{self._generation}:{p.subject_key}', p.box, p.state,
-                    p.association_usable, p.strong) for p in mapped_frame.subjects),
+                    p.association_usable, p.strong, p.torso) for p in mapped_frame.subjects),
                 data['subjectCheckMaxGapSec'],
                 camera_stationary=data.get('robotMotion') == 'stationary',
                 camera_moving=data.get('robotMotion') == 'moving'))

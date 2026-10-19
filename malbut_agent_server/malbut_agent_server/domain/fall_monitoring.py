@@ -227,6 +227,9 @@ class SubjectPose:
     association_usable: bool
     # Detector box score level for display only; None from an older detector.
     strong: Optional[bool] = None
+    # The torso keypoints (nose, shoulders, hips) the detector was sure of, normalized
+    # (x, y): its map place is measured on them (SWM25-267). None from an older detector.
+    torso: Optional[Tuple[Tuple[float, float], ...]] = None
 
     def __post_init__(self):
         identifier(self.subject_key)
@@ -242,6 +245,12 @@ class SubjectPose:
             raise ValueError('invalid subject box')
         if self.association_usable and self.box is None:
             raise ValueError('association requires an observed box')
+        if self.torso is not None and (
+                not isinstance(self.torso, tuple) or len(self.torso) > 5
+                or any(not isinstance(p, tuple) or len(p) != 2
+                       or any(type(v) not in (int, float) or not math.isfinite(v)
+                              or not 0 <= v <= 1 for v in p) for p in self.torso)):
+            raise ValueError('invalid subject torso')
 
 
 @dataclass(frozen=True)

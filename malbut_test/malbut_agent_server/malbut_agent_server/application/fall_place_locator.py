@@ -1,4 +1,5 @@
-"""Map position of a Cloud box from aligned depth and the camera pose; not identity.
+"""Map position of a Cloud box, or a Pose person's torso keypoints, from aligned depth
+and the camera pose; not identity.
 
 The ROS adapter stores one geometry per accepted RGB frame under the same
 monitor time as the frame. Missing depth, intrinsics or a map pose leaves the
@@ -18,6 +19,11 @@ MAX_DEPTH_M = 5.0
 # Centre part of the box: edges often hit the floor or the wall behind.
 ROI_SCALE = 0.45
 MIN_SAMPLES = 5
+# A torso keypoint's depth: the pixels right around it in the (downsampled) depth.
+KEYPOINT_PATCH = 1
+# As the Pose runtime's torso height above the floor (fall_candidate._floor_height):
+# at least two keypoints measured, and at least half of those given.
+MIN_BODY_POINTS = 2
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,35 @@ def map_point3d(geometry: FrameGeometry, box) -> Optional[Tuple[float, float, fl
             z + geometry.translation[2])
 
 
+def body_point(geometry: FrameGeometry, points) -> Optional[Tuple[float, float]]:
+    """A Pose person's map place from their torso keypoints (normalized x, y): each
+    keypoint's median depth around it, projected through it, and the median of those
+    places (SWM25-267, as Docekal et al. 2022 lift keypoints with depth).
+
+    The box centre is not always on the body: someone cut off at the image edge left
+    the centre on the wall behind (10-19 20:02, 0.9 m measured as 2.4 m). Too few
+    keypoints measured: None, the place unknown rather than wrong."""
+    rows, cols = geometry.depth_mm.shape
+    places = []
+    for x, y in points:
+        column = min(cols - 1, max(0, int(round(x * (cols - 1)))))
+        row = min(rows - 1, max(0, int(round(y * (rows - 1)))))
+        patch = geometry.depth_mm[max(0, row - KEYPOINT_PATCH):row + KEYPOINT_PATCH + 1,
+                                  max(0, column - KEYPOINT_PATCH):column + KEYPOINT_PATCH + 1]
+        depth = patch.astype(np.float64) / 1000
+        valid = depth[(depth >= MIN_DEPTH_M) & (depth <= MAX_DEPTH_M)]
+        if valid.size == 0:
+            continue
+        z = float(np.median(valid))
+        u, v = x * geometry.width, y * geometry.height
+        camera = ((u - geometry.cx) * z / geometry.fx, (v - geometry.cy) * z / geometry.fy, z)
+        px, py, _ = _rotate(geometry.rotation, camera)
+        places.append((px + geometry.translation[0], py + geometry.translation[1]))
+    if len(places) < MIN_BODY_POINTS or 2 * len(places) < len(points):
+        return None
+    return (float(np.median([p[0] for p in places])), float(np.median([p[1] for p in places])))
+
+
 class FallPlaceLocator:
     """Bounded per-frame geometry; Cloud replies arrive up to ~20 s after capture."""
 
@@ -137,6 +172,15 @@ class FallPlaceLocator:
         """Pose runs on its own frames: use the nearest RGB geometry within tolerance."""
         point = self.locate3d_near(observed_at, box, tolerance_s=tolerance_s)
         return None if point is None else point[:2]
+
+    def locate_body_near(self, observed_at, points, *, tolerance_s=0.25):
+        """A Pose person's map place from their torso keypoints (body_point)."""
+        if not self._frames:
+            return None
+        stamp = min(self._frames, key=lambda t: abs(t - observed_at))
+        if abs(stamp - observed_at) > tolerance_s:
+            return None
+        return body_point(self._frames[stamp], points)
 
     def locate3d(self, captured_at, box):
         geometry = self._frames.get(captured_at)

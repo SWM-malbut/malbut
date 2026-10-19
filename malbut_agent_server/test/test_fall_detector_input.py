@@ -130,3 +130,40 @@ def test_with_the_fall_rules_person_tracking_tracks_go_out_as_yolo_gave_them():
     assert adapter._pose_aliases.key('p2') == 'p2'
     frame = object()
     assert adapter._pose_aliases.observe(frame, stationary=True) is frame
+
+
+class Subjects:
+    """Only the subject frames the detector input hands on."""
+
+    def __init__(self):
+        self.frames = []
+
+    def configure(self, **settings):
+        pass
+
+    def invalidate_subject_input(self):
+        pass
+
+    def ingest_subject_frame(self, frame):
+        self.frames.append(frame)
+
+
+def test_each_track_brings_its_torso_keypoints_for_its_map_place():
+    """SWM25-267: the place is measured on the torso, not the box centre."""
+    monitor = Subjects()
+    adapter = FallDetectorInput(monitor, max_source_age_s=2, pose_aliases=False)
+    row = dict(targetTrackId='p1', trackingState='tracked', associationUsable=False,
+               box=[0.0, 0.1, 0.09, 0.9], subjectCheck={'state': 'unknown'})
+    message = json.loads(candidates())
+    message.update(subjectCheckVersion=1, subjectCheckMaxGapSec=0.5, captureTimeSec=1000,
+                   robotMotion='moving', unassignedCount=0,
+                   tracks=[dict(row, torso=[[0.02, 0.3], [0.03, 0.5]]),
+                           dict(row, targetTrackId='p2', torso=[]),
+                           dict(row, targetTrackId='p3')])
+    adapter.candidates(json.dumps(message), source_now=1000, now=100)
+    torso = [p.torso for p in monitor.frames[-1].subjects]
+    assert torso == [((0.02, 0.3), (0.03, 0.5)), (), None]  # None: an older detector
+    for bad in ([[0.02]], [[1.5, 0.3]], 'x', [[0.1, 0.1]] * 6):
+        message['tracks'] = [dict(row, torso=bad)]
+        with pytest.raises(ValueError):
+            adapter.candidates(json.dumps(message), source_now=1000, now=100)

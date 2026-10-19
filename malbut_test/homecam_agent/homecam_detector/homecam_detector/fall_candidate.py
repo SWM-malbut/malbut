@@ -12,6 +12,7 @@ import math
 from typing import Deque, Dict, Mapping, Optional, Tuple
 from uuid import uuid4
 
+from .aurora_depth import TORSO_KEYPOINTS
 from .pose import PersonPose
 from .pose_tracker import PoseTrackingResult
 
@@ -297,6 +298,13 @@ class FallCandidateDetector:
             diagnostic = dict(targetTrackId=track.track_id, trackingState=track.state,
                               features=asdict(feature) if feature else None,
                               box=list(track.pose.box) if track.pose else None,
+                              # Where the torso is, for its map place (SWM25-267): the
+                              # box centre can miss the body of someone cut off.
+                              torso=([[round(p.x, 4), round(p.y, 4)]
+                                      for p in track.pose.keypoints
+                                      if p.name in TORSO_KEYPOINTS
+                                      and p.confidence >= self.config.keypoint_threshold]
+                                     if track.pose else None),
                               # Display hint only: weak boxes also land on clothes or bedding.
                               confidenceLevel=track.confidence_level if track.pose else None,
                               associationUsable=bool(
