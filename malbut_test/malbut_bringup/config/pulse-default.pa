@@ -1,0 +1,7 @@
+# Keep the distribution defaults and saved device/stream choices.
+.include /etc/pulse/default.pa
+
+# Do not replace the chosen devices merely because another USB device appears.
+.nofail
+unload-module module-switch-on-connect
+.fail
