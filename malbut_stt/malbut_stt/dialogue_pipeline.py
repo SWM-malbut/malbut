@@ -530,7 +530,7 @@ class DialoguePipeline:
         if self.session.session_id and reason.startswith((
                 'utterance_discarded:', 'transcription_queue_full',
                 'audio_queue_overflow')):
-            self._input_status('failed')
+            self._input_status('failed', '')
         stream = self.command_stream if self.session.active else self.wake_stream
         tail = self._tail_stream
         if tail is None and self._discard_capture and stream.collector.started:
@@ -952,11 +952,15 @@ class DialoguePipeline:
             elif not self.session.session_id:
                 self._fail_command(failure)
             else:
-                # Agent-owned confirmations retain their correlated failure policy.
-                self._input_status('failed', uid)
+                # Use the existing utterance/session failure distinction:
+                # a rejected candidate is retryable; an operational fault
+                # invalidates the whole confirmation session (empty ID).
+                discarded = error_name in ('SileroNonSpeech', 'InsufficientSpeechEvidence') or (
+                    error_name is None and isinstance(text, str) and not text.strip())
+                self._input_status('failed', uid if discarded else '')
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
-                self.report(failure)
+                self.report('confirmation_input_discarded:' + failure if discarded else failure)
             return
         if kind == 'wake':
             command = parse_wake_phrase(text)

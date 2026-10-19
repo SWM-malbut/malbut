@@ -222,17 +222,25 @@ def test_earlier_cloud_non_normal_is_not_erased_by_later_normals(assessment):
 
 
 @pytest.mark.parametrize('earlier_answer', [VoiceAnswer.HELP, VoiceAnswer.NO_RESPONSE])
-def test_notification_history_blocks_closure_after_new_okay_answer(earlier_answer):
+def test_only_notified_help_history_blocks_closure_after_new_okay_answer(earlier_answer):
     async def run():
         monitor, clock, _, iid = await two_checks(answer_early=False)
         answer(monitor, iid, earlier_answer)
+        assert monitor.incident(iid).state is not IncidentState.RESOLVED
         monitor.ask_question(iid)
         assert monitor.observe_subject(subject_check(monitor, iid, clock))
         answer(monitor, iid, VoiceAnswer.OKAY)
-        assert monitor.incident(iid).state is not IncidentState.RESOLVED
-        assert len([e for e in monitor.drain_events() if e.kind == 'notification_requested']) == 1
-        with pytest.raises(ValueError, match='not supported'):
-            monitor.resolve(iid, revision=1, reason='normal_verified')
+        notices = [e for e in monitor.drain_events() if e.kind == 'notification_requested']
+        if earlier_answer is VoiceAnswer.NO_RESPONSE:
+            # Silence did not create notification history or prove safety.
+            # A later, explicitly requested check has its own valid answer.
+            assert not notices
+            assert monitor.incident(iid).state is IncidentState.RESOLVED
+        else:
+            assert monitor.incident(iid).state is not IncidentState.RESOLVED
+            assert len(notices) == 1
+            with pytest.raises(ValueError, match='not supported'):
+                monitor.resolve(iid, revision=1, reason='normal_verified')
     asyncio.run(run())
 
 

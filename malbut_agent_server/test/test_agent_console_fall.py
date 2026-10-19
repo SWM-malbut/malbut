@@ -148,7 +148,7 @@ def test_fall_accepts_legacy_and_correlated_tts_events(monkeypatch, with_request
         rig.demo.close()
 
 
-def test_closing_audio_failure_does_not_deny_already_delivered_silence_result():
+def test_closing_audio_failure_does_not_deny_already_delivered_answer():
     rig = Rig()
     messages = []
     rig.demo.emit = messages.append
@@ -163,7 +163,7 @@ def test_closing_audio_failure_does_not_deny_already_delivered_silence_result():
     try:
         rig.start()
         rig.listen()
-        rig.now = 10.0
+        rig.answer('도와줘')
         rig.until(lambda: rig.demo.session.done)
         assert rig.demo.status == 'aborted'
         assert rig.demo.result.situation_assessment == 'unknown'
@@ -207,9 +207,10 @@ def test_demo_audio_wiring_and_cleanup(case):
             demo.poll()
             assert demo.result is None
             rig.now = 22.0
-            rig.finish()
+            rig.until(lambda: demo.session.done)
+            assert demo.status == 'succeeded' and len(rig.players) == 1
             assert (demo.result.situation_assessment, demo.result.help_needed) == (
-                'unknown', True)
+                'unknown', False)
         else:
             if case == 'lost_session':
                 demo.stt.stop_session(first_sid)

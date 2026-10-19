@@ -76,10 +76,11 @@ class FallConfirmationLink:
     status_publisher = None
     last_status = None
     status_at = -math.inf
+    confirmation_answers = None
 
     def __init__(self, node, *, runtime_id='', goal_response_timeout_s=5.0,
                  result_timeout_s=610.0, server_loss_timeout_s=5.0,
-                 clock=time.monotonic):
+                 clock=time.monotonic, confirmation_answers=None):
         from rclpy.action import ActionClient
         from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
         from rclpy.clock import Clock, ClockType
@@ -89,6 +90,7 @@ class FallConfirmationLink:
         from std_msgs.msg import String
 
         self.node = node
+        self.confirmation_answers = confirmation_answers
         self.lock = RLock()
         self.clock = clock
         self.goal_response_timeout_s = goal_response_timeout_s
@@ -110,6 +112,7 @@ class FallConfirmationLink:
         self.agent_presence = ActionClient(
             node, ConfirmSituation, '/malbut/agent/confirm_situation', callback_group=self.group)
         self.decisions = node.create_publisher(String, '/malbut/falls/runtime/decision', 10)
+        self.replies = node.create_publisher(String, '/malbut/falls/runtime/agent_reply', 10)
         self.status_publisher = node.create_publisher(String, CHECK_STATUS_TOPIC, 10)
         self.events = node.create_subscription(
             String, '/malbut/falls/runtime/events', self.on_event, 50,
@@ -136,7 +139,13 @@ class FallConfirmationLink:
 
     def _publish(self):
         for command in self.coordinator.drain_commands():
-            self.decisions.publish(self.message_type(data=json.dumps(command, allow_nan=False)))
+            if command['action'] == 'agent_reply':
+                # Use the existing reply topic and its unchanged six fields.
+                reply = {key: value for key, value in command.items()
+                         if key not in {'action', 'boot_id'}}
+                self.replies.publish(self.message_type(data=json.dumps(reply, allow_nan=False)))
+            else:
+                self.decisions.publish(self.message_type(data=json.dumps(command, allow_nan=False)))
 
     def on_voice(self, message):
         """Said during the check: help alerts at once; a stop ends it without a question.
@@ -511,9 +520,14 @@ class FallConfirmationLink:
                             request, 'speech_unavailable' if speech_off else 'question_error')
                     else:
                         result = yaml.safe_load(response.result.result_yaml)
-                        self.coordinator.complete(
-                            request, situation_assessment=result['situation_assessment'],
-                            help_needed=result['help_needed'])
+                        answer = (self.confirmation_answers.resolve(request.request_id, result)
+                                  if self.confirmation_answers is not None else None)
+                        if answer == 'no_response':
+                            self.coordinator.no_response(request)
+                        else:
+                            self.coordinator.complete(
+                                request, situation_assessment=result['situation_assessment'],
+                                help_needed=result['help_needed'])
             except Exception:
                 self.coordinator.resume(self.clock())
                 if self.mode in DRIVES:

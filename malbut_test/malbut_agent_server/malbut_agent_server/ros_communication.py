@@ -56,6 +56,7 @@ def create_communication_node(
     situation_factory=None,
     enable_manager_commands=False,
     prerecorded_audio=False,
+    confirmation_answers=None,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
@@ -179,6 +180,7 @@ def create_communication_node(
                     on_begin=self._begin_situation,
                     on_end=self._end_situation,
                     prerecorded_audio=prerecorded_audio,
+                    confirmation_answers=confirmation_answers,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
@@ -781,6 +783,8 @@ def run_with_fall_rules(args, ros_args, settings):
     rules = rules_executor = rules_thread = None
     node = executor = None
     initialized = False
+    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+    confirmation_answers = ConfirmationAnswers()
 
     def report(text):
         owner = rules if rules is not None else node
@@ -811,7 +815,8 @@ def run_with_fall_rules(args, ros_args, settings):
         try:
             rules = FallRulesNode(
                 runtime_id=args.fall_runtime_id, bridge_runtime_id=args.fall_bridge_runtime_id,
-                vlm_runtime_id=args.fall_vlm_runtime_id, flow=args.fall_flow)
+                vlm_runtime_id=args.fall_vlm_runtime_id, flow=args.fall_flow,
+                confirmation_answers=confirmation_answers)
             rules_executor = MultiThreadedExecutor(num_threads=2)
             rules_executor.add_node(rules)
         except Exception as error:
@@ -838,6 +843,7 @@ def run_with_fall_rules(args, ros_args, settings):
                     dialogue_settings=settings,
                     enable_manager_commands=args.enable_manager_commands,
                     prerecorded_audio=args.prerecorded_audio,
+                    confirmation_answers=confirmation_answers,
                 )
                 executor = SingleThreadedExecutor()
                 executor.add_node(node)

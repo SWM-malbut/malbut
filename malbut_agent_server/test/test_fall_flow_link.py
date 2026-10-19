@@ -13,6 +13,7 @@ import pytest
 from malbut_agent_server.fall_rules.fall_flow_link import (
     LOOK_TIMEOUT_S, FallFlowLink, parse_people, parse_sighting,
 )
+from test_fall_flow_sensor import robot, stored, web_accepts  # noqa: F401
 
 
 def state(*manual):
@@ -109,9 +110,16 @@ def test_a_sighting_is_filtered_then_driven_to_from_the_side_first_seen(rig):
         3.0, 1.0, 0.0, 0.0)
 
 
-def test_the_whole_check_runs_through_the_manager_until_the_question(rig):
+@pytest.mark.parametrize('silent', [False, True])
+def test_the_whole_check_runs_through_the_manager_until_the_question(rig, silent, robot):
+    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+    from malbut_agent_server.situation_dialogue import SituationResult
+
+    rig.link.confirmation_answers = ConfirmationAnswers()
+    sensor, _, _, journal = robot
     incident = open_incident(rig)
-    decisions(rig.link)
+    opened = next(d for d in decisions(rig.link) if d.get('event') == 'incident_opened')
+    sensor.apply(opened)
     drive = rig.goals[-1]
     handle, _ = accept(rig, drive)
     drive.feedback(SimpleNamespace(feedback=SimpleNamespace(
@@ -130,12 +138,33 @@ def test_the_whole_check_runs_through_the_manager_until_the_question(rig):
     assert '낙상이 의심' in arguments['summary']
     decisions(rig.link)
     _, result = accept(rig, rig.goals[-1])
-    succeed(result, situation_assessment='confirmed_incident', help_needed=True)
+    rig.link.confirmation_answers.remember(
+        arguments['request_id'], SituationResult('unknown', not silent), no_response=silent)
+    succeed(result, situation_assessment='unknown', help_needed=not silent)
     out = decisions(rig.link)
-    done = next(d for d in out if d.get('event') == 'confirmation_completed')
+    done = next(d for d in out if d.get('event') == (
+        'voice_result' if silent else 'confirmation_completed'))
     assert (done['state'], done['answer'], done['reason']) == (
-        'help_required', 'help_request', 'confirmed_incident')
-    assert [d['reason'] for d in out if d['action'] == 'notify'] == ['confirmation_help_required']
+        ('recheck_required', 'no_response', 'no_response') if silent
+        else ('help_required', 'help_request', 'unknown'))
+    notices = [d for d in out if d['action'] == 'notify']
+    if silent:
+        assert not notices
+        assert not any(d['action'] == 'ask' for d in out)
+    else:
+        notice, = notices
+        assert (notice['reason'], notice['level']) == ('confirmation_help_required', 'urgent')
+    assert not any(d.get('event') == 'agent_check_failed' for d in out)
+    for command in out:
+        if command['action'] in ('record', 'notify', 'left_open'):
+            sensor.apply(command)
+    rows = stored(journal)
+    for row in rows:
+        web_accepts(row)
+    final = [row for row in rows if row['eventKind'] != 'incident_opened']
+    assert final and all(row['answer'] == ('no_response' if silent else 'help_request')
+                         for row in final)
+    assert not any(row['eventKind'] == 'agent_check_failed' for row in final)
     assert rig.link.step is None and rig.link.held is None
     handle.cancel_goal_async.assert_not_called()  # The next step replaced the hold.
 

@@ -59,7 +59,7 @@ class SituationResult:
 
 @dataclass(frozen=True)
 class SituationTurn:
-    """A question or closing sentence; only closing turns carry a result."""
+    """A question, closing sentence, or silent final result."""
 
     text: str
     result: Optional[SituationResult] = None
@@ -212,11 +212,11 @@ class SituationDialogue:
         return self._last_turn
 
     def no_response(self):
-        """Escalate silence immediately while preserving established facts."""
+        """End without a help request, follow-up speech or a new judgment."""
         self._require_started()
         if self.result is not None:
             return self._last_turn
-        return self._finish(True, 'no_response')
+        return self._finish(False, 'no_response')
 
     def _evaluate(self, context):
         interpreted = self.provider.evaluate(context)
@@ -235,7 +235,7 @@ class SituationDialogue:
 
     def _finish(self, help_needed, reason):
         if reason == 'no_response':
-            closing = '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
+            closing = ''
         elif reason == 'unclear':
             closing = '상황을 충분히 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
         elif help_needed:

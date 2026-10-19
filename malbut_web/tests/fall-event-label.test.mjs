@@ -80,6 +80,17 @@ test("every alert reads 알림: level · what", () => {
   }
 });
 
+test("silence stays no response in stored events and labels, distinct from help and faults", () => {
+  const silent = event({ eventKind: "voice_result", state: "recheck_required",
+    answer: "no_response", reason: "no_response" });
+  assert.deepEqual(parseFallEvent(silent), silent);
+  assert.equal(fallEventLabel(silent), "대답: 없음");
+  assert.equal(fallEventLabel(event({ eventKind: "confirmation_completed", state: "help_required",
+    answer: "help_request", reason: "unknown" })), "대답: 도움 요청");
+  assert.equal(fallEventLabel(event({ eventKind: "agent_check_failed", state: "recheck_required",
+    answer: "failed", reason: "question_error" })), "말벗: 질문 중 오류가 나 물을 수 없음");
+});
+
 test("a question request never invents spoken text, delivery or an old assessment", () => {
   assert.equal(fallEventLabel(event({ eventKind: "question_requested", answer: "unclear" })), "말벗: 물어봄");
 });
