@@ -76,7 +76,8 @@ URGENT, CHECK, INFO = 'urgent', 'check', 'info'
 NOTICES = {
     'robot_could_not_confirm': URGENT,     # a minute of waiting, or no question possible
     'help_requested': URGENT,              # "도와줘" during the check
-    'confirmation_help_required': URGENT,  # the answer needs help (or no answer)
+    'confirmation_help_required': URGENT,  # the answer needs help
+    'person_no_response': CHECK,          # a played question received no answer
     'scene_answer_unconfirmed': CHECK,     # someone answered, maybe not this person
     'check_stopped_by_user': CHECK,        # "그만" during the check
     'person_may_differ': CHECK,            # a different person at the spot (design 6)
@@ -142,7 +143,7 @@ class Incident:
     look_id: Optional[str] = None  # the Cloud look this step waits for
     # The check round: 1, then one more each time the robot checks it again.
     check_round: int = 1
-    answer: Optional[str] = None   # the web answer: okay, help_request, unclear, failed
+    answer: Optional[str] = None   # okay, help_request, no_response, unclear, failed
     # Waiting on the Manager this round: since when, why, how long before.
     waiting_since: Optional[float] = None
     waiting_for: Optional[str] = None
@@ -451,7 +452,7 @@ class FallFlow:
             self._ask(incident)  # From the nearest place it reached (design 7).
 
     def asked(self, incident_id, answer, now, *, assessment=None, reason=None):
-        """okay, help (help or no answer), unclear (who answered) or failed (no question).
+        """okay, help, no_response, unclear (who answered) or failed (no question).
 
         ``assessment``: the Agent's situation (confirmed_incident, resolved, unknown);
         ``reason``: why it failed (speech_unavailable, question_error, time_limit).
@@ -481,6 +482,10 @@ class FallFlow:
             incident.answer, incident.idle = 'unclear', 'person'
             self._record('voice_result', incident, 'scene_answer_unassociated')
             self._idle(incident, 'person', 'scene_answer_unconfirmed', now)
+        elif answer == 'no_response':
+            incident.answer, incident.idle = 'no_response', 'person'
+            self._record('voice_result', incident, 'no_response')
+            self._idle(incident, 'person', 'person_no_response', now)
         else:
             incident.answer, incident.idle = 'failed', 'person'
             self._record('agent_check_failed', incident,

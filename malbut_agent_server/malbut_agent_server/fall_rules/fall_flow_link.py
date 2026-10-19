@@ -133,9 +133,11 @@ class FallFlowLink:
     """FallFlow's commands as VLM decisions and Manager missions, one step at a time."""
 
     approach_timeout_s = 90.0  # 60 s drive limit plus Manager and planner slack.
+    confirmation_answers = None
 
     def __init__(self, node, *, runtime_id='', goal_response_timeout_s=5.0,
-                 result_timeout_s=610.0, server_loss_timeout_s=5.0, clock=time.monotonic):
+                 result_timeout_s=610.0, server_loss_timeout_s=5.0, clock=time.monotonic,
+                 confirmation_answers=None):
         from rclpy.action import ActionClient
         from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
         from rclpy.clock import Clock, ClockType
@@ -149,6 +151,7 @@ class FallFlowLink:
                     math.isfinite(value) and value > 0):
                 raise ValueError('confirmation transport timeouts must be positive and finite')
         self.node, self.runtime_id = node, runtime_id
+        self.confirmation_answers = confirmation_answers
         self.goal_response_timeout_s = goal_response_timeout_s
         self.result_timeout_s = result_timeout_s
         self.server_loss_timeout_s = server_loss_timeout_s
@@ -591,7 +594,10 @@ class FallFlowLink:
                         else 'question_error'))
                 else:
                     result = yaml.safe_load(response.result.result_yaml)
-                    self._asked(step, 'help' if result['help_needed'] else 'okay',
+                    answer = (self.confirmation_answers.resolve(step['request_id'], result)
+                              if self.confirmation_answers is not None
+                              else 'help' if result['help_needed'] else 'okay')
+                    self._asked(step, answer,
                                 assessment=result.get('situation_assessment'))
             except Exception:
                 if step['kind'] == 'drive':

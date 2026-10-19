@@ -47,6 +47,7 @@ class SituationSpeechSession:
         self._outcome = None
         self._early_started = ''
         self._early_answer = None
+        self.no_response = False
 
     @property
     def done(self):
@@ -60,6 +61,7 @@ class SituationSpeechSession:
 
     def _submit(self, method, *args):
         self.phase = 'thinking'
+        self.no_response = method == 'no_response'
         self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
 
         def run():

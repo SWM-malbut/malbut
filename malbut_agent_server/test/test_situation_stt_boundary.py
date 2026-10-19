@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 from pathlib import Path
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -11,9 +12,11 @@ from test_situation_session import Harness
 
 
 @pytest.mark.parametrize('recognition', [
-    'silence', 'non_speech', 'quality_rejected', 'empty', 'answer', 'failure',
+    'silence', 'non_speech', 'quality_rejected', 'empty', 'answer', 'help', 'failure',
 ])
-def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkeypatch, recognition):
+def test_confirmation_survives_rejected_noise_but_preserves_real_failures(
+    monkeypatch, recognition, tmp_path,
+):
     monkeypatch.syspath_prepend(str(Path(__file__).parents[2] / 'malbut_stt'))
     from malbut_stt.dialogue_pipeline import DialoguePipeline
 
@@ -70,15 +73,16 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkey
             assert pipeline.session_is_active(sid)
             assert not h.finishes and not h.outcomes
         h.now = 9.0
-        if recognition == 'answer':
-            captured_result('그냥 누워 있었어', None)
+        if recognition in ('answer', 'help'):
+            captured_result('도와줘' if recognition == 'help' else '그냥 누워 있었어', None)
         elif recognition == 'failure':
             captured_result(error='SileroGateError')
             assert h.finishes == [('aborted', None)]
             assert not h.outcomes
             assert statuses[-1] == (sid, '', 'failed')
             return
-    if recognition != 'answer':
+    silent = recognition not in ('answer', 'help')
+    if silent:
         h.now = 10.0
         h.session.tick()
     h.complete_work()
@@ -88,20 +92,57 @@ def test_confirmation_survives_rejected_noise_but_preserves_real_failures(monkey
     assert outcome.situation_assessment == ('resolved' if recognition == 'answer' else 'unknown')
     assert not pipeline.session.active
     assert all(uid for _, uid, state in statuses if state == 'failed')
-    if recognition != 'answer':
+    assert h.session.no_response is silent
+    if silent:
         assert h.events[-1][1] == '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
     h.session.playback(h.session.playback_id, 'finished')
     assert h.finishes == [('succeeded', outcome)]
 
     # The same completed result must not create the web's question-error event.
-    from malbut_agent_server.fall_runtime import apply_decision
-    from test_fall_confirmation_result import assessed, result
+    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+    from malbut_agent_server.fall_rules.fall_confirmation import FallConfirmationCoordinator
+    from malbut_agent_server.fall_runtime import apply_decision, event_metadata, parse_agent_reply
+    from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
+    from test_fall_confirmation_result import assessed
 
     monitor, _, _, iid = assessed()
-    monitor.drain_events()
-    assert apply_decision(monitor, result(
-        monitor, iid, situation_assessment=outcome.situation_assessment,
-        help_needed=outcome.help_needed))
+    question = next(e for e in monitor.drain_events() if e.kind == 'question_requested')
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    assert coordinator.receive(json.dumps(dict(
+        event_metadata(question), boot_id=monitor.boot_id, runtime_id='vlm')))
+    request, = coordinator.requests.values()
+    receipts = ConfirmationAnswers()
+    receipts.remember(request.request_id, outcome, no_response=h.session.no_response)
+    wire = dict(situation_assessment=outcome.situation_assessment, help_needed=outcome.help_needed)
+    if receipts.resolve(request.request_id, wire) == 'no_response':
+        assert coordinator.no_response(request)
+    else:
+        assert coordinator.complete(request, **wire)
+    command, = coordinator.drain_commands()
+    if command['action'] == 'agent_reply':
+        reply = {k: v for k, v in command.items() if k not in {'action', 'boot_id'}}
+        assert monitor.agent_reply(parse_agent_reply(json.dumps(reply)))
+        assert not monitor.agent_reply(parse_agent_reply(json.dumps(reply)))  # Replay is inert.
+    else:
+        assert apply_decision(monitor, json.dumps(command))
     events = monitor.drain_events()
     assert all(event.kind != 'agent_check_failed' for event in events)
     assert all(event.reason != 'question_error' for event in events)
+    expected = 'no_response' if silent else 'help_request' if recognition == 'help' else 'okay'
+    assert monitor.incident(iid).answer.value == expected
+    assert not monitor.pending_questions()
+    journal = SqliteFallJournal(tmp_path / 'events.sqlite', device_id='robot')
+    try:
+        for event in events:
+            journal.append(device_id='robot', boot_id=monitor.boot_id,
+                           event=event, incident=monitor.incident(iid))
+        records = [json.loads(row['payload']) for row in journal._db.execute(
+            'SELECT payload FROM incident_events')]
+        assert records and all(row['answer'] == expected for row in records)
+        if silent:
+            assert any(row['eventKind'] == 'voice_result' for row in records)
+            notice, = [row for row in records if row['eventKind'] == 'notification_requested']
+            assert (notice['reason'], notice['notificationLevel']) == ('person_no_response', 'check')
+            assert not any(row['state'] == 'help_required' for row in records)
+    finally:
+        journal.close()

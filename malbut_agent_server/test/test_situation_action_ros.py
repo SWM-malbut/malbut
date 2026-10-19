@@ -313,6 +313,10 @@ def test_non_speech_over_dds_completes_as_no_response_not_an_aborted_action(rig)
     assert result.result().status == GoalStatus.STATUS_SUCCEEDED
     assert result.result().result.situation_assessment == 'unknown'
     assert result.result().result.help_needed is True
+    assert set(result.result().result.get_fields_and_field_types()) == {
+        'situation_assessment', 'help_needed'}
+    assert rig.agent.situation.answers.resolve(session.request.request_id, dict(
+        situation_assessment='unknown', help_needed=True)) == 'no_response'
     assert rig.spoken[-1].text == '답변을 확인하지 못했어요. 도움이 필요한 상황으로 판단할게요.'
     assert len(rig.spoken) == 2
     assert any(request.check_only for request in rig.sessions)
