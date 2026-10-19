@@ -418,13 +418,16 @@ class Looks:
     """A fake appearance store: what was described, and a fixed similarity."""
 
     def __init__(self):
-        self.observed, self.compared, self.paired = [], [], False
+        self.observed, self.compared, self.paired, self.wanted = [], [], False, []
 
     def due(self, track, at):
         return True
 
     def ready(self, after):
         return self.paired
+
+    def want(self, track, since):
+        self.wanted.append((track, since))
 
     def observe(self, at, jpeg, people):
         self.observed.append((at, people))
@@ -445,6 +448,7 @@ def test_people_in_view_are_described_and_comparisons_answered(robot):
     sensor.apply(dict(action='compare', request_id='r1', a=dict(track='pose:1:a', at=90.0),
                       b=dict(track='pose:1:b', at=clock.value)))
     assert messages(sensor, 'fall_appearance') == []  # Waits for its second look.
+    assert looks.wanted == [('pose:1:b', clock.value)]  # Taken now, not on the round.
     looks.paired = True
     sensor.maintain_associations()
     answer, = messages(sensor, 'fall_appearance')
