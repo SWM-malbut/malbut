@@ -114,15 +114,19 @@ def parse_people(data):
 
 
 def restored_incident(data, now):
-    """An open incident from flow_ready, checked again from the start after a restart."""
+    """An open incident from flow_ready: checked again from the start after a restart,
+    unless it was left open for the guardian (``left``: nobody or person)."""
     first = parse_sighting(data.get('first'))
     round_ = data.get('check_round', 1)
     if type(round_) is not int or not 1 <= round_ <= 10000:
         raise ValueError('invalid check round')
+    left = data.get('left')
+    if left not in (None, 'nobody', 'person'):
+        raise ValueError('invalid left open')
     moments = [_text(m) for m in data.get('fall_moments') or [] if m][:2]
     # Nobody is bound yet: the first one seen for sure at its place (person_tracker).
     return Incident(_text(data.get('incident_id')), first, None, now, place=first.point,
-                    fall_moments=moments, check_round=round_)
+                    fall_moments=moments, check_round=round_, idle=left)
 
 
 class FallFlowLink:
@@ -327,7 +331,7 @@ class FallFlowLink:
             self.looks[fields['look_id']] = (fields['what'], key, self.clock())
             self._decide(dict(action='look', **{
                 k: (list(v) if isinstance(v, tuple) else v) for k, v in fields.items()}))
-        elif kind in ('record', 'notify', 'link', 'clip', 'people', 'compare'):
+        elif kind in ('record', 'notify', 'link', 'clip', 'people', 'compare', 'left_open'):
             self._decide(dict(action=kind, **fields))
         elif kind in ('drive', 'ask'):
             self._replace(dict(command))

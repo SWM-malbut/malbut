@@ -128,6 +128,7 @@ class FlowIncident:
     opened_at: float
     open: bool = True
     check_round: int = 1
+    left: Optional[str] = None     # left open for the guardian: nobody or person (restart)
     middle: list = field(default_factory=list)
     middle_at: float = -math.inf
     person: Optional[str] = None   # the Agent's person number: the yellow box (SWM25-267)
@@ -519,6 +520,12 @@ class FallFlowSensor:
                 self._clip_from(incident, sighting)
         elif action == 'people':
             self._people_numbers(data)
+        elif action == 'left_open':
+            incident = self._incident(_id(data.get('incident_id'), optional=False))
+            if incident is None or data.get('who') not in ('nobody', 'person'):
+                raise ValueError('invalid left open')
+            incident.left = data['who']
+            self._mark(incident, incident.check_round)
         elif action == 'compare':
             request_id = _id(data.get('request_id'), optional=False)
             sides = []
@@ -545,14 +552,16 @@ class FallFlowSensor:
         open_incidents = []
         stored = self._journal.open_flow_incidents() if self._journal is not None else [
             dict(incident_id=i.incident_id, boot_id=i.boot_id, payload=dict(first=i.first),
-                 check_round=i.check_round) for i in self._incidents.values() if i.open]
+                 check_round=i.check_round, left=i.left)
+            for i in self._incidents.values() if i.open]
         for row in stored:
             first = row['payload'].get('first')
             if not isinstance(first, dict):
                 continue
             open_incidents.append(dict(incident_id=row['incident_id'], first=first,
                                        check_round=row['check_round'],
-                                       fall_moments=row['payload'].get('fall_moments', [])))
+                                       fall_moments=row['payload'].get('fall_moments', []),
+                                       left=row.get('left')))
         now = self._now()
         recent = [message for message, *_ in self._sightings.values()
                   if now - message['at'] <= RECENT_S
@@ -567,7 +576,8 @@ class FallFlowSensor:
             if stored is not None:  # Opened before this process started.
                 incident = FlowIncident(incident_id, stored['boot_id'],
                                         stored['payload'].get('first') or {}, self._now(),
-                                        stored['open'], stored['check_round'])
+                                        stored['open'], stored['check_round'],
+                                        stored.get('left'))
                 self._incidents[incident_id] = incident
         return incident
 
@@ -617,6 +627,7 @@ class FallFlowSensor:
                 self._check_clip(incident, 'end', round_)
         elif event == 'recheck_started':
             incident.open = True
+            incident.left = None
             incident.middle.clear()
             incident.middle_at = -math.inf
             self._mark(incident, round_)
@@ -658,7 +669,7 @@ class FallFlowSensor:
     def _mark(self, incident, round_):
         if self._journal is not None:
             self._store(self._journal.mark_flow_incident, incident.incident_id,
-                        open=incident.open, check_round=round_)
+                        open=incident.open, check_round=round_, left=incident.left)
 
     def _store(self, method, *args, **kwargs):
         if self._storage_failed:

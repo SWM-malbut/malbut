@@ -492,6 +492,20 @@ def test_a_restarted_agent_gets_the_open_incidents_and_recent_suspicions(robot):
     assert [s['sighting_id'] for s in ready['recent']] == [sighting['sighting_id']]
 
 
+def test_left_open_for_the_guardian_is_kept_for_a_restart_until_checked_again(robot):
+    sensor, _, _, journal = robot
+    record(sensor, 'incident_opened', 'cloud_crosscheck', sighting_id='unknown')
+    sensor.apply(dict(action='left_open', incident_id='i1', who='person'))
+    assert journal.open_flow_incidents()[0]['left'] == 'person'
+    sensor.apply(dict(action='flow_hello', flow=True))
+    incident, = messages(sensor, 'flow_ready')[0]['open_incidents']
+    assert incident['left'] == 'person'
+    record(sensor, 'recheck_started', 'person_seen_again', check_round=2)
+    assert journal.open_flow_incidents()[0]['left'] is None
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='left_open', incident_id='i1', who='someone'))
+
+
 def test_a_guardian_close_is_passed_on_now_and_then(robot):
     sensor, clock, _, _ = robot
     record(sensor, 'incident_opened', 'cloud_crosscheck', sighting_id='unknown')

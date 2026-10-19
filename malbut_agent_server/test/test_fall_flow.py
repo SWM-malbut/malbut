@@ -429,7 +429,8 @@ def test_a_person_left_open_for_help_is_not_visited_again():
     robot.to_posture()
     robot.posture(('floor', None))
     robot.drive('closer')
-    robot.ask('help')
+    out = robot.ask('help')
+    assert [c['who'] for c in kinds(out, 'left_open')] == ['person']  # Kept for a restart.
     _, out = robot.see(track='t1')
     assert not drives(out) and robot.active() is None
 
@@ -455,6 +456,20 @@ def test_after_a_restart_open_incidents_are_checked_from_the_start():
     assert flow.status()['incident_id'] == 'i7' and drives(out, 'approach')
     assert flow.status()['purpose'] == 'restart'
     assert records(out, 'recheck_started') == ['agent_restart'] and incident.check_round == 2
+
+
+def test_after_a_restart_an_incident_left_for_the_guardian_stays_open_unchecked():
+    """10-17 22:19: left for the guardian after "help", then checked at every start."""
+    flow = FallFlow()
+    left = Incident('i7', Sighting('s1', 0.0, 'low', track='t1', point=SPOT, robot=FROM),
+                    None, 0.0, place=SPOT, idle='person')
+    cut = Incident('i8', Sighting('s2', 0.0, 'low', track='t2', point=(8.0, 0.0), robot=FROM),
+                   None, 0.0, place=(8.0, 0.0), step='posture')
+    flow.restore([left, cut], 5.0)
+    out = flow.drain()
+    assert records(out, 'recheck_started') == ['agent_restart']  # Only the one cut off.
+    assert flow.status()['incident_id'] == 'i8' and not notices(out)
+    assert (left.state, left.step, left.idle, left.check_round) == ('open', 'open', 'person', 1)
 
 
 def test_someone_unseen_for_30_minutes_is_forgotten():

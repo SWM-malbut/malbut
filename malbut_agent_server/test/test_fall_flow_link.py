@@ -184,6 +184,15 @@ def test_hello_until_the_vlm_is_ready_then_open_incidents_are_checked_again(rig)
     assert not decisions(rig.link, 'flow_hello')
 
 
+def test_an_incident_left_for_the_guardian_is_not_checked_again_after_a_restart(rig):
+    rig.link.tick()
+    event(rig.link, kind='flow_ready', flow=True, open_incidents=[dict(
+        incident_id='i-left', first=sighting(), check_round=1, fall_moments=[],
+        left='person')], recent=[])
+    assert not [d for d in decisions(rig.link, 'record') if d['event'] == 'recheck_started']
+    assert not rig.goals and rig.link.flow.incidents['i-left'].idle == 'person'
+
+
 def test_another_runtime_or_a_switch_mismatch_is_ignored(rig):
     rig.link.on_event(SimpleNamespace(data=json.dumps(dict(
         kind='fall_sighting', sighting=sighting(), runtime_id='someone-else'))))

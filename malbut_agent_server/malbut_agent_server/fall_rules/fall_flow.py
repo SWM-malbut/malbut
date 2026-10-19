@@ -577,13 +577,17 @@ class FallFlow:
                 self._recheck(memory, 'recheck', now)
 
     def restore(self, incidents, now):
-        """After a restart: every open incident is checked again from the start."""
+        """After a restart: an open incident cut off mid-check is checked again from the
+        start. One already left open for the guardian stays so (10-19: the 10-17 22:19
+        incident, left for the guardian, was checked again at every start for two days)."""
         self.now = now  # For the alert grouping (10 minutes).
         for incident in incidents:
             if incident.state != 'open' or incident.incident_id in self.incidents:
                 continue
             self.incidents[incident.incident_id] = incident
-            incident.idle = None
+            if incident.idle is not None:
+                incident.step = 'open'
+                continue
             self._new_round(incident, 'restart')
             self._enqueue(incident, 'restart')
         self._next(now)
@@ -768,6 +772,7 @@ class FallFlow:
         """Left open for the guardian: nobody verified there, or a person who needs help."""
         incident.idle = who
         incident.step = 'open'
+        self._command('left_open', incident, who=who)  # Kept by the VLM for a restart.
         if notice:
             self._notify(incident, notice)
         self._finish(incident, now, go_back=False)
