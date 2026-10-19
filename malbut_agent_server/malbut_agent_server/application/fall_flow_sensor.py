@@ -538,6 +538,7 @@ class FallFlowSensor:
             self._comparisons[request_id] = (*sides, self._now())
             while len(self._comparisons) > 32:
                 self._comparisons.popitem(last=False)
+            self._appearance.want(*sides[1])  # Its pair now, not on the five-second round.
             self._answer_comparisons()
         elif action == 'clip':
             incident = self._incident(_id(data.get('incident_id'), optional=False))
