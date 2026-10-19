@@ -141,3 +141,62 @@ def test_unsent_speech_is_not_recorded_as_already_announced(kind):
     assert announcer.handle(event(kind)) is None
     announcer._speak = lambda _: True
     assert announcer.handle(event(kind)) is not None
+
+
+@pytest.mark.parametrize('kind', ['unavailable', 'rejected', 'failed', 'unknown'])
+@pytest.mark.parametrize('prerecorded', [False, True])
+def test_immediate_notice_is_shared_with_successfully_published_direct_reply(kind, prerecorded):
+    spoken = []
+    audio = []
+    announcer = MissionAnnouncer(
+        lambda text: spoken.append(text) or True,
+        speak_audio=(lambda text, audio_id: audio.append((text, audio_id)) or True)
+        if prerecorded else None,
+    )
+    notice = event(kind)
+    with announcer.direct_reply('first') as acknowledge:
+        assert announcer.handle(notice) is None
+        assert spoken == []
+        spoken.append(event_speech(notice))  # Successful direct publication.
+        acknowledge(spoken[-1])
+    assert spoken == [event_speech(notice)]
+    assert audio == []
+    assert announcer.handle(notice) is None
+    if kind == 'unknown':
+        assert announcer.handle(event('succeeded')) == event_speech(event('succeeded'))
+
+
+@pytest.mark.parametrize('failure', ['suppressed', 'different_text', 'exception'])
+def test_failed_or_changed_direct_reply_does_not_consume_automatic_notice(failure):
+    spoken = []
+    announcer = MissionAnnouncer(lambda text: spoken.append(text) or True)
+    notice = event('unavailable')
+    try:
+        with announcer.direct_reply('first') as acknowledge:
+            announcer.handle(notice)
+            assert not spoken
+            if failure == 'exception':
+                raise RuntimeError('publication failed')
+            if failure == 'different_text':
+                acknowledge('대화가 변경되어 이전 실행 요청을 보내지 않았어요.')
+            # A false/None publication must not acknowledge anything.
+    except RuntimeError:
+        assert failure == 'exception'
+    assert spoken == [event_speech(notice)]
+
+
+def test_direct_notice_deduplication_is_per_request_and_preserves_other_events():
+    spoken = []
+    announcer = MissionAnnouncer(lambda text: spoken.append(text) or True)
+    for ident in ('first', 'second'):
+        with announcer.direct_reply(ident) as acknowledge:
+            notice = event('unavailable', request_id=ident)
+            announcer.handle(notice)
+            spoken.append(event_speech(notice))
+            acknowledge(spoken[-1])
+    assert spoken == [event_speech(event('unavailable'))] * 2
+    with announcer.direct_reply('third') as acknowledge:
+        assert announcer.handle(event('succeeded', request_id='other'))
+        announcer.handle(event('succeeded', request_id='third'))
+        acknowledge('네, 순찰을 시작하겠습니다.')
+    assert spoken[-2:] == [event_speech(event('succeeded'))] * 2

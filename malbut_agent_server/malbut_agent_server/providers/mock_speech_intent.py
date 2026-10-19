@@ -44,7 +44,7 @@ _GO = (
 )
 _CANCEL = (
     r'(?:(?:현재|지금)?(?:진행중인|실행중인)?'
-    r'(?:작업|이동|따라가기|추적|순찰)(?:을|를)?)?'
+    r'(?:작업|이동|따라가기|추적|순찰|지도만들기|지도작성|위치찾기|위치보정)(?:을|를)?)?'
     r'(?:(?:취소|중지|중단|정지)(?:' + _DO + r')?'
     r'|멈춰(?:줘|주세요|줄래)?(?:요)?|멈추세요|그만(?:해|해줘|해주세요)?(?:요)?)'
 )
@@ -101,6 +101,19 @@ def _patrol_intent(value, thoroughness):
     ))
 
 
+def mapping_fixture_arguments(utterance):
+    """Extract an explicit filename from the offline lab's mapping phrase."""
+    if not isinstance(utterance, str):
+        return None
+    match = re.fullmatch(
+        r'([A-Za-z0-9가-힣][A-Za-z0-9가-힣 _-]{0,63}?)'
+        r'(?:이라는 이름으로|라는 이름으로)?\s+지도(?:를)?\s*'
+        r'만들어\s*(?:줘|주세요|줄래)(?:요)?[.!?]?',
+        unicodedata.normalize('NFC', utterance).strip(),
+    )
+    return {'map_name': match[1].strip()} if match else None
+
+
 def matches_speech_fixture(utterance, tool_name, arguments):
     """Match fixed offline test phrases; this does not validate live LLM meaning."""
     if not isinstance(utterance, str) or any(c in _QUOTES for c in utterance):
@@ -126,4 +139,13 @@ def matches_speech_fixture(utterance, tool_name, arguments):
         ))
     if tool_name == 'request_patrol':
         return _patrol_intent(value, arguments['thoroughness'])
+    if tool_name == 'request_mapping':
+        return mapping_fixture_arguments(utterance) == arguments
+    if tool_name == 'request_relocalization':
+        prefix = r'지도전체에서' if arguments['method'] == 'global_search' else ''
+        return bool(re.fullmatch(
+            prefix + r'(?:(?:현재|내)위치(?:를)?다시찾아(?:줘|주세요|줄래)(?:요)?'
+            r'|위치(?:를)?다시찾아(?:줘|주세요|줄래)(?:요)?'
+            r'|위치보정(?:을)?' + _DO + r')', value,
+        ))
     return False

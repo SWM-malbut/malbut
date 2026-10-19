@@ -22,13 +22,14 @@ from uuid import uuid4
 import yaml
 
 
-_CAPABILITIES = ('follow_person', 'patrol', 'navigate_to_pose')
+_CAPABILITIES = ('follow_person', 'patrol', 'navigate_to_pose', 'autoslam', 'relocalize')
 _REMAPS = (
     '/malbut/mission/execute', '/malbut/state', '/malbut/localization/state',
     '/malbut/speech/transcript', '/malbut/speech/response',
     '/malbut/speech/input_status', '/malbut/speech/playback_status',
     '/malbut/speech/classify_addressee', '/malbut/speech/control_session',
     '/malbut/speech/control_playback', '/malbut/agent/confirm_situation',
+    '/malbut/falls/check/status', '/malbut/falls/check/voice',
 )
 
 
@@ -328,12 +329,14 @@ class VoiceLabGraph:
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('reply timeout must be positive and finite')
         self._wait(lambda: any(reply.get('utterance_id') == uid
-                               and reply.get('kind') not in {'progress', 'acknowledgement'} for reply in self.replies),
+                               and reply.get('kind') not in {'progress', 'acknowledgement'}
+                               for reply in self.replies),
                    'no final dialogue reply for ' + str(uid), timeout)
         self._drain_output()
         return deepcopy(next(
             reply for reply in self.replies
-            if reply.get('utterance_id') == uid and reply.get('kind') not in {'progress', 'acknowledgement'}))
+            if reply.get('utterance_id') == uid
+            and reply.get('kind') not in {'progress', 'acknowledgement'}))
 
     def status(self):
         """Return local laboratory evidence without polling a production graph."""
@@ -380,7 +383,7 @@ class VoiceLabGraph:
             self._behaviors[capability] = _Behavior(outcome, float(delay_s), float(cancel_delay_s))
 
     def reset_behaviors(self):
-        """Use continuous follow and successful finite navigation/patrol by default."""
+        """Use continuous follow and successful finite missions by default."""
         self._require_owner()
         for capability in _CAPABILITIES:
             self.set_behavior(capability, 'hold' if capability == 'follow_person' else 'success')
@@ -408,6 +411,12 @@ class VoiceLabGraph:
                 self._background.shutdown(timeout_sec=3.0)
             if self._thread is not None:
                 self._thread.join(timeout=3.0)
+            if self._background is not None:
+                # Humble's shutdown waits only for callbacks that entered its
+                # work tracker, not work still queued in the thread pool. Join
+                # that pool after dispatch stops and before destroying nodes:
+                # a queued timer callback still needs its ROS handle alive.
+                self._background._executor.shutdown(wait=True)
             for node in (self.manager, self._actuators):
                 if node is not None:
                     node.destroy_node()
@@ -433,7 +442,7 @@ class VoiceLabGraph:
 
 
 def _create_actuators(lab):
-    from malbut_interfaces.action import FollowPerson, Patrol
+    from malbut_interfaces.action import AutoSlam, FollowPerson, Patrol, Relocalize
     from nav2_msgs.action import NavigateToPose
     from rclpy.action import ActionServer, CancelResponse, GoalResponse
     from rclpy.callback_groups import ReentrantCallbackGroup
@@ -442,7 +451,8 @@ def _create_actuators(lab):
 
     class Actuators(Node):
         action_types = {'follow_person': FollowPerson, 'patrol': Patrol,
-                        'navigate_to_pose': NavigateToPose}
+                        'navigate_to_pose': NavigateToPose,
+                        'autoslam': AutoSlam, 'relocalize': Relocalize}
 
         def __init__(self):
             super().__init__('voice_lab_actuators')
@@ -501,6 +511,11 @@ def _create_actuators(lab):
                     elif capability == 'patrol':
                         feedback = Patrol.Feedback(state='OBSERVING', coverage_ratio=0.5,
                                                    viewpoints_visited=1)
+                    elif capability == 'autoslam':
+                        feedback = AutoSlam.Feedback(state='EXPLORING', frontier_count=2,
+                                                     known_area_m2=12.0)
+                    elif capability == 'relocalize':
+                        feedback = Relocalize.Feedback(state='SEARCHING', match_ratio=0.5)
                     else:
                         feedback = NavigateToPose.Feedback(distance_remaining=1.0)
                     handle.publish_feedback(feedback)
@@ -522,6 +537,19 @@ def _create_actuators(lab):
                                      message='voice lab patrol ' + outcome,
                                      coverage_ratio=1.0 if outcome == 'succeeded' else 0.5,
                                      viewpoints_visited=1)
+            if capability == 'autoslam':
+                return AutoSlam.Result(
+                    success=outcome == 'succeeded', message='voice lab mapping ' + outcome,
+                    map_yaml=(str(lab.directory / (handle.request.map_name + '.yaml'))
+                              if outcome == 'succeeded' else ''), known_area_m2=12.0)
+            if capability == 'relocalize':
+                result = Relocalize.Result(
+                    success=outcome == 'succeeded', message='voice lab relocalization ' + outcome,
+                    match_ratio=0.9 if outcome == 'succeeded' else 0.5)
+                if outcome == 'succeeded':
+                    result.pose.header.frame_id = 'map'
+                    result.pose.pose.pose.orientation.w = 1.0
+                return result
             return NavigateToPose.Result()
 
         def destroy_node(self):

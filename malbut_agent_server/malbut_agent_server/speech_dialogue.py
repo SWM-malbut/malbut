@@ -33,6 +33,7 @@ MEMORY_CHANGED_RESPONSE = (
 MAX_INTERRUPTION_IDS = 128
 MAX_SPEECH_ID_LENGTH = 256
 NAVIGATION_CONFIRMATION_SECONDS = 30.0
+MAPPING_NAME_SECONDS = 120.0
 NAVIGATION_CHANGED_RESPONSE = '지도나 방 정보가 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
 ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
 NEW_CONVERSATION_REQUESTS = frozenset({
@@ -61,12 +62,21 @@ class _DialogueReply(dict):
         super().__init__(fields)
         self._memory_validator = memory_validator
         self._mission_callback = None
+        self._mission_request_id = None
         self._on_publish = None
 
 
 @dataclass(frozen=True)
 class _NavigationConfirmation:
     proposal: object
+    conversation_id: str
+    generation: int
+    revision: int
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class _MappingNameQuestion:
     conversation_id: str
     generation: int
     revision: int
@@ -129,6 +139,7 @@ class DialogueWorker:
         self._missions = missions
         self._scene_source = scene_source
         self._navigation_confirmation = None
+        self._mapping_name_question = None
         self._user_id = validate_user_id(user_id)
         self._capacity = capacity
         self._condition = Condition()
@@ -278,6 +289,7 @@ class DialogueWorker:
         with self._condition:
             self._suspended = True
             self._navigation_confirmation = None
+            self._mapping_name_question = None
             self._generation += 1
             if self._active_progress is not None:
                 self._active_progress.finish(cancelled=True)
@@ -320,6 +332,7 @@ class DialogueWorker:
         with self._condition:
             self._closing = True
             self._navigation_confirmation = None
+            self._mapping_name_question = None
             if self._active_progress is not None:
                 self._active_progress.finish(cancelled=True)
             for _, _, _, progress in self._pending:
@@ -373,9 +386,12 @@ class DialogueWorker:
                         return
                     utterance_id, text, playback_id, progress = self._pending.popleft()
                     confirmation = None
+                    mapping_question = None
                     if playback_id is None:
                         confirmation = self._navigation_confirmation
                         self._navigation_confirmation = None
+                        mapping_question = self._mapping_name_question
+                        self._mapping_name_question = None
                     generation = self._generation
                     self._running = True
                     self._active_progress = progress
@@ -411,6 +427,10 @@ class DialogueWorker:
                     )
                     conversation_id = session.conversation_id
                     confirmation = self._valid_navigation_confirmation(session, confirmation)
+                    mapping_question = self._valid_mapping_name_question(session, mapping_question)
+                    fresh_request = not runtime.conversation_store.has_agent_request(
+                        self._user_id, request_id,
+                    )
                     locations = (self._missions.navigation_locations()
                                  if self._missions is not None else None)
                     if (confirmation is not None
@@ -442,6 +462,7 @@ class DialogueWorker:
                         navigation_locations=locations,
                         navigation_confirmation=(confirmation.proposal.location
                                                  if confirmation is not None else ''),
+                        mapping_name_requested=mapping_question is not None,
                     )
                     result = self._handle_with_progress(runtime, request, progress)
                     decision = result.decision
@@ -454,6 +475,7 @@ class DialogueWorker:
                         reply = self._mission_reply(
                             runtime, request, result, utterance_id, conversation_id,
                             confirmation=confirmation, navigation_binding=navigation_binding,
+                            mapping_question=mapping_question,
                         )
                     elif (decision.type not in {
                             'message', 'clarification', 'refusal',
@@ -477,6 +499,10 @@ class DialogueWorker:
                         if (self._missions is not None
                                 and result.safety.code == 'navigation_confirmation_required'):
                             self._prepare_navigation_confirmation(runtime, request, result, reply)
+                        elif (fresh_request and 'request_mapping' in request.available_tools
+                              and decision.type == 'clarification'
+                              and decision.clarification_for == 'mapping_name'):
+                            self._prepare_mapping_name_question(runtime, request, result, reply)
                 except CancelledError:
                     reply = None
                 except (ConversationNotFoundError, ConversationStateError):
@@ -565,8 +591,40 @@ class DialogueWorker:
 
         reply._on_publish = activate
 
+    def _valid_mapping_name_question(self, session, pending):
+        """Consume a question only in its current, unexpired conversation turn."""
+        if (pending is not None and time.monotonic() < pending.expires_at
+                and session.status == 'active'
+                and session.conversation_id == pending.conversation_id
+                and session.generation == pending.generation
+                and session.revision == pending.revision):
+            return pending
+        return None
+
+    def _prepare_mapping_name_question(self, runtime, request, result, reply):
+        """Arm a typed model question only once its committed reply is published."""
+        def activate():
+            expires_at = time.monotonic() + MAPPING_NAME_SECONDS
+            if self._running or self._pending:
+                return
+            try:
+                session = runtime.conversation_store.snapshot(
+                    self._user_id, request.conversation_id, limit=1,
+                ).session
+            except (ConversationNotFoundError, ConversationStateError, sqlite3.Error):
+                return
+            if (session.status == 'active'
+                    and session.generation == result.conversation_generation
+                    and session.revision == result.conversation_revision
+                    and time.monotonic() < expires_at):
+                self._mapping_name_question = _MappingNameQuestion(
+                    request.conversation_id, session.generation, session.revision, expires_at,
+                )
+
+        reply._on_publish = activate
+
     def _mission_reply(self, runtime, request, result, utterance_id, conversation_id,
-                       *, confirmation=None, navigation_binding=None):
+                       *, confirmation=None, navigation_binding=None, mapping_question=None):
         """Bind a committed proposal; send only at the ROS publication boundary."""
         decision = result.decision
         if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
@@ -610,9 +668,13 @@ class DialogueWorker:
                     and proposal.location == confirmation.proposal.location
                     and time.monotonic() >= confirmation.expires_at):
                 return '목적지 확인 시간이 지났어요. 다시 요청해 주세요.'
+            if (mapping_question is not None and decision.tool_name == 'request_mapping'
+                    and time.monotonic() >= mapping_question.expires_at):
+                return '요청의 유효 시간이 지나 실행하지 않았어요. 다시 말씀해 주세요.'
             return None
 
         reply._mission_callback = lambda: self._missions.dispatch(proposal, guard=guard)
+        reply._mission_request_id = proposal.manager_request_id
         return reply
 
     def _progress_notice(self, utterance_id, text, progress):

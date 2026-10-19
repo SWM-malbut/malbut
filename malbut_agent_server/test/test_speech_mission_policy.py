@@ -47,6 +47,12 @@ def evaluate(utterance, tool, arguments=None, *, policy=None, ttl=5000):
     ('제 뒤를 따라오실래요', 'request_follow_person', {}),
     ('집안을 좀 꼼꼼히 둘러봐 줘', 'request_patrol', {'thoroughness': 'thorough'}),
     ('집안 한 번 가볍게 돌아주겠니', 'request_patrol', {'thoroughness': 'light'}),
+    ('탐색해서 새 지도를 우리 집이라는 이름으로 남겨 줄래',
+     'request_mapping', {'map_name': '우리 집'}),
+    ('위치가 어긋난 것 같으니 다시 맞춰 줘',
+     'request_relocalization', {'method': 'auto'}),
+    ('저장 위치부터 보지 말고 지도 전체에서 찾아줘',
+     'request_relocalization', {'method': 'global_search'}),
     ('이제 그만 따라오셔도 돼요', 'cancel_voice_mission', {}),
 ])
 def test_structured_model_proposals_are_not_limited_by_utterance_grammar(
@@ -67,6 +73,11 @@ def test_structured_model_proposals_are_not_limited_by_utterance_grammar(
     ('request_patrol', {'thoroughness': 'fast'}),
     ('request_patrol', {'thoroughness': 1}),
     ('request_patrol', {}),
+    ('request_mapping', {}),
+    ('request_mapping', {'map_name': 'x' * 65}),
+    ('request_relocalization', {'method': 0}),
+    ('request_relocalization', {'method': 'given_pose'}),
+    ('request_relocalization', {'method': 'auto', 'initial_pose': {'x': 1}}),
 ])
 def test_strict_schema_rejects_unbounded_or_invented_payload(tool, arguments):
     with pytest.raises(ValidationError):

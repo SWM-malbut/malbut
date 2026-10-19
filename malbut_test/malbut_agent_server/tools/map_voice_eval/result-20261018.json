@@ -1,0 +1,680 @@
+{
+  "method": "Actual configured OpenAI LLM, real Agent and Manager, isolated fake Action servers; text replaces STT, no physical robot",
+  "oracle_note": "Expectations declared before inference. Baseline preemption expected CANCELED incorrectly: actual Manager contract uses FAILED/preempted. Original failure retained; v2 also verifies lower Action cancellation precedes the replacement goal.",
+  "raw_decision_note": "Orchestrator raw_decision can be overwritten by memory policy. diagnostic/fix_probe/final separately capture provider_before_policy.",
+  "phases": {
+    "pilot": {
+      "complete": true,
+      "scenarios": 3,
+      "expected_scenarios": 3,
+      "turns": 4,
+      "expected_turns": 4,
+      "statuses": {
+        "pass": 4
+      },
+      "live_responses": 4,
+      "action_goals": 2,
+      "errors": 0,
+      "groups": {
+        "map-missing-name": {
+          "pass": 2
+        },
+        "action-failure": {
+          "pass": 1
+        },
+        "manager-unavailable": {
+          "pass": 1
+        }
+      },
+      "failures": []
+    },
+    "baseline": {
+      "complete": true,
+      "scenarios": 167,
+      "expected_scenarios": 167,
+      "turns": 201,
+      "expected_turns": 201,
+      "statuses": {
+        "pass": 193,
+        "fail": 8
+      },
+      "live_responses": 201,
+      "action_goals": 98,
+      "errors": 0,
+      "groups": {
+        "map-missing-name": {
+          "pass": 19,
+          "fail": 1
+        },
+        "map-names": {
+          "pass": 15
+        },
+        "map-conversation": {
+          "pass": 23
+        },
+        "map-intent-boundary": {
+          "pass": 11,
+          "fail": 1
+        },
+        "map-invalid-name": {
+          "pass": 3,
+          "fail": 5
+        },
+        "map-limits": {
+          "pass": 2
+        },
+        "patrol-coverage": {
+          "pass": 24
+        },
+        "patrol-intent-boundary": {
+          "pass": 9
+        },
+        "patrol-limits": {
+          "pass": 3
+        },
+        "localization-method": {
+          "pass": 19
+        },
+        "localization-intent-boundary": {
+          "pass": 17
+        },
+        "localization-conversation": {
+          "pass": 4
+        },
+        "mission-cancellation": {
+          "pass": 23
+        },
+        "action-failure": {
+          "pass": 6
+        },
+        "manager-priority": {
+          "pass": 3,
+          "fail": 1
+        },
+        "repeatability": {
+          "pass": 9
+        },
+        "manager-unavailable": {
+          "pass": 3
+        }
+      },
+      "failures": [
+        {
+          "scenario": "map-invalid-name-3",
+          "turn": 1,
+          "utterance": "새 지도 만들어줘. 이름은 \"새집.yaml\" 이 문자열 그대로 사용해.",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "새집.yaml"
+          },
+          "reply": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
+          "failed_checks": [
+            "non_error_reply"
+          ]
+        },
+        {
+          "scenario": "map-invalid-name-5",
+          "turn": 1,
+          "utterance": "새 지도 만들어줘. 이름은 \"집!\" 이 문자열 그대로 사용해.",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "집!"
+          },
+          "reply": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
+          "failed_checks": [
+            "non_error_reply"
+          ]
+        },
+        {
+          "scenario": "patrol-map-preemption",
+          "turn": 2,
+          "utterance": "새집이라는 이름으로 지도 만들어줘",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "새집"
+          },
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "새집"
+          },
+          "reply": "네, 지도 만들기를 시작하겠습니다.",
+          "failed_checks": [
+            "preempted"
+          ]
+        },
+        {
+          "scenario": "map-unnamed-3",
+          "turn": 1,
+          "utterance": "집 안 탐색해서 지도 저장해줘",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "기억해 둘 내용을 한 가지만 다시 알려줄래요?",
+          "failed_checks": [
+            "reply_content"
+          ]
+        },
+        {
+          "scenario": "map-noncommand-4",
+          "turn": 1,
+          "utterance": "내일 새집이라는 이름으로 지도 만들어 줘",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "새집"
+          },
+          "reply": "네, 지도 만들기를 시작하겠습니다.",
+          "failed_checks": [
+            "tool",
+            "no_mission"
+          ]
+        },
+        {
+          "scenario": "map-invalid-name-2",
+          "turn": 1,
+          "utterance": "새 지도 만들어줘. 이름은 \"/tmp/home\" 이 문자열 그대로 사용해.",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "/tmp/home"
+          },
+          "reply": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
+          "failed_checks": [
+            "non_error_reply"
+          ]
+        },
+        {
+          "scenario": "map-invalid-name-4",
+          "turn": 1,
+          "utterance": "새 지도 만들어줘. 이름은 \"집/거실\" 이 문자열 그대로 사용해.",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "집/거실"
+          },
+          "reply": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
+          "failed_checks": [
+            "non_error_reply"
+          ]
+        },
+        {
+          "scenario": "map-invalid-name-6",
+          "turn": 1,
+          "utterance": "새 지도 만들어줘. 이름은 \"🙂\" 이 문자열 그대로 사용해.",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": null,
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "🙂"
+          },
+          "reply": "답변을 만들지 못했어요. 다시 말씀해 주세요.",
+          "failed_checks": [
+            "non_error_reply"
+          ]
+        }
+      ]
+    },
+    "diagnostic": {
+      "complete": true,
+      "scenarios": 6,
+      "expected_scenarios": 6,
+      "turns": 7,
+      "expected_turns": 7,
+      "statuses": {
+        "fail": 6,
+        "pass": 1
+      },
+      "live_responses": 7,
+      "action_goals": 0,
+      "errors": 0,
+      "groups": {
+        "holdout-save": {
+          "fail": 2
+        },
+        "holdout-correction": {
+          "pass": 1,
+          "fail": 4
+        }
+      },
+      "failures": [
+        {
+          "scenario": "holdout-map-save-unnamed",
+          "turn": 1,
+          "utterance": "집 안 탐색해서 지도 저장해줘",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": null,
+          "provider_arguments_before_policy": {},
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "기억해 둘 내용을 한 가지만 다시 알려줄래요?",
+          "failed_checks": [
+            "reply_content"
+          ]
+        },
+        {
+          "scenario": "holdout-map-save-named",
+          "turn": 1,
+          "utterance": "집 안을 탐색하고 지도를 새집이라는 이름으로 저장해 줘",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "새집"
+          },
+          "provider_tool_before_policy": "request_mapping",
+          "provider_arguments_before_policy": {
+            "map_name": "새집"
+          },
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "기억해 둘 내용을 한 가지만 다시 알려줄래요?",
+          "failed_checks": [
+            "tool",
+            "arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ]
+        },
+        {
+          "scenario": "holdout-map-name-correction",
+          "turn": 2,
+          "utterance": "구집이 아니라 새집으로 해",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "새집"
+          },
+          "provider_tool_before_policy": "request_mapping",
+          "provider_arguments_before_policy": {
+            "map_name": "새집"
+          },
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.",
+          "failed_checks": [
+            "tool",
+            "arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ]
+        },
+        {
+          "scenario": "holdout-map-name-precise",
+          "turn": 1,
+          "utterance": "새집, 정확히는 우리 집이라는 이름으로 지도 만들어 줘",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "우리 집"
+          },
+          "provider_tool_before_policy": "request_mapping",
+          "provider_arguments_before_policy": {
+            "map_name": "우리 집"
+          },
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.",
+          "failed_checks": [
+            "tool",
+            "arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ]
+        },
+        {
+          "scenario": "holdout-patrol-correction",
+          "turn": 1,
+          "utterance": "가볍게가 아니라 꼼꼼하게 순찰해 줘",
+          "expected_tool": "request_patrol",
+          "expected_arguments": {
+            "thoroughness": "thorough"
+          },
+          "provider_tool_before_policy": "request_patrol",
+          "provider_arguments_before_policy": {
+            "thoroughness": "thorough"
+          },
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.",
+          "failed_checks": [
+            "tool",
+            "arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ]
+        },
+        {
+          "scenario": "holdout-locate-correction",
+          "turn": 1,
+          "utterance": "자동이 아니라 전역 탐색으로 위치 찾아줘",
+          "expected_tool": "request_relocalization",
+          "expected_arguments": {
+            "method": "global_search"
+          },
+          "provider_tool_before_policy": "request_relocalization",
+          "provider_arguments_before_policy": {
+            "method": "global_search"
+          },
+          "tool_after_policy": null,
+          "arguments_after_policy": {},
+          "reply": "로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.",
+          "failed_checks": [
+            "tool",
+            "arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ]
+        }
+      ]
+    },
+    "fix_probe": {
+      "complete": true,
+      "scenarios": 17,
+      "expected_scenarios": 17,
+      "turns": 19,
+      "expected_turns": 19,
+      "statuses": {
+        "pass": 19
+      },
+      "live_responses": 19,
+      "action_goals": 6,
+      "errors": 0,
+      "groups": {
+        "map-missing-name": {
+          "pass": 2
+        },
+        "map-intent-boundary": {
+          "pass": 2
+        },
+        "map-invalid-name": {
+          "pass": 8
+        },
+        "holdout-save": {
+          "pass": 2
+        },
+        "holdout-correction": {
+          "pass": 5
+        }
+      },
+      "failures": []
+    },
+    "final": {
+      "complete": true,
+      "scenarios": 179,
+      "expected_scenarios": 179,
+      "turns": 214,
+      "expected_turns": 214,
+      "statuses": {
+        "pass": 211,
+        "fail": 3
+      },
+      "live_responses": 214,
+      "action_goals": 102,
+      "errors": 0,
+      "groups": {
+        "map-missing-name": {
+          "pass": 19,
+          "fail": 1
+        },
+        "map-names": {
+          "pass": 15
+        },
+        "map-conversation": {
+          "pass": 21,
+          "fail": 2
+        },
+        "map-intent-boundary": {
+          "pass": 12
+        },
+        "map-invalid-name": {
+          "pass": 8
+        },
+        "map-limits": {
+          "pass": 2
+        },
+        "patrol-coverage": {
+          "pass": 24
+        },
+        "patrol-intent-boundary": {
+          "pass": 9
+        },
+        "patrol-limits": {
+          "pass": 3
+        },
+        "localization-method": {
+          "pass": 19
+        },
+        "localization-intent-boundary": {
+          "pass": 17
+        },
+        "localization-conversation": {
+          "pass": 4
+        },
+        "mission-cancellation": {
+          "pass": 23
+        },
+        "action-failure": {
+          "pass": 6
+        },
+        "manager-priority": {
+          "pass": 4
+        },
+        "repeatability": {
+          "pass": 9
+        },
+        "holdout-save": {
+          "pass": 2
+        },
+        "holdout-correction": {
+          "pass": 5
+        },
+        "future-repeatability": {
+          "pass": 6
+        },
+        "manager-unavailable": {
+          "pass": 3
+        }
+      },
+      "failures": [
+        {
+          "scenario": "map-exact-5",
+          "turn": 2,
+          "utterance": "\"새집으로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "새집으로"
+          },
+          "provider_tool_before_policy": "request_mapping",
+          "provider_arguments_before_policy": {
+            "map_name": "새집"
+          },
+          "tool_after_policy": "request_mapping",
+          "arguments_after_policy": {
+            "map_name": "새집"
+          },
+          "reply": "네, 지도 만들기를 시작하겠습니다.",
+          "failed_checks": [
+            "arguments",
+            "action_goal"
+          ]
+        },
+        {
+          "scenario": "map-topic-switch",
+          "turn": 2,
+          "utterance": "지도 만들기는 그만하고 순찰 기능이 뭔지 설명해줘",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool_before_policy": "cancel_voice_mission",
+          "provider_arguments_before_policy": {},
+          "tool_after_policy": "cancel_voice_mission",
+          "arguments_after_policy": {},
+          "reply": "진행 중인 작업이 없어요.",
+          "failed_checks": [
+            "tool"
+          ]
+        },
+        {
+          "scenario": "map-switch-to-patrol",
+          "turn": 2,
+          "utterance": "지도는 됐고 대충 순찰해",
+          "expected_tool": "request_patrol",
+          "expected_arguments": {
+            "thoroughness": "light"
+          },
+          "provider_tool_before_policy": "request_patrol",
+          "provider_arguments_before_policy": {
+            "thoroughness": "normal"
+          },
+          "tool_after_policy": "request_patrol",
+          "arguments_after_policy": {
+            "thoroughness": "normal"
+          },
+          "reply": "네, 순찰을 시작하겠습니다.",
+          "failed_checks": [
+            "arguments",
+            "action_goal"
+          ]
+        }
+      ]
+    }
+  },
+  "warnings": [
+    {
+      "phase": "pilot",
+      "scenario": "autoslam-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "baseline",
+      "scenario": "autoslam-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "baseline",
+      "scenario": "patrol-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "baseline",
+      "scenario": "relocalize-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "final",
+      "scenario": "autoslam-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "final",
+      "scenario": "patrol-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    },
+    {
+      "phase": "final",
+      "scenario": "relocalize-manager-off",
+      "turn": 1,
+      "kind": "repeated_speech_notice",
+      "texts": [
+        "지금은 실행할 수 없어요."
+      ]
+    }
+  ],
+  "total_live_responses": 445,
+  "total_turns": 445,
+  "regression": {
+    "suites": [
+      {
+        "files": [
+          "test_speech_mission_dialogue.py",
+          "test_speech_missions.py",
+          "test_speech_mission_policy.py",
+          "test_memory_quiet_save.py",
+          "test_prompting_speech_missions.py"
+        ],
+        "passed": 206
+      },
+      {
+        "files": [
+          "test_personal_memory_flow.py",
+          "test_memory_providers.py",
+          "test_memory_source_review.py",
+          "test_automatic_memory_policy.py"
+        ],
+        "passed": 147
+      },
+      {
+        "files": [
+          "test_speech_deployment.py::test_robot_speech_runtime_matches_source[malbut_agent_server]"
+        ],
+        "passed": 1
+      },
+      {
+        "files": [
+          "test_voice_map_actions_ros.py"
+        ],
+        "passed": 6
+      },
+      {
+        "files": [
+          "malbut_autoslam/test/test_action.py::test_map_name_cannot_escape_or_replace_a_saved_map",
+          "malbut_autoslam/test/test_action.py::test_saved_map_is_not_overwritten",
+          "malbut_autoslam/test/test_action.py::test_central_manifest_builds_the_actual_action_goal"
+        ],
+        "passed": 8
+      }
+    ],
+    "total_passed": 368,
+    "note": "Independent of live LLM semantic accuracy. ROS Actions are isolated test servers. AutoSLAM filename tests use temporary files without starting mapping."
+  },
+  "artifacts_directory": "/home/shin/ros2_ws/voice_llm_scenario_sweep_20261018"
+}

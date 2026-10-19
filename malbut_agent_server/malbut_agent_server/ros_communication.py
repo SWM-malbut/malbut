@@ -477,16 +477,21 @@ def create_communication_node(
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
                     continue
-                published = self.dialogue.publish_reply(
-                    response, lambda text: self.say(
-                        text, interim=response.get('kind') in {'progress', 'acknowledgement'},
-                        # Prerecorded TTS coalesces waiting/start notices for the
-                        # same utterance and preserves a start before a fast result.
-                        # Keep legacy synthesized receipts on their old correlation.
-                        request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
-                                    if (response.get('kind') == 'acknowledgement'
-                                        and not prerecorded_audio)
-                                    else response.get('utterance_id', ''))))
+                with self._announcer.direct_reply(
+                    getattr(response, '_mission_request_id', None),
+                ) as acknowledge:
+                    published = self.dialogue.publish_reply(
+                        response, lambda text: self.say(
+                            text, interim=response.get('kind') in {'progress', 'acknowledgement'},
+                            # Prerecorded TTS coalesces waiting/start notices for the
+                            # same utterance and preserves a start before a fast result.
+                            # Keep legacy synthesized receipts on their old correlation.
+                            request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
+                                        if (response.get('kind') == 'acknowledgement'
+                                            and not prerecorded_audio)
+                                        else response.get('utterance_id', ''))))
+                    if published is not None:
+                        acknowledge(published['text'])
                 if published is not None:
                     if (response.get('kind') not in {'progress', 'acknowledgement'}
                             and response.get('utterance_id') == self._awaiting_reply):

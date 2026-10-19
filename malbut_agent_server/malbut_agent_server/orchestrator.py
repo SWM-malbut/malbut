@@ -36,7 +36,7 @@ from malbut_agent_server.automatic_memory_policy import (
 )
 from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
 from malbut_agent_server.personal_memory import (
-    PersonalMemory, direct_source, local_intent, management_request,
+    PersonalMemory, direct_source, explicit_memory_management, local_intent,
     negated_management, requested_operation, reply as memory_reply,
 )
 from malbut_agent_server.providers.base import (
@@ -428,6 +428,7 @@ class OrchestrationResult:
             reason=value.get('reason', ''),
             confidence=value.get('confidence'),
             expires_in_ms=value.get('expires_in_ms', 5000),
+            clarification_for=value.get('clarification_for'),
         )
         decision.validate()
         return decision
@@ -942,10 +943,11 @@ class AgentOrchestrator:
             reason=provider_decision.reason,
             confidence=provider_decision.confidence,
             expires_in_ms=provider_decision.expires_in_ms,
+            clarification_for=provider_decision.clarification_for,
         )
         if raw_decision.type == 'tool_call' and (
             provider_result.memory_proposal is not None
-            or (management_request(request.utterance)
+            or (explicit_memory_management(request.utterance)
                 and raw_decision.tool_name != 'set_weather_location')
         ):
             raw_decision = memory_reply(

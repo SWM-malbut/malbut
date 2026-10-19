@@ -19,6 +19,7 @@ HELP = """
 문장을 입력하면 STT의 최종 발화로 전달합니다.
   자유 대화 모드에서는 일상 대화와 질문을 이어서 할 수 있습니다.
   거실로 가줘 / 따라와 / 순찰해 / 꼼꼼히 순찰해 / 멈춰
+  새집 지도를 만들어 줘 / 위치 다시 찾아줘 / 지도 전체에서 위치 다시 찾아줘
 
 /scenarios                   시나리오 목록
 /run ID                      시나리오 하나 실행 (목록 번호도 가능)
@@ -26,7 +27,7 @@ HELP = """
 /regression                  만료·대화 변경·TTS 실패 등 집중 회귀 실행
 /status                      현재 Manager 상태와 하위 Goal 확인
 /behavior 기능 결과 [초] [취소지연초]
-                             기능: nav, follow, patrol
+                             기능: nav, follow, patrol, autoslam, relocalize
                              결과: success, hold, abort, reject
                              예: /behavior patrol hold
 /map home|other|none|mapping|switching|error
@@ -48,6 +49,7 @@ CAPABILITIES = {
     'nav': 'navigate_to_pose', 'navigate_to_pose': 'navigate_to_pose',
     'follow': 'follow_person', 'follow_person': 'follow_person',
     'patrol': 'patrol',
+    'autoslam': 'autoslam', 'relocalize': 'relocalize',
 }
 
 
@@ -288,7 +290,8 @@ class Terminal:
         elif command == '/behavior' and 2 <= len(args) <= 4:
             capability = CAPABILITIES.get(args[0])
             if capability is None or args[1] not in {'success', 'hold', 'abort', 'reject'}:
-                raise ValueError('/behavior nav|follow|patrol success|hold|abort|reject [초]')
+                raise ValueError('/behavior nav|follow|patrol|autoslam|relocalize '
+                                 'success|hold|abort|reject [초]')
             delays = [float(value) for value in args[2:]]
             if any(not math.isfinite(value) or value < 0 or value > 30 for value in delays):
                 raise ValueError('지연 시간은 0~30초여야 합니다.')

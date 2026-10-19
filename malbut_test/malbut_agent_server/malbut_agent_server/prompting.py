@@ -225,7 +225,11 @@ def system_instructions_for_tools(tools: Sequence[ToolSpec], *, homecam_result=F
             '불필요하게 첫 작업을 다시 묻지 않는다. 이동 외의 다른 작업을 숨겨 넣지 않는다.'
         )
     navigation_intent = (
-        '\n장소 이동에서 목적지가 분명한 현재 제안은 질문형이어도 실행 요청입니다. '
+        '\n다음 목적지 규칙은 현재 대화에서 실제 이동 의도가 있는 경우에만 적용합니다. '
+        'navigation_context가 있다는 사실이나 발화가 장소처럼 보인다는 이유만으로 '
+        '이동 요청으로 해석하지 않습니다. 지도 이름 질문에 답한 이름에는 등록 장소 '
+        '검사나 이동 목적지 질문을 적용하지 않고, 그 이름으로 지도 작성 요청을 완성합니다. '
+        '장소 이동에서 목적지가 분명한 현재 제안은 질문형이어도 실행 요청입니다. '
         '예: 우리 거실로 가볼까?, 거실로 와바라, 주방으로 오너라. '
         '이때 이동할까요?라고 다시 확인하지 말고 제공된 이동 도구를 선택합니다. '
         '목적지가 빠졌으면 장소를 묻고, 바로 그 질문에 대한 현재 답변은 앞선 이동 요청의 '
@@ -257,9 +261,29 @@ def system_instructions_for_tools(tools: Sequence[ToolSpec], *, homecam_result=F
         '알아들을 수 있는 오타나 음성 인식 오류도 의미가 같으면 같은 요청입니다. '
         '거실로, 아니 주방으로 가줘처럼 자기정정은 최종 목적지를 사용합니다. '
         '인용·번역·문장 설명·가정·단순 기능 질문·나중 예약과 현재 실행 요청을 구분합니다. '
+        '이 도구에는 예약·지연 실행 기능이 없습니다. 내일·10분 뒤·외출하면처럼 '
+        '미래 시간이나 조건을 지정한 요청은 지금 실행하면 다른 요청이 됩니다. '
+        '그 조건을 생략해 Tool을 호출하지 말고 예약을 지원하지 않는다고 안내합니다. '
         '부정의 범위를 해석하고 부정된 시작 요청을 실행하지 않습니다. 서로 다른 작업을 '
         '여러 개 요청하면 하나를 묻고 임의로 일부를 실행하지 않습니다. '
-        '명시적인 중지·취소는 제공된 취소 도구로 요청합니다.\n'
+        '현재 실행 중이거나 접수된 작업에 대한 명시적인 중지·취소는 제공된 취소 도구로 요청합니다. '
+        '필수 정보를 묻는 확인 대화는 아직 그 작업을 접수한 상태가 아닙니다. '
+        '짧은 후속 답변은 직전에 무엇을 물었는지 먼저 확인해서 해석합니다. '
+        '지도 이름을 물은 직후 이름만 제시한 답은 지도 작성 요청을 완성하는 값입니다. '
+        '그 값이 장소처럼 보이거나 로·으로로 끝나도 새로운 이동 명령으로 바꾸지 않습니다. '
+        '명시적으로 인용한 이름은 따옴표 안 문자열 전체를 그대로 사용합니다. '
+        '새 작업으로 전환하는 명시적인 요청과 질문에 답하는 이름 값을 구분합니다. '
+        '직전에 지도 이름 같은 필수 값을 물었다면 응·네·알겠어 같은 단순 동의는 '
+        '그 값을 제공한 답이 아닙니다. 사용자가 철회하거나 다른 요청으로 바꾸지 않았다면 '
+        '현재 확인 대화를 유지하고 빠진 값을 구체적으로 다시 묻습니다. '
+        '예를 들어 지도 이름 질문 뒤 응이라고 하면 네라고만 응답하지 말고 지도 이름을 '
+        '다시 묻고, 다음에 우리집이라고 답하면 그 이름으로 지도 작성 도구를 요청합니다. '
+        '사용자가 그 미접수 요청을 철회하고 새 질문이나 다른 작업으로 전환하면 새 요청을 '
+        '처리합니다. 앞선 요청의 철회를 별도 취소 작업으로 해석하거나 복합 작업으로 묻지 않습니다. '
+        '예를 들어 지도 이름을 물었는데 지도 만들기는 그만하고 순찰 기능을 설명해 달라고 '
+        '하면 취소 Tool 없이 순찰 기능을 설명합니다. 대충 순찰해 달라고 바꾸면 '
+        '현재 발화의 대충이라는 조건을 보존해 light 순찰을 요청합니다. '
+        '이미 실행을 요청한 작업을 실제로 멈추라는 명령은 취소 도구로 처리합니다.\n'
         '실행 요청에 Bringup 시작·지도 선택·위치 보정을 숨겨서 연쇄 실행하지 않습니다. '
         '하위 기능이 준비되지 않으면 실제 실패 결과를 안내합니다. '
         '취소는 기존 CancelGoal로 전면 작업만 요청하며 배경 모니터링은 유지합니다.\n'
@@ -407,6 +431,8 @@ def prepare_model_input(
     if (isinstance(request, SpeechAgentRequest) and request.scene_context is not None
             and (memory_context or {}).get('mode') not in {'automatic_extraction', 'source_review'}):
         context['scene_context_untrusted'] = request.scene_context
+    if isinstance(request, SpeechAgentRequest) and 'request_mapping' in request.available_tools:
+        context['mapping_context'] = {'awaiting_name': request.mapping_name_requested}
     text = _render_context(context)
     overflow_fallback = False
     if not preserve_conversation and len(text) > data_limit:
@@ -425,6 +451,8 @@ def prepare_model_input(
             raise ValueError('weather context cannot fit without losing data')
         if 'navigation_context' in context:
             raise ValueError('navigation context cannot fit without losing data')
+        if 'mapping_context' in context:
+            raise ValueError('mapping context cannot fit without losing data')
         overflow_fallback = True
         if conversation_turns:
             truncated_sections.add('recent_conversation')
