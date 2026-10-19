@@ -54,6 +54,25 @@ def test_two_against_two_the_last_pair_before_and_the_first_pair_after():
     assert abs(seen.compare(('old', 101.0), ('new', 700.0)) - expected) < 1e-9
 
 
+def test_a_wanted_pair_is_taken_at_once_not_on_the_five_second_round():
+    """10-19 18:28: the pair from the track's first moments was too early for the
+    comparison asked 2 s later, and the next pair came after the 3 s wait."""
+    seen, _ = store([1.0, 0.0])
+    for at in (100.0, 101.0):  # Its first pair (a sliver at the screen edge).
+        seen.observe(at, b'jpeg', [('b', BOX)])
+    asked = 102.2
+    assert not seen.ready(('b', asked))
+    late = FallAppearance(encode=looks([1.0, 0.0])[0], decode=lambda jpeg: Image())
+    for at in (100.0, 101.0):
+        late.observe(at, b'jpeg', [('b', BOX)])
+    seen.want('b', asked)
+    for at in (102.4, 102.6, 102.8, 103.0, 103.2, 103.4, 103.6):
+        seen.observe(at, b'jpeg', [('b', BOX)])
+        late.observe(at, b'jpeg', [('b', BOX)])
+    assert seen.ready(('b', asked)) and seen._wanted == {}  # Within 1.5 s of asking.
+    assert not late.ready(('b', asked))  # On the round it would come at 105-106.
+
+
 def test_without_the_encoder_or_model_the_answer_is_none():
     def missing(path):
         raise ImportError('malbut_reid')
