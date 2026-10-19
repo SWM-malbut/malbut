@@ -7,9 +7,13 @@ following) of each person in view, by YOLO track, for 30 minutes: two looks a se
 apart every five seconds. A comparison averages a pair on each side: the last pair
 before the person was gone and the first pair after someone reappeared (two against
 two: on the 10-17 pairs on the Jetson single looks wobbled, 5 of 9 same people fell
-below 0.64; pairs did not). No identity is decided here. Without the encoder or its
-model, or without a pair on both sides, the answer is "none" and the Agent goes by
-place alone. Never raises into the fall check.
+below 0.64; pairs did not). When the Agent asks about someone who has no pair yet
+since they reappeared, their pair is taken at once instead of on the five-second round
+(10-19 18:28: a lying person's track began as a sliver at the screen edge, its pair was
+taken then, the Agent asked 2 s later and the next pair was due after the 3 s wait).
+No identity is decided here. Without the encoder or its model, or without a pair on
+both sides, the answer is "none" and the Agent goes by place alone. Never raises into
+the fall check.
 """
 
 from collections import OrderedDict, deque
@@ -61,6 +65,7 @@ class FallAppearance:
         self._tried = encode is not None
         # YOLO track -> deque[(at, unit vector, first of its pair)]
         self._tracks = OrderedDict()
+        self._wanted = {}   # track -> since when a comparison waits for its pair
         self.failures = 0
 
     @property
@@ -84,7 +89,16 @@ class FallAppearance:
         last_at, _, first = looks[-1]
         if first:
             return at - last_at >= PAIR_GAP_S  # The second of the pair.
+        if track in self._wanted:
+            return True  # A comparison waits: the next pair now.
         return at - last_at >= EVERY_S - PAIR_GAP_S  # The next pair.
+
+    def want(self, track, since):
+        """A comparison waits for this track's pair from ``since`` on: take it now."""
+        if not self.ready((track, since)):
+            self._wanted[track] = since
+            while len(self._wanted) > MAX_TRACKS:
+                self._wanted.pop(next(iter(self._wanted)))
 
     def observe(self, at, jpeg, people):
         """``people``: (track, box in 1/1 of the frame) of one frame, its JPEG."""
@@ -107,10 +121,13 @@ class FallAppearance:
             first = not (looks and looks[-1][2] and at - looks[-1][0] < EVERY_S)
             looks.append((at, [float(v) for v in vector], first))
             self._tracks.move_to_end(track)
+            if track in self._wanted and self.ready((track, self._wanted[track])):
+                del self._wanted[track]
         for track in [k for k, v in self._tracks.items() if at - v[-1][0] > KEEP_S]:
             del self._tracks[track]
+            self._wanted.pop(track, None)
         while len(self._tracks) > MAX_TRACKS:
-            self._tracks.popitem(last=False)
+            self._wanted.pop(self._tracks.popitem(last=False)[0], None)
 
     def _pairs(self, track):
         looks = list(self._tracks.get(track, ()))
