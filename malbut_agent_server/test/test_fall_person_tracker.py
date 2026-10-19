@@ -229,17 +229,51 @@ def test_one_of_them_alone_in_one_place_for_a_minute_clears_it(robot):
 
 def test_not_alone_long_enough_keeps_it_uncertain(robot):
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
-    robot.frames(30.0, seen('a', (3.0, 1.0)))
-    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.7, 1.0), BOX_B))  # 'b' back.
     robot.frames(40.0, seen('a', (3.0, 1.0)))
-    assert robot.tracker.uncertain('test:P1')  # Alone 40 s since, not 60.
+    assert robot.tracker.uncertain('test:P1')  # Alone and apart 40 s, not 60.
+    robot.frames(21.0, seen('a', (3.0, 1.0)))
+    assert not robot.tracker.uncertain('test:P1')
 
 
 def test_alone_but_walking_away_keeps_it_uncertain(robot):
     robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
-    for step in range(int(SOLO_S / DT) + 10):  # Alone, walking across the room.
+    for step in range(int(55 / DT)):  # Alone, walking across the room.
         robot.frame(Observation('a', None, (3.0 + step * 0.05, 1.0)))
     assert robot.tracker.uncertain('test:P1')
+
+
+def test_meeting_again_renews_and_who_stayed_put_is_told_when_they_part(robot):
+    robot.tracker.reid = False  # By place alone here (ReID would wait for its answer).
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    robot.frames(30.0, seen('a', (3.0, 1.0)))
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.3, 1.0), BOX_B))  # Met again.
+    assert robot.tracker.uncertain('test:P1')
+    robot.frame(seen('a', (3.0, 1.0)))  # 'a' had stayed put: told apart as 'b' leaves.
+    assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
+
+
+def test_two_who_do_not_meet_again_for_a_minute_are_apart(robot):
+    """As MHT commits after its horizon: both seen apart, never close again (10-17)."""
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))
+    robot.frames(50.0, seen('a', (3.0, 1.0)), seen('b', (6.0, 1.0), BOX_B))
+    assert robot.tracker.uncertain('test:P1') and robot.tracker.uncertain('test:P2')
+    robot.frames(11.0, seen('a', (3.0, 1.0)), seen('b', (6.0, 1.0), BOX_B))
+    assert not robot.tracker.uncertain('test:P1') and not robot.tracker.uncertain('test:P2')
+
+
+def test_a_group_splits_where_its_links_were_not_renewed(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (3.2, 1.0), BOX_B))  # a-b now.
+    for step in range(15):  # 'b' walks off.
+        robot.frame(seen('a', (3.0, 1.0)), seen('b', (3.4 + step * 0.2, 1.0), BOX_B))
+    robot.frames(37.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B))
+    robot.frames(1.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B),
+                 seen('c', (6.4, 1.0), BOX_A))  # b-c 40 s later.
+    group, = robot.tracker.groups
+    assert group.members == {'test:P1', 'test:P2', 'test:P3'}
+    robot.frames(21.0, seen('a', (3.0, 1.0)), seen('b', (6.2, 1.0), BOX_B),
+                 seen('c', (6.4, 1.0), BOX_A))  # b and c stay together.
+    assert not robot.tracker.uncertain('test:P1')  # a-b not renewed for a minute.
+    assert robot.tracker.uncertain('test:P2') and robot.tracker.uncertain('test:P3')
 
 
 def test_two_people_who_crossed_while_walking_stay_uncertain(robot):

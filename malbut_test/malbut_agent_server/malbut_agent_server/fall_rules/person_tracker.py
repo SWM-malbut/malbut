@@ -19,14 +19,19 @@ someone just gone from another view, whose box cannot be compared (design decisi
 It clears when one of them stayed put while the other came and left, when depth comes
 back for a number made without it at the last place of one of them (decision 2, as
 reappearing within 1 m), when for a minute only one of them was seen and in one place
-(SOLO_S), or when the other is forgotten (30 minutes unseen). Nothing else clears it;
-Cloud's "same person" does not (it told different people apart 1 of 8 times on 10-18).
+(SOLO_S), when two of them have not met again for a minute (LINK_S: the link between
+them is committed and the group splits into what is still linked), or when the other
+is forgotten (30 minutes unseen). Nothing else clears it; Cloud's "same person" does
+not (it told different people apart 1 of 8 times on 10-18).
 
 A new number counts as someone else only once it was seen in SETTLE_HITS frames: until
 then it makes no one uncertain and is no one's rival (10-19 18:28 robot test: one
 person entering at the screen edge got boxes for a frame or two that became 18 more
 numbers and one uncertain group that never cleared; tentative tracks as in DeepSORT,
-and an ambiguity committed after a horizon as in MHT's N-scan pruning).
+and an ambiguity committed after a horizon as in MHT's N-scan pruning). Groups are
+linked pairs, not a lasting whole: as MHT clusters are split once their tracks stop
+sharing measurements and JPDA forms its clusters each scan (10-17 evening replay: one
+group held both people's numbers 85% of the time, so neither was ever alone).
 
 ReID only splits (decision 10): someone reappearing where one unseen person was is that
 person, uncertain until the VLM says how alike the two looked (two looks against two);
@@ -62,6 +67,7 @@ REID_SPLIT = 0.62
 REID_WAIT_S = 5.0       # no answer by then: by place alone
 SETTLE_HITS = 3         # frames a new number is seen in before it counts as someone else
 SOLO_S = 60.0           # uncertain, but only one of them seen, in one place, this long: clear
+LINK_S = 60.0           # two not met again (close, or one taken for the other) this long: apart
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,7 @@ class Group:
     solo_since: float = 0.0
     solo_last: float = 0.0
     solo_where: tuple = (None, None, None)
+    links: Dict[frozenset, float] = field(default_factory=dict)  # pair -> when they last met
 
 
 @dataclass
@@ -118,6 +125,16 @@ class FrameResult:
     changed: Dict[str, str]                             # tracks whose person changed
     stood_up: List[str]                                 # posture suspected -> clear
     merged: Dict[str, str] = field(default_factory=dict)  # retired number -> that person
+
+
+def _parts(links):
+    """The linked groups of people in ``links`` (pairs), each a set."""
+    parts = []
+    for pair in links:
+        joined = [part for part in parts if part & pair]
+        merged = set(pair).union(*joined)
+        parts = [part for part in parts if part not in joined] + [merged]
+    return parts
 
 
 def _iou(a, b):
@@ -174,6 +191,7 @@ class PersonTracker:
         self._settle(seen, t)
         merged = self._recover(seen, t)
         self._merge(seen, t)
+        self._unlink(t)
         self._release(seen, t, frame.view)
         # After a release may have swapped two people: each one's track now.
         assignments = {person.track: person.person_id for _, person in seen if person.track}
@@ -419,33 +437,50 @@ class PersonTracker:
         return person.point if all(math.dist(p, person.point) <= STAY_M for p in places) else None
 
     def _group(self, people, t):
+        """The first of ``people`` may be any of the others: linked to each, now."""
+        first = people[0].person_id
+        links = {frozenset((first, p.person_id)): t for p in people[1:]
+                 if p.person_id != first}
         members = {p.person_id for p in people}
         joined = [g for g in self.groups if g.members & members]
         anchors = {}
         for g in joined:
             members |= g.members
             anchors.update(g.anchors)
+            for pair, at in g.links.items():
+                links[pair] = max(at, links.get(pair, at))
             self.groups.remove(g)
         for person in people:
             stayed = self._stayed(person, t)
             if stayed is not None and person.person_id not in anchors:
                 anchors[person.person_id] = stayed
-        self.groups.append(Group(members, t, anchors))
+        self.groups.append(Group(members, t, anchors, links=links))
+
+    def _unlink(self, t):
+        """Links not renewed for LINK_S are committed; a group keeps only its members
+        still linked and splits into the parts that are."""
+        for group in list(self.groups):
+            links = {pair: at for pair, at in group.links.items()
+                     if t - at <= LINK_S and pair <= group.members}
+            parts = _parts(links)
+            if len(links) == len(group.links) and parts == [group.members]:
+                continue
+            self.groups.remove(group)
+            for part in parts:
+                self.groups.append(Group(
+                    part, group.since, {m: a for m, a in group.anchors.items() if m in part},
+                    links={pair: at for pair, at in links.items() if pair <= part}))
 
     def _merge(self, seen, t):
-        """Two people this close in one frame may swap: uncertain from now on."""
+        """Two people this close in one frame may swap: uncertain, the link renewed."""
         for i, (a, pa) in enumerate(seen):
             for b, pb in seen[i + 1:]:
                 if a.point and b.point:
                     close = math.dist(a.point, b.point) <= MERGE_M
                 else:
                     close = bool(a.box and b.box) and _iou(a.box, b.box) >= MERGE_IOU
-                if (close and self._settled(pa) and self._settled(pb)
-                        and not self._together(pa.person_id, pb.person_id)):
+                if close and self._settled(pa) and self._settled(pb):
                     self._group([pa, pb], t)
-
-    def _together(self, a, b):
-        return any(a in g.members and b in g.members for g in self.groups)
 
     def _release(self, seen, t, view):
         """Clear a group once they parted and the one who stayed put is plain to see, or
