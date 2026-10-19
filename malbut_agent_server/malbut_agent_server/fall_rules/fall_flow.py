@@ -219,6 +219,18 @@ class FallFlow:
         self._ask_appearance()
         if result.changed:  # For the people boxes on the incident's video.
             self.commands.append(dict(kind='people', at=frame.at, tracks=dict(result.changed)))
+        for retired, person in result.merged.items():
+            # Depth came back: the number made while uncertain was this person (design 2),
+            # the other way round from a ReID split.
+            for incident in self.incidents.values():
+                if incident.person == retired:
+                    self._bind(incident, person)
+            for candidate in self.candidates.values():
+                if candidate.person == retired:
+                    candidate.person = person
+            for memory in self.memory:
+                if memory.person == retired:
+                    memory.person = person
         for person in result.stood_up:
             memory = next((m for m in self.memory if m.person == person
                            and m.kind == 'person'), None)
