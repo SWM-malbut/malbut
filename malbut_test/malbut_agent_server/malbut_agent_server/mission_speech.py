@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from typing import Callable, Dict, Optional
 
-from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
+from malbut_agent_server.mission_audio_cases import event_audio_id, NOTICE_TEXTS
 
 
 _PROGRESS = {
@@ -21,9 +21,7 @@ def event_speech(event: Dict) -> Optional[str]:
     kind = event.get('kind')
     if kind == 'progress':
         return _PROGRESS.get(event.get('state'))
-    if kind == 'succeeded' and event.get('capability_id') == 'set_weather_location':
-        return NOTICE_TEXTS['set_weather_location.succeeded']
-    return NOTICE_TEXTS.get(EVENT_AUDIO_IDS.get(kind))
+    return NOTICE_TEXTS.get(event_audio_id(event))
 
 
 class MissionAnnouncer:

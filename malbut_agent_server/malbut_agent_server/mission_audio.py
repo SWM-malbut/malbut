@@ -7,7 +7,7 @@ from malbut_agent_server.conversation_progress import (
     SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
 from malbut_agent_server.function_speech import FUNCTION_STARTS
-from malbut_agent_server.mission_audio_cases import EVENT_AUDIO_IDS, NOTICE_TEXTS
+from malbut_agent_server.mission_audio_cases import event_audio_id, NOTICE_TEXTS
 from malbut_agent_server.situation_dialogue import FALL_CONFIRMATION_QUESTION
 from malbut_agent_server.speech_nav2 import NAV2_TOOL_DEFINITIONS
 
@@ -54,12 +54,9 @@ TEXT_IDS.update(_REPLY_AUDIO_IDS)
 
 def notice_for_event(event):
     """Report observed outcomes without narrating opaque implementation errors."""
-    audio_id = EVENT_AUDIO_IDS.get(event.get('kind'))
+    audio_id = event_audio_id(event)
     if audio_id is None:
         return None
-    if (event.get('capability_id') == 'set_weather_location'
-            and event.get('kind') == 'succeeded'):
-        audio_id = 'set_weather_location.succeeded'
     return audio_id, CATALOG[audio_id]
 
 

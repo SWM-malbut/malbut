@@ -1,5 +1,7 @@
 """Short notices; detailed transport reasons remain in their event logs."""
 
+import yaml
+
 
 NOTICE_TEXTS = {
     'operation.succeeded': '요청하신 작업이 완료됐어요.',
@@ -19,6 +21,9 @@ NOTICE_TEXTS = {
     'weather.location_not_found': '지역 이름을 다시 알려주세요.',
     'weather.location_required': '날씨를 확인할 지역을 알려주세요.',
     'set_weather_location.succeeded': '날씨 조회 지역을 저장했어요.',
+    'relocalize.low_match': '지도와 주변 환경이 충분히 일치하지 않아 현재 위치를 확인하지 못했어요.',
+    'relocalize.timeout': '제한 시간 안에 현재 위치를 찾지 못했어요. 지도와 주변 환경을 확인해 주세요.',
+    'relocalize.failed': '현재 위치를 확인하지 못했어요. 지도와 센서 상태를 확인해 주세요.',
     'conversation.input_unrecognized': '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.',
     'conversation.input_too_long': '한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.',
     'conversation.receipt_failed': '대화를 접수하지 못했어요. 다시 말씀해 주세요.',
@@ -73,3 +78,24 @@ EVENT_AUDIO_IDS = {
     'cancel_rejected': 'cancel.rejected',
     'cancel_unknown': 'cancel.unknown',
 }
+
+
+def event_audio_id(event):
+    """Select only documented result codes, never speak arbitrary diagnostics."""
+    kind = event.get('kind')
+    capability = event.get('capability_id')
+    if capability == 'set_weather_location' and kind == 'succeeded':
+        return 'set_weather_location.succeeded'
+    if capability == 'relocalize' and kind == 'failed':
+        payload = event.get('result_yaml')
+        if isinstance(payload, str) and len(payload) <= 16384:
+            try:
+                result = yaml.safe_load(payload)
+            except (yaml.YAMLError, ValueError, RecursionError):
+                result = None
+            if isinstance(result, dict) and result.get('success') is False:
+                reason = result.get('failure_reason')
+                if reason in ('low_match', 'timeout'):
+                    return 'relocalize.' + reason
+        return 'relocalize.failed'
+    return EVENT_AUDIO_IDS.get(kind)

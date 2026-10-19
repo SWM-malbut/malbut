@@ -20,7 +20,6 @@ from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, SPEECH_MISSION_TOOLS
     ('autoslam', '', 'message: Nav2 map saver failed'),
     ('get_weather', '', 'error_code: KMA_RATE_LIMITED'),
     ('enroll_person', '', 'message: At most five people can be registered'),
-    ('relocalize', '', 'message: no recent LiDAR scan'),
     ('patrol', 'mission preempted by a replacement request', 'message: RGB camera is stale'),
     ('future_capability', 'unrecognized failure', '!!python/object:malicious {}'),
     ('follow_person', '', 'x' * 16385),
@@ -40,6 +39,8 @@ def test_every_registered_capability_has_all_recorded_outcomes():
         for kind, expected in EVENT_AUDIO_IDS.items():
             if capability == 'set_weather_location' and kind == 'succeeded':
                 expected = 'set_weather_location.succeeded'
+            if capability == 'relocalize' and kind == 'failed':
+                expected = 'relocalize.failed'
             assert notice_for_event(dict(capability_id=capability, kind=kind)) == (
                 expected, CATALOG[expected])
     assert CATALOG['operation.unsupported'] == '현재 지원하지 않아요.'
@@ -188,3 +189,42 @@ def test_unsent_audio_can_be_announced_again():
     assert announcer.handle(event) is None
     announcer._speak_audio = lambda *_: True
     assert announcer.handle(event)
+
+
+@pytest.mark.parametrize('reason', ['low_match', 'timeout', 'error'])
+@pytest.mark.parametrize('prerecorded', [False, True])
+def test_relocalization_failure_is_spoken_once_with_its_reason(reason, prerecorded):
+    from malbut_agent_server.mission_speech import event_speech
+    payload = yaml.safe_dump({'success': False, 'failure_reason': reason,
+                              'match_ratio': 0.34, 'message': 'private diagnostic'})
+    event = dict(request_id='relocalization', capability_id='relocalize', kind='failed',
+                 result_yaml=payload)
+    audio_id = 'relocalize.' + (reason if reason != 'error' else 'failed')
+    spoken = []
+    announcer = MissionAnnouncer(
+        lambda text: spoken.append((text, None)) or True,
+        speak_audio=(lambda text, ident: spoken.append((text, ident)) or True)
+        if prerecorded else None)
+    assert event_speech(event) == CATALOG[audio_id]
+    assert notice_for_event(event) == (audio_id, CATALOG[audio_id])
+    assert announcer.handle(event) == CATALOG[audio_id]
+    assert announcer.handle(event) is None
+    assert spoken == [(CATALOG[audio_id], audio_id if prerecorded else None)]
+    assert '완료됐' not in spoken[0][0] and 'private' not in spoken[0][0]
+
+
+@pytest.mark.parametrize('payload', [
+    None, '', '[]', 'message: no recent LiDAR scan',
+    'success: false\nfailure_reason: unknown', 'success: false\nfailure_reason: []',
+    'success: true\nfailure_reason: timeout', '!!python/object:malicious {}', 'x' * 16385])
+def test_unclassified_relocalization_failure_uses_a_safe_fallback(payload):
+    event = dict(capability_id='relocalize', kind='failed', result_yaml=payload)
+    assert notice_for_event(event) == ('relocalize.failed', CATALOG['relocalize.failed'])
+
+
+@pytest.mark.parametrize('kind', ['succeeded', 'canceled', 'unknown', 'cancel_unknown'])
+def test_failure_reason_cannot_override_a_different_manager_state(kind):
+    event = dict(capability_id='relocalize', kind=kind,
+                 result_yaml='success: false\nfailure_reason: timeout')
+    ident = EVENT_AUDIO_IDS[kind]
+    assert notice_for_event(event) == (ident, CATALOG[ident])
