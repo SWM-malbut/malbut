@@ -760,7 +760,9 @@ def test_depth_back_moves_what_the_new_number_had_to_that_person():
         robot.now += 0.2
     robot.now += 1.0
     nudged = (0.36, 0.24, 0.62, 0.49)  # Overlaps LEFT a little, no depth.
-    robot.frame(person('b', None, nudged))
+    for _ in range(3):  # Seen in three frames: it counts.
+        robot.frame(person('b', None, nudged))
+        robot.now += 0.2
     s, out = robot.see(track='b', point=None, box=nudged)
     assert looks(out, 'filter')
     robot.filter(s, 'suspect')
@@ -784,7 +786,9 @@ def test_a_track_handed_to_someone_far_away_does_not_join_the_first_incident():
 def test_a_fall_while_two_are_too_close_is_checked_separately_once():
     robot = Robot()
     first = robot.open(track='a', point=(3.0, 1.0))
-    robot.frame(person('a', (3.0, 1.0)), person('b', (3.3, 1.0)))  # Too close: uncertain.
+    for _ in range(3):  # Too close, seen in three frames: uncertain.
+        robot.frame(person('a', (3.0, 1.0)), person('b', (3.3, 1.0)))
+        robot.now += 0.2
     s, out = robot.see(track='b', point=(3.3, 1.0))
     assert looks(out, 'filter') and not kinds(out, 'link')
     robot.filter(s, 'suspect')
