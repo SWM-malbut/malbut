@@ -291,7 +291,9 @@ def test_case14_floor_activity_closes_and_is_checked_again_every_30_minutes():
     robot.wait(RECHECK_S - 60)
     robot.frame(person('t1'))  # Still in view (the VLM keeps reporting it).
     out = robot.wait(60)
-    assert records(out, 'recheck_started') == ['floor_recheck'] and drives(out, 'approach')
+    assert records(out, 'recheck_started') == ['floor_recheck'] and not drives(out)
+    assert looks(out, 'arrival')  # Still there? From where it stands first (SWM25-269).
+    assert drives(robot.arrival('same_person'), 'approach')
 
 
 def test_case15_a_minute_of_waiting_alerts_then_goes_late_and_reports_the_close():
@@ -347,6 +349,72 @@ def test_case17_okay_on_the_floor_is_checked_again_after_30_minutes():
     robot.frame(person('t1'))
     out = robot.wait(60)
     assert records(out, 'recheck_started') == ['floor_recheck']
+
+
+def okay_on_the_floor_30_minutes_ago(robot, track='t1'):
+    """Okay on the floor, then the 30-minute recheck's first look; returns its incident."""
+    incident = robot.open(track=track)
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.wait(RECHECK_S - 60)
+    robot.frame(person(track))
+    out = robot.wait(60)
+    assert records(out, 'recheck_started') == ['floor_recheck'] and looks(out, 'arrival')
+    return incident
+
+
+def test_the_30_minute_recheck_sees_the_spot_empty_from_where_it_stands_and_stays():
+    """10-20 15:49 (SWM25-269): the one who said okay had left; the robot drove there,
+    could not reach where it first saw them and alerted "could not see the spot"."""
+    robot = Robot()
+    incident = okay_on_the_floor_30_minutes_ago(robot)
+    robot.log.clear()
+    out = robot.arrival('gone')
+    assert not drives(out) and not notices(out)  # Not even a way back: it never left.
+    assert records(out, 'incident_resolved') == ['left_the_spot']
+    assert robot.flow.incidents[incident].state == 'closed' and robot.flow.memory == []
+    s, out = robot.see('lying', track='t1')  # Down there again later: a new suspicion.
+    assert looks(out, 'filter')
+
+
+def test_someone_else_there_at_the_30_minute_recheck_is_an_incident_of_their_own():
+    robot = Robot()
+    incident = okay_on_the_floor_30_minutes_ago(robot)
+    robot.log.clear()
+    out = robot.arrival('different_person')
+    assert not drives(out) and not notices(out)  # Not "maybe someone else" on the old one.
+    assert records(out, 'incident_resolved') == ['left_the_spot']
+    s, out = robot.see('lying', track='t9', point=(3.1, 0.0))
+    robot.filter(s, 'suspect')
+    assert robot.active() not in (None, incident) and drives(robot.log, 'approach')
+
+
+def test_the_30_minute_recheck_still_goes_when_they_are_there_or_not_seen_from_here():
+    for verdict in ('same_person', 'person_unsure', 'not_visible', 'failed'):
+        robot = Robot()
+        okay_on_the_floor_30_minutes_ago(robot)
+        assert drives(robot.arrival(verdict), 'approach'), verdict
+
+
+def test_an_empty_spot_after_driving_on_the_30_minute_recheck_closes_without_an_alert():
+    robot = Robot()
+    incident = okay_on_the_floor_30_minutes_ago(robot)
+    robot.arrival('not_visible')
+    robot.log.clear()
+    robot.drive('approach')
+    out = robot.arrival('gone')
+    assert not drives(out, 'reverify') and not notices(out)
+    assert records(out, 'incident_resolved') == ['left_the_spot'] and drives(out, 'return')
+    assert robot.flow.incidents[incident].state == 'closed'
+
+
+def test_on_a_first_check_an_empty_spot_is_still_looked_at_again_from_where_first_seen():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    assert drives(robot.arrival('gone'), 'reverify')
 
 
 def test_case18_a_pet_that_left_is_closed_after_looking_again_and_reviewing_the_way():
@@ -822,7 +890,47 @@ def test_standing_up_after_a_close_on_the_floor_checks_again():
     robot.frame(person('t1', state='suspected'))
     robot.now += 0.2
     out = robot.frame(person('t1', state='clear'))
-    assert records(out, 'recheck_started') == ['stood_up']
+    assert records(out, 'recheck_started') == ['stood_up'] and not drives(out)
+    assert looks(out, 'arrival')  # From where it stands first (SWM25-269).
+
+
+def test_standing_up_cut_off_at_the_top_after_okay_on_the_floor_checks_again():
+    """10-20 15:16 (SWM25-269): nobody came, and 30 minutes later it drove to an empty spot."""
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected', box=(0.08, 0.08, 0.99, 0.63)))
+    out = []
+    for _ in range(12):
+        robot.now += 0.2
+        out += robot.frame(person('t1', point=None, box=(0.08, 0.0, 0.23, 0.48)))
+    assert records(out, 'recheck_started') == ['stood_up'] and robot.active() == incident
+    robot.log.clear()
+    out = robot.arrival('gone')  # Walked off by now: closed where it stands, no alert.
+    assert records(out, 'incident_resolved') == ['left_the_spot']
+    assert not drives(out) and not notices(out)
+    assert not records(robot.wait(RECHECK_S), 'recheck_started')  # No 30-minute visit.
+
+
+def test_standing_up_seen_still_at_the_spot_is_looked_at_closer_and_closed_off_the_floor():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected'))
+    robot.now += 0.2
+    robot.frame(person('t1', state='clear'))
+    assert drives(robot.arrival('same_person'), 'approach')
+    robot.drive('approach')
+    robot.arrival('same_person')
+    robot.drive('view')
+    out = robot.posture(('standing', None), ('standing', None))
+    assert records(out, 'incident_resolved') == ['off_floor_verified']
 
 
 def test_the_vlm_is_told_who_each_track_is_and_whose_each_incident_is():

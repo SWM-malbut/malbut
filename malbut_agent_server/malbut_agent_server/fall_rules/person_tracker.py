@@ -72,6 +72,15 @@ REID_WAIT_S = 5.0       # no answer by then: by place alone
 SETTLE_HITS = 3         # frames a new number is seen in before it counts as someone else
 SOLO_S = 60.0           # uncertain, but only one of them seen, in one place, this long: clear
 LINK_S = 60.0           # two not met again (close, or one taken for the other) this long: apart
+# Up without a clear pose check (SWM25-269): the low camera cuts off the head and shoulders
+# of someone standing 1-2 m away, so YOLO-Pose says unknown, not clear (10-20 15:16; no
+# suspected -> clear at all in the 10-19/20 robot logs). Someone who lay down is taken as up
+# when for STAND_S their box stands (taller than STAND_SHAPE x its width and STAND_H of the
+# image) or they are STOOD_M from where they lay. It only sends the robot to look.
+STAND_S = 2.0
+STAND_SHAPE = 2.0
+STAND_H = 0.35          # a corner scrap of someone is no standing body (10-20 05:31)
+STOOD_M = 1.0
 _WAITING = object()     # a ReID check asked, not answered yet
 
 
@@ -90,6 +99,7 @@ class Frame:
     at: float
     view: int
     people: Tuple[Observation, ...]
+    stationary: bool = True   # the robot stood still: a moving camera's places jump
 
 
 @dataclass
@@ -104,6 +114,9 @@ class Person:
     last_seen: float
     posture: str = 'unknown'
     places: deque = field(default_factory=lambda: deque(maxlen=64))  # (at, point)
+    down_point: Optional[Tuple[float, float]] = None  # where they last lay (suspected)
+    standing_since: Optional[float] = None   # a standing box since, while unknown
+    away_since: Optional[float] = None       # STOOD_M from where they lay since
     unplaced: bool = False   # made without a map place while uncertain: recovered by place
     hits: int = 0            # frames seen in
     waiting: tuple = ()      # who could be this one, made uncertain once it settles
@@ -130,7 +143,7 @@ class Group:
 class FrameResult:
     assignments: Dict[str, str]                         # YOLO track -> person in this frame
     changed: Dict[str, str]                             # tracks whose person changed
-    stood_up: List[str]                                 # posture suspected -> clear
+    stood_up: List[str]                                 # suspected -> clear or seen up
     merged: Dict[str, str] = field(default_factory=dict)  # retired number -> that person
 
 
@@ -192,7 +205,7 @@ class PersonTracker:
         stood_up = []
         for obs, person in self._match(frame.people, t, frame.view):
             taken[id(obs)] = person
-            if self._apply(person, obs, t, frame.view):
+            if self._apply(person, obs, t, frame.view, frame.stationary):
                 stood_up.append(person.person_id)
             person.hits += 1
         seen = [(obs, taken[id(obs)]) for obs in frame.people if id(obs) in taken]
@@ -366,8 +379,9 @@ class PersonTracker:
             self._drop(oldest.person_id)
         return person
 
-    def _apply(self, person, obs, t, view):
-        """Update a matched person; True when they stood up (suspected -> clear)."""
+    def _apply(self, person, obs, t, view, still=None):
+        """Update a matched person; True when they stood up (suspected -> clear or seen
+        up). ``still``: whether the robot stood still, None for a suspicion (no frame)."""
         if obs.track:
             for other in self.people.values():
                 if other is not person and other.track == obs.track:
@@ -379,10 +393,41 @@ class PersonTracker:
         if obs.box is not None:
             person.box, person.view = tuple(obs.box), view
         person.last_seen = max(person.last_seen, t)
-        stood_up = person.posture == 'suspected' and obs.state == 'clear'
+        stood_up = person.posture == 'suspected' and (
+            obs.state == 'clear'
+            or (obs.state == 'unknown' and self._seen_up(person, obs, t, still)))
+        if obs.state == 'suspected':
+            person.standing_since = person.away_since = None
+            if obs.point is not None:
+                person.down_point = tuple(obs.point)
         if obs.state != 'unknown':
             person.posture = obs.state
+        elif stood_up:
+            person.posture = 'clear'  # Taken as up: told once.
         return stood_up
+
+    @staticmethod
+    def _seen_up(person, obs, t, still):
+        """Up without a clear pose check: a standing box, or away from where they lay,
+        while the robot stands still (10-19 22:33 a turning robot moved a lying place 1.1 m)."""
+        if still is None:
+            return False  # A suspicion between frames: the frames decide.
+        if not still:
+            person.standing_since = person.away_since = None
+            return False
+        box = obs.box
+        if box is None or box[3] - box[1] < max(STAND_H, STAND_SHAPE * (box[2] - box[0])):
+            person.standing_since = None
+        elif person.standing_since is None:
+            person.standing_since = t
+        if obs.point is not None:  # Without depth it keeps what it had.
+            if (person.down_point is None
+                    or math.dist(obs.point, person.down_point) < STOOD_M):
+                person.away_since = None
+            elif person.away_since is None:
+                person.away_since = t
+        return any(since is not None and t - since >= STAND_S
+                   for since in (person.standing_since, person.away_since))
 
     # ------------------------------------------------------------ uncertain
 

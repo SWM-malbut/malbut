@@ -295,6 +295,8 @@ def test_pose_frames_go_to_the_person_tracking_and_its_numbers_to_the_vlm(rig):
 def test_a_malformed_pose_frame_is_refused():
     ok = dict(at=1.0, view=0, people=[dict(track='a', box=None, point=None, state='clear')])
     assert parse_people(ok).people[0].state == 'clear'
+    # Whether the robot stood still: only a frame that says so (SWM25-269).
+    assert not parse_people(ok).stationary and parse_people(dict(ok, stationary=True)).stationary
     for bad in (dict(ok, at='x'), dict(ok, view=-1), dict(ok, people='a'),
                 dict(ok, people=[dict(track='a', state='lying')]),
                 dict(ok, people=[dict(track='a', box=[0, 0, 2, 1], state='clear')])):
