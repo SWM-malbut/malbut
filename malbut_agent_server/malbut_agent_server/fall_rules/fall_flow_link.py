@@ -124,9 +124,14 @@ def restored_incident(data, now):
     if left not in (None, 'nobody', 'person'):
         raise ValueError('invalid left open')
     moments = [_text(m) for m in data.get('fall_moments') or [] if m][:2]
+    # How long ago a suspicion last joined it; not known (kept before 10-20): never
+    # taken for whoever is at its place.
+    ago = data.get('seen_ago')
+    seen = (now - ago if type(ago) in (int, float) and math.isfinite(ago) and ago >= 0
+            else None)
     # Nobody is bound yet: the first one seen for sure at its place (person_tracker).
     return Incident(_text(data.get('incident_id')), first, None, now, place=first.point,
-                    fall_moments=moments, check_round=round_, idle=left)
+                    fall_moments=moments, check_round=round_, idle=left, seen_at=seen)
 
 
 class FallFlowLink:

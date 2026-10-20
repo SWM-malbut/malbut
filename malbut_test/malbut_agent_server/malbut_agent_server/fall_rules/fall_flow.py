@@ -151,6 +151,10 @@ class Incident:
     waits_noted: set = field(default_factory=set)
     revisit_noted: bool = False
     clip_open: bool = False      # this round's clip range is growing (SWM25-268)
+    # After a restart: when a suspicion last joined it (None: not known). Unseen for 30
+    # minutes, someone at its place is a new incident (SWM25-269: 10-20 15:14 a lying
+    # down joined the 10-19 22:32 incident nobody had closed).
+    seen_at: Optional[float] = None
 
     @property
     def fall_seen(self):
@@ -237,7 +241,7 @@ class FallFlow:
             if memory is not None and not self.tracker.uncertain(person):
                 self._recheck(memory, 'stood_up', now)
         for incident in list(self.incidents.values()):
-            if incident.state == 'open' and incident.person is None and incident.place:
+            if self._claims_its_place(incident, now):
                 # After a restart: the first one seen for sure at its place (decision 5).
                 here = [p for p in self.tracker.people.values() if p.last_seen == frame.at
                         and p.point and math.dist(p.point, incident.place) <= REAPPEAR_M
@@ -604,6 +608,7 @@ class FallFlow:
             if incident.idle is not None:
                 incident.step = 'open'
                 continue
+            incident.seen_at = now  # Checked again now: the one at its place is its person.
             self._new_round(incident, 'restart')
             self._enqueue(incident, 'restart')
         self._next(now)
@@ -871,8 +876,16 @@ class FallFlow:
             return separate
         # After a restart nobody is bound yet: a suspicion at its place is its person.
         return next((i for i in self.incidents.values()
-                     if i.state == 'open' and i.person is None and i.place
+                     if self._claims_its_place(i, self.now)
                      and math.dist(s.point, i.place) <= REAPPEAR_M), None)
+
+    @staticmethod
+    def _claims_its_place(incident, now):
+        """After a restart, nobody bound yet: someone at its place is its person, unless
+        it was last seen 30 minutes ago or more (FORGET_S, as the tracking forgets)."""
+        return (incident.state == 'open' and incident.person is None
+                and incident.place is not None and incident.seen_at is not None
+                and now - incident.seen_at < FORGET_S)
 
     def _candidate_match(self, s):
         if s.uncertain:
