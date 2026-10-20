@@ -94,22 +94,6 @@ def test_robot_speech_launch_and_native_assets_match_source():
         assert original == deployed, path
 
 
-def test_robot_keepout_plugin_and_localization_verifier_ship_together():
-    for path in (SOURCE / 'malbut_bringup/keepout').rglob('*'):
-        if path.is_file():
-            assert path.read_bytes() == (ROBOT / path.relative_to(SOURCE)).read_bytes()
-    for name in ('localization_confidence.py', 'relocalization_node.py'):
-        path = Path('malbut_relocalization/malbut_relocalization') / name
-        assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes()
-    for root in (SOURCE, ROBOT):
-        cmake = (root / 'malbut_bringup/CMakeLists.txt').read_text()
-        registration = ('pluginlib_export_plugin_description_file('
-                        'nav2_costmap_2d keepout/keepout_escape.xml)')
-        assert registration in cmake
-        manifest = ElementTree.parse(root / 'malbut_bringup/package.xml').getroot()
-        assert 'nav2_costmap_2d' in {item.text for item in manifest.findall('depend')}
-
-
 def test_autoslam_backend_services_ship_with_runtime_dependencies():
     """Test-only dependencies may differ; standard backend service types must ship."""
     dependencies = []

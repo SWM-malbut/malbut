@@ -33,12 +33,6 @@ _STATES = {
 }
 
 
-# The padded footprint's half-diagonal: a centre this close to a no-entry Zone puts
-# the body in it, and Nav2 then refuses every motion (2026-10-08).
-FOOTPRINT_REACH_M = 0.19
-ESCAPE_RADIUS_M = 1.0
-# The bridge applies a keepout change within a second; the global costmap updates at 1 Hz.
-ZONE_SETTLE_S = 2.5
 # Below this the drive never really left its start (Nav2 gave up where it stood).
 STUCK_AT_START_M = 0.15
 # The reasons the web map names for a failed drive (목업 23번).
@@ -132,34 +126,6 @@ def resolve_goal(point, floor, blocked, margin=RESTRICTED_MARGIN_M):
     raise NavigationError('말벗이 다닐 수 있는 바닥을 골라 주세요.')
 
 
-def escape_point(point, floor, blocked, margin=RESTRICTED_MARGIN_M):
-    """
-    Return where to drive first so the body clears every no-entry Zone.
-
-    None: the body is already clear. False: no floor point within 1 m keeps the
-    margin, so the robot cannot get out by itself.
-    """
-    if not any(point_in_geometry(point, zone) or distance_to_geometry(point, zone)
-               < FOOTPRINT_REACH_M for zone in blocked):
-        return None
-
-    def usable(candidate):
-        return (any(point_in_geometry(candidate, area) for area in floor)
-                and not any(point_in_geometry(candidate, zone)
-                            or distance_to_geometry(candidate, zone) < margin
-                            for zone in blocked))
-
-    for ring in range(1, int(round(ESCAPE_RADIUS_M / SNAP_STEP_M)) + 1):
-        radius = ring * SNAP_STEP_M
-        count = max(8, math.ceil(2 * math.pi * radius / SNAP_STEP_M))
-        for index in range(count):
-            angle = 2 * math.pi * index / count
-            candidate = (point[0] + radius * math.cos(angle), point[1] + radius * math.sin(angle))
-            if usable(candidate):
-                return candidate
-    return False
-
-
 def failure_reason(request, start, system):
     """Name why a destination drive ended without arriving, for the web map (목업 23번)."""
     result = request.get('result') if isinstance(request.get('result'), dict) else {}
@@ -245,8 +211,6 @@ class Navigator:
 
     def busy(self, requests):
         """Return whether a destination drive (this one or another) is still going."""
-        if self.session is not None and self.session['state'] == 'escaping':
-            return True
         return any(item.get('capability') == 'navigate_to_pose'
                    and _STATES.get(item.get('state')) in ('driving', 'canceling')
                    for item in requests)
@@ -283,14 +247,8 @@ class Navigator:
             'snapped': moved > 0, 'snap_distance_m': round(moved, 3), 'path': path,
         }
 
-    def start(self, token, *, map_key, busy, submit, escape=None, zones=None):
-        """
-        Send a previewed destination once; ``submit`` returns the mission's request ID.
-
-        ``escape`` is where to drive first when the body touches a no-entry Zone
-        (``escape_point``). ``zones`` tracks this phase; the costmap filters remain
-        enabled and independently require verified localization for an exit.
-        """
+    def start(self, token, *, map_key, busy, submit):
+        """Send one previewed destination through the existing Manager request."""
         record = self.previews.pop(token, None)
         if record is None or record['expires'] <= self.clock():
             raise NavigationError('고른 목적지의 확인 시간이 지났어요. 다시 골라 주세요.')
@@ -298,75 +256,11 @@ class Navigator:
             raise NavigationError('그사이 지도가 바뀌었어요. 다시 골라 주세요.')
         if busy:
             raise NavigationError('이동 중에는 새 목적지를 고를 수 없어요.')
-        session = {'goal': record['goal'], 'path': record['path'], 'submit': submit,
-                   'zones': zones, 'reason': None}
-        if escape is False:
-            session.update(session_id=secrets.token_hex(16), request_id=None,
-                           state='failed', phase='done', reason='zone_stuck')
-        elif escape is not None and zones is not None:
-            zones(False)
-            session.update(session_id=secrets.token_hex(16), request_id=None, state='escaping',
-                           phase='escape_wait', escape={'x': round(escape[0], 4),
-                                                        'y': round(escape[1], 4),
-                                                        'yaw': record['goal']['yaw']},
-                           at=self.clock() + ZONE_SETTLE_S)
-        else:
-            request_id = submit(record['goal'])
-            session.update(session_id=request_id, request_id=request_id, state='driving',
-                           phase='drive')
-        self.session = session
-        return {key: session[key] for key in ('session_id', 'state', 'goal', 'path')}
-
-    def escape_then(self, escape, *, submit, zones, then):
-        """Drive out of a no-entry Zone first, then call ``then`` (a patrol start)."""
-        if self.busy([]):
-            raise NavigationError('말벗이 금지 구역에서 빠져나오는 중이에요.')
-        point = escape if escape else (0.0, 0.0)
-        goal = {'x': round(point[0], 4), 'y': round(point[1], 4), 'yaw': 0.0}
-        session = {'session_id': secrets.token_hex(16), 'request_id': None, 'goal': goal,
-                   'path': {'length_m': 0.0, 'points': []}, 'submit': submit,
-                   'zones': zones, 'then': then, 'reason': None}
-        if escape is False:
-            session.update(state='failed', phase='done', reason='zone_stuck')
-        else:
-            zones(False)
-            session.update(state='escaping', phase='escape_wait', escape=goal,
-                           at=self.clock() + ZONE_SETTLE_S)
-        self.session = session
-        return {'session_id': session['session_id'], 'state': session['state']}
-
-    def advance(self, requests):
-        """Drive out under costmap checks, then send the original destination."""
-        session = self.session
-        if session is None or session['phase'] not in ('escape_wait', 'escape', 'drive_wait'):
-            return
-        now = self.clock()
-        try:
-            if session['phase'] == 'escape_wait' and now >= session['at']:
-                session['request_id'] = session['submit'](session['escape'])
-                session['phase'] = 'escape'
-            elif session['phase'] == 'escape':
-                request = self._request(requests)
-                state = request.get('state') if request else None
-                if state in ('SUCCEEDED', 'CANCELED', 'ABORTED', 'REJECTED', 'ERROR'):
-                    session['zones'](True)
-                    if state == 'SUCCEEDED':
-                        session.update(phase='drive_wait', at=now + ZONE_SETTLE_S)
-                    else:
-                        session.update(phase='done', state='failed', reason='zone_stuck')
-            elif session['phase'] == 'drive_wait' and now >= session['at']:
-                if session.get('then') is not None:
-                    # Out of the Zone: the patrol takes over; the map card shows it.
-                    session['then']()
-                    session.update(phase='done', state='handed_over')
-                else:
-                    session['request_id'] = session['submit'](session['goal'])
-                    session.update(phase='drive', state='driving')
-        except (ValueError, RuntimeError) as error:
-            if session.get('zones') is not None:
-                session['zones'](True)
-            session.update(phase='done', state='failed', reason='unknown',
-                           message=str(error)[:256])
+        request_id = submit(record['goal'])
+        self.session = {'goal': record['goal'], 'path': record['path'], 'reason': None,
+                        'session_id': request_id, 'request_id': request_id,
+                        'state': 'driving'}
+        return {key: self.session[key] for key in ('session_id', 'state', 'goal', 'path')}
 
     def _request(self, requests):
         request_id = self.session.get('request_id') if self.session else None
@@ -377,12 +271,6 @@ class Navigator:
         session = self.session
         if session is None or session['session_id'] != session_id:
             raise NavigationError('이미 끝났거나 바뀐 이동이에요.')
-        if session['phase'] in ('escape_wait', 'drive_wait'):
-            # Nothing runs in the manager between steps: end the escape phase here.
-            if session.get('zones') is not None:
-                session['zones'](True)
-            session.update(phase='done', state='canceled')
-            return {'session_id': session_id, 'state': 'canceled'}
         if session.get('request_id'):
             cancel(session['request_id'])
         return {'session_id': session_id, 'state': 'canceling'}
@@ -392,7 +280,7 @@ class Navigator:
         if self.session is None:
             return {}
         session = self.session
-        request = self._request(requests) if session['phase'] == 'drive' else None
+        request = self._request(requests)
         if request is not None:
             session['state'] = _STATES.get(request.get('state'), 'driving')
             session['message'] = str(request.get('message') or '')[:256]

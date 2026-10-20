@@ -300,14 +300,8 @@ local_costmap:
       # the inflation layer adds the graded preference beyond it.
       footprint_padding: 0.01
       plugins: ["obstacle_layer", "inflation_layer"]
-      # Saved-map Zones: zone_filter loads the mask for the selected map.
-      filters: ["keepout_filter"]
-      keepout_filter:
-        plugin: "malbut_bringup::KeepoutEscapeFilter"
-        enabled: True
-        filter_info_topic: "/keepout_costmap_filter_info"
-        escape_max_distance: 1.0
-        escape_timeout: 15.0
+      # Zones constrain the global route only; local control checks real obstacles.
+      # Omit filters: Humble defaults to none and cannot parse an empty YAML list.
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
@@ -360,11 +354,9 @@ global_costmap:
       # Saved-map Zones: zone_filter loads the mask for the selected map.
       filters: ["keepout_filter"]
       keepout_filter:
-        plugin: "malbut_bringup::KeepoutEscapeFilter"
+        plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True
         filter_info_topic: "/keepout_costmap_filter_info"
-        escape_max_distance: 1.0
-        escape_timeout: 15.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True

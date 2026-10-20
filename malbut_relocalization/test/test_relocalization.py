@@ -110,8 +110,6 @@ def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node.initial_stamp = 0
     node.estimate = None
     node.busy = False
-    node.confidence = relocalization_node.LocalizationConfidence()
-    node.verified_pose = Mock()
     node._start_observing = Mock()
     node._stop_observing = Mock()
     node.amcl_active = True

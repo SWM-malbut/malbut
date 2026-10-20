@@ -145,23 +145,23 @@ def test_deployed_nav2_parameters_match_source(config):
     assert yaml.safe_load(path.read_text()) == config
 
 
-def test_saved_map_zones_reach_both_costmaps_through_keepout_filter(config):
-    """zone_filter loads the mask; both costmaps read it through filter info."""
+def test_saved_map_zones_constrain_only_the_global_route(config):
+    """Use stock keepout globally and retain physical obstacle checks locally."""
     mask = config['zone_filter_mask_server']['ros__parameters']
     info = config['zone_filter_info_server']['ros__parameters']
     assert mask['yaml_filename'] == '' and mask['frame_id'] == 'map'
     assert info['type'] == 0  # keepout
     assert info['mask_topic'] == mask['topic_name']
     assert info['base'] == 0.0 and info['multiplier'] == 1.0
-    for scope in ('local_costmap', 'global_costmap'):
-        costmap = config[scope][scope]['ros__parameters']
-        assert costmap['filters'] == ['keepout_filter']
-        keepout = costmap['keepout_filter']
-        assert keepout['plugin'] == 'malbut_bringup::KeepoutEscapeFilter'
-        assert keepout['enabled'] is True
-        assert keepout['filter_info_topic'] == info['filter_info_topic']
-        assert keepout['escape_max_distance'] == 1.0
-        assert keepout['escape_timeout'] == 15.0
+    costmap = config['global_costmap']['global_costmap']['ros__parameters']
+    assert costmap['filters'] == ['keepout_filter']
+    assert costmap['keepout_filter'] == {
+        'plugin': 'nav2_costmap_2d::KeepoutFilter', 'enabled': True,
+        'filter_info_topic': info['filter_info_topic'],
+    }
+    local = config['local_costmap']['local_costmap']['ros__parameters']
+    assert 'filters' not in local and 'keepout_filter' not in local
+    assert local['plugins'] == ['obstacle_layer', 'inflation_layer']
 
 
 def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(config):

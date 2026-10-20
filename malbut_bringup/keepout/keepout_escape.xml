@@ -1,5 +1,0 @@
-<library path="malbut_keepout_escape">
-  <class type="malbut_bringup::KeepoutEscapeFilter" base_class_type="nav2_costmap_2d::Layer">
-    <description>Keepout zones with a fresh-localization, footprint-aware exit corridor.</description>
-  </class>
-</library>

@@ -227,8 +227,6 @@ def test_map_api_is_authenticated_and_does_not_launch(http_server):
 
 
 def _bridge(manager_ready=False, autoslam_ready=True):
-    from malbut_bringup.zone_override import ZoneOverride
-
     bridge = object.__new__(RosBridge)
     bridge.data = PanelData()
     bridge.node = Mock()
@@ -250,9 +248,6 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.start_mapping = Mock()
     bridge.start_mapping.service_is_ready.return_value = False
     bridge.start_mapping_request = SimpleNamespace
-    bridge.zone_override = ZoneOverride()
-    bridge.zone_toggles = {}
-    bridge.zone_toggle_request = SimpleNamespace
     bridge.tf_buffer = Mock()
     bridge.topics = {'map_topic': '/map'}
     bridge.guard = Mock()
