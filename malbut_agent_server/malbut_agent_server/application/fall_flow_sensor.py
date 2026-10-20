@@ -134,6 +134,8 @@ class FlowIncident:
     person: Optional[str] = None   # the Agent's person number: the yellow box (SWM25-267)
     # While the robot works on a round: [check round, since, last grown] (SWM25-268).
     check_clip: Optional[list] = None
+    # When a suspicion last joined it, without a journal (the journal keeps it otherwise).
+    seen_at: Optional[float] = None
 
 
 @dataclass
@@ -527,9 +529,15 @@ class FallFlowSensor:
             self._write_notice(data)
         elif action == 'link':
             sighting = self._sightings.get(_id(data.get('sighting_id'), optional=False))
-            incident = self._incidents.get(_id(data.get('incident_id'), optional=False))
+            incident_id = _id(data.get('incident_id'), optional=False)
+            incident = self._incidents.get(incident_id)
             if sighting is not None and incident is not None:
                 self._clip_from(incident, sighting)
+            # Seen now: for a restarted Agent, whoever is at its place for 30 more minutes.
+            if self._journal is not None:
+                self._store(self._journal.seen_flow_incident, incident_id)
+            elif incident is not None:
+                incident.seen_at = self._now()
         elif action == 'people':
             self._people_numbers(data)
         elif action == 'left_open':
@@ -563,9 +571,11 @@ class FallFlowSensor:
     def _ready(self):
         """For a restarted Agent: the open incidents and the latest suspicions."""
         open_incidents = []
+        now = self._now()
         stored = self._journal.open_flow_incidents() if self._journal is not None else [
             dict(incident_id=i.incident_id, boot_id=i.boot_id, payload=dict(first=i.first),
-                 check_round=i.check_round, left=i.left)
+                 check_round=i.check_round, left=i.left,
+                 seen_ago=None if i.seen_at is None else max(0.0, now - i.seen_at))
             for i in self._incidents.values() if i.open]
         for row in stored:
             first = row['payload'].get('first')
@@ -574,8 +584,7 @@ class FallFlowSensor:
             open_incidents.append(dict(incident_id=row['incident_id'], first=first,
                                        check_round=row['check_round'],
                                        fall_moments=row['payload'].get('fall_moments', []),
-                                       left=row.get('left')))
-        now = self._now()
+                                       left=row.get('left'), seen_ago=row.get('seen_ago')))
         recent = [message for message, *_ in self._sightings.values()
                   if now - message['at'] <= RECENT_S
                   and message['kind'] in ('low', 'lying', 'motion', 'cloud')]
@@ -608,7 +617,8 @@ class FallFlowSensor:
         if event == 'incident_opened' and incident_id not in self._incidents:
             sighting = self._sightings.get(data.get('sighting_id'))
             first = sighting[0] if sighting is not None else {}
-            incident = FlowIncident(incident_id, self.boot_id, first, self._now())
+            now = self._now()
+            incident = FlowIncident(incident_id, self.boot_id, first, now, seen_at=now)
             self._incidents[incident_id] = incident
             if self._journal is not None:
                 self._store(self._journal.save_flow_incident, incident_id=incident_id,

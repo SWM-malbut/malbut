@@ -222,6 +222,18 @@ def test_an_incident_left_for_the_guardian_is_not_checked_again_after_a_restart(
     assert not rig.goals and rig.link.flow.incidents['i-left'].idle == 'person'
 
 
+def test_a_restored_incident_keeps_how_long_ago_it_was_seen(rig):
+    rig.link.tick()
+    event(rig.link, kind='flow_ready', flow=True, open_incidents=[
+        dict(incident_id='i-seen', first=sighting(), check_round=1, fall_moments=[],
+             left='person', seen_ago=600.0),
+        dict(incident_id='i-old', first=sighting(), check_round=1, fall_moments=[],
+             left='person')], recent=[])
+    incidents = rig.link.flow.incidents
+    assert incidents['i-seen'].seen_at == rig.now.value - 600.0
+    assert incidents['i-old'].seen_at is None  # Kept before 10-20: never taken by place.
+
+
 def test_another_runtime_or_a_switch_mismatch_is_ignored(rig):
     rig.link.on_event(SimpleNamespace(data=json.dumps(dict(
         kind='fall_sighting', sighting=sighting(), runtime_id='someone-else'))))

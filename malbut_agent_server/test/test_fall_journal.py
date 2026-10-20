@@ -171,6 +171,31 @@ def test_journal_adds_the_left_open_column_to_existing_flow_incidents(tmp_path):
         journal.close()
 
 
+def test_journal_adds_the_seen_column_and_older_incidents_are_not_known(tmp_path):
+    path = tmp_path / 'private' / 'fall.sqlite'
+    path.parent.mkdir(mode=0o700)
+    path.touch(mode=0o600)
+    with sqlite3.connect(path) as db:  # A journal from before 10-20 (SWM25-269).
+        db.execute('''CREATE TABLE flow_incidents(incident_id TEXT PRIMARY KEY,
+            boot_id TEXT NOT NULL, payload TEXT NOT NULL, open INTEGER NOT NULL DEFAULT 1,
+            check_round INTEGER NOT NULL DEFAULT 1, left_open TEXT)''')
+        db.execute("INSERT INTO flow_incidents(incident_id,boot_id,payload,left_open) "
+                   "VALUES('old','b','{}','person')")
+    wall = [1_760_000_000.0]
+    journal = SqliteFallJournal(path, device_id='robot', wall_clock=lambda: wall[0])
+    try:
+        journal.save_flow_incident(incident_id='new', boot_id='b', payload={})
+        wall[0] += 90.0
+        seen = {i['incident_id']: i['seen_ago'] for i in journal.open_flow_incidents()}
+        assert seen == {'old': None, 'new': 90.0}
+        journal.seen_flow_incident('old')
+        wall[0] += 30.0
+        seen = {i['incident_id']: i['seen_ago'] for i in journal.open_flow_incidents()}
+        assert seen == {'old': 30.0, 'new': 120.0}
+    finally:
+        journal.close()
+
+
 def test_wrong_device_and_insecure_paths_rejected_without_changing_identity(tmp_path):
     path = tmp_path / 'private' / 'fall.sqlite'
     journal = SqliteFallJournal(path, device_id='robot')

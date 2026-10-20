@@ -848,6 +848,54 @@ def test_after_a_restart_an_incident_is_bound_to_who_is_at_its_place():
     assert {'kind': 'people', 'incidents': {'i7': incident.person}} in out
 
 
+def left_open(incident_id, idle, seen_at):
+    """An incident restored after a restart, left open for the guardian."""
+    s = Sighting(f'{incident_id}-first', 0.0, 'lying', track='old', point=SPOT, robot=FROM)
+    return Incident(incident_id, s, None, 0.0, place=SPOT, idle=idle, seen_at=seen_at)
+
+
+def test_after_a_restart_an_incident_unseen_for_30_minutes_takes_no_one_at_its_place():
+    """10-20 15:14 (SWM25-269): lying down where the 10-19 22:32 (nobody) and 23:27 (person)
+    incidents were left open joined them, so no incident of its own."""
+    robot = Robot()
+    robot.now = 100_000.0
+    nobody = left_open('i1', 'nobody', robot.now - 60_000.0)
+    person_ = left_open('i2', 'person', None)  # Kept before 10-20: not known.
+    robot.flow.restore([nobody, person_], robot.now)
+    robot.take()
+    robot.frame(person('new', (3.2, 0.0)))
+    assert nobody.person is None and person_.person is None
+    s, out = robot.see('lying', track='new', point=(3.1, 0.0))
+    assert not kinds(out, 'link') and not records(out, 'recheck_started')
+    look, = looks(out, 'filter')  # Filtered as a suspicion of its own.
+    robot.filter(s, 'suspect')
+    assert robot.active() not in ('i1', 'i2') and drives(robot.log, 'approach')
+    assert (nobody.state, nobody.idle, person_.state, person_.idle) == (
+        'open', 'nobody', 'open', 'person')  # Still the guardian's to close.
+
+
+def test_after_a_restart_an_incident_seen_within_30_minutes_takes_who_is_at_its_place():
+    robot = Robot()
+    robot.now = 100_000.0
+    incident = left_open('i1', 'nobody', robot.now - (FORGET_S - 60.0))
+    robot.flow.restore([incident], robot.now)
+    robot.take()
+    s, out = robot.see('lying', track='new', point=(3.1, 0.0))
+    link, = kinds(out, 'link')
+    assert (link['sighting_id'], link['incident_id']) == (s.sighting_id, 'i1')
+    assert records(out, 'recheck_started') == ['person_seen_again']
+
+
+def test_after_a_restart_the_30_minutes_run_on_until_someone_is_at_its_place():
+    robot = Robot()
+    robot.now = 100_000.0
+    incident = left_open('i1', 'person', robot.now - (FORGET_S - 60.0))
+    robot.flow.restore([incident], robot.now)
+    robot.wait(60.0)
+    s, out = robot.see('lying', track='new', point=(3.1, 0.0))
+    assert not kinds(out, 'link') and looks(out, 'filter') and incident.person is None
+
+
 def test_a_person_filtered_on_the_floor_is_filtered_again_with_a_new_sighting():
     # 10-17 21:31: the 30-minute refilter copied the 21:01 sighting under a new id the VLM
     # never saw (no first photo, no place, not restored after a restart).

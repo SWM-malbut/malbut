@@ -99,6 +99,8 @@ class SqliteFallJournal:
             columns = {row['name'] for row in self._db.execute('PRAGMA table_info(flow_incidents)')}
             if 'left_open' not in columns:  # Left open for the guardian (10-19).
                 self._db.execute('ALTER TABLE flow_incidents ADD COLUMN left_open TEXT')
+            if 'seen_at' not in columns:  # When a suspicion last joined it (SWM25-269).
+                self._db.execute('ALTER TABLE flow_incidents ADD COLUMN seen_at REAL')
             identities = self._db.execute('SELECT device_id FROM identity').fetchall()
             if identities and (len(identities) != 1 or identities[0]['device_id'] != device_id):
                 raise ValueError('journal belongs to a different device')
@@ -190,9 +192,17 @@ class SqliteFallJournal:
         """What a restarted Agent needs to check an open incident again (flow_ready)."""
         with self._lock, self._db:
             self._db.execute(
-                'INSERT OR IGNORE INTO flow_incidents(incident_id,boot_id,payload) VALUES(?,?,?)',
+                'INSERT OR IGNORE INTO flow_incidents(incident_id,boot_id,payload,seen_at) '
+                'VALUES(?,?,?,?)',
                 (incident_id, boot_id, json.dumps(payload, separators=(',', ':'),
-                                                  allow_nan=False)))
+                                                  allow_nan=False), self._clock()))
+
+    def seen_flow_incident(self, incident_id):
+        """A suspicion joined it now: after a restart, taken for whoever is at its place
+        for 30 more minutes (the Agent decides, SWM25-269)."""
+        with self._lock, self._db:
+            self._db.execute('UPDATE flow_incidents SET seen_at=? WHERE incident_id=?',
+                             (self._clock(), incident_id))
 
     def flow_incident(self, incident_id):
         with self._lock:
@@ -213,13 +223,17 @@ class SqliteFallJournal:
                 (int(bool(open)), check_round, left, incident_id))
 
     def open_flow_incidents(self, limit=64):
+        """``seen_ago``: seconds since a suspicion last joined it, None if not known."""
         with self._lock:
             rows = self._db.execute(
-                'SELECT incident_id,boot_id,payload,check_round,left_open FROM flow_incidents '
-                'WHERE open=1 ORDER BY rowid DESC LIMIT ?', (limit,)).fetchall()
+                'SELECT incident_id,boot_id,payload,check_round,left_open,seen_at '
+                'FROM flow_incidents WHERE open=1 ORDER BY rowid DESC LIMIT ?',
+                (limit,)).fetchall()
+            now = self._clock()
         return [dict(incident_id=r['incident_id'], boot_id=r['boot_id'],
                      payload=json.loads(r['payload']), check_round=r['check_round'],
-                     left=r['left_open'])
+                     left=r['left_open'],
+                     seen_ago=None if r['seen_at'] is None else max(0.0, now - r['seen_at']))
                 for r in reversed(rows)]
 
     def append_flow_note(self, payload):
