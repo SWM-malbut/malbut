@@ -22,3 +22,9 @@ kvsFileLogFilter.*
 # Generated files left locally after homecam_web was renamed to malbut_web.
 /homecam_web/node_modules/
 /homecam_web/.next/
+# Generated map voice evaluation output; keep scenarios and runners in source.
+**/tools/map_voice_eval/**/*.json
+**/tools/map_voice_eval/**/*.jsonl
+**/tools/map_voice_eval/**/*.csv
+**/tools/map_voice_eval/**/*.wav
+**/tools/map_voice_eval/**/*.json.tmp
