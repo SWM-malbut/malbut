@@ -10,6 +10,9 @@
 pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Bringup의
 `test/test_deployment.py`에서 확인하며, 실기기 웹 패널과 수동 GPU 검사는 유지한다.
 
+실기기에서 음성 안내에 따라 대화·사람추적·낙상을 관찰하는 단일 실행기는
+[`smoke.sh`](smoke.sh)이며, 실행 조건과 결과 판정은 [스모크 검사 안내](README_SMOKE.md)를 따른다.
+
 ### 낙상 감지 포팅 시 추가 준비
 
 낙상 기능을 설정한 경우 Bringup은 VLM·`malbut_fall_pose`·`malbut_fall_approach`를 각각 한 번 시작하고,
