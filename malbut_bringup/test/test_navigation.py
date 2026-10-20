@@ -334,7 +334,7 @@ def test_the_robot_drives_out_of_the_zone_first_then_to_the_destination():
     assert started['state'] == 'escaping' and zones.calls == [False]
     assert navigator.busy([]), 'no second destination while it escapes'
     navigator.advance([])
-    submit.assert_not_called()  # Waits for the costmaps to drop the Zones.
+    submit.assert_not_called()  # Waits for current costmap/localization evidence.
     clock.now += 2.5
     navigator.advance([])
     assert submit.call_args.args[0] == {'x': 1.5, 'y': 1.2, 'yaw': started['goal']['yaw']}
@@ -431,6 +431,7 @@ def test_a_robot_standing_in_a_zone_escapes_before_the_drive_it_was_sent(robot):
                    'payload': {'previewToken': token}})
     assert sync.pending[START_ID]['result']['state'] == 'escaping'
     assert bridge.zone_override.escaping()
+    assert all(bridge.zone_override.wanted().values())
     bridge.submit.assert_not_called()
 
 
@@ -446,6 +447,7 @@ def test_a_patrol_sent_while_standing_in_a_zone_starts_after_the_escape(robot):
     sync.dispatch({'id': START_ID, 'operation': 'drive_mode_start',
                    'payload': {'mode': 'patrol', 'thoroughness': 1}})
     assert sync.pending[START_ID]['result']['status'] == 'escaping'
+    assert all(bridge.zone_override.wanted().values())
     bridge.submit.assert_not_called()
     clock.now += 2.5
     sync.navigator.advance([])

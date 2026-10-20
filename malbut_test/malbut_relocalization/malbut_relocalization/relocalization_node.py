@@ -17,7 +17,7 @@ import threading
 import time
 
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import Relocalize
@@ -41,6 +41,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from .pose_store import map_identity, read_initial_pose, valid_pose, write_pose
 from .scan_match import distance_field, match_ratio
+from .localization_confidence import LocalizationConfidence
 
 
 LOCALIZATION_STATE_TOPIC = '/malbut/localization/state'
@@ -180,11 +181,14 @@ class Relocalization(Node):
         self.amcl_active = False
         self.state_future = None
         self.state_requested = 0.0
+        self.confidence = LocalizationConfidence()
         group = ReentrantCallbackGroup()
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.publisher = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
+        self.verified_pose = self.create_publisher(
+            PoseStamped, '/malbut/localization/verified_pose', 1)
         # Sensor-compatible reliability and VOLATILE: never act on a latched old estimate.
         self.create_subscription(
             PoseWithCovarianceStamped, '/amcl_pose', self._receive,
@@ -214,6 +218,7 @@ class Relocalization(Node):
         self.spin = ActionClient(self, Spin, '/spin', callback_group=group)
         self.create_timer(0.5, self._poll_amcl, callback_group=group)
         self.create_timer(self.period, self.save_latest, callback_group=group)
+        self.create_timer(0.2, self._verify_pose, callback_group=group)
         self.server = ActionServer(
             self, Relocalize, '/relocalize', execute_callback=self._execute,
             goal_callback=self._goal, cancel_callback=lambda _: CancelResponse.ACCEPT,
@@ -237,7 +242,10 @@ class Relocalization(Node):
             return
         if (map_file or None) != self.map_file:
             self._select(map_file or None)
-        self.saving = mode == 'LOCALIZATION' and self.identity is not None
+        with self.lock:
+            self.saving = mode == 'LOCALIZATION' and self.identity is not None
+            if not self.saving:
+                self._revoke_verified()
 
     def _select(self, map_file):
         """Remember poses only for the selected saved map; mapping has none."""
@@ -249,6 +257,7 @@ class Relocalization(Node):
             except (OSError, KeyError, TypeError, ValueError) as error:
                 self.get_logger().error(f'Cannot read saved map {map_file}: {error}')
                 identity = None
+        confidence = LocalizationConfidence(map_file if identity else None)
         with self.lock:
             self.map_file, self.identity, self.expected_map = map_file, identity, expected
             self.field = None
@@ -257,6 +266,8 @@ class Relocalization(Node):
             self.estimate = None
             self.received = self.saved_received = 0.0
             self.saving = False
+            self.confidence = confidence
+            self._revoke_verified()
 
     def _map(self, message):
         # Kept as received; the distance field is built only for the selected map.
@@ -293,6 +304,50 @@ class Relocalization(Node):
             with self.lock:
                 self.latest = None
                 self.initial_stamp = self.get_clock().now().nanoseconds
+                self._revoke_verified()
+
+    def _revoke_verified(self):
+        """Caller holds lock: invalidate an escape lease before applying corrections."""
+        self.confidence.reset()
+        self.verified_pose.publish(PoseStamped())
+
+    def _verify_pose(self):
+        """Read-only scan/TF check; never initialize AMCL or send a motion request."""
+        with self.lock:
+            if (self.busy or not self.saving or not self.amcl_active
+                    or self.latest is None or self.scan is None
+                    or time.monotonic() - self.scan[0] > 0.5):
+                self._revoke_verified()
+                return
+            scan = self.scan[1]
+            when = Time.from_msg(scan.header.stamp)
+            try:
+                robot = self.tf.lookup_transform('map', self.settings['base_frame'], when)
+                laser = self.tf.lookup_transform(
+                    self.settings['base_frame'], scan.header.frame_id, when)
+
+                def planar(transform):
+                    p, q = transform.transform.translation, transform.transform.rotation
+                    return (p.x, p.y, math.atan2(
+                        2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z)))
+
+                valid = self.confidence.check(
+                    self.map_message, scan, self.latest['covariance'],
+                    planar(robot), planar(laser),
+                    self.get_clock().now().nanoseconds / 1e9)
+            except (TransformException, ValueError):
+                self._revoke_verified()
+                return
+            if not valid:
+                self.verified_pose.publish(PoseStamped())
+                return
+            message = PoseStamped()
+            message.header.frame_id = 'map'
+            message.header.stamp = scan.header.stamp
+            message.pose.position.x = robot.transform.translation.x
+            message.pose.position.y = robot.transform.translation.y
+            message.pose.orientation = robot.transform.rotation
+            self.verified_pose.publish(message)
 
     def _receive(self, message):
         if message.header.frame_id != 'map':
@@ -347,6 +402,7 @@ class Relocalization(Node):
             if self.busy:
                 return GoalResponse.REJECT
             self.busy = True
+            self._revoke_verified()
         return GoalResponse.ACCEPT
 
     def _execute(self, handle):

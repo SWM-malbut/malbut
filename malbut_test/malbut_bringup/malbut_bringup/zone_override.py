@@ -3,8 +3,9 @@ Which costmaps keep the no-entry Zones on (SWM25-237, 2026-10-08).
 
 Manual driving ignores the Zones so a person can always drive the 말벗 out of
 one: only the local costmap's keepout filter is turned off, and the LiDAR
-Collision Monitor still guards real obstacles. A Zone escape before a
-destination drive turns both costmaps' filters off for a short drive out.
+Collision Monitor still guards real obstacles. Autonomous escape keeps both
+filters on: KeepoutEscapeFilter checks fresh localization and opens only the
+body's bounded exit corridor. Tracking a web escape never disables a filter.
 Nav2 serves each filter's SetBool at ``<costmap>/<filter>/toggle_filter``.
 """
 
@@ -14,7 +15,7 @@ import time
 
 LOCAL_TOGGLE = '/local_costmap/keepout_filter/toggle_filter'
 GLOBAL_TOGGLE = '/global_costmap/keepout_filter/toggle_filter'
-# Zones come back even if an escape never reports its end.
+# Expire web escape bookkeeping if the mission never reports its end.
 ESCAPE_LIMIT_S = 60.0
 # A restarted costmap starts with its filter on: repeat "off" while it should be off.
 RESEND_S = 5.0
@@ -37,17 +38,17 @@ class ZoneOverride:
             self.manual = bool(active)
 
     def start_escape(self, limit_s=ESCAPE_LIMIT_S):
-        """Turn both filters off for at most ``limit_s`` seconds."""
+        """Track the web escape phase without disabling either filter."""
         with self.lock:
             self.escape_until = self.clock() + limit_s
 
     def end_escape(self):
-        """Turn the filters an escape turned off back on."""
+        """Finish the web escape phase."""
         with self.lock:
             self.escape_until = None
 
     def escaping(self):
-        """Return whether an escape still holds the filters off."""
+        """Return whether a web escape is still pending."""
         with self.lock:
             return self._escaping()
 
@@ -57,8 +58,7 @@ class ZoneOverride:
     def wanted(self):
         """Return each toggle service and whether its filter should be on."""
         with self.lock:
-            escape = self._escaping()
-            return {LOCAL_TOGGLE: not (self.manual or escape), GLOBAL_TOGGLE: not escape}
+            return {LOCAL_TOGGLE: not self.manual, GLOBAL_TOGGLE: True}
 
     def due(self):
         """Return (service, enabled) to send now: a change, or a repeat of "off"."""

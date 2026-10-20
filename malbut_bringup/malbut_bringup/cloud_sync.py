@@ -693,7 +693,8 @@ class CloudSync:
         Return (escape, zones) for a robot whose body touches a no-entry Zone.
 
         A Zone drawn under the robot or a jump in its map pose freezes every
-        motion; ``escape`` is where to drive with the Zones lifted (None: clear).
+        motion; ``escape`` is a proposed exit (None: clear). Nav2 independently
+        checks current localization and keeps the rest of the Zones blocked.
         """
         override = getattr(self.bridge, 'zone_override', None)
         if (override is None or pose is None or not floor

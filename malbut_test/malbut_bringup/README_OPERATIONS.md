@@ -559,7 +559,7 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
 
 저장 지도마다 `<지도이름>.zones.geojson`(형식 `malbut-semantic-zones-v1`)에 구역을
 저장한다. `zone_filter` 노드가 선택된 지도의 구역을 Nav2 keepout 마스크로 바꿔
-`zone_filter_mask_server`에 넣고, Local/Global costmap의 `KeepoutFilter`가 적용한다.
+`zone_filter_mask_server`에 넣고, Local/Global costmap의 `KeepoutEscapeFilter`가 적용한다.
 
 | 구역 | 마스크 값 | 주행 |
 | --- | --- | --- |
@@ -578,10 +578,22 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
 - 진입 금지의 0.2m 여유를 통과 불가로 두면, 로봇이 여유 안에 서는 순간 주행·회전·수동 조작이
   모두 멈췄다(2026-10-08 실기). 지금은 구역만 막고, 차체가 구역에 닿는 움직임은 주행 제어기·
   행동·수동 조작의 차체 윤곽 검사가 막는다. 목적지는 여유 밖으로 옮겨 받는다.
-- 그래도 차체가 구역에 닿아 있다고 판단되면(로봇 자리에 구역을 그림, 위치 추정이 튐)
-  웹에서 보낸 목적지·순찰은 먼저 1m 안의 구역 밖 지점으로 빠져나간다. 그동안 Local·Global
-  costmap의 keepout 필터를 끄고(Nav2 `<costmap>/keepout_filter/toggle_filter`, 최대 60초),
-  빠져나오면 켠 뒤 원래 일을 시작한다. 나갈 곳이 없거나 실패하면 웹 지도 카드에 이유를 보인다.
+- 차체가 구역에 걸친 경우에는 **위치가 확인된 동안에만** 제한적으로 빠져나올 수 있다.
+  중심점뿐 아니라 차체 전체와 구역 셀의 교차를 검사하므로 모서리만 걸쳐도 같은 규칙을
+  적용한다. 차체 패딩과 격자 크기에 따른 충돌 검사 여유를 포함하며, Manager의
+  요청·실행 경로는 그대로 사용한다.
+- `malbut_relocalization`이 선택된 저장 지도와 현재 지도가 일치하고, 최근 LiDAR 스캔
+  3개가 지도에 95% 이상 맞으며 AMCL의 x/y/yaw 분산이 각각 0.04 이하일 때
+  `/malbut/localization/verified_pose`를 발행한다. 스캔은 0.5초 이내, 유효 반사점은
+  60개 이상·180도 이상 범위가 필요하다. 재위치 작업·초기 위치 변경·지도 전환 중에는
+  확인을 취소한다. 과거 재위치 성공이나 작은 공분산만으로 탈출을 허용하지 않는다.
+- 필터는 확인된 위치가 현재 위치와 0.1m·0.15rad 이내이고 0.75초 이내일 때, 현재
+  방향의 전진/후진 중 차체 전체가 먼저 벗어나는 경로를 연다. 기본 최대 거리 1m,
+  이동 시작 후 최대 시간 15초(`escape_max_distance`, `escape_timeout`)이며 경로를 뒤로 닫는다.
+  구역 전체를 끄지 않으며 다른 구역·실제 장애물·미확인 장애물 셀은 해제하지 않는다.
+- 위치 확인이 끊기면 즉시 구역 비용을 복구한다. 시간 초과 또는 경로 이탈 시에는
+  같은 자리에서 자동 재시도하지 않는다. 1m 안에 직선 탈출 경로가 없으면 정지 상태를
+  유지한다. 웹 목적지·순찰의 선행 탈출 단계도 필터를 켠 상태로 이 검사를 따른다.
 
 ## 수동 조작
 

@@ -35,22 +35,24 @@ def test_manual_driving_turns_only_the_local_filter_off():
     assert _send(override) == {}
 
 
-def test_an_escape_turns_both_off_and_expires_on_its_own():
+def test_an_autonomous_escape_never_disables_either_filter():
     clock = Clock()
     override = ZoneOverride(clock=clock)
     override.start_escape()
-    assert _send(override) == {LOCAL_TOGGLE: False, GLOBAL_TOGGLE: False}
+    assert override.wanted() == {LOCAL_TOGGLE: True, GLOBAL_TOGGLE: True}
+    assert _send(override) == {}
     clock.now += RESEND_S
-    assert _send(override) == {LOCAL_TOGGLE: False, GLOBAL_TOGGLE: False}, 'off is repeated'
+    assert _send(override) == {}
     clock.now += ESCAPE_LIMIT_S
     assert not override.escaping()
-    assert _send(override) == {LOCAL_TOGGLE: True, GLOBAL_TOGGLE: True}
+    assert _send(override) == {}
 
 
 def test_manual_driving_keeps_the_local_filter_off_after_an_escape():
     override = ZoneOverride(clock=Clock())
     override.start_escape()
     override.set_manual(True)
-    _send(override)
+    assert _send(override) == {LOCAL_TOGGLE: False}
     override.end_escape()
-    assert _send(override) == {GLOBAL_TOGGLE: True}
+    assert override.wanted() == {LOCAL_TOGGLE: False, GLOBAL_TOGGLE: True}
+    assert _send(override) == {}

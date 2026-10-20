@@ -288,8 +288,8 @@ class Navigator:
         Send a previewed destination once; ``submit`` returns the mission's request ID.
 
         ``escape`` is where to drive first when the body touches a no-entry Zone
-        (``escape_point``); ``zones(False)`` lifts the Zones for that short drive and
-        ``zones(True)`` restores them before the destination itself is sent.
+        (``escape_point``). ``zones`` tracks this phase; the costmap filters remain
+        enabled and independently require verified localization for an exit.
         """
         record = self.previews.pop(token, None)
         if record is None or record['expires'] <= self.clock():
@@ -336,7 +336,7 @@ class Navigator:
         return {'session_id': session['session_id'], 'state': session['state']}
 
     def advance(self, requests):
-        """Move an escape on: wait for the Zones, drive out, restore them, then drive."""
+        """Drive out under costmap checks, then send the original destination."""
         session = self.session
         if session is None or session['phase'] not in ('escape_wait', 'escape', 'drive_wait'):
             return
@@ -378,7 +378,7 @@ class Navigator:
         if session is None or session['session_id'] != session_id:
             raise NavigationError('이미 끝났거나 바뀐 이동이에요.')
         if session['phase'] in ('escape_wait', 'drive_wait'):
-            # Nothing runs in the manager between steps: restore the Zones and stop here.
+            # Nothing runs in the manager between steps: end the escape phase here.
             if session.get('zones') is not None:
                 session['zones'](True)
             session.update(phase='done', state='canceled')

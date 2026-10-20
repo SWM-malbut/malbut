@@ -5,7 +5,7 @@ import math
 import os
 import time
 
-from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import Relocalize
@@ -164,3 +164,64 @@ def test_low_match_timeout_aborts_the_real_action(graph, room):
     assert result.match_ratio < 0.95
     assert 'location not confirmed' in result.message
     assert 'global' in calls and 'spin' in calls
+
+
+def _spin_until(executor, condition, seconds=4):
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        executor.spin_once(timeout_sec=.02)
+    assert condition()
+
+
+def _verified_graph(graph):
+    executor, select, _client, calls = graph
+    server = next(node for node in executor.get_nodes() if isinstance(node, Relocalization))
+    amcl = next(node for node in executor.get_nodes() if node.get_name() == 'amcl')
+    received = []
+    subscription = amcl.create_subscription(
+        PoseStamped, '/malbut/localization/verified_pose', received.append, 1)
+    broadcaster = StaticTransformBroadcaster(amcl)
+    transform = TransformStamped()
+    transform.header.frame_id, transform.child_frame_id = 'map', 'base_footprint'
+    transform.transform.translation.x, transform.transform.translation.y = TRUE_POSE[:2]
+    transform.transform.rotation.z = math.sin(TRUE_POSE[2] / 2)
+    transform.transform.rotation.w = math.cos(TRUE_POSE[2] / 2)
+    broadcaster.sendTransform(transform)
+    select()
+    _spin_until(executor, lambda: server.saving and server.amcl_active)
+    estimates = amcl.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
+    covariance = [.01 if i in (0, 7, 35) else 0.0 for i in range(36)]
+    estimates.publish(pose_message(
+        dict(x=TRUE_POSE[0], y=TRUE_POSE[1], yaw=TRUE_POSE[2], covariance=covariance),
+        amcl.get_clock().now().to_msg()))
+    _spin_until(executor, lambda: bool(received) and received[-1].header.frame_id == 'map')
+    assert calls == []  # Evidence production never drives or changes localization.
+    return server, amcl, received, subscription, broadcaster, estimates
+
+
+def test_verified_pose_uses_fresh_ros_inputs_and_revokes_when_lidar_stops(graph):
+    executor = graph[0]
+    server, amcl, received, *_keep_alive = _verified_graph(graph)
+    assert received[-1].pose.position.x == pytest.approx(TRUE_POSE[0])
+    for timer in amcl.timers:
+        timer.cancel()
+    _spin_until(executor, lambda: received[-1].header.frame_id == '')
+    assert server.confidence.good_scans == 0
+
+
+def test_map_switch_and_pose_correction_revoke_verified_pose(graph):
+    executor = graph[0]
+    server, amcl, received, *_keep_alive = _verified_graph(graph)
+    initial = amcl.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+    initial.publish(pose_message(
+        dict(x=TRUE_POSE[0], y=TRUE_POSE[1], yaw=TRUE_POSE[2], covariance=[.2] * 36),
+        amcl.get_clock().now().to_msg()))
+    before = len(received)
+    _spin_until(executor, lambda: any(m.header.frame_id == '' for m in received[before:]))
+    state = amcl.create_publisher(
+        String, '/malbut/localization/state',
+        QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                   durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    state.publish(String(data=json.dumps({'mode': 'MAPPING'})))
+    _spin_until(executor, lambda: not server.saving)
+    assert server.confidence.good_scans == 0

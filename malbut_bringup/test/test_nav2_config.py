@@ -157,9 +157,11 @@ def test_saved_map_zones_reach_both_costmaps_through_keepout_filter(config):
         costmap = config[scope][scope]['ros__parameters']
         assert costmap['filters'] == ['keepout_filter']
         keepout = costmap['keepout_filter']
-        assert keepout['plugin'] == 'nav2_costmap_2d::KeepoutFilter'
+        assert keepout['plugin'] == 'malbut_bringup::KeepoutEscapeFilter'
         assert keepout['enabled'] is True
         assert keepout['filter_info_topic'] == info['filter_info_topic']
+        assert keepout['escape_max_distance'] == 1.0
+        assert keepout['escape_timeout'] == 15.0
 
 
 def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(config):
