@@ -2,6 +2,8 @@
 
 import copy
 import math
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 
@@ -55,6 +57,12 @@ TOOL_SPECS = {
             'Request one named indoor destination through Manager. Use only for '
             'a current movement request interpreted by meaning, including polite '
             'questions, suggestions, dialect, and recognizable speech errors. '
+            'First determine actual movement intent from the conversation. '
+            'The presence of navigation_context or a place-like value does not '
+            'establish that intent. A name supplied in response to a map-name '
+            'question completes mapping; do not check it against destinations '
+            'or ask where to move. Apply the destination rules below only to '
+            'actual movement requests. '
             'For example "우리 거실로 가볼까?", "거실로 와바라", and '
             '"주방으로 오너라" request movement to the named place. '
             'These examples are not an exhaustive phrase list. '
@@ -109,14 +117,24 @@ TOOL_SPECS = {
         description=(
             'Ask Manager for one patrol of the selected saved map. Use only for '
             'a current request to inspect or patrol the home, interpreted by meaning '
-            'rather than a fixed phrase. thoroughness is normal unless the user '
-            'explicitly asks for light or thorough coverage. Never claim '
+            'rather than a fixed phrase. Choose coverage from the CURRENT request: '
+            '대충, 가볍게, 간단히, or 대강 means light; 꼼꼼하게, 구석구석, '
+            'or 철저히 means thorough. Use normal only when no coverage preference '
+            'is given, or ordinary coverage is explicitly requested. A topic switch '
+            'does not remove qualifiers in the new request: after a map-name '
+            'question, 지도는 됐고 대충 순찰해 requests light patrol. These are '
+            'examples of meaning, not an exhaustive phrase list. This tool cannot '
+            'restrict patrol to one room, set a speed, or patrol continuously '
+            'for a requested duration. If those are requirements, explain the '
+            'limitation without starting a broader or different patrol. Never claim '
             'execution or completion before Manager reports it.'
         ),
         parameters={
             'type': 'object',
             'properties': {'thoroughness': {
                 'type': 'string', 'enum': ['light', 'normal', 'thorough'],
+                'description': 'Coverage, not speed: light=가볍게/대충, normal=보통/미지정, '
+                               'thorough=꼼꼼하게/구석구석. Preserve the current user preference.',
             }},
             'required': ['thoroughness'],
             'additionalProperties': False,
@@ -126,8 +144,12 @@ TOOL_SPECS = {
         name='cancel_voice_mission',
         description=(
             'Request cancellation of current foreground Manager missions, '
-            'including pending and suspended foreground work. '
-            'mission. Interpret current stop/cancel intent by meaning, including '
+            'including submitted goals waiting to execute and suspended work. '
+            'An unanswered clarification, such as asking what to name a new map, '
+            'has not submitted that mission. Dropping that unsubmitted idea and '
+            'asking for an explanation is a conversation change, not an Action '
+            'cancellation; answer the current question without this tool. '
+            'Still use this tool for an actual stop/cancel command, including '
             '"이제 그만 따라와", "그쯤 하고 쉬어", and other paraphrases. '
             'Do not cancel background monitoring or weather work. '
             'Cancellation receipt does not prove termination.'
@@ -237,13 +259,50 @@ TOOL_SPECS = {
 _ADDITIONAL_TOOLS = {
     'request_mapping': (
         'Request AutoSLAM through the existing Manager capability. '
-        'Supply a new map filename without extension or path; do not overwrite.',
+        'Use for a current request to explore and create a map, not a request '
+        'to patrol an existing map. Supply the user\'s new map filename without '
+        'extension or path; preserve spaces and Korean characters INSIDE the '
+        'name, but extract only the name from the sentence. Naming particles '
+        'and instructions surrounding it are not part of the filename: '
+        '"이름은 이사집으로 하자" means map_name="이사집"; a current reply '
+        '"이사한 집으로 해" to your name question means map_name="이사한 집". '
+        'When the user explicitly quotes a filename, copy the ENTIRE quoted value '
+        'before interpreting any surrounding naming instruction. For example, '
+        'a name-only answer containing the quoted value "새집으로" means '
+        'map_name="새집으로", and "집으로 해" means map_name="집으로 해". '
+        'Do not treat syllables INSIDE that quoted value as particles or commands. '
+        'In contrast, the unquoted instruction 새집으로 해 means map_name="새집". '
+        'This is literal value preservation, not a blanket suffix removal. If no name '
+        'was supplied, ask what to call the map; do not invent a name or use '
+        'home as an implicit default. A bare affirmation such as 응 or 네 does '
+        'not supply a filename: keep the pending mapping context and ask for '
+        'the name again. Do not treat that acknowledgement as a new unrelated '
+        'conversation or abandon the request. A current answer to that question can '
+        'complete the request. Names must be 1-64 characters: start with a Korean '
+        'syllable, ASCII letter, or digit; then those characters, spaces, hyphens '
+        'or underscores only. Ask for another name if invalid; do not silently '
+        'sanitize an exact filename. Never overwrite a map. Manager and the existing '
+        'AutoSLAM server prepare the runtime. Completion means exploration '
+        'ended and the map was saved, not that every space was explored.',
         {'map_name': {'type': 'string', 'maxLength': 64}},
     ),
     'request_relocalization': (
         'Request pose correction on the already selected map. '
-        'Use auto normally, global_search only when explicitly requested. '
-        'This does not select a map or start Bringup.',
+        'Use when asked to actively find, recover, or correct the ROBOT\'S '
+        'position, including 지금 어디인지 위치 찾아봐, 위치 다시 찾아줘, '
+        'or 위치 보정해 줘. These request localization even when the current '
+        'pose is unknown; do not refuse them as unsupported location lookup. '
+        'Use auto normally, global_search only when the user explicitly asks '
+        'to search the whole map. A bare status question such as 지금 어디야? '
+        'or 어느 방에 있어? alone does not request correction: there is no '
+        'current-room lookup tool, so do not invent a room or start localization '
+        'to answer it. Missing lookup data is not evidence of a localization '
+        'failure; do not claim the robot has lost its pose. If the user asks '
+        'about a person\'s location or the intent '
+        'to run localization is unclear, clarify. This does not select a map or start '
+        'Bringup. GIVEN_POSE requires a verified map pose and is available '
+        'through the operator interface, not this voice tool; never invent '
+        'coordinates or substitute a different correction method for it.',
         {'method': {'type': 'string', 'enum': ['auto', 'global_search']}},
     ),
     'request_manual_control': (
@@ -310,7 +369,19 @@ def validate_tool_arguments(
         'arguments',
         depth=0,
     )
+    if tool_name == 'request_mapping':
+        normalize_mapping_name(arguments['map_name'])
     return copy.deepcopy(arguments)
+
+
+def normalize_mapping_name(value):
+    """Share filename validation between proposal policy and ROS preparation."""
+    if isinstance(value, str):
+        value = unicodedata.normalize('NFC', value.strip())
+    if (not isinstance(value, str)
+            or re.fullmatch(r'[A-Za-z0-9가-힣][A-Za-z0-9가-힣 _-]{0,63}', value) is None):
+        raise ValidationError('mapping requires a filename without path or extension')
+    return value
 
 
 def _validate_schema_value(

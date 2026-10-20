@@ -28,7 +28,7 @@ TRUE_POSE = (0.8, 0.4, 0.3)
 
 
 @pytest.fixture
-def graph(room):
+def graph(room, request):
     """Run the server beside stand-in AMCL, behavior server and manager."""
     context = rclpy.Context()
     rclpy.init(context=context, domain_id=130 + os.getpid() % 30)
@@ -40,6 +40,7 @@ def graph(room):
     amcl.declare_parameter('min_particles', 500)
     amcl.declare_parameter('max_particles', 3000)
     calls = []
+    found_pose = getattr(request, 'param', TRUE_POSE)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
     estimates = amcl.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
@@ -69,7 +70,7 @@ def graph(room):
     amcl.create_service(Empty, '/reinitialize_global_localization', service('global'))
     # After the spin, AMCL converges on the robot's actual pose.
     amcl.create_service(Empty, '/request_nomotion_update',
-                        service('nomotion', lambda: publish(*TRUE_POSE)))
+                        service('nomotion', lambda: publish(*found_pose)))
     map_publisher = amcl.create_publisher(OccupancyGrid, '/map', latched)
     scans = amcl.create_publisher(LaserScan, '/scan_raw', 10)
 
@@ -105,7 +106,7 @@ def graph(room):
     rclpy.shutdown(context=context)
 
 
-def _run(executor, client, method=Relocalize.Goal.AUTO):
+def _run(executor, client, method=Relocalize.Goal.AUTO, *, response=False):
     assert client.wait_for_server(timeout_sec=5.0) or pytest.fail('no /relocalize')
     goal = Relocalize.Goal()
     goal.method = method
@@ -116,7 +117,7 @@ def _run(executor, client, method=Relocalize.Goal.AUTO):
     result = sent.result().get_result_async()
     while not result.done() and time.monotonic() < deadline:
         executor.spin_once(timeout_sec=0.05)
-    return result.result().result
+    return result.result() if response else result.result().result
 
 
 def _saved(room, x, y, yaw):
@@ -149,3 +150,17 @@ def test_moved_robot_is_found_by_rotating_global_search(graph, room):
     assert calls[0] == 'initialpose' and 'nomotion' in calls
     assert calls[calls.index('global') + 1] == 'spin'
     assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0], abs=1e-3)
+
+
+@pytest.mark.parametrize('graph', [(-0.9, -0.5, 2.0)], indirect=True)
+def test_low_match_timeout_aborts_the_real_action(graph, room):
+    from action_msgs.msg import GoalStatus
+    executor, select, client, calls = graph
+    select()
+    response = _run(executor, client, Relocalize.Goal.GLOBAL_SEARCH, response=True)
+    assert response.status == GoalStatus.STATUS_ABORTED
+    result = response.result
+    assert not result.success and result.failure_reason == 'timeout'
+    assert result.match_ratio < 0.95
+    assert 'location not confirmed' in result.message
+    assert 'global' in calls and 'spin' in calls

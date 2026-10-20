@@ -57,6 +57,10 @@ RESTORE_TIMEOUT_S = 5.0
 class RelocalizationError(RuntimeError):
     """A relocalization request cannot be completed."""
 
+    def __init__(self, message, failure_reason='error'):
+        super().__init__(message)
+        self.failure_reason = failure_reason
+
 
 class Canceled(RuntimeError):
     """The client canceled the goal."""
@@ -349,8 +353,9 @@ class Relocalization(Node):
         result = Relocalize.Result()
         try:
             self._start_observing()
-            found, message, estimate, ratio = self._relocalize(handle)
+            found, message, estimate, ratio, reason = self._relocalize(handle)
             result.success, result.message, result.match_ratio = found, message, ratio
+            result.failure_reason = reason
             if estimate is not None:
                 result.pose = estimate[2]
             if found:
@@ -363,6 +368,7 @@ class Relocalization(Node):
             handle.canceled()
         except RelocalizationError as error:
             result.message = str(error)
+            result.failure_reason = error.failure_reason
             self.get_logger().warning(f'Relocalization failed: {error}')
             handle.abort()
         finally:
@@ -406,7 +412,7 @@ class Relocalization(Node):
                 current = self.estimate
             if current is not None:
                 restored_pose = current[1]
-                located = (*located[:2], current, located[3])
+                located = (*located[:2], current, *located[3:])
             return located
         finally:
             # Cancellation during a running search also keeps the last live
@@ -448,10 +454,10 @@ class Relocalization(Node):
         while not client.wait_for_service(timeout_sec=0.05):
             self._check(handle)
             if time.monotonic() >= deadline:
-                raise RelocalizationError(f'AMCL {label} service is unavailable')
+                raise RelocalizationError(f'AMCL {label} service is unavailable', 'timeout')
         self._check(handle)
         if time.monotonic() >= deadline:
-            raise RelocalizationError(f'AMCL {label} did not finish in time')
+            raise RelocalizationError(f'AMCL {label} did not finish in time', 'timeout')
         return self._wait_future(handle, client.call_async(request), deadline, label)
 
     def _locate(self, handle, deadline, seeded=None):
@@ -465,8 +471,12 @@ class Relocalization(Node):
             self._feedback(handle, 'APPLYING')
             estimate = seeded or self._apply(handle, pose, deadline)
             ratio = self._score(handle, estimate, deadline)
-            # An operator's pose is kept even when the scan disagrees; report it.
-            return True, f'pose set; {ratio:.0%} of the scan matches the map', estimate, ratio
+            # Applying a pose does not establish that it matches the environment.
+            timed_out = time.monotonic() >= deadline
+            found = not timed_out and ratio >= minimum
+            reason = '' if found else 'timeout' if timed_out else 'low_match'
+            return (found, f'pose set; {ratio:.0%} of the scan matches the map',
+                    estimate, ratio, reason)
         reason = 'global search requested'
         if request.method == goal.AUTO:
             with self.lock:
@@ -478,17 +488,23 @@ class Relocalization(Node):
                 estimate = seeded or self._apply(handle, saved, deadline)
                 ratio = self._score(handle, estimate, deadline)
                 self._feedback(handle, 'CHECKING_SAVED_POSE', ratio)
+                if time.monotonic() >= deadline:
+                    return (False, 'saved pose check time limit reached',
+                            estimate, ratio, 'timeout')
                 if ratio >= minimum:
                     return (True, f'saved pose confirmed; {ratio:.0%} of the scan matches the map',
-                            estimate, ratio)
+                            estimate, ratio, '')
                 reason = f'saved pose matched only {ratio:.0%} of the scan'
             self.get_logger().info(f'Relocalization: {reason}; searching the whole map')
-        estimate, ratio = self._search(handle, deadline, minimum)
-        if ratio >= minimum:
+        estimate, ratio, found = self._search(handle, deadline, minimum)
+        if found:
             return (True, f'{reason}; found by global search, {ratio:.0%} of the scan '
-                    'matches the map', estimate, ratio)
-        return (True, f'{reason}; search time limit reached; keeping the latest AMCL pose, '
-                f'{ratio:.0%} of the scan matches the map', estimate, ratio)
+                    'matches the map', estimate, ratio, '')
+        timed_out = time.monotonic() >= deadline
+        detail = 'search time limit reached' if timed_out else 'final pose match is too low'
+        return (False, f'{reason}; {detail}; location not confirmed, '
+                f'{ratio:.0%} of the scan matches the map', estimate, ratio,
+                'timeout' if timed_out else 'low_match')
 
     def _wait_ready(self, handle, deadline):
         self._feedback(handle, 'WAITING')
@@ -498,7 +514,7 @@ class Relocalization(Node):
             if not missing:
                 return
             if time.monotonic() >= deadline:
-                raise RelocalizationError(missing)
+                raise RelocalizationError(missing, 'timeout')
             time.sleep(0.1)
 
     def _missing(self):
@@ -526,7 +542,8 @@ class Relocalization(Node):
             if estimate is not None and estimate[0] > sent and accepts(estimate[1], pose):
                 return estimate
             if time.monotonic() >= deadline:
-                raise RelocalizationError('AMCL did not report the corrected pose in time')
+                raise RelocalizationError('AMCL did not report the corrected pose in time',
+                                          'timeout')
             time.sleep(0.05)
 
     def _score(self, handle, estimate, deadline):
@@ -551,7 +568,7 @@ class Relocalization(Node):
             if scan is not None and scan[0] >= estimate[0] and field is not None:
                 break
             if time.monotonic() >= deadline:
-                raise RelocalizationError('no LiDAR scan after the pose correction')
+                raise RelocalizationError('no LiDAR scan after the pose correction', 'timeout')
             time.sleep(0.05)
         message = scan[1]
         try:
@@ -618,6 +635,7 @@ class Relocalization(Node):
         else:
             self.get_logger().warning('Spin is unavailable; searching without rotating')
         estimate, ratio, scored_at, update_at = None, 0.0, None, 0.0
+        found = False
         try:
             while time.monotonic() < deadline:
                 self._check(handle)
@@ -630,9 +648,13 @@ class Relocalization(Node):
                     ratio = self._score(handle, current, deadline)
                     estimate, scored_at = current, current[0]
                     self._feedback(handle, 'SEARCHING', ratio)
-                if estimate is not None and ratio >= minimum:
+                if (estimate is not None and ratio >= minimum
+                        and time.monotonic() < deadline):
+                    found = True
                     break
                 now = time.monotonic()
+                if now >= deadline:
+                    break
                 if (result is None or result.done()) and now - update_at >= 0.2:
                     self._call(self.nomotion_update, 'AMCL update', deadline, handle)
                     update_at = now
@@ -642,12 +664,16 @@ class Relocalization(Node):
                 spin.cancel_goal_async()
                 self._wait_motion(result, 'Spin cancellation')
         if estimate is None:
-            raise RelocalizationError('AMCL reported no pose during the global search')
+            raise RelocalizationError('AMCL reported no pose during the global search', 'timeout')
         with self.lock:
             current = self.estimate
         if current is not None and current[0] >= started:
+            # A score measured during rotation cannot validate a different final pose.
+            if found and current is not estimate:
+                ratio = self._score(handle, current, deadline)
+                found = ratio >= minimum and time.monotonic() < deadline
             estimate = current
-        return estimate, ratio
+        return estimate, ratio, found
 
     def _wait_motion(self, future, label):
         """Keep this Action and its dependencies until owned motion really ends."""
@@ -669,7 +695,7 @@ class Relocalization(Node):
             if handle is not None:
                 self._check(handle)
             if time.monotonic() >= deadline:
-                raise RelocalizationError(f'{label} did not finish in time')
+                raise RelocalizationError(f'{label} did not finish in time', 'timeout')
             time.sleep(0.05)
         try:
             return future.result()

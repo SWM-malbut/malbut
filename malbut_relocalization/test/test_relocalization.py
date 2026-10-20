@@ -233,8 +233,8 @@ def test_an_explicit_search_does_not_fit_or_rewind_to_the_previous_pose(monkeypa
     _ready(node, room)
     node.amcl.estimate(*TRUE_POSE)
     result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
-    assert result.success and result.match_ratio < 0.95
-    assert 'keeping the latest AMCL pose' in result.message
+    assert not result.success and result.match_ratio < 0.95
+    assert result.failure_reason == 'timeout'
     assert 'returned to the previous pose' not in result.message
     assert node.amcl.calls.count('global') == 1
     assert result.pose.pose.pose.position.x == pytest.approx(WRONG_POSE[0])
@@ -281,7 +281,7 @@ def test_global_search_rejects_a_map_without_known_free_cells(monkeypatch, room,
     assert 'global' not in node.amcl.calls and not node.spin.goals
 
 
-def test_given_pose_remains_available_on_the_unknown_default_map(monkeypatch, room):
+def test_given_pose_on_unknown_map_is_applied_but_not_confirmed(monkeypatch, room):
     node = _node(monkeypatch, room)
     _ready(node, room)
     grid = room.grid()
@@ -289,19 +289,21 @@ def test_given_pose_remains_available_on_the_unknown_default_map(monkeypatch, ro
     node._map(grid)
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
-    assert result.success and result.match_ratio == 0.
+    assert not result.success and result.match_ratio == 0.
+    assert result.failure_reason == 'low_match'
     assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
 
 
 def test_search_that_never_matches_stops_at_ten_seconds(monkeypatch, room):
-    """95% is an early-stop threshold, not a failure threshold."""
+    """Keep the last estimate, but never call an unconfirmed location a success."""
     node = _node(monkeypatch, room, found=WRONG_POSE)
     _ready(node, room)
     handle = _handle()
     result = node._execute(handle)
-    handle.succeed.assert_called_once()
-    handle.abort.assert_not_called()
-    assert result.success and 'keeping the latest AMCL pose' in result.message
+    handle.abort.assert_called_once()
+    handle.succeed.assert_not_called()
+    assert not result.success and 'location not confirmed' in result.message
+    assert result.failure_reason == 'timeout'
     assert node.amcl.calls.count('global') == 1 and len(node.spin.goals) == 1
     assert result.match_ratio < 0.5
     assert 10.0 <= node.clock.now - 100.0 < 10.1
@@ -325,8 +327,10 @@ def test_search_deadline_keeps_last_measurement_without_waiting_for_another_scan
     monkeypatch.setattr(relocalization_node.time, 'sleep', advance)
     handle = _handle(Relocalize.Goal.GLOBAL_SEARCH)
     result = node._execute(handle)
-    handle.succeed.assert_called_once()
-    assert result.success and result.match_ratio < 0.95
+    handle.abort.assert_called_once()
+    handle.succeed.assert_not_called()
+    assert not result.success and result.match_ratio < 0.95
+    assert result.failure_reason == 'timeout'
     assert result.pose.pose.pose.position.x == pytest.approx(-0.85)
     assert node.estimate[1]['x'] == pytest.approx(-0.85)
     assert node.clock.now - 100 < 10.1
@@ -599,15 +603,19 @@ def test_missing_parameter_response_is_bounded(monkeypatch, room):
     node._particle_reader.call_async = lambda _: Future()
     result = node._execute(_handle())
     assert not result.success and 'read particle limits' in result.message
+    assert result.failure_reason == 'timeout'
     assert not node.parameter_calls and not node.spin.goals
     assert 10 <= node.clock.now - 100 < 10.1
 
 
-def test_result_and_restore_keep_the_last_pose_after_spin_stops(monkeypatch, room):
+@pytest.mark.parametrize('final_pose, confirmed', [
+    ((0.82, 0.41, 0.32), True), (WRONG_POSE, False),
+])
+def test_result_and_restore_keep_the_last_pose_after_spin_stops(
+        monkeypatch, room, final_pose, confirmed):
     node = _node(monkeypatch, room)
     _ready(node, room)
     stopped = Future()
-    final_pose = (0.82, 0.41, 0.32)
 
     def stop():
         node.amcl.estimate(*final_pose)
@@ -627,7 +635,8 @@ def test_result_and_restore_keep_the_last_pose_after_spin_stops(monkeypatch, roo
     monkeypatch.setattr(relocalization_node.time, 'sleep', advance)
     result = node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH))
     actual = pose_record(result.pose)
-    assert result.success
+    assert result.success is confirmed
+    assert result.failure_reason == ('' if confirmed else 'low_match')
     assert (actual['x'], actual['y'], actual['yaw']) == pytest.approx(final_pose)
     assert node.estimate[1]['yaw'] == pytest.approx(final_pose[2])
     assert node.publisher.publish.call_args.args[0].pose.pose.position.x == final_pose[0]
@@ -710,3 +719,39 @@ def test_unconfirmed_spin_keeps_action_and_particles_until_actual_terminal(
         handle.canceled.assert_called_once()
     else:
         handle.succeed.assert_called_once()
+
+
+@pytest.mark.parametrize('ratio, success', [(0.34, False), (0.949, False), (0.95, True)])
+def test_given_pose_requires_the_configured_match_threshold(monkeypatch, room, ratio, success):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    node._score = lambda *_: ratio
+    given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
+    handle = _handle(Relocalize.Goal.GIVEN_POSE, given)
+    result = node._execute(handle)
+    assert result.success is success
+    assert result.failure_reason == ('' if success else 'low_match')
+    assert result.match_ratio == pytest.approx(ratio)
+    assert handle.succeed.call_count == int(success)
+    assert handle.abort.call_count == int(not success)
+    assert node.particle_limits == (500, 3000)
+
+
+@pytest.mark.parametrize('method', [Relocalize.Goal.AUTO, Relocalize.Goal.GIVEN_POSE,
+                                    Relocalize.Goal.GLOBAL_SEARCH])
+def test_a_high_score_computed_after_the_deadline_is_not_success(monkeypatch, room, method):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+
+    def slow_score(*_):
+        node.clock.now += node.timeout
+        return 1.0
+    node._score = slow_score
+    given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
+    handle = _handle(method, given)
+    result = node._execute(handle)
+    assert not result.success and result.failure_reason == 'timeout'
+    handle.abort.assert_called_once()
+    handle.succeed.assert_not_called()
+    assert node.particle_limits == (500, 3000)

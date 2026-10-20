@@ -187,9 +187,10 @@ class AudioRig:
         self.responses.append(text)
         self.stt.feed(SPEECH + QUIET * 100)
 
-    def finish(self):
-        self.until(lambda: self.results and self.session.playback_id in self.players)
-        self.players[self.session.playback_id].drain.set()
+    def finish(self, *, closing_speech=True):
+        if closing_speech:
+            self.until(lambda: self.results and self.session.playback_id in self.players)
+            self.players[self.session.playback_id].drain.set()
         self.until(lambda: self.session.done)
         assert self.finishes == [('succeeded', self.results[0])]
         assert not self.stt.session.active
@@ -421,9 +422,11 @@ def test_unclear_asr_reasks_in_a_new_session_before_help_decision(audio_rig, fol
         assert rig.results == []
         rig.drain_question()
         rig.answer('모르겠어')
-    rig.finish()
-    assert rig.results == [SituationResult('unknown', True)]
-    assert len(rig.spoken) == (4 if followup == 'still_unclear' else 3)
+    silent = followup == 'silence'
+    rig.finish(closing_speech=not silent)
+    assert rig.session.no_response is silent
+    assert rig.results == [SituationResult('unknown', not silent)]
+    assert len(rig.spoken) == {'silence': 2, 'corrected_help': 3, 'still_unclear': 4}[followup]
     assert not rig.wakes
 
 
@@ -497,8 +500,10 @@ def test_real_playback_finish_starts_silence_deadline(audio_rig):
     rig.poll()
     assert not rig.results
     rig.now = 22
-    rig.finish()
-    assert rig.results == [SituationResult('unknown', True)]
+    rig.finish(closing_speech=False)
+    assert rig.session.no_response
+    assert rig.results == [SituationResult('unknown', False)]
+    assert len(rig.spoken) == 1
 
 
 def test_lost_stt_session_does_not_turn_into_a_help_judgment(audio_rig):

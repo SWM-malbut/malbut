@@ -64,6 +64,7 @@ class PythonSuiteTests(unittest.TestCase):
             'test_situation_action_ros.py', 'test_situation_recovery_ros.py',
             'test_ros_speech_missions.py', 'test_homecam_query.py',
             'test_manager_boundary_ros.py',
+            'test_voice_map_actions_ros.py', 'test_voice_lab_graph.py',
         )}
         self.assertEqual(self.files('agent-ros'), expected)
         self.assertEqual(self.files('agent-ros', fall_job=True), expected)

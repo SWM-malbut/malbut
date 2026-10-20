@@ -1,0 +1,173 @@
+{
+  "started_at": "2026-10-19T18:37:13.054014+00:00",
+  "finished_at": "2026-10-19T18:37:21.738970+00:00",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "scope": {
+    "llm": "live configured OpenAI model",
+    "agent": "production source",
+    "manager": "production SystemManagerNode and SpeechCoordinator",
+    "tts": "production TtsNode + SpeechRuntime + PiperSynthesizer/prerecorded notices",
+    "audio_device": "WAV file sink; no physical speaker or realtime device drain",
+    "input": "text injected at final STT transcript boundary; no microphone/ASR",
+    "robot": "isolated fake AutoSlam Action; no driving or actual map creation"
+  },
+  "expectations": {
+    "utterances": [
+      "지도 만들어줘",
+      "작업실로"
+    ],
+    "first_decision": {
+      "type": "clarification",
+      "clarification_for": "mapping_name"
+    },
+    "second_decision": {
+      "tool_name": "request_mapping",
+      "arguments": {
+        "map_name": "작업실"
+      }
+    },
+    "capability": "autoslam",
+    "required_voice_path": [
+      "Agent SpeechRequest",
+      "Manager accepted",
+      "private TTS request",
+      "real TTS runtime",
+      "WAV output",
+      "Manager finished"
+    ]
+  },
+  "passed": true,
+  "checks": {
+    "first_live_llm": true,
+    "asks_map_name": true,
+    "no_execution_before_name": true,
+    "question_finished_through_manager": true,
+    "name_context_active_after_question": true,
+    "second_live_llm": true,
+    "second_has_pending_name_context": true,
+    "second_uses_auto_tool_choice": true,
+    "correct_mapping_tool_and_name": true,
+    "exactly_one_autoslam_goal": true,
+    "no_navigation_goal": true,
+    "manager_mission_succeeded": true,
+    "completion_notice_finished": true,
+    "question_published_once": true,
+    "question_manager_accepted": true,
+    "question_forwarded_once": true,
+    "question_actual_tts_received": true,
+    "question_nonempty_audio": true,
+    "question_status_returned": true,
+    "start_published_once": true,
+    "start_manager_accepted": true,
+    "start_forwarded_once": true,
+    "start_actual_tts_received": true,
+    "start_nonempty_audio": true,
+    "start_status_returned": true,
+    "completion_published_once": true,
+    "completion_manager_accepted": true,
+    "completion_forwarded_once": true,
+    "completion_actual_tts_received": true,
+    "completion_nonempty_audio": true,
+    "completion_status_returned": true,
+    "all_public_speech_admitted": true,
+    "no_voice_failure": true,
+    "private_tts_only_manager_publishes": true,
+    "source_unchanged_during_test": true
+  },
+  "models": [
+    {
+      "request_id": "speech-request-32e8cadceea0dcbd69a8c7a9d42e45a3b3a3138d099082fea38f2709641cc466",
+      "utterance": "지도 만들어줘",
+      "mapping_name_requested": false,
+      "tool_choices": [
+        "auto"
+      ],
+      "decision": {
+        "type": "clarification",
+        "message": "새로 만들 지도의 이름을 무엇으로 할까요?",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "missing_mapping_name",
+        "confidence": 1,
+        "expires_in_ms": 5000,
+        "clarification_for": "mapping_name"
+      },
+      "provider": "openai",
+      "response_id": "resp_069bdf91ecfd556e016ad6635ba80087d084e541b6ecfbfec8"
+    },
+    {
+      "request_id": "speech-request-c571f823643839ee18c3fdeb76bbcaec7646205d77761037ad0d74b29409f5b1",
+      "utterance": "작업실로",
+      "mapping_name_requested": true,
+      "tool_choices": [
+        "auto"
+      ],
+      "decision": {
+        "type": "tool_call",
+        "message": "request_mapping 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_mapping",
+        "arguments": {
+          "map_name": "작업실"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "provider": "openai",
+      "response_id": "resp_0cbc14650fce51b6016ad6635e6b1487d0bda2f55c8f22e096"
+    }
+  ],
+  "base_commit": "4a514e7d",
+  "checks_passed": 35,
+  "action_goals": [
+    {
+      "capability_id": "autoslam",
+      "arguments": {
+        "map_name": "작업실"
+      },
+      "accepted": true
+    }
+  ],
+  "voice": [
+    {
+      "text": "새로 만들 지도의 이름을 무엇으로 할까요?",
+      "audio_id": "",
+      "sample_rate": 22050,
+      "frames": 61952,
+      "duration_s": 2.81,
+      "sha256": "6467005ced6faffa7cf72ec94978379f9007366b89a89f98101b5ba7cc69668f",
+      "manager_states": [
+        "accepted",
+        "playing",
+        "finished"
+      ]
+    },
+    {
+      "text": "네, 지도 만들기를 시작하겠습니다.",
+      "audio_id": "function.request_mapping.starting",
+      "sample_rate": 24000,
+      "frames": 67431,
+      "duration_s": 2.81,
+      "sha256": "32709b58a4f89770c7b118b27b623d50aa775eabd40cf0809b5bed7c873d6b23",
+      "manager_states": [
+        "accepted",
+        "playing",
+        "finished"
+      ]
+    },
+    {
+      "text": "요청하신 작업이 완료됐어요.",
+      "audio_id": "operation.succeeded",
+      "sample_rate": 24000,
+      "frames": 58515,
+      "duration_s": 2.438,
+      "sha256": "11163582a345c6c7b196e4834a3043aa3731ffb7128f3fc27cc5f0f8b340c685",
+      "manager_states": [
+        "accepted",
+        "playing",
+        "finished"
+      ]
+    }
+  ]
+}

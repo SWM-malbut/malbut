@@ -1,0 +1,205 @@
+{
+  "final": {
+    "scenarios": 626,
+    "turns": 1145,
+    "passed": 1145,
+    "failed": 0,
+    "errors": 0,
+    "complete": true
+  },
+  "stages": {
+    "pilot.json": {
+      "complete": true,
+      "expected_scenarios": 18,
+      "scenarios": 18,
+      "turns": 45,
+      "passed": 45,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "names_0.json": {
+      "complete": false,
+      "expected_scenarios": 94,
+      "scenarios": 22,
+      "turns": 43,
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "names_1.json": {
+      "complete": false,
+      "expected_scenarios": 93,
+      "scenarios": 22,
+      "turns": 43,
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "names_2.json": {
+      "complete": false,
+      "expected_scenarios": 93,
+      "scenarios": 21,
+      "turns": 40,
+      "passed": 39,
+      "failed": 1,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_boundaries_0.json": {
+      "complete": true,
+      "expected_scenarios": 65,
+      "scenarios": 65,
+      "turns": 145,
+      "passed": 145,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_boundaries_1.json": {
+      "complete": true,
+      "expected_scenarios": 65,
+      "scenarios": 65,
+      "turns": 145,
+      "passed": 145,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_full_0.json": {
+      "complete": true,
+      "expected_scenarios": 108,
+      "scenarios": 108,
+      "turns": 147,
+      "passed": 147,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_full_1.json": {
+      "complete": true,
+      "expected_scenarios": 108,
+      "scenarios": 108,
+      "turns": 148,
+      "passed": 148,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_names_0.json": {
+      "complete": true,
+      "expected_scenarios": 70,
+      "scenarios": 70,
+      "turns": 140,
+      "passed": 140,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_names_1.json": {
+      "complete": true,
+      "expected_scenarios": 70,
+      "scenarios": 70,
+      "turns": 140,
+      "passed": 140,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_names_2.json": {
+      "complete": true,
+      "expected_scenarios": 70,
+      "scenarios": 70,
+      "turns": 140,
+      "passed": 140,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    },
+    "final_names_3.json": {
+      "complete": true,
+      "expected_scenarios": 70,
+      "scenarios": 70,
+      "turns": 140,
+      "passed": 140,
+      "failed": 0,
+      "errors": 0,
+      "configured_model": "gpt-5.6-luna",
+      "reasoning": "low"
+    }
+  },
+  "names": {
+    "state-name-workshop-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-office-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-living-bare": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-office-particle": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-kitchen-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-workshop-bare": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-kitchen-particle": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-living-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-new-home-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-living-particle": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-workshop-naming": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-entrance-quoted": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-workshop-particle": {
+      "attempts": 20,
+      "passed": 20
+    },
+    "state-name-entrance-particle": {
+      "attempts": 20,
+      "passed": 20
+    }
+  },
+  "unique_tests": {
+    "passed": 520
+  }
+}

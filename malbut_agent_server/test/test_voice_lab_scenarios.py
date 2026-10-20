@@ -64,11 +64,14 @@ class ObservedNavigationGraph:
 
 def test_catalog_is_unique_and_advertises_advanced_tests_separately():
     names = [item.id for item in scenarios.SCENARIOS]
-    assert len(names) == len(set(names)) == 31
+    assert len(names) == len(set(names)) == 40
     assert {
         'navigation', 'follow', 'cancel-follow', 'patrol-light', 'patrol-normal',
         'patrol-thorough', 'preempt-base', 'cancel-delayed', 'manager-unavailable',
         'navigation-suggestion', 'capability-question',
+        'mapping', 'relocalize-auto', 'relocalize-global',
+        'cancel-mapping', 'cancel-relocalize', 'abort-mapping', 'abort-relocalize',
+        'reject-mapping', 'reject-relocalize',
     } <= set(names)
     assert all(item.title and item.description for item in scenarios.SCENARIOS)
     assert '/regression' in scenarios.COVERAGE_NOTE

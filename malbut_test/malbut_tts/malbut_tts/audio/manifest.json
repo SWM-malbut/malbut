@@ -1739,6 +1739,96 @@
     "text": "이 음성 실행 기능이 연결되지 않았어요.",
     "voice": "kss"
   },
+  "relocalize.failed": {
+    "generation": {
+      "backend": "piper",
+      "model_config_sha256": "153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df",
+      "model_sha256": "624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9",
+      "output_rate": 24000,
+      "provider": "CPUExecutionProvider",
+      "resampling": "scipy.signal.resample_poly:160/147",
+      "source_rate": 22050,
+      "source_sha256": {
+        "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
+        "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
+        "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
+        "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
+      },
+      "threads": 6,
+      "versions": {
+        "numpy": "1.26.4",
+        "onnxruntime": "1.23.2",
+        "piper-tts": "1.8.0",
+        "scipy": "1.15.3"
+      }
+    },
+    "instructions": null,
+    "model": "rhasspy/piper-voices/ko_KR-kss-medium",
+    "sha256": "b79cf861c4c9b40678f619f9d55aafa34120c37c61a5ba46b69fd0c94af59263",
+    "text": "현재 위치를 확인하지 못했어요. 지도와 센서 상태를 확인해 주세요.",
+    "voice": "kss"
+  },
+  "relocalize.low_match": {
+    "generation": {
+      "backend": "piper",
+      "model_config_sha256": "153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df",
+      "model_sha256": "624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9",
+      "output_rate": 24000,
+      "provider": "CPUExecutionProvider",
+      "resampling": "scipy.signal.resample_poly:160/147",
+      "source_rate": 22050,
+      "source_sha256": {
+        "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
+        "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
+        "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
+        "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
+      },
+      "threads": 6,
+      "versions": {
+        "numpy": "1.26.4",
+        "onnxruntime": "1.23.2",
+        "piper-tts": "1.8.0",
+        "scipy": "1.15.3"
+      }
+    },
+    "instructions": null,
+    "model": "rhasspy/piper-voices/ko_KR-kss-medium",
+    "sha256": "a729d0e380f9865a7401e32b9d0717b858b54900c83580fb7338b86aff64421d",
+    "text": "지도와 주변 환경이 충분히 일치하지 않아 현재 위치를 확인하지 못했어요.",
+    "voice": "kss"
+  },
+  "relocalize.timeout": {
+    "generation": {
+      "backend": "piper",
+      "model_config_sha256": "153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df",
+      "model_sha256": "624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9",
+      "output_rate": 24000,
+      "provider": "CPUExecutionProvider",
+      "resampling": "scipy.signal.resample_poly:160/147",
+      "source_rate": 22050,
+      "source_sha256": {
+        "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
+        "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
+        "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
+        "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
+      },
+      "threads": 6,
+      "versions": {
+        "numpy": "1.26.4",
+        "onnxruntime": "1.23.2",
+        "piper-tts": "1.8.0",
+        "scipy": "1.15.3"
+      }
+    },
+    "instructions": null,
+    "model": "rhasspy/piper-voices/ko_KR-kss-medium",
+    "sha256": "3d95d67ee0a2a2e793ca934bfdd6579922654a954b75ba58623737d6537aa0f8",
+    "text": "제한 시간 안에 현재 위치를 찾지 못했어요. 지도와 주변 환경을 확인해 주세요.",
+    "voice": "kss"
+  },
   "set_weather_location.succeeded": {
     "generation": {
       "backend": "piper",

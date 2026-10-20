@@ -13,7 +13,7 @@ import pytest
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 
 from action_msgs.msg import GoalStatus  # noqa: E402
-from malbut_interfaces.action import FollowPerson, Patrol  # noqa: E402
+from malbut_interfaces.action import FollowPerson, Patrol, Relocalize  # noqa: E402
 from malbut_interfaces.msg import SpeechRequest, SpeechTranscript  # noqa: E402
 from nav2_msgs.action import NavigateToPose  # noqa: E402
 from rclpy.action import ActionClient, ActionServer, CancelResponse  # noqa: E402
@@ -47,7 +47,7 @@ def test_new_nav2_manifests_resolve_real_humble_goal_types():
         'backup': {'target': {'x': 0.2}, 'speed': 0.1,
                    'time_allowance': {'sec': 10, 'nanosec': 0}},
         'follow_waypoints': {'poses': [{'header': {'frame_id': 'map'},
-                                      'pose': {'orientation': {'w': 1.0}}}]},
+                                       'pose': {'orientation': {'w': 1.0}}}]},
     }
     for name, arguments in examples.items():
         manifest = registry.get(name)
@@ -56,7 +56,7 @@ def test_new_nav2_manifests_resolve_real_humble_goal_types():
 
 
 ACTION_TYPES = {
-    'follow_person': FollowPerson, 'patrol': Patrol,
+    'follow_person': FollowPerson, 'patrol': Patrol, 'relocalize': Relocalize,
     'navigate_to_pose': NavigateToPose,
 }
 
@@ -120,6 +120,7 @@ class _Actuators(Node):
     def __init__(self):
         super().__init__('speech_mission_test_actuators')
         self.goals = {name: [] for name in ACTION_TYPES}
+        self.relocalization_reason = 'timeout'
         self.cancel_seen = Event()
         self.allow_cancel = Event()
         self.release = Event()
@@ -152,6 +153,10 @@ class _Actuators(Node):
                 time.sleep(0.02)
             handle.abort()
             return FollowPerson.Result(message='test fixture released')
+        if capability == 'relocalize':
+            handle.abort()
+            return Relocalize.Result(success=False, failure_reason=self.relocalization_reason,
+                                     match_ratio=0.34, message='diagnostic only')
         handle.succeed()
         if capability == 'patrol':
             return Patrol.Result(success=True, message='test patrol complete',
@@ -722,3 +727,24 @@ def test_default_speech_navigation_reads_web_room_edits_and_map_switches(
     goal = run.actuators.goals['navigate_to_pose'][-1]
     assert (goal.pose.pose.position.x, goal.pose.pose.position.y) == (1, 2)
     run.spin_until(lambda: sum(event['kind'] == 'succeeded' for event in run.events) == 3)
+
+
+@pytest.mark.parametrize('reason', ['low_match', 'timeout'])
+def test_relocalization_failure_crosses_manager_to_the_correct_voice_notice(speech_graph, reason):
+    from malbut_agent_server.mission_audio_cases import NOTICE_TEXTS
+    graph = speech_graph
+    graph.start()
+    graph.actuators.relocalization_reason = reason
+    graph.provider.overrides['위치 다시 찾아줘'] = AgentDecision(
+        type='tool_call', tool_name='request_relocalization', arguments={'method': 'auto'},
+        message='모델이 만든 실행 완료 주장', expires_in_ms=5000)
+    graph.say('위치 다시 찾아줘')
+    expected = NOTICE_TEXTS['relocalize.' + reason]
+    graph.spin_until(lambda: expected in graph.replies)
+    assert graph.manager_goals == [('relocalize', {'method': 0})]
+    terminal = [e for e in graph.events if e.get('terminal')]
+    assert len(terminal) == 1 and terminal[0]['kind'] == 'failed'
+    result = yaml.safe_load(terminal[0]['result_yaml'])
+    assert result['success'] is False and result['failure_reason'] == reason
+    assert graph.replies.count(expected) == 1
+    assert '요청하신 작업이 완료됐어요.' not in graph.replies

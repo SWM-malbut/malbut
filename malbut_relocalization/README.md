@@ -4,7 +4,7 @@
 저장된 위치나 지정한 위치를 `/initialpose`로 보내고, AMCL이 그 위치에서 새 추정을
 낸 것까지 확인한다. 저장 위치가 라이다와 맞지 않거나 `method=GLOBAL_SEARCH`(2)면
 AMCL 전역 위치 탐색과 Nav2 Spin을 사용한다. 위치는 AMCL만 추정하며,
-일치율이 95% 이상이면 회전을 취소하고 끝낸다. 탐색은 최대 10초다.
+일치율이 95% 이상일 때만 성공으로 판정한다. 탐색은 최대 10초다.
 
 ## 인터페이스
 
@@ -13,7 +13,7 @@ AMCL 전역 위치 탐색과 Nav2 Spin을 사용한다. 위치는 AMCL만 추정
 | Action | `/relocalize` (`malbut_interfaces/action/Relocalize`) |
 | `method=AUTO`(0) | 저장 AMCL 위치·AutoSLAM `<지도>.pose.yaml` 확인, 없거나 맞지 않으면 전역 탐색 |
 | `method=GIVEN_POSE`(1) | Goal의 `initial_pose`(map 좌표) |
-| 결과 | `success`, `message`, 보정 후 AMCL 추정 `pose` |
+| 결과 | `success`, `failure_reason`, `message`, AMCL 추정 `pose`, `match_ratio` |
 | 피드백 | `WAITING`(지도 선택·AMCL 활성 대기) → `APPLYING` |
 
 선택 지도는 Bringup 공통 실행기의 `/malbut/localization/state`에서 읽는다.
@@ -50,10 +50,16 @@ Humble AMCL은 범위를 바꾸면 필터를 초기화하므로, 같은 지도�
 고정 공분산으로 AMCL 결과를 덮어쓰지 않는다.
 
 `scan_match`는 일치율 계산만 한다. 지도 장애물에서 0.10 m 이내인 유효 측정점의 비율을
-사용한다(`match_distance_m`, `match_ratio_min`). 95%는 조기 종료 기준이다.
-10초 내 도달하지 못해도 마지막 AMCL 위치를 유지하고, 측정한 일치율과 함께 완료로 반환한다.
+사용한다(`match_distance_m`, `match_ratio_min`). 기본 성공 기준은 95%다.
+제한 시간 내에 이 기준을 충족하지 못하면 `success=false`, Action `ABORTED`,
+`failure_reason=timeout`으로 반환한다. 마지막 AMCL 추정치는 유지하지만 위치 확인 성공으로
+간주하지 않는다. `GIVEN_POSE`도 적용 후 일치율이 낮으면 `failure_reason=low_match`로 실패한다.
+회전이 멈춘 뒤 추정 위치가 바뀌면 최종 위치의 일치율도 확인한다.
 회전 종료 확인과 파티클·위치 복원은 탐색 제한 이후에도 정리될 때까지 수행한다.
-`GIVEN_POSE`는 사용자가 지정한 위치를 적용하고 일치율을 보고하는 기존 동작을 유지한다.
+취소는 `CANCELED`로 유지하고, 그 밖의 오류는 `failure_reason=error`로 반환한다.
+
+Manager는 실패 결과를 Agent에 전달한다. 음성 안내는 `failure_reason`을 기준으로
+일치율 부족과 시간 초과를 구분하며, 내부 진단 문자열을 그대로 읽지 않는다.
 
 ## 위치 기억
 

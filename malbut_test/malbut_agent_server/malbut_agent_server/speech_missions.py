@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 import hashlib
 import json
-import re
 from pathlib import Path
 from threading import RLock, get_ident
 import time
@@ -13,7 +12,7 @@ from malbut_agent_server.mission_speech import event_speech
 from malbut_agent_server.mission_audio_cases import NOTICE_TEXTS
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 from malbut_agent_server.speech_navigation import NavigationTargets
-from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
+from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, normalize_mapping_name
 from malbut_agent_server.speech_nav2 import (
     MAP_TOOLS, NAV2_CAPABILITIES, map_arguments, motion_arguments,
 )
@@ -59,6 +58,13 @@ class SpeechMissionProposal:
     map_revision: str = ''
     blocked: bool = False
     _issuer: object = field(default=None, repr=False, compare=False)
+
+    @property
+    def manager_request_id(self):
+        """Bind both dispatch and direct speech to the same Manager request."""
+        if self.blocked or self.tool_name == 'cancel_voice_mission':
+            return None
+        return 'speech-mission:' + hashlib.sha256(self.request_id.encode('utf-8')).hexdigest()
 
 
 @dataclass
@@ -196,13 +202,9 @@ class SpeechMissions:
                 raise ValueError('patrol requires a supported thoroughness')
             manager_arguments = {'thoroughness': levels[level]}
         elif tool_name == 'request_mapping':
-            name = arguments.get('map_name')
-            if isinstance(name, str):
-                name = unicodedata.normalize('NFC', name.strip())
-            if (set(arguments) != {'map_name'} or not isinstance(name, str)
-                    or re.fullmatch(r'[A-Za-z0-9가-힣][A-Za-z0-9가-힣 _-]{0,63}', name) is None):
+            if set(arguments) != {'map_name'}:
                 raise ValueError('mapping requires a filename without path or extension')
-            manager_arguments = {'map_name': name}
+            manager_arguments = {'map_name': normalize_mapping_name(arguments['map_name'])}
         elif tool_name == 'request_relocalization':
             methods = {'auto': 0, 'global_search': 2}
             method = arguments.get('method')
@@ -319,9 +321,7 @@ class SpeechMissions:
                 or not self.map_matches(proposal.map_revision)):
             return _NAV_CHANGED
         capability = _CAPABILITIES[proposal.tool_name]
-        manager_id = 'speech-mission:' + hashlib.sha256(
-            proposal.request_id.encode('utf-8'),
-        ).hexdigest()
+        manager_id = proposal.manager_request_id
         arguments = json.loads(proposal.arguments_json)
         refusal = self._guard_refusal(guard)
         if refusal is None:

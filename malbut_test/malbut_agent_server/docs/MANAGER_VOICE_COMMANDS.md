@@ -3,7 +3,22 @@
 음성 실행을 켜면 STT 원문 → LLM 의미 해석·도구 제안 → 서버의 도구·인자·전송 조건 검사 →
 대화 저장 → ROS 스레드의 `ManagerClient` → `/malbut/mission/execute`로 연결한다.
 Agent는 Nav2나 속도 토픽을 직접 호출하지 않는다. Manager가 기능 등록,
-자원 충돌과 실행·취소를 관리하며, 기존 Bringup이 기능별 준비를 담당한다.
+자원 충돌과 실행·취소를 관리하고, 실행 전 준비는 Bringup에 위임한다.
+지도 모드와 지도 제공자 전환은 Bringup과 AutoSLAM이 담당한다.
+
+```mermaid
+flowchart TD
+    A[음성 입력과 STT] --> B[Agent와 LLM: 의도 판단과 대화 상태]
+    B --> C[Manager]
+    C -->|작업 요청| D[지도 작성 · 순찰 · 위치 찾기]
+    C -->|음성 요청| E[TTS와 스피커]
+```
+
+`request_*`는 Agent가 LLM에 제공하는 도구이며 작업은 Manager의 `ExecuteMission`으로
+전달한다. 이름 질문·일반 응답·작업 안내도 `/malbut/speech/response`의 `SpeechRequest`로
+Manager `SpeechCoordinator`에 보내고, 수락된 요청만 `/malbut/tts/request`로 전달한다.
+TTS 재생 상태는 Manager를 거쳐 `/malbut/speech/playback_status`로 돌아온다.
+Agent의 토픽 발행 성공, Manager 수락, TTS 완료는 서로 다른 시점이다.
 
 | 발화 예 | LLM 도구 | Manager 요청 |
 | --- | --- | --- |
@@ -11,8 +26,9 @@ Agent는 Nav2나 속도 토픽을 직접 호출하지 않는다. Manager가 기�
 | 따라와 | `request_follow_person()` | `follow_person`, 첫 번째 보이는 사람, 거리 1 m |
 | 순찰해 | `request_patrol(thoroughness="normal")` | `patrol`, 꼼꼼함 1 |
 | 꼼꼼하게 순찰해 | `request_patrol(thoroughness="thorough")` | `patrol`, 꼼꼼함 2 |
-| 새 지도 만들어줘 | `request_mapping(map_name="new_home")` | `autoslam` |
+| 새집 지도를 만들어 줘 | `request_mapping(map_name="새집")` | `autoslam`, map_name 새집 |
 | 위치 다시 찾아줘 | `request_relocalization(method="auto")` | `relocalize`, method 0 |
+| 지도 전체에서 위치 다시 찾아줘 | `request_relocalization(method="global_search")` | `relocalize`, method 2 |
 | 수동 조작 켜줘 | `request_manual_control()` | `manual_drive` (속도 명령 없음) |
 | Bringup 복구해줘 | `request_recovery()` | 기존 `recovery` Action |
 | 멈춰 / 취소해 | `cancel_voice_mission()` | 관측된 전면 작업과 음성 접수 대기 Goal의 표준 취소 |
@@ -20,6 +36,80 @@ Agent는 Nav2나 속도 토픽을 직접 호출하지 않는다. Manager가 기�
 | 30 cm 뒤로 가 | `request_backup(distance_m=0.3)` | 기존 Nav2 `/backup` |
 | 지도 좌표 (1, 2)로 가 | `request_navigation_point(map_revision=…, x=1, y=2, yaw_deg=null)` | 기존 `navigate_to_pose` |
 | 거실 다음 주방으로 가 | `request_waypoints(map_revision=…, waypoints=[…])` | 기존 Nav2 `/follow_waypoints` 한 번 |
+
+세 지도 기능도 `SpeechMissions` → `ManagerClient` → `ExecuteMission` 경로를 사용한다.
+Manager는 `malbut_interfaces/capabilities`의 manifest로 인자를 검사한 뒤
+`Patrol`, `AutoSlam`, `Relocalize` Goal을 각각 `/patrol`, `/autoslam`, `/relocalize`에 보낸다.
+하위 Feedback과 Result는 `feedback_yaml`, `result_yaml`로 Agent에 돌아오며,
+성공·실패·취소 안내는 관측한 Manager 결과를 따른다.
+
+지도 작성은 새 파일 이름이 필요하다. 이름 없이 “지도를 만들어 줘”라고 하면
+LLM은 저장 이름을 묻고, 현재 답변의 이름으로 요청한다. 이름을 임의로 `home`이나
+`new_home`으로 만들지 않는다. 한글과 공백을 보존하며 경로·확장자는 허용하지 않고,
+기존 지도 덮어쓰기는 AutoSLAM 서버가 거부한다. 성공은 탐색 절차와 지도 저장 완료이며
+모든 공간을 탐색했다는 뜻은 아니다.
+이름을 답하는 문장에서는 이름 부분만 추출한다. “이름은 이사집으로 하자”는 `이사집`,
+이름 질문에 대한 “이사한 집으로 해”는 `이사한 집`이다. 조사·명령 어미를 이름에 붙이지
+않되, 사용자가 따옴표로 지정한 실제 이름은 보존한다. 이는 LLM의 의미 추출 지침이며
+서버가 모든 이름의 끝부분을 일괄 삭제하는 규칙은 아니다.
+파일 이름 검사는 Tool 정책과 ROS 준비 단계에서 같은 검증 함수를 사용한다.
+잘못된 이름이면 Manager에 보내지 않고 허용되는 이름 형식을 안내한다.
+
+지도 이름 확인에는 별도의 대화 상태를 사용한다. LLM은 실제 이름 질문을
+`type=clarification, clarification_for=mapping_name`으로 표시한다. 서버는 질문을
+대화에 저장하고 응답 토픽에 정상 발행한 뒤에만 다음 발화의
+`mapping_context.awaiting_name=true`를 전달한다. 이 상태는 현재 세션·세대·대화 차수에
+묶이며 120초 뒤 만료한다. 다음 일반 발화에서 한 번 소비하고, 이름을 다시 묻는 응답이
+발행될 때만 새로 설정한다. 취소·주제 전환·새 대화·선점·오류 뒤에는 예전 이름 질문을
+대화 기록만 보고 되살리지 않는다. 발행 성공은 스피커 재생 완료를 뜻하지 않는다.
+
+이름을 기다릴 때 `작업실로`는 LLM이 지도 이름 `작업실`로 추출하고, `거실로 가`는
+명시적인 이동 요청으로 해석한다. 발화 전체가 `"작업실로"`처럼 유효한 이름 하나를
+따옴표로 감싼 값이면 서버가 실제 LLM의 선택을 `request_mapping`과 그 정확한 이름으로
+제한한다. 이 경우 `작업실로` 전체가 파일 이름이며, 장소 등록 여부를 검사하지 않는다.
+도구 응답이 다른 기능이나 이름을 제안하면 정책이 차단한다. 대기 상태가 없거나,
+인용문 뒤에 번역·설명·이동 등 다른 말이 붙으면 이 제한을 적용하지 않는다.
+등록된 장소명에 이름 지정 조사만 붙인 답변도 필드 입력으로 묶는다. 예를 들어 등록된
+이름이 `주방`이고 전체 답변이 `주방으로`라면 이름은 `주방`이다. `주방으로 가`나
+`지도는 됐고 주방으로`처럼 다른 말이 붙으면 묶지 않는다. 등록 이름 후보가 겹치면
+서버가 하나를 추측하지 않으며, 인용한 이름은 항상 내부 문자열 보존이 우선한다.
+미등록 이름·그 밖의 문장과 주제 전환은 명시적인 대기 상태를 받은 LLM이 판단한다.
+
+```mermaid
+flowchart TD
+    A[현재 발화] --> B{발행된 지도 이름 질문을 기다리는가?}
+    B -->|아니오| C[LLM이 현재 요청의 의도와 도구 선택]
+    B -->|예| D{인용한 유효 이름 또는 등록 장소명과 조사만인가?}
+    D -->|예| E[실제 LLM 호출을 지도 도구와 정확한 이름으로 제한]
+    D -->|아니오| F[대기 상태를 받은 LLM이 이름 답변과 새 요청 구분]
+    C --> G{응답 유형}
+    E --> G
+    F --> G
+    G -->|지도 이름 질문| H[대화 저장과 발행 성공 후 다음 발화 대기]
+    G -->|도구 요청| I[서버 검증 후 Manager에 전송]
+    G -->|설명이나 거절| J[응답하고 이름 대기 해제]
+```
+
+“지도 저장해줘”의 저장은 개인 사실 기억 저장과 구분한다. “구집이 아니라 새집”,
+“정확히는 우리 집” 같은 로봇 명령의 정정만으로 기억 관리와의 복합 요청으로 막지 않는다.
+
+위치 보정은 기본 `AUTO=0`, 명시적인 전체 지도 탐색은 `GLOBAL_SEARCH=2`다.
+`GIVEN_POSE=1`은 `initial_pose`의 map 좌표·방향·공분산이 필요하여 운영자 화면이나
+Manager의 구조화된 요청으로 사용한다. 음성 tool은 두 방식만 제공하며 좌표를 추측하지 않는다.
+“내 위치가 어디야?” 같은 조회만으로 위치 보정을 시작하지 않는다.
+“지금 어디인지 위치 찾아봐”처럼 로봇 위치를 적극적으로 찾으라는 명령은 `AUTO` 요청이다.
+“지금 어디야?” 같은 현재 위치 조회와 구분하며, 사람의 위치를 묻거나 실행 의도가
+불분명하면 확인한다. 현재 방을 읽는 음성 도구가 없다는 사실만으로 AMCL의 위치 추정이
+실패했다고 말하지 않는다.
+
+문장 의미 → 실행 의도 → 기능·옵션 선택은 LLM이 도구 설명과 대화 문맥에 따라 판단한다.
+따라서 “대충”을 `light`로 해석하는 것은 프롬프트의 의미 판단이고, `light → 0`,
+`normal → 1`, `thorough → 2`, `auto → 0`, `global_search → 2` 변환은 코드의 고정 규칙이다.
+인용한 이름의 대기 상태와 정확한 값은 서버가 검사하지만, 일반 발화에서 인자 형식이
+맞는 의미 해석 오류까지 모두 알아내지는 못한다. 실제 모델의 표현별·반복 시험과 ROS 전송 검증을 따로 확인한다.
+예약·지연 실행은 지원하지 않는다. “내일”, “10분 뒤”, “외출하면” 같은 시간·조건을
+생략한 즉시 실행을 요청해서는 안 된다. 순찰은 한 번의 전체 지도 순찰이며 방 제한,
+사용자 지정 속도, 지정 시간 동안의 연속 순찰 조건을 임의로 버려 실행하지 않는다.
 
 따라오기 대상은 발화자로 인증된 사람이 아니다. 임의 사람 ID·속도·
 Behavior Tree·기능 ID를 모델이 정할 수 없다. 사용자 요청 범위 안에서 RGB와 현재 위치·방향,
