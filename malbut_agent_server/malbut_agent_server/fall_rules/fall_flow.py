@@ -132,6 +132,7 @@ class Incident:
     # Open but not being checked: nobody (no person verified there) or a person.
     idle: Optional[str] = None
     reverified: bool = False     # looked again from where it was first seen
+    looking_first: bool = False  # the 30-minute recheck looks from where it stands first
     compare_at_view: bool = False
     keep_open: bool = False      # the first person was never verified (design 6)
     asked: bool = False
@@ -336,6 +337,10 @@ class FallFlow:
             self._guarded(incident, reason, now)
             return
         self._record('arrival_compared', incident, verdict, look_id=look_id)
+        if incident.looking_first:
+            incident.looking_first = False
+            self._looked_from_here(incident, verdict, now)
+            return
         at_view = incident.compare_at_view
         if verdict == 'failed':
             verdict = 'person_unsure'  # Cannot compare by Cloud: keep checking the person.
@@ -350,11 +355,18 @@ class FallFlow:
             else:
                 incident.compare_at_view = True
                 self._view(incident)
+        elif verdict == 'different_person' and incident.purpose == 'recheck':
+            # The one checked 30 minutes ago left; whoever lies there now is filtered
+            # and checked as an incident of their own (SWM25-269).
+            self._close(incident, 'left_the_spot', now, memory=None)
         elif verdict == 'different_person':
             self._differ(incident)
             self._to_view_or_posture(incident, at_view, now)
         elif verdict == 'same_object':
             self._close(incident, 'not_a_person', now, memory='object')
+        elif verdict == 'gone' and incident.purpose == 'recheck':
+            # Okay 30 minutes ago and the spot is empty: left, not "could not see".
+            self._close(incident, 'left_the_spot', now, memory=None)
         elif verdict in ('gone', 'not_visible'):
             if not incident.reverified:
                 self._reverify(incident)  # Look from where it was first seen first.
@@ -364,6 +376,16 @@ class FallFlow:
                            box=incident.first.box)
             else:
                 self._idle(incident, 'nobody', 'could_not_compare', now)
+
+    def _looked_from_here(self, incident, verdict, now):
+        """The 30-minute recheck's first look, from where the robot stands (SWM25-269)."""
+        if verdict in ('gone', 'different_person'):
+            # Left. Someone else lying there is an incident of their own.
+            self._close(incident, 'left_the_spot', now, memory=None, quiet=True)
+        elif verdict == 'same_object':
+            self._close(incident, 'not_a_person', now, memory='object', quiet=True)
+        else:
+            self._approach(incident)  # Still there, unsure or not in view from here: go.
 
     def departure_answered(self, incident_id, verdict, now, *, look_id=None, reason=None):
         """What left the spot, from the frames between first sight and arrival."""
@@ -664,10 +686,16 @@ class FallFlow:
                 continue
             self.active = incident.incident_id
             incident.idle = None
-            incident.reverified = incident.compare_at_view = False
+            incident.reverified = incident.compare_at_view = incident.looking_first = False
             incident.keep_open = incident.asked = False
             incident.looks = []
-            self._approach(incident)
+            if incident.purpose == 'recheck' and incident.first.photo:
+                # Still there? Asked from where the robot stands before it drives
+                # (SWM25-269: 10-20 15:49 it drove to an empty spot and alerted).
+                incident.looking_first = True
+                self._compare(incident)
+            else:
+                self._approach(incident)
 
     def _target(self, incident):
         """Where the incident's person is now, or their last certain place."""
