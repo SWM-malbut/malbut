@@ -58,7 +58,7 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert config['map_server']['ros__parameters']['yaml_filename'] == ''
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased', 'FollowPersonAStar']
-    assert planner['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
+    assert planner['GridBased']['plugin'] == 'malbut_bringup::keepout::Planner'
     assert planner['GridBased']['tolerance'] == 0.5
     assert planner['GridBased']['use_astar'] is False
 
@@ -124,12 +124,12 @@ def test_robot_costmap_footprint_and_driver_velocity_limits(config):
         assert scan['marking'] is True
         assert scan['clearing'] is True
     smoother = config['velocity_smoother']['ros__parameters']
-    assert smoother['max_velocity'] == [0.2, 0.0, 0.5]
-    assert smoother['min_velocity'] == [-0.2, 0.0, -0.5]
-    assert smoother['max_accel'] == [2.5, 0.0, 3.2]
-    assert smoother['max_decel'] == [-2.5, 0.0, -3.2]
+    assert smoother['max_velocity'] == [0.2, 0.08, 0.5]
+    assert smoother['min_velocity'] == [-0.2, -0.08, -0.5]
+    assert smoother['max_accel'] == [2.5, 0.5, 3.2]
+    assert smoother['max_decel'] == [-2.5, -0.5, -3.2]
     controller = config['controller_server']['ros__parameters']
-    assert controller['min_y_velocity_threshold'] == 0.5
+    assert controller['min_y_velocity_threshold'] == 0.001
     for name in controller['controller_plugins']:
         dwb = controller[name]
         assert dwb['min_vel_y'] == 0.0
@@ -145,8 +145,8 @@ def test_deployed_nav2_parameters_match_source(config):
     assert yaml.safe_load(path.read_text()) == config
 
 
-def test_saved_map_zones_constrain_only_the_global_route(config):
-    """Use stock keepout globally and retain physical obstacle checks locally."""
+def test_saved_map_zones_remain_strict_in_both_costmaps(config):
+    """Keep both masks strict while the Nav2 plugins own bounded physical exits."""
     mask = config['zone_filter_mask_server']['ros__parameters']
     info = config['zone_filter_info_server']['ros__parameters']
     assert mask['yaml_filename'] == '' and mask['frame_id'] == 'map'
@@ -156,11 +156,12 @@ def test_saved_map_zones_constrain_only_the_global_route(config):
     costmap = config['global_costmap']['global_costmap']['ros__parameters']
     assert costmap['filters'] == ['keepout_filter']
     assert costmap['keepout_filter'] == {
-        'plugin': 'nav2_costmap_2d::KeepoutFilter', 'enabled': True,
+        'plugin': 'malbut_bringup::keepout::Filter', 'enabled': True,
         'filter_info_topic': info['filter_info_topic'],
     }
     local = config['local_costmap']['local_costmap']['ros__parameters']
-    assert 'filters' not in local and 'keepout_filter' not in local
+    assert local['filters'] == ['keepout_filter']
+    assert local['keepout_filter'] == costmap['keepout_filter']
     assert local['plugins'] == ['obstacle_layer', 'inflation_layer']
 
 

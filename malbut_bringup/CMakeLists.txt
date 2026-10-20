@@ -18,6 +18,21 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(slam_toolbox REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread serialization)
+find_package(nav2_costmap_2d REQUIRED)
+find_package(nav2_navfn_planner REQUIRED)
+find_package(dwb_core REQUIRED)
+find_package(nav2_core REQUIRED)
+
+add_library(malbut_keepout SHARED keepout/src/geometry.cpp keepout/src/filter.cpp
+  keepout/src/navigation.cpp)
+target_include_directories(malbut_keepout PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/keepout/include>)
+ament_target_dependencies(malbut_keepout nav2_costmap_2d nav2_navfn_planner dwb_core
+  nav2_core rclcpp tf2_ros tf2_geometry_msgs)
+target_compile_options(malbut_keepout PRIVATE -Wall -Wextra -Wpedantic)
+pluginlib_export_plugin_description_file(nav2_costmap_2d keepout/plugins.xml)
+pluginlib_export_plugin_description_file(nav2_core keepout/plugins.xml)
+install(TARGETS malbut_keepout LIBRARY DESTINATION lib)
 
 # Native servers/plugins are unchanged; these small entrypoints fix Humble's
 # worker lifetime on process exit, without adding another resident process.
@@ -87,6 +102,7 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test")
   find_package(nav2_navfn_planner REQUIRED)
   find_package(dwb_core REQUIRED)
   ament_add_gtest(test_global_keepout test/test_global_keepout.cpp TIMEOUT 90)
+  target_link_libraries(test_global_keepout malbut_keepout)
   ament_target_dependencies(test_global_keepout nav2_costmap_2d nav2_util
     nav2_navfn_planner dwb_core rclcpp tf2_ros geometry_msgs nav2_msgs)
   target_compile_definitions(test_global_keepout PRIVATE
