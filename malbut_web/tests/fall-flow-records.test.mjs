@@ -302,6 +302,31 @@ test("a person who walked away is closed by the robot like off the floor (처리
   });
 });
 
+test("SWM25-269: an asked incident stays in 전체 when a later round finds them gone or up", async () => {
+  await withRepo(async ({ events, review }) => {
+    const asked = [
+      ["incident_opened", "pose_sustained_horizontal_posture"],
+      ["arrival_compared", "same_person"], ["posture_check_completed", "on_floor"], ["question_requested", null],
+      ["confirmation_completed", "resolved", { state: "resolved", answer: "okay" }],
+      ["incident_resolved", "response_completed", { state: "resolved", answer: "okay" }],
+    ];
+    for (const close of ["left_the_spot", "off_floor_verified"]) {
+      const rows = journal([...asked,
+        ["recheck_started", "stood_up", { checkRound: 2 }],
+        ["arrival_compared", "gone", { checkRound: 2 }],
+        ["incident_resolved", close, { state: "resolved", checkRound: 2 }]]);
+      for (const row of rows.slice(0, asked.length)) await events.storeFallEvent("robot-a", row);
+      const before = await review.getFallIncidentDetail("robot-a", rows[0].incidentId);
+      for (const row of rows.slice(asked.length)) await events.storeFallEvent("robot-a", row);
+      const after = await review.getFallIncidentDetail("robot-a", rows[0].incidentId);
+      assert.equal(before.category, "check");
+      assert.equal(after.category, before.category, close);  // Not "묻지도, 알리지도 않았어요".
+      const all = await review.listFallIncidentSummaries("robot-a", "all");
+      assert.ok(all.some((i) => i.incidentId === rows[0].incidentId), close);
+    }
+  });
+});
+
 test("목업 32번: the map card reads the one check's step and why it goes", () => {
   const card = (fall_check) => fallCheckView({ fall_check_active: true, fall_check });
   assert.equal(card({ phase: "look", step: "compare", purpose: "approach" }).title, "처음 봤을 때와 지금을 비교하고 있어요");

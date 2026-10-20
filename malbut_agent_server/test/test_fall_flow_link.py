@@ -222,6 +222,18 @@ def test_an_incident_left_for_the_guardian_is_not_checked_again_after_a_restart(
     assert not rig.goals and rig.link.flow.incidents['i-left'].idle == 'person'
 
 
+def test_a_restored_incident_keeps_how_long_ago_it_was_seen(rig):
+    rig.link.tick()
+    event(rig.link, kind='flow_ready', flow=True, open_incidents=[
+        dict(incident_id='i-seen', first=sighting(), check_round=1, fall_moments=[],
+             left='person', seen_ago=600.0),
+        dict(incident_id='i-old', first=sighting(), check_round=1, fall_moments=[],
+             left='person')], recent=[])
+    incidents = rig.link.flow.incidents
+    assert incidents['i-seen'].seen_at == rig.now.value - 600.0
+    assert incidents['i-old'].seen_at is None  # Kept before 10-20: never taken by place.
+
+
 def test_another_runtime_or_a_switch_mismatch_is_ignored(rig):
     rig.link.on_event(SimpleNamespace(data=json.dumps(dict(
         kind='fall_sighting', sighting=sighting(), runtime_id='someone-else'))))
@@ -283,6 +295,8 @@ def test_pose_frames_go_to_the_person_tracking_and_its_numbers_to_the_vlm(rig):
 def test_a_malformed_pose_frame_is_refused():
     ok = dict(at=1.0, view=0, people=[dict(track='a', box=None, point=None, state='clear')])
     assert parse_people(ok).people[0].state == 'clear'
+    # Whether the robot stood still: only a frame that says so (SWM25-269).
+    assert not parse_people(ok).stationary and parse_people(dict(ok, stationary=True)).stationary
     for bad in (dict(ok, at='x'), dict(ok, view=-1), dict(ok, people='a'),
                 dict(ok, people=[dict(track='a', state='lying')]),
                 dict(ok, people=[dict(track='a', box=[0, 0, 2, 1], state='clear')])):

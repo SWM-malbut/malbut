@@ -42,14 +42,22 @@ const ROBOT_NORMAL_SQL = `(i.origin='robot' AND i.state='resolved' AND i.assessm
 // The robot drove near the spot and found no person: closed by the robot, not a
 // normal-activity judgment. Like a merge, it closes the queue, not the review.
 const ROBOT_NOT_PERSON_SQL = `(i.origin='robot' AND i.state='resolved' AND ${ROBOT_CLOSE_REASON_SQL}='not_a_person')`;
+// The person has been asked or alerted: no longer only the robot looking.
+const ASKED_SQL = `EXISTS(SELECT 1 FROM fall_incident_events e
+    WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
+      AND e.payload_json::jsonb->>'eventKind' IN ('voice_result','confirmation_completed','agent_check_failed',
+        'notification_requested'))`;
 // The robot saw the whole body off the floor (on a bed or chair, or standing) and
 // did not ask (목업 25번). Only 처리 완료 shows it, so the suspicion itself stays out
 // of 전체, the voice agent and the timeline (2026-10-11). Sitting up busy on the
 // floor, seen twice with no fall seen, is closed the same way (2026-10-14).
 // NULL-safe: a resolved incident without a robot closure must stay in 전체.
 // A person seen walking away from the spot is closed the same way (SWM25-261, 목업 30번).
+// Never once asked or alerted: a later round that finds them up or gone (stood up,
+// 30 minutes on) keeps an asked incident in 전체 as its answer left it (SWM25-269).
 export const ROBOT_OFF_FLOOR_SQL = `(i.origin='robot' AND i.state='resolved' AND
-  COALESCE(${ROBOT_CLOSE_REASON_SQL} IN ('off_floor_verified','floor_activity_verified','left_the_spot'), FALSE))`;
+  COALESCE(${ROBOT_CLOSE_REASON_SQL} IN ('off_floor_verified','floor_activity_verified','left_the_spot'), FALSE)
+  AND NOT ${ASKED_SQL})`;
 const ROBOT_CLOSED_SQL = `(${ROBOT_MERGED_SQL} OR ${ROBOT_NOT_PERSON_SQL} OR ${ROBOT_OFF_FLOOR_SQL})`;
 /** Shown only under 처리 완료 until a member reopens it. */
 export const OFF_FLOOR_HIDDEN_SQL = `(${ROBOT_OFF_FLOOR_SQL} AND i.reopened_at IS NULL)`;
@@ -149,10 +157,7 @@ const SUMMARY_COLUMNS = `
       AND e.payload_json::jsonb->>'eventKind' IN ('approach_started','approach_completed','person_check_completed',
         'view_completed','posture_check_completed')
     ORDER BY e.sequence DESC LIMIT 1) AS last_approach,
-  EXISTS(SELECT 1 FROM fall_incident_events e
-    WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
-      AND e.payload_json::jsonb->>'eventKind' IN ('voice_result','confirmation_completed','agent_check_failed',
-        'notification_requested')) AS asked,
+  ${ASKED_SQL} AS asked,
   ${ROBOT_CLOSE_REASON_SQL} AS robot_close_reason,
   (SELECT jsonb_agg(jsonb_build_object('eventKind', e.payload_json::jsonb->>'eventKind',
       'reason', e.payload_json::jsonb->>'reason', 'answer', e.payload_json::jsonb->>'answer',

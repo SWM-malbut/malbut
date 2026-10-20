@@ -537,6 +537,30 @@ def test_left_open_for_the_guardian_is_kept_for_a_restart_until_checked_again(ro
         sensor.apply(dict(action='left_open', incident_id='i1', who='someone'))
 
 
+def test_a_restarted_agent_hears_how_long_ago_each_open_incident_was_seen(robot):
+    """SWM25-269: unseen for 30 minutes, someone at its place is a new incident."""
+    sensor, clock, _, journal = robot
+    wall = [1_760_000_000.0]
+    journal._clock = lambda: wall[0]
+    advance(sensor, clock, 2)
+    sensor._sight('lying', clock.value, box=BOX, point=SPOT, photo=True)
+    first = messages(sensor, 'fall_sighting')[0]['sighting']
+    record(sensor, 'incident_opened', 'pose_sustained_horizontal_posture',
+           sighting_id=first['sighting_id'])
+    sensor.apply(dict(action='left_open', incident_id='i1', who='person'))
+    wall[0] += 600.0
+    sensor.apply(dict(action='flow_hello', flow=True))
+    incident, = messages(sensor, 'flow_ready')[0]['open_incidents']
+    assert incident['seen_ago'] == 600.0
+    sensor._sight('lying', clock.value, box=BOX, point=SPOT, photo=True)
+    again = messages(sensor, 'fall_sighting')[0]['sighting']
+    sensor.apply(dict(action='link', sighting_id=again['sighting_id'], incident_id='i1'))
+    wall[0] += 60.0
+    sensor.apply(dict(action='flow_hello', flow=True))
+    incident, = messages(sensor, 'flow_ready')[0]['open_incidents']
+    assert incident['seen_ago'] == 60.0
+
+
 def test_a_guardian_close_is_passed_on_now_and_then(robot):
     sensor, clock, _, _ = robot
     record(sensor, 'incident_opened', 'cloud_crosscheck', sighting_id='unknown')

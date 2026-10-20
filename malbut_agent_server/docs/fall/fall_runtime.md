@@ -536,7 +536,7 @@ VLM → 낙상 규칙(`/malbut/falls/runtime/events`)
 |---|---|---|
 | `fall_sighting` | `sighting`: `sighting_id`, `at`(단조 시계 초), `kind`(low·lying·motion·cloud·up·seen), `track`, `point`[x, y](지도), `box`[0~1], `view`(로봇이 멈춰 있던 구간 번호), `robot`[x, y], `on_floor`, `photo`, `fall_moment` | YOLO-Pose 후보, Cloud 정기 확인의 발견(넘어짐이면 그 12장이 `fall_moment`), 일어섬(`up`), 보이는 사람마다 2초에 한 번(`seen`) |
 | `fall_look_result` | `look_id`, `what`(filter·arrival·departure·posture), `sighting_id` 또는 `incident_id`, `verdict`, `earlier`(넘어지는 순간 사진을 같이 본 자세만), `reason` | 요청한 Cloud 확인의 답. Cloud 오류 `failed`, 가드 `guard`. 모델 설명은 VLM이 장부용으로 가짐 |
-| `flow_ready` | `flow`, `open_incidents`(`incident_id`, `first`, `check_round`, `fall_moments`), `recent`(최근 60초 의심 발견) | `flow_hello`에 대한 답(Agent 재시작 이어받기) |
+| `flow_ready` | `flow`, `open_incidents`(`incident_id`, `first`, `check_round`, `fall_moments`, `left`(보호자에게 맡김: nobody·person), `seen_ago`(의심이 마지막으로 붙은 뒤 지난 초, 모르면 null)), `recent`(최근 60초 의심 발견) | `flow_hello`에 대한 답(Agent 재시작 이어받기) |
 | `guardian_closed` | `incident_id` | 앱에서 처리 완료(10초에 한 번까지) |
 
 낙상 규칙 → VLM(`/malbut/falls/runtime/decision`)
@@ -546,7 +546,7 @@ VLM → 낙상 규칙(`/malbut/falls/runtime/events`)
 | `look` | `look_id`, `what`, `sighting_id`(filter) 또는 `incident_id`, `photo`·`before`, `box`, `track`, `fall_moments`, `ordinary_drops` | 처음 거르기는 예전 사건 확인 요청(`incident`), 도착 비교·떠난 것·자세는 #286의 새 요청. 사진이 없으면(재시작) 도착 비교는 사람만 확인, 떠난 것은 `not_seen`, 자세의 `earlier`는 `unknown` |
 | `record` | `event`, `incident_id`, `reason`, `state`, `fall_seen`, `answer`, `check_round`, `look_id`, `sighting_id` | 장부에 웹 사건 기록으로 적음(`checkRound` 포함). `incident_id`가 없으면(거른 후보) 업로드하지 않는 로컬 표에만 |
 | `notify` | `incident_id`, `reason`, `level`, `state`, `fall_seen`, `answer`, `check_round` | `notification_requested` |
-| `link` | `sighting_id`, `incident_id` | 사건에 붙은 의심 발견으로 클립 구간을 늘림 |
+| `link` | `sighting_id`, `incident_id` | 사건에 붙은 의심 발견으로 클립 구간을 늘리고, 의심이 마지막으로 붙은 시각을 남김(`seen_ago`) |
 | `flow_hello` | `flow` | `flow_ready`로 답함 |
 
 사진은 VLM 메모리에만 둔다: 의심 발견마다 1장(박스와 함께), 넘어지는 순간 5초 12장(YOLO-Pose는 앞 4초~뒤
