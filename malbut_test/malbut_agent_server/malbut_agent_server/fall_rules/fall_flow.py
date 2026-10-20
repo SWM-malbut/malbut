@@ -67,6 +67,10 @@ OPEN_REASON = {'low': 'pose_sustained_low_posture', 'lying': 'pose_sustained_hor
                'motion': 'pose_rapid_posture_change', 'cloud': 'cloud_crosscheck'}
 POSTURE_REASON = {'furniture': 'sitting_off_floor', 'standing': 'standing',
                   'floor_active': 'active_on_floor', 'floor': 'on_floor'}
+# Checking again someone closed (30 minutes on the floor, or seen getting up): it looks
+# from where it stands first, and an empty spot or someone else there means they left
+# (SWM25-269).
+AFTER_A_CLOSE = ('recheck', 'stood_up')
 RECHECK_REASON = {'stood_up': 'stood_up', 'recheck': 'floor_recheck',
                   'again': 'person_seen_again', 'restart': 'agent_restart'}
 EARLIER = ('fall', 'self', 'unknown')
@@ -132,7 +136,7 @@ class Incident:
     # Open but not being checked: nobody (no person verified there) or a person.
     idle: Optional[str] = None
     reverified: bool = False     # looked again from where it was first seen
-    looking_first: bool = False  # the 30-minute recheck looks from where it stands first
+    looking_first: bool = False  # a recheck after a close looks from where it stands first
     compare_at_view: bool = False
     keep_open: bool = False      # the first person was never verified (design 6)
     asked: bool = False
@@ -355,17 +359,17 @@ class FallFlow:
             else:
                 incident.compare_at_view = True
                 self._view(incident)
-        elif verdict == 'different_person' and incident.purpose == 'recheck':
-            # The one checked 30 minutes ago left; whoever lies there now is filtered
-            # and checked as an incident of their own (SWM25-269).
+        elif verdict == 'different_person' and incident.purpose in AFTER_A_CLOSE:
+            # The one checked before left; whoever lies there now is filtered and checked
+            # as an incident of their own (SWM25-269).
             self._close(incident, 'left_the_spot', now, memory=None)
         elif verdict == 'different_person':
             self._differ(incident)
             self._to_view_or_posture(incident, at_view, now)
         elif verdict == 'same_object':
             self._close(incident, 'not_a_person', now, memory='object')
-        elif verdict == 'gone' and incident.purpose == 'recheck':
-            # Okay 30 minutes ago and the spot is empty: left, not "could not see".
+        elif verdict == 'gone' and incident.purpose in AFTER_A_CLOSE:
+            # Checked before and the spot is empty: left, not "could not see".
             self._close(incident, 'left_the_spot', now, memory=None)
         elif verdict in ('gone', 'not_visible'):
             if not incident.reverified:
@@ -378,7 +382,7 @@ class FallFlow:
                 self._idle(incident, 'nobody', 'could_not_compare', now)
 
     def _looked_from_here(self, incident, verdict, now):
-        """The 30-minute recheck's first look, from where the robot stands (SWM25-269)."""
+        """A recheck's first look, from where the robot stands (SWM25-269)."""
         if verdict in ('gone', 'different_person'):
             # Left. Someone else lying there is an incident of their own.
             self._close(incident, 'left_the_spot', now, memory=None, quiet=True)
@@ -689,7 +693,7 @@ class FallFlow:
             incident.reverified = incident.compare_at_view = incident.looking_first = False
             incident.keep_open = incident.asked = False
             incident.looks = []
-            if incident.purpose == 'recheck' and incident.first.photo:
+            if incident.purpose in AFTER_A_CLOSE and incident.first.photo:
                 # Still there? Asked from where the robot stands before it drives
                 # (SWM25-269: 10-20 15:49 it drove to an empty spot and alerted).
                 incident.looking_first = True

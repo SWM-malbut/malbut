@@ -345,6 +345,60 @@ def test_standing_up_is_told_once_per_person(robot):
     assert robot.frame(seen('b', (3.0, 1.05), state='clear')).stood_up == []
 
 
+LYING = (0.08, 0.08, 0.99, 0.63)      # 10-20 15:15, lying 1 m from the robot
+STANDING = (0.08, 0.0, 0.23, 0.48)    # 10-20 15:16, standing there: head cut off, unknown
+
+
+def stood_up_while(robot, seconds, *people):
+    """Every person number told as up over these frames."""
+    up = []
+    for _ in range(round(seconds / DT)):
+        up += robot.frame(*people).stood_up
+    return up
+
+
+def test_standing_up_cut_off_at_the_top_is_up_after_2_seconds(robot):
+    """10-20 15:16 (SWM25-269): YOLO-Pose never said clear, so nobody came to look."""
+    robot.frames(1.0, seen('a', (0.1, 0.5), LYING, state='suspected'))
+    assert stood_up_while(robot, 1.6, seen('a', None, STANDING)) == []
+    assert stood_up_while(robot, 1.0, seen('a', None, STANDING)) == ['test:P1']  # Once.
+
+
+def test_walking_a_metre_from_where_they_lay_is_up(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), LYING, state='suspected'))
+    up = []
+    for step in range(1, 11):  # Walks 1.1 m away in two seconds (pose unknown).
+        up += robot.frame(seen('a', (3.0, 1.0 + 0.11 * step), LYING)).stood_up
+    assert up == []
+    assert stood_up_while(robot, 1.6, seen('a', (3.0, 2.1), LYING)) == []
+    assert stood_up_while(robot, 1.0, seen('a', (3.0, 2.1), LYING)) == ['test:P1']
+
+
+def test_lying_on_with_unknown_frames_and_a_wandering_place_is_not_up(robot):
+    for _ in range(20):
+        robot.frames(0.4, seen('a', (3.0, 1.0), LYING, state='suspected'))
+        assert stood_up_while(robot, 1.0, seen('a', (3.0, 1.7), LYING)) == []
+
+
+def test_while_the_robot_moves_nobody_is_taken_as_up(robot):
+    """10-19 22:33: turning, the robot put the lying person's place 1.1 m off."""
+    robot.frames(1.0, seen('a', (3.0, 1.0), LYING, state='suspected'))
+    up = []
+    for step in range(1, 26):  # A standing box drifting 1.1 m off over five seconds.
+        robot.t = round(robot.t + DT, 3)
+        moved = seen('a', (3.0, 1.0 + 0.044 * step), STANDING)
+        up += robot.tracker.update(Frame(robot.t, 0, (moved,), stationary=False)).stood_up
+    assert up == []
+    assert stood_up_while(robot, 2.2, seen('a', (3.0, 2.1), STANDING)) == ['test:P1']
+
+
+def test_a_corner_scrap_or_someone_never_down_is_not_up(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), LYING, state='suspected'))
+    assert stood_up_while(robot, 5.0, seen('a', None, (0.0, 0.0, 0.07, 0.17))) == []  # 05:31
+    assert stood_up_while(robot, 5.0, seen('b', None, STANDING, state='unknown'),
+                          seen('a', None, (0.0, 0.0, 0.07, 0.17))) == []
+
+
 def test_a_suspicion_before_its_frame_is_matched_the_same_way(robot):
     robot.frames(1.0, seen('a', (3.0, 1.0)))
     assert robot.tracker.assign(seen('a', (3.0, 1.0)), robot.t + 0.1, 0) == ('test:P1', False)

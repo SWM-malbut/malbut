@@ -110,7 +110,8 @@ def parse_people(data):
             raise ValueError('invalid people frame')
         observations.append(Observation(_text(person.get('track')), _box(person.get('box')),
                                         _pair(person.get('point')), person['state']))
-    return Frame(float(at), view, tuple(observations))
+    # Not told (before 10-19): not taken as still, so nobody is taken as up without a pose check.
+    return Frame(float(at), view, tuple(observations), data.get('stationary') is True)
 
 
 def restored_incident(data, now):

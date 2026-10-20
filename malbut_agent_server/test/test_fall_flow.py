@@ -890,7 +890,47 @@ def test_standing_up_after_a_close_on_the_floor_checks_again():
     robot.frame(person('t1', state='suspected'))
     robot.now += 0.2
     out = robot.frame(person('t1', state='clear'))
-    assert records(out, 'recheck_started') == ['stood_up']
+    assert records(out, 'recheck_started') == ['stood_up'] and not drives(out)
+    assert looks(out, 'arrival')  # From where it stands first (SWM25-269).
+
+
+def test_standing_up_cut_off_at_the_top_after_okay_on_the_floor_checks_again():
+    """10-20 15:16 (SWM25-269): nobody came, and 30 minutes later it drove to an empty spot."""
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected', box=(0.08, 0.08, 0.99, 0.63)))
+    out = []
+    for _ in range(12):
+        robot.now += 0.2
+        out += robot.frame(person('t1', point=None, box=(0.08, 0.0, 0.23, 0.48)))
+    assert records(out, 'recheck_started') == ['stood_up'] and robot.active() == incident
+    robot.log.clear()
+    out = robot.arrival('gone')  # Walked off by now: closed where it stands, no alert.
+    assert records(out, 'incident_resolved') == ['left_the_spot']
+    assert not drives(out) and not notices(out)
+    assert not records(robot.wait(RECHECK_S), 'recheck_started')  # No 30-minute visit.
+
+
+def test_standing_up_seen_still_at_the_spot_is_looked_at_closer_and_closed_off_the_floor():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected'))
+    robot.now += 0.2
+    robot.frame(person('t1', state='clear'))
+    assert drives(robot.arrival('same_person'), 'approach')
+    robot.drive('approach')
+    robot.arrival('same_person')
+    robot.drive('view')
+    out = robot.posture(('standing', None), ('standing', None))
+    assert records(out, 'incident_resolved') == ['off_floor_verified']
 
 
 def test_the_vlm_is_told_who_each_track_is_and_whose_each_incident_is():
