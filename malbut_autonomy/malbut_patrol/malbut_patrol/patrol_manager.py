@@ -125,8 +125,11 @@ class PatrolManager(Node):
             'camera_image_topic': '/camera/color/image_raw',
             'camera_info_topic': '/camera/color/camera_info',
             'camera_optical_frame': '',
+            'camera_image_rectified': False,
             'depth_image_topic': '/camera/depth/image_raw',
             'depth_aligned_to_rgb': False,
+            'depth_registered_frame': '',
+            'depth_scale_m': 0.0,
             'room_map_file': '',
             'base_frame': 'base_footprint',
             'nav2_action_name': 'navigate_to_pose',
@@ -154,6 +157,9 @@ class PatrolManager(Node):
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         self.settings = {name: self.get_parameter(name).value for name in defaults}
+        if (not math.isfinite(self.settings['depth_scale_m'])
+                or self.settings['depth_scale_m'] < 0):
+            raise ValueError('depth_scale_m must be zero or positive and finite')
         for name in ('observation_hz', 'sensor_timeout_s', 'costmap_timeout_s',
                      'goal_response_timeout_s', 'cancel_completion_timeout_s',
                      'navigation_timeout_s', 'spin_time_allowance_s',
@@ -364,7 +370,9 @@ class PatrolManager(Node):
         if not self.map_message.data or self.map_message.info.resolution <= 0:
             return 'Saved /map is empty or invalid'
         if (self.image is None or self.camera_info is None
-                or self.camera_info.k[0] <= 0 or not self.camera_info.width):
+                or not self.camera_info.width
+                or (self.camera_info.p[0] if self.settings['camera_image_rectified']
+                    else self.camera_info.k[0]) <= 0):
             return 'RGB image and calibrated CameraInfo are required'
         if now - self.image_received > self.settings['sensor_timeout_s']:
             return 'RGB camera is stale'
@@ -443,7 +451,8 @@ class PatrolManager(Node):
         forward_y = 2.0 * (q.y * q.z - q.w * q.x)
         if math.hypot(forward_x, forward_y) < 1e-6:
             return
-        fov = 2.0 * math.atan2(info.width, 2.0 * info.k[0])
+        focal_length = info.p[0] if self.settings['camera_image_rectified'] else info.k[0]
+        fov = 2.0 * math.atan2(info.width, 2.0 * focal_length)
         p = transform.transform.translation
         self.planner.mark_observed(p.x, p.y, math.atan2(forward_y, forward_x), fov)
         self.last_image_stamp = stamp
@@ -458,6 +467,9 @@ class PatrolManager(Node):
                     simulated=bool(self.get_parameter('use_sim_time').value),
                     spatial={'aligned': self.settings['depth_aligned_to_rgb'],
                              'depth': depth, 'info': info, 'transform': transform.transform,
+                             'image_rectified': self.settings['camera_image_rectified'],
+                             'depth_registered_frame': self.settings['depth_registered_frame'],
+                             'depth_scale_m': self.settings['depth_scale_m'],
                              'optical_frame': optical_frame or image.header.frame_id})
             except Exception:
                 self.get_logger().warning('Patrol photo capture unavailable')

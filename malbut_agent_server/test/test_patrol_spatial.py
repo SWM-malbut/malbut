@@ -58,8 +58,17 @@ def capture(tmp_path):
     return path, metadata
 
 
-def test_actual_object_region_persists_and_can_be_searched_after_restart(capture):
+@pytest.mark.parametrize('calibration', [
+    None,
+    {'image_space': 'raw', 'distortion_model': 'plumb_bob',
+     'distortion_coefficients': [.1, -.03, 0., 0., .01]},
+    {'image_space': 'rectified', 'distortion_model': 'none', 'distortion_coefficients': []},
+])
+def test_actual_object_region_persists_and_can_be_searched_after_restart(capture, calibration):
     path, metadata = capture
+    if calibration is not None:
+        metadata['spatial']['calibration'] = calibration
+        path.write_text(json.dumps(metadata, ensure_ascii=False))
 
     class Observer:
         model = 'fixture-vision'
@@ -155,6 +164,105 @@ def test_rotated_map_transform_moves_object_into_capture_region(capture):
     spatial = result['objects'][0]['spatial']
     assert spatial['region']['id'] == 'living'
     assert spatial['map_position']['x'] == -1.5
+
+
+def sloped_surface():
+    _, x = np.indices((100, 100))
+    # A planar face seen at an angle, with substantial but continuous depth variation.
+    depth = (1 / (.5 + .9 * (x - 50) / 100)).astype(np.float32)
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0]['image_bbox'] = [200, 200, 800, 800]
+    return analysis, depth
+
+
+def test_sloped_surface_uses_measured_center_and_persists_its_region(capture):
+    path, metadata = capture
+    analysis, depth = sloped_surface()
+    buffer = io.BytesIO()
+    np.save(buffer, depth, allow_pickle=False)
+    data = buffer.getvalue()
+    path.with_suffix('.depth.npy').write_bytes(data)
+    metadata['spatial']['depth_sha256'] = hashlib.sha256(data).hexdigest()
+    path.write_text(json.dumps(metadata))
+    regions, stored_depth = read_spatial(path, metadata)
+    result = localize_objects(analysis, metadata, regions, stored_depth)
+    spatial = result['objects'][0]['spatial']
+    assert spatial['status'] == 'located'
+    assert spatial['region']['name'] == '작업실'
+    assert spatial['map_position'] == {'x': 1., 'y': 0., 'z': .2}
+    assert spatial['depth_support'] == 'planar_center_patch'
+    store = PatrolMemoryStore(path.parent.parent, 'owner', simulation=True)
+    store.ingest()
+    store.complete(path.stem, result, 'fixture')
+    reopened = PatrolMemoryStore(store.directory, 'owner', simulation=True)
+    recalled = reopened.search('owner', {
+        'query': '작업실 상자', 'since': None, 'until': None, 'limit': 5})
+    assert recalled['observations'][0]['objects'][0]['spatial'] == spatial
+
+
+@pytest.mark.parametrize('kind', ['step', 'missing_center', 'occluded_center'])
+def test_plane_fallback_never_fills_holes_or_accepts_depth_discontinuities(capture, kind):
+    _, metadata = capture
+    analysis, depth = sloped_surface()
+    if kind == 'step':
+        depth[:, :50], depth[:, 50:] = 1.9, 2.1
+    else:
+        depth[47:54, 47:54] = 0. if kind == 'missing_center' else 1.
+    spatial = localize_objects(analysis, metadata, REGIONS, depth)['objects'][0]['spatial']
+    assert spatial['status'] == 'unknown'
+    expected = 'insufficient_depth' if kind == 'missing_center' else 'mixed_depth'
+    assert spatial['reason'] == expected
+
+
+def test_planar_anchor_does_not_hide_surface_spanning_multiple_regions(capture):
+    _, metadata = capture
+    analysis, depth = sloped_surface()
+    regions = [region('one', '첫 방', -3, 1.4), region('two', '둘째 방', 1.4, 3)]
+    spatial = localize_objects(analysis, metadata, regions, depth)['objects'][0]['spatial']
+    assert spatial['status'] == 'unknown'
+    assert spatial['region'] is None and spatial['reason'] == 'surface_crosses_regions'
+
+
+def test_raw_distortion_is_removed_before_map_projection(capture):
+    _, metadata = capture
+    metadata['spatial']['calibration'] = {
+        'image_space': 'raw', 'distortion_model': 'plumb_bob',
+        'distortion_coefficients': [.5, 0., 0., 0., 0.]}
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0]['image_bbox'] = [700, 400, 900, 600]
+    result = localize_objects(analysis, metadata, REGIONS, np.full((100, 100), 2.))
+    spatial = result['objects'][0]['spatial']
+    # Raw x=.3, pure radial k1=.5: solve x + .5*x**3 = .3 independently.
+    root = next(value.real for value in np.roots([.5, 0, 1, -.3])
+                if abs(value.imag) < 1e-9)
+    assert spatial['region']['id'] == 'workroom'
+    assert spatial['map_position']['x'] == 1.
+    assert spatial['map_position']['y'] == pytest.approx(-2*root, abs=.001)
+    assert abs(spatial['map_position']['y'] - (-.6)) > .01
+
+
+def test_rectified_and_legacy_pinhole_captures_have_the_same_projection(capture):
+    _, metadata = capture
+    depth = np.full((100, 100), 2.)
+    legacy = localize_objects(ANALYSIS, metadata, REGIONS, depth)
+    metadata['spatial']['calibration'] = {
+        'image_space': 'rectified', 'distortion_model': 'none', 'distortion_coefficients': []}
+    assert localize_objects(ANALYSIS, metadata, REGIONS, depth) == legacy
+
+
+@pytest.mark.parametrize('calibration', [
+    {'image_space': 'rectified', 'distortion_model': 'plumb_bob',
+     'distortion_coefficients': [.1, 0, 0, 0, 0]},
+    {'image_space': 'raw', 'distortion_model': 'fisheye', 'distortion_coefficients': []},
+    {'image_space': 'raw', 'distortion_model': 'plumb_bob',
+     'distortion_coefficients': [float('nan'), 0, 0, 0, 0]},
+    {'image_space': 'raw', 'distortion_model': 'plumb_bob', 'distortion_coefficients': [.1]},
+])
+def test_untrusted_or_inconsistent_calibration_is_rejected(capture, calibration):
+    path, metadata = capture
+    metadata['spatial']['calibration'] = calibration
+    with pytest.raises(ValueError, match='calibration'):
+        read_spatial(path, metadata)
 
 
 def test_model_cannot_assign_its_own_room_or_invalid_bbox():

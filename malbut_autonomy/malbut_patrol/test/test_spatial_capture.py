@@ -22,7 +22,9 @@ def sensors(encoding='32FC1', bigendian=False):
                is_bigendian=int(bigendian), data=values.tobytes(), header=header)
     bundle = {'aligned': True, 'depth': depth, 'optical_frame': 'optical',
               'info': NS(width=20, height=10, k=[20., 0., 10., 0., 20., 5., 0., 0., 1.],
-                         d=[0.] * 5, header=header),
+                         d=[0.] * 5, distortion_model='plumb_bob', header=header,
+                         p=[20., 0., 10., 0., 0., 20., 5., 0., 0., 0., 1., 0.],
+                         r=np.eye(3).ravel().tolist()),
               'transform': NS(translation=NS(x=-1., y=0., z=.2),
                               rotation=NS(x=-.5, y=.5, z=-.5, w=.5))}
     return image, bundle
@@ -50,11 +52,65 @@ def test_unsynchronized_unregistered_or_uncalibrated_depth_is_not_saved():
     bundle['depth'].width = 19
     assert encode_spatial(image, bundle)[0]['status'] == 'calibration_size_mismatch'
     bundle['depth'].width = 20
-    bundle['info'].d[0] = .1
+    bundle['info'].distortion_model = 'equidistant'
     assert encode_spatial(image, bundle)[0]['status'] == 'calibration_unsupported'
-    bundle['info'].d[0] = 0
+    bundle['info'].distortion_model = 'plumb_bob'
     bundle['depth'].header = NS(frame_id='other_optical', stamp=image.header.stamp)
     assert encode_spatial(image, bundle)[0]['status'] == 'registration_frame_mismatch'
+
+
+@pytest.mark.parametrize('model,coefficients', [
+    ('plumb_bob', [.00484363, -.03018760, .00011549, -.00060054, .01503610]),
+    ('rational_polynomial', [.1, -.2, 0., 0., .03, .01, .02, .03]),
+])
+def test_raw_camera_distortion_is_persisted_without_warping_depth(model, coefficients):
+    image, bundle = sensors()
+    bundle['info'].distortion_model = model
+    bundle['info'].d = coefficients
+    spatial, data = encode_spatial(image, bundle)
+    assert spatial['status'] == 'available'
+    assert spatial['calibration'] == dict(
+        image_space='raw', distortion_model=model, distortion_coefficients=coefficients)
+    np.testing.assert_allclose(np.load(io.BytesIO(data), allow_pickle=False), 2.)
+
+
+def test_rectified_image_uses_projection_matrix_and_never_reapplies_raw_distortion():
+    image, bundle = sensors()
+    bundle['image_rectified'] = True
+    bundle['info'].d = [.3, -.1, .01, -.01, .02]
+    bundle['info'].p[:3] = [25., 0., 9.]
+    spatial, _ = encode_spatial(image, bundle)
+    assert spatial['status'] == 'available'
+    assert spatial['intrinsics'] == dict(fx=25., fy=20., cx=9., cy=5.)
+    assert spatial['calibration'] == dict(
+        image_space='rectified', distortion_model='none', distortion_coefficients=[])
+    bundle['info'].p[3] = -.1
+    assert encode_spatial(image, bundle)[0]['status'] == 'calibration_unsupported'
+
+
+@pytest.mark.parametrize('bigendian', [False, True])
+def test_mono16_requires_explicit_units_and_registered_frame_contract(bigendian):
+    image, bundle = sensors('mono16', bigendian)
+    bundle['depth'].header = NS(frame_id='physical_depth', stamp=image.header.stamp)
+    assert encode_spatial(image, bundle)[0]['status'] == 'registration_frame_mismatch'
+    bundle['depth_registered_frame'] = 'optical'
+    assert encode_spatial(image, bundle)[0]['status'] == 'depth_unit_unknown'
+    bundle['depth_scale_m'] = .001
+    spatial, data = encode_spatial(image, bundle)
+    assert spatial['status'] == 'available'
+    assert spatial['depth_source_frame'] == 'physical_depth'
+    assert spatial['depth_registered_frame'] == 'optical'
+    assert spatial['depth_scale_m'] == .001
+    np.testing.assert_allclose(np.load(io.BytesIO(data), allow_pickle=False), 2.)
+    bundle['aligned'] = False
+    assert encode_spatial(image, bundle)[0]['status'] == 'depth_not_registered'
+
+
+@pytest.mark.parametrize('scale', [0, -1, float('nan'), float('inf'), True])
+def test_mono16_rejects_unknown_or_invalid_units(scale):
+    image, bundle = sensors('mono16')
+    bundle['depth_scale_m'] = scale
+    assert encode_spatial(image, bundle) == ({'status': 'depth_unit_unknown'}, None)
 
 
 def test_room_edit_after_capture_does_not_change_snapshot(tmp_path):
