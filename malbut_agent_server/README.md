@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8765/v1/agent/respond \
 ## SWM25-165 동의 기반 장기기억
 
 수동 순찰의 사진 관찰은 별도의 로봇 소유자별 기록으로 보존합니다. 실제 OpenAI 음성
-런타임은 기존 키 설정을 읽어 미분석 사진을 백그라운드에서 처리하며,
+런타임은 기존 키로 종료된 순찰 사진을 모음 이미지 한 장으로 묶어 1회 분석하며,
 `search_patrol_observations` 도구로 촬영 시각·촬영 장소·사진 근거를 조회합니다.
 촬영 구역(`capture_regions`)과 물체별 추정 구역(`objects[].spatial.region`)을
 구분합니다. 물체 구역은 LLM의 이미지 bbox와 촬영 당시 RGB-D·TF·구역 경계로

@@ -642,6 +642,9 @@ class PatrolManager(Node):
                 else:
                     handle.abort()
                     state = 'aborted'
+                recorder = getattr(self, 'photo_recorder', None)
+                if recorder is not None:
+                    recorder.finish('canceled' if state == 'idle' else state)
                 self._publish_status(state, result.message)
                 return result
             finally:

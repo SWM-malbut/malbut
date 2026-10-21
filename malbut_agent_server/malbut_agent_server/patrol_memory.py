@@ -60,6 +60,8 @@ def read_capture(path):
             raise ValueError('invalid capture frame')
     if type(data.get('simulated')) is not bool:
         raise ValueError('invalid capture clock')
+    if 'analysis_batch' in data and data['analysis_batch'] != 'patrol_mosaic_v1':
+        raise ValueError('unsupported capture batch policy')
     photo = path.with_suffix('.jpg')
     if photo.is_symlink() or not 0 < photo.stat().st_size <= 4 * 1024 * 1024:
         raise ValueError('invalid capture photo')
@@ -197,9 +199,11 @@ class PatrolMemoryStore:
         """Claim one attempt durably; a crash retries only after its lease expires."""
         with self.connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
-            row = connection.execute('''SELECT * FROM observations WHERE user_id=?
-                AND status='pending' AND retry_at <= ? ORDER BY captured_at LIMIT 1''',
-                                     (self.owner_id, time.time())).fetchone()
+            rows = connection.execute('''SELECT * FROM observations WHERE user_id=?
+                AND status='pending' AND retry_at <= ? ORDER BY captured_at''',
+                                      (self.owner_id, time.time())).fetchall()
+            row = next((row for row in rows
+                        if 'analysis_batch' not in json.loads(row['metadata'])), None)
             if row is None:
                 return None
             connection.execute('UPDATE observations SET retry_at=? WHERE id=?',

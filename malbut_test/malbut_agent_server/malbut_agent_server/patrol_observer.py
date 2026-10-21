@@ -4,6 +4,7 @@ import base64
 import fcntl
 import json
 import logging
+import os
 import threading
 
 from malbut_agent_server.endpoint_policy import is_official_openai_base_url
@@ -94,6 +95,52 @@ class OpenAIPatrolObserver:
             raise ValueError('patrol analysis too large')
         return validate_analysis(json.loads(text))
 
+    def analyze_batch(self, captures):
+        """Analyze one contact sheet; preserve frame identities and measured API usage."""
+        from malbut_agent_server.patrol_mosaic import (
+            INSTRUCTIONS as BATCH_INSTRUCTIONS, make_mosaic, schema_for, split_results,
+        )
+
+        credential = key_value(self.key)
+        if not credential:
+            raise ValueError('patrol analysis key unavailable')
+        image, layout = make_mosaic(captures)
+        metadata = {'simulated': captures[0][0]['simulated'],
+                    'sheet_size': [layout['width'], layout['height']],
+                    'region_legend': layout['regions'],
+                    'frames': [{k: v for k, v in f.items() if k != 'observation_id'}
+                               for f in layout['frames']]}
+        payload = {
+            'model': self.model, 'instructions': BATCH_INSTRUCTIONS, 'store': False,
+            'max_output_tokens': 12000,
+            'input': [{'role': 'user', 'content': [
+                {'type': 'input_text', 'text': json.dumps(metadata, ensure_ascii=False)},
+                {'type': 'input_image', 'detail': 'high',
+                 'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image).decode('ascii')},
+            ]}],
+            'text': {'format': {'type': 'json_schema', 'name': 'patrol_mosaic', 'strict': True,
+                                'schema': schema_for([f['frame_id'] for f in layout['frames']],
+                                                     SCHEMA)}},
+        }
+        response = self.transport(self.base_url + '/responses',
+                                  {'Authorization': 'Bearer ' + credential,
+                                   'Content-Type': 'application/json'}, payload, 90)
+        messages = [item for item in response.get('output', []) if item.get('type') == 'message']
+        if (response.get('status') != 'completed' or len(messages) != 1
+                or any(item.get('type') == 'function_call'
+                       for item in response.get('output', []))):
+            raise ValueError('incomplete patrol batch response')
+        content = messages[0].get('content', [])
+        if (len(content) != 1 or content[0].get('type') != 'output_text'
+                or not isinstance(content[0].get('text'), str)
+                or len(content[0]['text']) > 120000):
+            raise ValueError('invalid patrol batch response')
+        results = split_results(json.loads(content[0]['text']), layout)
+        usage = response.get('usage') or {}
+        details = usage.get('input_tokens_details') or {}
+        usage = dict(usage, cached_input_tokens=details.get('cached_tokens'))
+        return results, usage, image, layout
+
 
 class PatrolObservationWorker:
     """Recover pending photos on restart; serialize workers with a process lock."""
@@ -114,6 +161,12 @@ class PatrolObservationWorker:
             except BlockingIOError:
                 return False
             self.store.ingest()
+            from malbut_agent_server.patrol_batch import claim_batch
+
+            batch = claim_batch(self.store)
+            if batch is not None:
+                self._analyze_batch(*batch)
+                return True
             row = self.store.next_pending()
             if row is None:
                 return False
@@ -135,6 +188,55 @@ class PatrolObservationWorker:
                 self.store.fail(row['id'])
             return True
 
+    def _analyze_batch(self, manifest, rows):
+        from malbut_agent_server.patrol_batch import complete_batch, verify_batch_files
+
+        if not self.observer.available():
+            for row in rows:
+                self.store.fail(row['id'], missing_key=True)
+            return
+        try:
+            verify_batch_files(self.store, manifest)
+            captures = []
+            for row in rows:
+                path = self.store.directory / 'captures' / (row['id'] + '.json')
+                metadata, image = read_capture(path)
+                if metadata != json.loads(row['metadata']):
+                    raise ValueError('capture changed after ingestion')
+                captures.append((metadata, image))
+            if (len({m['map_id'] for m, _ in captures}) != 1
+                    or any(m['simulated'] != self.store.simulation for m, _ in captures)):
+                raise ValueError('inconsistent patrol batch source')
+            results, usage, image, layout = self.observer.analyze_batch(captures)
+            verify_batch_files(self.store, manifest)
+            localized = {}
+            for metadata, _image in captures:
+                identity = metadata['observation_id']
+                path = self.store.directory / 'captures' / (identity + '.json')
+                # Evidence must still be intact after the external request.
+                current, _ = read_capture(path)
+                if current != metadata:
+                    raise ValueError('capture changed during batch analysis')
+                regions, depth = read_spatial(path, metadata)
+                localized[identity] = localize_objects(results[identity], metadata, regions, depth)
+            folder = self.store.directory / 'batches'
+            folder.mkdir(exist_ok=True, mode=0o700)
+            path = folder / (manifest['patrol_id'] + '.jpg')
+            temporary = path.with_suffix('.jpg.tmp')
+            try:
+                with temporary.open('wb') as stream:
+                    os.chmod(temporary, 0o600)
+                    stream.write(image)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            complete_batch(self.store, manifest, localized, self.observer.model, usage, layout)
+        except Exception:
+            for row in rows:
+                self.store.fail(row['id'])
+
     def _run(self):
         while not self._stop.is_set():
             try:
@@ -147,4 +249,4 @@ class PatrolObservationWorker:
         """Stop polling; each transport has a bounded timeout and its own connection."""
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=35.0)
+            self._thread.join(timeout=95.0)

@@ -1,12 +1,14 @@
 """Bounded, asynchronous JPEG evidence capture; never call a model from patrol."""
 
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 from queue import Empty, Full, Queue
+import re
 import threading
 import time
 from uuid import uuid4
@@ -72,6 +74,8 @@ class PhotoRecorder:
         self._poses = []
         self._last_capture = 0.0
         self._run = None
+        self._batches = {}
+        self._writer_owned = False
         self._thread = threading.Thread(target=self._work, name='patrol-photo-writer', daemon=True)
         self._thread.start()
 
@@ -81,17 +85,25 @@ class PhotoRecorder:
                     grid.origin_y, grid.origin_yaw]
         digest = hashlib.sha256(json.dumps(geometry).encode() + grid.cells.tobytes()).hexdigest()
         with self._lock:
+            self.finish('interrupted')
             self._run = {'patrol_id': uuid4().hex, 'map_id': digest, 'map_frame': frame,
                          'room_map': Path(room_map_file).name if room_map_file else '',
+                         'analysis_batch': 'patrol_mosaic_v1',
                          '_regions': room_snapshot(rooms)}
-            self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': ''}
+            self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': '',
+                           'batch_ready': False}
+            self._batches[self._run['patrol_id']] = {
+                'stats': self._stats, 'captures': [], 'outcome': None,
+            }
             self._poses = []
             self._last_capture = 0.0
 
     def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None):
         """Queue a fresh frame already matched to its TF; return without disk I/O."""
         with self._lock:
-            if self._stop.is_set() or self._run is None:
+            if (self._stop.is_set() or self._run is None
+                    or self._batches.get(self._run['patrol_id'], {}).get('outcome') is not None
+                    or self._run['patrol_id'] not in self._batches):
                 return False
             # Capture the initial view even if the map is already covered.
             if self._poses and phase != 'OBSERVING':
@@ -126,6 +138,38 @@ class PhotoRecorder:
         with self._lock:
             return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats}
 
+    def finish(self, outcome='completed'):
+        """Seal this patrol without waiting for its accepted disk writes."""
+        with self._lock:
+            batch = self._batches.get(self._run['patrol_id']) if self._run else None
+            if batch is not None and batch['outcome'] is None:
+                batch['outcome'] = outcome
+
+    def _flush_batches(self):
+        """Publish a complete batch only after every accepted photo has settled."""
+        if not self._writer_owned:
+            return
+        with self._lock:
+            ready = [(identity, batch) for identity, batch in self._batches.items()
+                     if batch['outcome'] is not None and batch['stats']['queued']
+                     == batch['stats']['saved'] + batch['stats']['failed']]
+        for identity, batch in ready:
+            try:
+                folder = self.directory / 'runs'
+                folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+                manifest = {'version': 1, 'patrol_id': identity,
+                            'outcome': batch['outcome'], 'captures': batch['captures'],
+                            'capture_failures': batch['stats']['failed']}
+                _atomic_write(folder / (identity + '.json'),
+                              json.dumps(manifest, ensure_ascii=False).encode('utf-8'))
+            except OSError:
+                with self._lock:
+                    batch['stats']['last_error'] = 'batch_manifest_failed'
+                continue
+            with self._lock:
+                batch['stats']['batch_ready'] = True
+                del self._batches[identity]
+
     def _save(self, image, metadata):
         folder = self.directory / 'captures'
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -159,13 +203,72 @@ class PhotoRecorder:
             raise
 
     def _work(self):
+        """One producer owns this directory; restart seals its interrupted runs."""
+        lock = None
+        try:
+            try:
+                self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                lock = (self.directory / 'producer.lock').open('a')
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._writer_owned = True
+                self._recover_batches()
+            except OSError:
+                self._writer_owned = False
+            self._write_photos()
+        finally:
+            if lock is not None:
+                lock.close()
+
+    def _recover_batches(self):
+        """After a producer crash, retain only the photos whose manifests were committed."""
+        runs = {}
+        for path in (self.directory / 'captures').glob('*.json'):
+            if not re.fullmatch('[a-f0-9]{32}', path.stem):
+                continue
+            try:
+                if path.is_symlink() or path.stat().st_size > 16384:
+                    continue
+                data = path.read_bytes()
+                metadata = json.loads(data)
+                identity = metadata.get('patrol_id', '')
+                if (metadata.get('analysis_batch') != 'patrol_mosaic_v1'
+                        or metadata.get('observation_id') != path.stem
+                        or not isinstance(identity, str)
+                        or not re.fullmatch('[a-f0-9]{32}', identity)
+                        or (self.directory / 'runs' / (identity + '.json')).exists()):
+                    continue
+                runs.setdefault(identity, []).append({
+                    'observation_id': path.stem,
+                    'manifest_sha256': hashlib.sha256(data).hexdigest(),
+                })
+            except (OSError, ValueError, AttributeError):
+                continue
+        folder = self.directory / 'runs'
+        for identity, captures in runs.items():
+            if len(captures) > 24:
+                continue
+            folder.mkdir(exist_ok=True, mode=0o700)
+            # Exclusive producer ownership makes an earlier process's temporary
+            # completion file stale; do not strand the recovered run on it.
+            (folder / (identity + '.json.tmp')).unlink(missing_ok=True)
+            _atomic_write(folder / (identity + '.json'), json.dumps({
+                'version': 1, 'patrol_id': identity, 'outcome': 'interrupted',
+                'captures': captures, 'capture_failures': None,
+            }).encode('utf-8'))
+
+    def _write_photos(self):
         while not self._stop.is_set() or not self._queue.empty():
             try:
                 image, metadata, stats = self._queue.get(timeout=0.2)
             except Empty:
+                self._flush_batches()
                 continue
             try:
+                if not self._writer_owned:
+                    raise OSError('photo directory producer unavailable')
                 self._save(image, metadata)
+                path = self.directory / 'captures' / (metadata['observation_id'] + '.json')
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except Exception:
                 with self._lock:
                     stats['failed'] += 1
@@ -173,10 +276,16 @@ class PhotoRecorder:
             else:
                 with self._lock:
                     stats['saved'] += 1
+                    self._batches[metadata['patrol_id']]['captures'].append({
+                        'observation_id': metadata['observation_id'], 'manifest_sha256': digest,
+                    })
             finally:
                 self._queue.task_done()
+            self._flush_batches()
+        self._flush_batches()
 
     def close(self):
         """Drain accepted photos after navigation has settled on shutdown."""
+        self.finish('shutdown')
         self._stop.set()
         self._thread.join(timeout=5.0)

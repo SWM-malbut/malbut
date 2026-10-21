@@ -1,6 +1,7 @@
 """Verify camera encoding, bounded asynchronous capture and durable handoff."""
 
 import json
+import hashlib
 import math
 from threading import Event
 import time
@@ -121,3 +122,50 @@ def test_new_patrol_has_distinct_identity_but_same_map(tmp_path):
                (tmp_path / 'captures').glob('[a-f0-9]' * 32 + '.json')]
     assert len({record['map_id'] for record in records}) == 1
     assert len({record['patrol_id'] for record in records}) == 2
+
+
+def test_batch_is_sealed_only_after_patrol_finishes_and_all_writes_complete(tmp_path):
+    entered, release = Event(), Event()
+    recorder = PhotoRecorder(tmp_path)
+    original = recorder._save
+
+    def delayed(image, metadata):
+        entered.set()
+        assert release.wait(3)
+        original(image, metadata)
+
+    recorder._save = delayed
+    begin(recorder)
+    identity = recorder.status()['patrol_id']
+    manifest = tmp_path / 'runs' / (identity + '.json')
+    try:
+        assert offer(recorder)
+        assert entered.wait(1)
+        recorder.finish('canceled')
+        assert not offer(recorder, math.pi)
+        assert not manifest.exists()
+    finally:
+        release.set()
+        recorder.close()
+    saved = json.loads(manifest.read_text())
+    assert saved['outcome'] == 'canceled' and len(saved['captures']) == 1
+    item = saved['captures'][0]
+    source = tmp_path / 'captures' / (item['observation_id'] + '.json')
+    assert item['manifest_sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert recorder.status()['batch_ready']
+
+
+def test_restart_seals_committed_photos_from_interrupted_patrol(tmp_path):
+    recorder = PhotoRecorder(tmp_path)
+    begin(recorder)
+    assert offer(recorder)
+    recorder.close()
+    identity = recorder.status()['patrol_id']
+    manifest = tmp_path / 'runs' / (identity + '.json')
+    manifest.unlink()  # Disk state after committed photos but before final run publication.
+    manifest.with_suffix('.json.tmp').write_bytes(b'{"unfinished":')
+    recovered = PhotoRecorder(tmp_path)
+    recovered.close()
+    saved = json.loads(manifest.read_text())
+    assert saved['outcome'] == 'interrupted' and len(saved['captures']) == 1
+    assert saved['capture_failures'] is None

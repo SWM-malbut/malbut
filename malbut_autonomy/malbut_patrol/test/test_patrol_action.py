@@ -328,6 +328,11 @@ def test_photo_writer_cannot_delay_ros_cancellation(patrol_runtime):
     assert metadata['camera_pose']['y'] == 1.5
     assert metadata['camera_frame'] == 'patrol_test_optical'
     assert metadata['image_stamp']['sec'] > 0
+    _wait_until(lambda: recorder.status()['batch_ready'])
+    closed_path = recorder.directory / 'runs' / (metadata['patrol_id'] + '.json')
+    closed = json.loads(closed_path.read_text())
+    assert closed['outcome'] == 'canceled'
+    assert [item['observation_id'] for item in closed['captures']] == [manifest.stem]
 
 
 def test_cancel_before_child_acceptance_waits_for_child_stop(patrol_runtime):
