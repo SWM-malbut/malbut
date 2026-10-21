@@ -119,6 +119,25 @@ def test_active_patrol_is_not_analyzed_and_separate_runs_never_share_a_call(tmp_
             for call in calls] == [3, 2]
 
 
+def test_batch_retains_cache_writes_for_cost_accounting(tmp_path):
+    batch(tmp_path, 2)
+
+    def with_writes(response):
+        response['usage']['input_tokens_details'] = {
+            'cached_tokens': 400, 'cache_write_tokens': 1500,
+            'cache_write_tokens_details': {'ttl_30m_tokens': 1000, 'ttl_12h_tokens': 500}}
+        return response
+
+    store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+    worker = PatrolObservationWorker(store, observer([], mutate=with_writes), autostart=False)
+    assert worker.run_once()
+    with store.connect() as db:
+        usage = json.loads(db.execute('SELECT usage FROM patrol_analysis_batches').fetchone()[0])
+    assert usage == dict(input_tokens=2500, output_tokens=1200, total_tokens=3700,
+                         cached_input_tokens=400, cache_write_tokens=1500,
+                         cache_write_30m_tokens=1000, cache_write_12h_tokens=500)
+
+
 @pytest.mark.parametrize('fault', ['missing', 'duplicate', 'unknown', 'incomplete'])
 def test_invalid_batch_response_never_partially_saves_observations(tmp_path, fault):
     batch(tmp_path, 3)

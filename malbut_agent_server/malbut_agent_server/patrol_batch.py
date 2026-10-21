@@ -111,7 +111,9 @@ def complete_batch(store, manifest, results, model, usage, mosaic):
     for analysis in results.values():
         validate_analysis(analysis, localized=True)
     measured = {name: value for name, value in usage.items()
-                if name in {'input_tokens', 'output_tokens', 'total_tokens', 'cached_input_tokens'}
+                if name in {'input_tokens', 'output_tokens', 'total_tokens', 'cached_input_tokens',
+                            'cache_write_tokens', 'cache_write_30m_tokens',
+                            'cache_write_12h_tokens'}
                 and type(value) is int and value >= 0}
     with store.connect() as connection:
         connection.execute('''CREATE TABLE IF NOT EXISTS patrol_analysis_batches (

@@ -138,7 +138,11 @@ class OpenAIPatrolObserver:
         results = split_results(json.loads(content[0]['text']), layout)
         usage = response.get('usage') or {}
         details = usage.get('input_tokens_details') or {}
-        usage = dict(usage, cached_input_tokens=details.get('cached_tokens'))
+        writes = details.get('cache_write_tokens_details') or {}
+        usage = dict(usage, cached_input_tokens=details.get('cached_tokens'),
+                     cache_write_tokens=details.get('cache_write_tokens'),
+                     cache_write_30m_tokens=writes.get('ttl_30m_tokens'),
+                     cache_write_12h_tokens=writes.get('ttl_12h_tokens'))
         return results, usage, image, layout
 
 
