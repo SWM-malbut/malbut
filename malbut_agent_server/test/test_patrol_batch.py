@@ -198,3 +198,43 @@ def test_restored_bbox_still_locates_object_in_different_region(tmp_path):
     analysis = localize_objects(results[path.stem], metadata, regions, depth)
     assert metadata['capture_rooms'] == ['거실']
     assert analysis['objects'][0]['spatial']['region']['name'] == '작업실'
+
+
+@pytest.mark.parametrize('count', [1, 4, 9, 10, 24])
+def test_separated_cards_keep_image_budget_and_geometry(tmp_path, count):
+    captures, _ = batch(tmp_path, count)
+    image, layout = make_mosaic(captures)
+    decoded = cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR)
+    assert layout['version'] == 2
+    assert math.ceil(layout['width']/32) * math.ceil(layout['height']/32) <= 2500
+    assert max(layout['width'], layout['height']) <= 2048
+    for i, frame in enumerate(layout['frames']):
+        left, top, right, bottom = frame['photo_rect']
+        # Aspect ratio and the entire image survive; labels never replace pixels.
+        assert (right-left) / (bottom-top) == pytest.approx(640/400, abs=.01)
+        pixels = decoded[top+16:bottom-16, left+16:right-16]
+        assert np.max(np.abs(pixels.astype(int) - (0, 0, 120+i))) <= 4
+        # Coordinates supplied to the model use its response's normalized units.
+        assert np.allclose(source_bbox(frame['photo_rect_1000'], frame, layout),
+                           [0, 0, 1000, 1000], atol=6)
+        if i % layout['columns']:
+            previous = layout['frames'][i-1]
+            gap_left, gap_right = previous['photo_rect'][2], left
+            assert gap_right - gap_left >= 24
+            midpoint = (gap_left+gap_right)//2
+            assert decoded[(top+bottom)//2, midpoint].max() <= 16
+    if count == 24:
+        assert layout['width'] == 1392 and layout['height'] == 1744
+        assert all(f['photo_rect'][2]-f['photo_rect'][0] == 320 for f in layout['frames'])
+
+
+def test_batch_request_declares_frame_before_its_contents(tmp_path):
+    batch(tmp_path, 2)
+    store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+    calls = []
+    assert PatrolObservationWorker(store, observer(calls), autostart=False).run_once()
+    schema = calls[0]['text']['format']['schema']['properties']['frames']['items']
+    assert next(iter(schema['properties'])) == 'frame_id'
+    context = json.loads(calls[0]['input'][0]['content'][0]['text'])
+    assert all('photo_rect_1000' in f and 'grid_row' in f and 'grid_column' in f
+               for f in context['frames'])
