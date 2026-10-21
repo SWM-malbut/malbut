@@ -935,6 +935,18 @@ def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, e
     assert 'fall_only' not in params
 
 
+@pytest.mark.parametrize('simulation', [False, True])
+def test_fall_sensor_tf_clocks_follow_the_selected_environment(
+        launch_module, fall_config, simulation):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config),
+                       use_sim_time=str(simulation).lower())
+    actions = module._setup(context)
+    for executable in ('homecam_detector_node', 'malbut-fall-monitor', 'fall_approach'):
+        node, = _nodes(actions, executable)
+        assert _parameters(context, node)['use_sim_time'] is simulation
+
+
 @pytest.mark.parametrize('changes', [
     {'fall_pose_execution_provider': 'invalid'}, {'fall_pose_intra_op_num_threads': '-1'},
     {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},

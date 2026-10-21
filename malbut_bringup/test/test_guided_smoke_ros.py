@@ -70,7 +70,7 @@ def speech_graph(tmp_path, monkeypatch):
             assert time.monotonic() < deadline, 'fake speech peers did not discover one another'
             robot.spin()
         yield SimpleNamespace(module=module, runner=runner, received=received, controls=controls,
-                              emit_finished=emit_finished)
+                              emit_finished=emit_finished, robot=robot)
     finally:
         coordinator.close()
         for node in (robot.node, worker, manager, agent):
@@ -97,3 +97,22 @@ def test_real_cancel_service_receipt_without_worker_terminal_is_not_silence(spee
     with pytest.raises(graph.module.SmokeError, match='guide_stop_unconfirmed'):
         graph.runner.guide('실패 검사')
     assert graph.controls and graph.runner.tts_finished == 0
+
+
+def test_simulation_timestamp_validation_uses_actual_ros_clock(speech_graph):
+    from rclpy.parameter import Parameter
+    from rosgraph_msgs.msg import Clock
+    graph = speech_graph
+    graph.robot.node.set_parameters([Parameter('use_sim_time', value=True)])
+    assert not graph.robot.stamp_fresh(0)
+    publisher = graph.robot.node.create_publisher(Clock, '/clock', 10)
+    message = Clock()
+    message.clock.sec = 43
+    deadline = time.monotonic() + 5
+    while not graph.robot.stamp_fresh(42):
+        assert time.monotonic() < deadline
+        publisher.publish(message)
+        graph.robot.spin()
+    assert not graph.robot.stamp_fresh(30)
+    assert not graph.robot.stamp_fresh(44)
+    assert not graph.robot.stamp_fresh(float('nan'))

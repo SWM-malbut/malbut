@@ -54,7 +54,7 @@ MISSION_FIELDS = ('active_foreground_missions', 'active_background_missions',
 FALL_CAPABILITIES = frozenset(('fall_approach', 'fall_confirmation'))
 TERMINAL_AUDIO = frozenset(('finished', 'failed', 'stopped'))
 EVENT_KINDS = frozenset(('transcript', 'reply', 'audio', 'worker_audio',
-                         'mission', 'fall_event', 'fall_decision'))
+                         'input_status', 'mission', 'fall_event', 'fall_decision'))
 
 
 class SmokeError(Exception):
@@ -95,6 +95,13 @@ def parser():
                           ('review-timeout', 60)):
         result.add_argument('--' + name, type=finite_seconds, default=float(default))
     result.add_argument('--no-review', action='store_true', help='사람 평가 없이 미평가로 저장')
+    result.add_argument('--simulation', action='store_true',
+                        help='Gazebo /clock 사용. 실제 API·완료 판정은 동일하게 유지')
+    for name, default in (('scan-topic', '/scan_raw'),
+                          ('rgb-topic', '/depth_cam/rgb0/image_raw'),
+                          ('depth-topic', '/depth_cam/depth0/image_raw'),
+                          ('camera-info-topic', '/depth_cam/rgb0/camera_info')):
+        result.add_argument('--' + name, default=default)
     return result
 
 
@@ -283,7 +290,7 @@ class Report:
 class RosRobot:
     """Temporary observer; models and the existing Bringup remain in their owners."""
 
-    def __init__(self, *, rpc_timeout=30.0):
+    def __init__(self, *, rpc_timeout=30.0, simulation=False, sensor_topics=None):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -292,7 +299,8 @@ class RosRobot:
         from nav_msgs.msg import Odometry
         from std_msgs.msg import String
         from malbut_interfaces.msg import (
-            FallRuntimeStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript, SystemState)
+            FallRuntimeStatus, SpeechInputStatus, SpeechPlaybackStatus,
+            SpeechRequest, SpeechTranscript, SystemState)
         from malbut_interfaces.srv import ControlSpeechPlayback
         from malbut_interfaces.srv import ClassifySpeechAddressee
         from malbut_interfaces.action import ConfirmSituation, FallApproach, FollowPerson
@@ -306,6 +314,8 @@ class RosRobot:
         from rclpy.signals import SignalHandlerOptions
         rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         self.node = Node('malbut_smoke')
+        from rclpy.parameter import Parameter
+        self.node.set_parameters([Parameter('use_sim_time', value=simulation)])
         self.rpc_timeout = rpc_timeout
         self._graph_at, self._graph = -math.inf, {}
         self.evidence, self.sensor_subscriptions = Evidence(), []
@@ -353,6 +363,8 @@ class RosRobot:
             'utterance_id': m.utterance_id, 'session_id': m.session_id,
             'stop_word': any(word in m.text.replace(' ', '')
                              for word in ('그만', '멈춰', '정지'))})
+        subscribe('input_status', SpeechInputStatus, '/malbut/speech/input_status', lambda m: {
+            'utterance_id': m.utterance_id, 'session_id': m.session_id, 'state': m.state})
         subscribe('reply', SpeechRequest, '/malbut/speech/response', lambda m: {
             'playback_id': m.playback_id, 'request_id': m.request_id,
             'interim': m.interim, 'owner_goal_id': m.owner_goal_id,
@@ -388,17 +400,18 @@ class RosRobot:
                 valid = valid and message.width > 0 and message.height > 0 and bool(message.data)
             return {'valid': bool(valid), 'stamp': stamp, 'frame': header.frame_id}
 
-        self.sensor_topics = (
+        topics = sensor_topics or {}
+        self.sensor_topics = tuple((name, kind, topics.get(name, topic)) for name, kind, topic in (
             ('scan', LaserScan, '/scan_raw'), ('rgb', Image, '/depth_cam/rgb0/image_raw'),
             ('depth', Image, '/depth_cam/depth0/image_raw'),
-            ('camera_info', CameraInfo, '/depth_cam/rgb0/camera_info'))
+            ('camera_info', CameraInfo, '/depth_cam/rgb0/camera_info')))
         self.subscribe_sensor = lambda kind, message_type, topic: subscribe(
             kind, message_type, topic, sensor_data, sensor)
 
         def odometry(message):
             twist = message.twist.twist
             sample = sensor_data(message)
-            sample['valid'] = sample['valid'] and -0.5 <= time.time() - sample['stamp'] <= 3
+            sample['valid'] = sample['valid'] and self.stamp_fresh(sample['stamp'])
             return {**sample, 'linear': math.hypot(twist.linear.x, twist.linear.y),
                     'angular': abs(twist.angular.z)}
 
@@ -412,6 +425,10 @@ class RosRobot:
 
     def spin(self):
         self.rclpy.spin_once(self.node, timeout_sec=0.05)
+
+    def stamp_fresh(self, stamp):
+        now = self.node.get_clock().now().nanoseconds * 1e-9
+        return now > 0 and math.isfinite(stamp) and -0.5 <= now - stamp <= 3
 
     def parameters(self, name, keys, wait):
         client = self.node.create_client(self.GetParameters, name + '/get_parameters')
@@ -493,7 +510,7 @@ class RosRobot:
         for name in ('scan', 'rgb', 'depth', 'camera_info', 'odom'):
             value = self.evidence.value(name, {})
             if (not self.evidence.fresh(name) or not value.get('valid')
-                    or not -0.5 <= time.time() - value.get('stamp', 0) <= 3):
+                    or not self.stamp_fresh(value.get('stamp', 0))):
                 return False
             if not self.tf.can_transform('base_footprint', value['frame'], Time()):
                 return False
@@ -545,12 +562,30 @@ class Runner:
         self.started_work = False
         self.consumed_utterances = set()
         self.dialogue_boundary = None
+        self.fall_boundary = None
+        self.fall_stop_sent = False
+
+    def observe_incident(self):
+        if self.fall_boundary is None:
+            return
+        ids = {item[3]['incident_id'] for item in self.events.since(
+            self.fall_boundary, 'fall_decision') if item[3].get('action') == 'record'
+            and item[3].get('event') == 'incident_opened' and item[3].get('incident_id')}
+        if len(ids) > 1 or (ids and self.incident and self.incident not in ids):
+            self.ambiguous_fall = True
+        elif ids:
+            self.incident = next(iter(ids))
 
     def tick(self, *, cleanup=False):
         if self.interrupted and not cleanup:
             raise SmokeError('interrupted')
         self.robot.spin()
+        self.observe_incident()
         check = self.events.value('fall_check', {})
+        if (cleanup and self.incident and not self.ambiguous_fall and not self.fall_stop_sent
+                and check.get('active') and check.get('incident_id') == self.incident):
+            self.robot.stop_fall()
+            self.fall_stop_sent = True
         if not cleanup and check.get('active'):
             different = self.incident and check.get('incident_id') not in (None, self.incident)
             if not self.allow_fall or different:
@@ -631,8 +666,10 @@ class Runner:
         finally:
             self.robot.release_images()
         params = self.robot.parameters('/system_manager', ['use_sim_time'], self.wait)
-        if params['use_sim_time'].type != 1 or params['use_sim_time'].bool_value:
-            raise SmokeError('real_robot_wall_clock_required')
+        if (params['use_sim_time'].type != 1
+                or params['use_sim_time'].bool_value != self.args.simulation):
+            raise SmokeError('simulation_clock_required' if self.args.simulation
+                             else 'real_robot_wall_clock_required')
         params = self.robot.parameters('/malbut_cloud_fall_monitor', ['flow_enabled'], self.wait)
         if not params['flow_enabled'].bool_value:
             raise SmokeError('current_fall_flow_required')
@@ -653,6 +690,7 @@ class Runner:
         if open_incidents:
             raise SmokeError('existing_open_fall_incident')
         self.report.set(0, 'PASS', tts_backend=backend,
+                        environment='gazebo' if self.args.simulation else 'robot',
                         llm_api='verified_in_dialogue_not_preflight',
                         guardian_delivery='not_verified')
 
@@ -789,6 +827,7 @@ class Runner:
         # The person may react before the last syllable of the guide. Keep that
         # genuine detection, rather than losing it behind a post-guide boundary.
         boundary = self.events.sequence
+        self.fall_boundary = boundary
         self.allow_fall = True
         self.guide('낙상 상황을 보여 주세요. 실제로 넘어지지 말고 안전하게 연출하세요. '
                    '로봇이 질문하면 괜찮다고 답해 주세요.', may_yield_to_fall=True)
@@ -881,6 +920,7 @@ class Runner:
             self.report.save()
             return
         try:
+            self.tick(cleanup=True)
             if self.tracking and not self.robot.manager.snapshot(self.tracking)['terminal']:
                 self.robot.manager.cancel(self.tracking)
                 self.wait(lambda: self.robot.manager.snapshot(self.tracking)['terminal'],
@@ -888,8 +928,9 @@ class Runner:
             # Only the incident first observed in our fall stage is eligible.
             check = self.events.value('fall_check', {})
             if (self.incident and not self.ambiguous_fall and check.get('active')
-                    and check.get('incident_id') == self.incident):
+                    and check.get('incident_id') == self.incident and not self.fall_stop_sent):
                 self.robot.stop_fall()
+                self.fall_stop_sent = True
             for playback in tuple(self.guides):
                 self.robot.stop_audio(playback)
             if self.guides:
@@ -902,8 +943,16 @@ class Runner:
                 stopping = set()
 
                 def dialogue_drained():
+                    inputs = [item[3] for item in self.events.since(
+                        self.dialogue_boundary, 'input_status') if not item[3]['session_id']]
+                    started = {value['utterance_id'] for value in inputs
+                               if value['state'] == 'started' and value['utterance_id']}
+                    failed = {value['utterance_id'] for value in inputs
+                              if value['state'] == 'failed' and value['utterance_id']}
                     uids = {item[3]['utterance_id'] for item in self.events.since(
                         self.dialogue_boundary, 'transcript') if not item[3]['session_id']}
+                    if started - failed - uids:
+                        return False  # The microphone/ASR can still produce a late turn.
                     replies = [item[3] for item in self.events.since(
                         self.dialogue_boundary, 'reply') if item[3]['request_id'] in uids]
                     if any(not any(reply['request_id'] == uid and not reply['interim']
@@ -1016,7 +1065,9 @@ def main(argv=None):
     try:
         report = Report(args.report_dir)
         report.data['mode'] = 'execute' if args.execute else 'check'
-        robot = RosRobot(rpc_timeout=args.rpc_timeout)
+        robot = RosRobot(rpc_timeout=args.rpc_timeout, simulation=args.simulation,
+                         sensor_topics={name: getattr(args, name + '_topic')
+                                        for name in ('scan', 'rgb', 'depth', 'camera_info')})
         runner = Runner(robot, args, report)
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, lambda *_: setattr(runner, 'interrupted', True))

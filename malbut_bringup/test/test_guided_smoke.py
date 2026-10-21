@@ -945,3 +945,85 @@ def test_actual_parameter_timeout_cancels_only_its_pending_read_and_destroys_cli
     with pytest.raises(smoke.SmokeError, match='parameter_response_timeout'):
         probe.parameters('/runtime_control', ['use_sim_time'], runner.wait)
     assert removed == [future] and destroyed == [client] and future.cancelled()
+
+
+def test_interrupt_while_asr_is_running_waits_for_late_transcript_and_audio(runtime):
+    runner, robot = runtime.runner, runtime.robot
+    runner.started_work = True
+    runner.dialogue_boundary = robot.evidence.sequence
+    robot.evidence.add('input_status', dict(
+        state='started', utterance_id='recognizing', session_id=''))
+    robot.later(1, lambda: robot.evidence.add('transcript', dict(
+        utterance_id='recognizing', session_id='')))
+    robot.later(1.2, lambda: robot.evidence.add('reply', dict(
+        request_id='recognizing', playback_id='late', interim=False)))
+    runner.interrupted = True
+    runner.cleanup()
+    assert robot.now >= 1.2 and 'late' in robot.stopped
+    assert runtime.report.data['cleanup'] == 'CONFIRMED'
+
+
+def test_unfinished_asr_cannot_be_reported_as_confirmed_cleanup(runtime):
+    runtime.runner.started_work = True
+    runtime.runner.dialogue_boundary = 0
+    runtime.robot.evidence.add('input_status', dict(
+        state='started', utterance_id='recognizing', session_id=''))
+    runtime.runner.cleanup()
+    assert runtime.report.data['cleanup'] == 'UNCONFIRMED'
+
+
+def test_failed_recognition_does_not_wait_for_a_nonexistent_api_reply(runtime):
+    runtime.runner.started_work = True
+    runtime.runner.dialogue_boundary = 0
+    for state in ('started', 'failed'):
+        runtime.robot.evidence.add('input_status', dict(
+            state=state, utterance_id='failed-asr', session_id=''))
+    runtime.runner.cleanup()
+    assert runtime.report.data['cleanup'] == 'CONFIRMED'
+
+
+def test_fall_detected_during_interrupted_guidance_is_stopped(runtime):
+    robot, runner = runtime.robot, runtime.runner
+    runner.journal = runtime.args.journal
+
+    def interrupt(text, pid):
+        robot.later(0.1, robot.fall_open)
+        robot.later(0.2, lambda: setattr(runner, 'interrupted', True))
+
+    robot.say = interrupt
+    with pytest.raises(runtime.smoke.SmokeError, match='interrupted'):
+        runner.fall()
+    runner.cleanup()
+    assert robot.fall_stops == 1 and runner.incident == 'incident-1'
+    assert runtime.report.data['cleanup'] == 'CONFIRMED'
+
+
+def test_simulation_flag_does_not_allow_a_wall_clock_manager(runtime):
+    runtime.args.simulation = True
+    with pytest.raises(runtime.smoke.SmokeError, match='simulation_clock_required'):
+        runtime.runner.prepare()
+    assert not runtime.robot.spoken and not runtime.robot.manager.calls
+
+
+def test_fall_ownership_arriving_during_cleanup_is_not_abandoned(runtime):
+    runner, robot = runtime.runner, runtime.robot
+    runner.started_work = True
+    runner.fall_boundary = robot.evidence.sequence
+    runner.interrupted = True
+    robot.later(0.2, lambda: setattr(robot, 'fall_active', True))
+    robot.later(0.5, robot.fall_open)
+    runner.cleanup()
+    assert robot.fall_stops == 1
+    assert runtime.report.data['cleanup'] == 'CONFIRMED'
+
+
+def test_cleanup_never_selects_one_of_multiple_new_incidents(runtime):
+    runner, robot = runtime.runner, runtime.robot
+    runner.started_work = True
+    runner.fall_boundary = robot.evidence.sequence
+    robot.fall_open()
+    robot.evidence.add('fall_decision', dict(
+        action='record', event='incident_opened', incident_id='unrelated-incident'))
+    runner.cleanup()
+    assert runner.ambiguous_fall and robot.fall_stops == 0
+    assert runtime.report.data['cleanup'] == 'UNCONFIRMED'

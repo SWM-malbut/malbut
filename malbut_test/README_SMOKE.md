@@ -34,6 +34,23 @@ ROS Humble와 기존 `install/setup.bash`, `install/malbut_test/local_setup.bash
 다른 workspace는 `MALBUT_SMOKE_WORKSPACE`, 관측용 Python은 `MALBUT_SMOKE_PYTHON`으로
 지정한다. 관측용 Python에는 `rclpy`와 빌드된 Malbut 패키지가 필요하지만 추론 환경은 불필요하다.
 
+Gazebo에서는 실행 중인 시뮬레이션의 ROS 환경을 먼저 읽고 `--simulation`을 명시한다.
+센서 이름이 다르면 다음처럼 연결한다. 관측 노드와 센서 시각 검사는 ROS `/clock`을 쓰며,
+Manager도 `use_sim_time=true`여야 한다. 실제 LLM·Cloud 결과·음성 재생·정지 확인 기준은
+실기기와 같고, 시뮬레이션 옵션으로 준비 실패나 미검사를 통과시키지 않는다.
+낙상 모듈도 Bringup의 `use_sim_time`을 Pose·Cloud 모니터·다가가기 노드에 전달한다.
+실기기 기본값은 기존처럼 `false`다.
+
+```bash
+MALBUT_SMOKE_WORKSPACE=/실제/시뮬레이션/workspace bash malbut_test/smoke.sh \
+  --simulation --check \
+  --scan-topic /scan --rgb-topic /camera/color/image_raw \
+  --depth-topic /camera/depth/image_raw --camera-info-topic /camera/color/camera_info
+```
+
+전체 시나리오는 같은 인자에서 `--check` 대신 `--execute --test-alerts-confirmed`를 사용한다.
+Gazebo만 실행한 상태는 음성·낙상 모듈의 준비 완료를 의미하지 않는다.
+
 별도 설정으로 Bringup을 실행했다면 같은 DB/낙상 설정 경로를 전달한다.
 
 ```bash
@@ -94,7 +111,12 @@ bash smoke.sh --execute --test-alerts-confirmed \
   완화하지 않고, RPC 응답과 최종 Action 결과도 계속 확인한다.
 - Ctrl+C/SIGTERM 시에도 bounded cleanup 중 ROS를 계속 처리한다. 테스트의 추적 Goal과 안내
   재생 ID만 취소하고, 테스트 낙상 단계에서 새로 관측한 사건만 기존 정지 경로로 중단한다.
+  낙상 안내 도중 새 사건이 시작돼도 사건 ID를 즉시 관측하고, 중단 정리 중 늦게 도착한
+  사건도 같은 소유 범위에서 정지한다. 여러 사건이 겹치면 임의의 사건을 선택해 취소하지 않는다.
   이전 사건, 다른 사람이 요청한 미션, 드라이버와 Bringup은 임의 종료하지 않는다.
+- 대화 중 중단하면 전사된 발화뿐 아니라 STT가 이미 시작한 발화도 추적한다.
+  인식 실패 또는 전사·최종 응답·실제 재생 종료까지 확인하며, 인식이 끝나지 않으면
+  정리를 확인한 것으로 표시하지 않는다.
 - 늦은 Goal 접수, API 응답 미확인, 실제 TTS worker 종료 미확인, 유휴 복귀 실패는 성공으로
   감추지 않는다. 정리를 확인하지 못하면 다음 이동을 하지 않고 수동 정지를 요청한다.
   **SIGKILL·전원/네트워크 단절은 정리 실행을 보장할 수 없고, 이 스크립트는 물리 비상정지가 아니다.**

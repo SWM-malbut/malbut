@@ -26,7 +26,7 @@ ARGUMENTS = [
     'fall_pose_opencv_num_threads', 'fall_pose_allow_spinning', 'rgb_topic', 'odom_topic',
     'depth_topic', 'global_frame', 'fall_depth_aligned_to_rgb', 'fall_depth_camera_info_topic',
     'fall_camera_height_m', 'fall_camera_pitch_rad', 'fall_camera_roll_rad', 'fall_approach',
-    'fall_full_view', 'fall_flow', 'robot_frame',
+    'fall_full_view', 'fall_flow', 'robot_frame', 'use_sim_time',
     'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
 ]
 
@@ -34,6 +34,8 @@ ARGUMENTS = [
 def _setup(context):
     def value(name):
         return LaunchConfiguration(name).perform(context)
+
+    use_sim_time = value('use_sim_time') == 'true'
 
     fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
     fall_monitor = None
@@ -79,7 +81,7 @@ def _setup(context):
             package='homecam_detector', executable='homecam_detector_node',
             name='malbut_fall_pose', output='screen', prefix=[shlex.quote(pose_python)],
             parameters=[{
-                'use_sim_time': False,
+                'use_sim_time': use_sim_time,
                 'fall_runtime_id': fall_ids['vlm'],
                 'image_topic': value('rgb_topic'), 'odom_topic': value('odom_topic'),
                 'pose_model_path': pose_model, 'pose_keep_aspect': True,
@@ -95,7 +97,7 @@ def _setup(context):
         fall_monitor = Node(
             package='malbut_agent_server', executable='malbut-fall-monitor',
             output='screen', arguments=['--config', fall_config, '--execute'],
-            parameters=[{'use_sim_time': False, 'manager_runtime_id': fall_ids['manager'],
+            parameters=[{'use_sim_time': use_sim_time, 'manager_runtime_id': fall_ids['manager'],
                          'runtime_id': fall_ids['vlm'],
                          # Map places (AMCL + depth) only with aligned depth; else the
                          # scene cases compare image positions.
@@ -131,7 +133,7 @@ def _setup(context):
         actions.append(Node(
             package='malbut_fall_approach', executable='fall_approach', name='fall_approach',
             output='screen', parameters=[{
-                'use_sim_time': False, 'global_frame': value('global_frame'),
+                'use_sim_time': use_sim_time, 'global_frame': value('global_frame'),
                 'robot_frame': value('robot_frame')}]))
     try:
         upload_args = prepare_fall_upload(fall_config, context.environment)
