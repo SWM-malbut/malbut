@@ -8,7 +8,8 @@ from malbut_bringup.launch_support import (
 
 ARGUMENTS = [
     'static_map_topic', 'patrol_costmap_topic', 'robot_frame', 'rgb_topic',
-    'camera_info_topic', 'room_map_file', 'use_sim_time',
+    'camera_info_topic', 'depth_topic', 'patrol_depth_aligned_to_rgb',
+    'room_map_file', 'use_sim_time',
 ]
 
 
@@ -23,6 +24,8 @@ def _setup(context):
             'base_frame': value('robot_frame'),
             'camera_image_topic': value('rgb_topic'),
             'camera_info_topic': value('camera_info_topic'),
+            'depth_image_topic': value('depth_topic'),
+            'depth_aligned_to_rgb': value('patrol_depth_aligned_to_rgb'),
             'room_map_file': value('room_map_file'),
             'use_sim_time': value('use_sim_time'),
             'start_enabled': 'false',

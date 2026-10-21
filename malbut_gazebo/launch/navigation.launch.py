@@ -514,6 +514,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
+            'depth_aligned_to_rgb': True,
             'room_map_file': ParameterValue(user_map, value_type=str),
             'camera_optical_frame': ParameterValue(
                 person_projection_frame, value_type=str,

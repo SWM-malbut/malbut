@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Set
 
 from malbut_agent_server.schemas import AgentDecision, AgentRequest, RobotState, ValidationError
-from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, TOOL_SPECS, validate_tool_arguments
+from malbut_agent_server.tools import (
+    HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS, TOOL_SPECS, validate_tool_arguments,
+)
 
 
 DEFAULT_LOCATIONS = {
@@ -278,6 +280,15 @@ class SafetyPolicy:
                 True, 'weather_read_only' if decision.tool_name == 'get_weather'
                 else 'weather_location_setting', 'Manager를 통한 날씨 기능입니다.',
             )
+
+        if decision.tool_name in PATROL_QUERY_TOOLS:
+            if decision.tool_name not in request.available_tools:
+                return SafetyResult(False, 'tool_unavailable', '순찰 기록 조회가 연결되지 않았어요.')
+            try:
+                validate_tool_arguments(decision.tool_name, decision.arguments)
+            except ValidationError:
+                return SafetyResult(False, 'invalid_arguments', '순찰 기록 조회 인자가 올바르지 않아요.')
+            return SafetyResult(True, 'patrol_read_only', '저장된 순찰 관찰 기록 조회입니다.')
 
         if decision.tool_name in HOMECAM_QUERY_TOOLS:
             if decision.tool_name not in request.available_tools:
