@@ -18,6 +18,7 @@ from malbut_agent_server.schemas import ValidationError, validate_user_id
 from malbut_agent_server.tools import (
     SPEECH_MISSION_TOOLS,
     HOMECAM_QUERY_TOOLS,
+    PATROL_QUERY_TOOLS,
     TOOL_SPECS,
     ToolSpec,
     select_tool_specs,
@@ -65,10 +66,10 @@ TOOL_TIMEOUT_SECONDS = {
 
 TOOL_RISK_LEVELS.update({name: 'L3' for name in SPEECH_MISSION_TOOLS
                          if name not in TOOL_RISK_LEVELS})
-TOOL_RISK_LEVELS.update({name: 'L0' for name in HOMECAM_QUERY_TOOLS})
+TOOL_RISK_LEVELS.update({name: 'L0' for name in (*HOMECAM_QUERY_TOOLS, *PATROL_QUERY_TOOLS)})
 TOOL_TIMEOUT_SECONDS.update({name: 2.0 for name in SPEECH_MISSION_TOOLS
                              if name not in TOOL_TIMEOUT_SECONDS})
-TOOL_TIMEOUT_SECONDS.update({name: 10.0 for name in HOMECAM_QUERY_TOOLS})
+TOOL_TIMEOUT_SECONDS.update({name: 10.0 for name in (*HOMECAM_QUERY_TOOLS, *PATROL_QUERY_TOOLS)})
 
 READ_ONLY_ELIGIBLE = frozenset(
     {'get_robot_status', 'detect_pet'}
@@ -674,7 +675,9 @@ def production_registry() -> CapabilityRegistry:
                     else PROPOSAL_ONLY
                 ),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
-                available=name not in (*SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS),
+                available=name not in (
+                    *SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS, *PATROL_QUERY_TOOLS,
+                ),
             )
             for name in TOOL_SPECS
         ],
@@ -688,7 +691,7 @@ def simulation_registry() -> CapabilityRegistry:
     for name in TOOL_SPECS:
         manager_only = name in {
             'get_weather', 'set_weather_location',
-            *SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS,
+            *SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS, *PATROL_QUERY_TOOLS,
         }
         capabilities.append(
             ToolCapability(
@@ -698,7 +701,9 @@ def simulation_registry() -> CapabilityRegistry:
                 adapter=None if manager_only
                 else MockToolAdapter(name),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
-                available=name not in (*SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS),
+                available=name not in (
+                    *SPEECH_MISSION_TOOLS, *HOMECAM_QUERY_TOOLS, *PATROL_QUERY_TOOLS,
+                ),
             )
         )
     return CapabilityRegistry(

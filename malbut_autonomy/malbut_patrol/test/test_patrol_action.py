@@ -1,5 +1,6 @@
 """Exercise patrol ownership and camera accounting through real ROS Actions."""
 
+import json
 from threading import Event, RLock, Thread
 import time
 
@@ -135,6 +136,7 @@ class _Sensors(Node):
             CameraInfo, '/patrol_test/camera_info', 1,
         )
         self.image = self.create_publisher(Image, '/patrol_test/image', 1)
+        self.depth = self.create_publisher(Image, '/patrol_test/depth', 1)
         self.emit_images = True
         self.image_frame = 'patrol_test_optical'
         self._transforms = StaticTransformBroadcaster(self)
@@ -190,10 +192,17 @@ class _Sensors(Node):
             image.step = 6
             image.data = [0] * 12
             self.image.publish(image)
+            depth = Image()
+            depth.header = info.header
+            depth.width = depth.height = 2
+            depth.encoding = '16UC1'
+            depth.step = 4
+            depth.data = [208, 7] * 4  # 2000 mm, little endian.
+            self.depth.publish(depth)
 
 
 @pytest.fixture
-def patrol_runtime(request):
+def patrol_runtime(request, tmp_path):
     """Run the real patrol Action with only external ROS dependencies faked."""
     rclpy.init(domain_id=191)
     sensors = _Sensors()
@@ -208,6 +217,8 @@ def patrol_runtime(request):
         'observation_hz': 20.0,
         'sensor_timeout_s': 3.0,
         'cancel_completion_timeout_s': 3.0,
+        'record_observations': True,
+        'observation_directory': str(tmp_path / 'observations'),
     }
     values.update(getattr(request, 'param', {}))
     manager = PatrolManager(
@@ -260,6 +271,63 @@ def test_reject_invalid_and_duplicate_goals(patrol_runtime):
     assert not outcome.result.success
     assert navigation.cancel_received.is_set()
     assert not manager.busy
+
+
+@pytest.mark.parametrize('patrol_runtime', [{
+    'depth_aligned_to_rgb': True, 'depth_image_topic': '/patrol_test/depth',
+}], indirect=True)
+def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runtime):
+    """Release depth traffic while idle and preserve a synchronized pair on restart."""
+    manager, _navigation, _sensors, client = patrol_runtime
+    _wait_until(lambda: bool(manager.depth_images))
+    manager._change_processing(False)
+    assert manager._depth_subscription is None and not manager.depth_images
+    manager._change_processing(True)
+    _wait_until(lambda: not manager._ready() and bool(manager.depth_images))
+    assert manager._depth_subscription is not None
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    assert handle.accepted
+    _wait_until(lambda: manager.photo_recorder.status().get('saved') == 1)
+    manifest, = (manager.photo_recorder.directory / 'captures').glob('[a-f0-9]' * 32 + '.json')
+    metadata = json.loads(manifest.read_text())
+    assert metadata['spatial']['status'] == 'available'
+    assert metadata['spatial']['depth_shape'] == [2, 2]
+    assert manifest.with_name(manifest.stem + '.depth.npy').exists()
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+
+
+def test_photo_writer_cannot_delay_ros_cancellation(patrol_runtime):
+    """Save real camera evidence while a blocked disk writer leaves Nav2 cancellable."""
+    manager, navigation, _sensors, client = patrol_runtime
+    entered, release = Event(), Event()
+    recorder = manager.photo_recorder
+    original = recorder._save
+
+    def delayed_save(image, metadata):
+        entered.set()
+        assert release.wait(TIMEOUT_S)
+        original(image, metadata)
+
+    recorder._save = delayed_save
+    try:
+        handle = _result(client.send_goal_async(Patrol.Goal()))
+        assert handle.accepted and entered.wait(TIMEOUT_S)
+        assert navigation.request_received.wait(TIMEOUT_S)
+        assert _result(handle.cancel_goal_async()).goals_canceling
+        result = _result(handle.get_result_async())
+        assert result.status == GoalStatus.STATUS_CANCELED
+        assert not manager.busy and recorder.status()['saved'] == 0
+    finally:
+        release.set()
+    _wait_until(lambda: recorder.status()['saved'] == 1)
+    manifest, = list((recorder.directory / 'captures').glob('[a-f0-9]' * 32 + '.json'))
+    metadata = json.loads(manifest.read_text())
+    assert manifest.with_suffix('.jpg').exists()
+    assert metadata['camera_pose']['x'] == 1.5
+    assert metadata['camera_pose']['y'] == 1.5
+    assert metadata['camera_frame'] == 'patrol_test_optical'
+    assert metadata['image_stamp']['sec'] > 0
 
 
 def test_cancel_before_child_acceptance_waits_for_child_stop(patrol_runtime):
