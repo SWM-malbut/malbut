@@ -14,8 +14,8 @@ def speech_graph(tmp_path, monkeypatch):
     pytest.importorskip('rclpy')
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest
-    from malbut_interfaces.srv import ControlSpeechPlayback
+    from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest, SpeechTranscript
+    from malbut_interfaces.srv import ClassifySpeechAddressee, ControlSpeechPlayback
     from malbut_system_manager.speech_coordinator import SpeechCoordinator
 
     # Import the shipped code, not a copied test implementation.
@@ -29,8 +29,9 @@ def speech_graph(tmp_path, monkeypatch):
     robot = module.RosRobot()
     worker = Node('smoke_fake_tts')
     manager = Node('smoke_fake_manager')
+    agent = Node('smoke_fake_agent')
     executor = SingleThreadedExecutor()
-    for node in (robot.node, worker, manager):
+    for node in (robot.node, worker, manager, agent):
         executor.add_node(node)
     robot.spin = lambda: executor.spin_once(timeout_sec=0.02)
     status = worker.create_publisher(SpeechPlaybackStatus, '/malbut/tts/playback_status', 100)
@@ -50,29 +51,33 @@ def speech_graph(tmp_path, monkeypatch):
 
     worker.create_subscription(SpeechRequest, '/malbut/tts/request', request, 100)
     worker.create_service(ControlSpeechPlayback, '/malbut/tts/playback_control', stop)
+    agent.create_publisher(SpeechRequest, '/malbut/speech/response', 100)
+    agent.create_subscription(SpeechTranscript, '/malbut/speech/transcript', lambda _: None, 100)
+    agent.create_service(ClassifySpeechAddressee, '/malbut/speech/classify_addressee',
+                         lambda _, response: response)
     coordinator = SpeechCoordinator(
         manager, lock=RLock(), state=SimpleNamespace(active=lambda: [], pending={}),
         mission_for_goal=lambda _: None, changed=lambda: None)
     args = module.parser().parse_args(['--execute', '--test-alerts-confirmed'])
-    args.turn_timeout = args.cleanup_timeout = 2.0
+    args.ready_timeout = args.turn_timeout = args.cleanup_timeout = 2.0
     report = module.Report(tmp_path / 'reports')
     runner = module.Runner(robot, args, report)
     try:
         deadline = time.monotonic() + 10
-        while not (robot.speech.get_subscription_count() >= 2
+        while not (robot.speech_ready()
                    and coordinator.requests.get_subscription_count() >= 1
-                   and coordinator.client.service_is_ready()
-                   and robot.speech_control.service_is_ready()):
+                   and coordinator.client.service_is_ready()):
             assert time.monotonic() < deadline, 'fake speech peers did not discover one another'
             robot.spin()
         yield SimpleNamespace(module=module, runner=runner, received=received, controls=controls,
                               emit_finished=emit_finished)
     finally:
         coordinator.close()
-        for node in (robot.node, worker, manager):
+        for node in (robot.node, worker, manager, agent):
             executor.remove_node(node)
         worker.destroy_node()
         manager.destroy_node()
+        agent.destroy_node()
         executor.shutdown(timeout_sec=2)
         robot.close()
 

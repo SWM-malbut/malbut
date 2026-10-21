@@ -72,6 +72,7 @@ class FakeRobot:
         self.tasks = []
         self.spoken, self.stopped, self.fall_stops = [], [], 0
         self.images_released = False
+        self.sensors_started = False
         self.fall_active = False
         self.closed = False
         self.emit_audio = True
@@ -80,6 +81,9 @@ class FakeRobot:
         self.persist_closure = True
         self.answer_okay = True
         self.parameter_failure = False
+        self.audio_delay, self.dialogue_delay = 0.1, 0.5
+        self.incident_delay, self.closure_delay, self.cloud_delay = 0.5, 1.0, 0.0
+        self.ledger_delay = 0.0
         self.idle()
 
     def idle(self):
@@ -116,6 +120,15 @@ class FakeRobot:
         return True
 
     def sensors_ready(self):
+        return self.sensors_started
+
+    def start_sensors(self):
+        self.sensors_started = True
+
+    def speech_ready(self):
+        return True
+
+    def actions_ready(self, stage):
         return True
 
     def parameters(self, name, keys, wait):
@@ -134,16 +147,19 @@ class FakeRobot:
     def say(self, text, pid):
         self.spoken.append((text, pid))
         if self.emit_audio:
-            self.later(0.1, lambda: self.audio(pid))
+            self.later(self.audio_delay, lambda: self.audio(pid))
         if text.startswith('호출어') and self.make_dialogue:
-            self.later(0.5, self.dialogue)
+            self.later(self.dialogue_delay, self.dialogue)
         if text.startswith('낙상 상황'):
-            self.later(0.5, self.fall_open)
-            self.later(1.0, self.fall_close)
+            self.later(self.incident_delay, self.fall_open)
+            self.later(self.closure_delay, self.fall_close)
 
     def dialogue(self):
         uid = 'utterance-' + str(len(self.spoken))
-        speech_ledger(self.args.conversation_db, uid)
+        if self.ledger_delay:
+            self.later(self.ledger_delay, lambda: speech_ledger(self.args.conversation_db, uid))
+        else:
+            speech_ledger(self.args.conversation_db, uid)
         self.evidence.add('transcript', dict(utterance_id=uid, session_id='', stop_word=False))
         self.evidence.add('reply', dict(playback_id=uid, request_id=uid, interim=False,
                                         owner_goal_id='', has_text=True, audio_id=''))
@@ -156,8 +172,11 @@ class FakeRobot:
             incident_id='incident-1', sighting_id='sight-1'))
         self.evidence.add('fall_decision', dict(
             action='look', look_id='look-1', incident_id='incident-1'))
-        self.evidence.add('fall_event', dict(
-            kind='fall_look_result', look_id='look-1', verdict=self.cloud_verdict))
+        cloud = dict(kind='fall_look_result', look_id='look-1', verdict=self.cloud_verdict)
+        if self.cloud_delay:
+            self.later(self.cloud_delay, lambda: self.evidence.add('fall_event', cloud))
+        else:
+            self.evidence.add('fall_event', cloud)
         self.evidence.add('fall_decision', dict(
             action='record', event='question_requested', incident_id='incident-1'))
         self.busy('fall_confirmation')
@@ -201,6 +220,7 @@ def runtime(smoke, tmp_path, monkeypatch):
     args.follow_seconds = 1.0
     args.prepare_seconds = 0.2
     args.ready_timeout = args.turn_timeout = args.fall_timeout = args.cleanup_timeout = 2.0
+    args.transition_timeout = args.rpc_timeout = 2.0
     with sqlite3.connect(args.conversation_db) as connection:
         connection.execute('CREATE TABLE conversation_turns(request_id TEXT,status TEXT,'
                            'response_json TEXT)')
@@ -572,7 +592,7 @@ def test_high_rate_odometry_cannot_evict_fall_or_dialogue_evidence(smoke):
 def test_main_runs_cleanup_and_restores_signal_handlers_even_if_close_fails(runtime, monkeypatch):
     smoke = runtime.smoke
     original = smoke.Runner
-    monkeypatch.setattr(smoke, 'RosRobot', lambda: runtime.robot)
+    monkeypatch.setattr(smoke, 'RosRobot', lambda **_: runtime.robot)
     monkeypatch.setattr(smoke, 'Runner', lambda robot, args, report: original(
         robot, args, report, lambda: robot.now))
 
@@ -620,3 +640,308 @@ def test_transient_ledger_lock_retries_only_reads_while_spinning(runtime, monkey
     assert runtime.runner.ledger(Path('unused'), 'SELECT 1') == []
     assert len(calls) == 3
     assert runtime.robot.now >= 0.3
+
+
+def test_default_budgets_cover_existing_bringup_startup_and_lifecycle(smoke):
+    args = smoke.parser().parse_args([])
+    assert args.ready_timeout >= 120  # Speech's existing cold-start budget is 120 s.
+    assert args.transition_timeout >= 120  # Manager's existing dependency preparation budget.
+    assert args.rpc_timeout >= 30
+    assert args.cleanup_timeout >= 30
+
+
+def test_staggered_cold_boot_does_not_stream_images_or_start_work_early(runtime):
+    robot, runner = runtime.robot, runtime.runner
+    runtime.args.ready_timeout = 180
+    robot.evidence.add('state', dict(system_state=0, control_mode=0, missions=[]))
+    robot.evidence.add('runtime', dict(ready=False, active_groups=[], capabilities=[]))
+    robot.endpoints = lambda: robot.now >= 65
+    robot.speech_ready = lambda: robot.now >= 125
+    robot.actions_ready = lambda stage: robot.now >= 140
+    robot.later(100, robot.idle)
+    start_sensors = robot.start_sensors
+
+    def start():
+        assert robot.now >= 140
+        assert not robot.spoken and not robot.manager.calls
+        start_sensors()
+
+    robot.start_sensors = start
+    sensors_ready = robot.sensors_ready
+    robot.sensors_ready = lambda: robot.now >= 145 and sensors_ready()
+    parameters = robot.parameters
+
+    def late_parameters(*args):
+        # Large temporary subscriptions must be gone before further RPC waits.
+        assert robot.images_released
+        return parameters(*args)
+
+    # runtime_control is queried before sensors, the other nodes afterwards.
+    robot.parameters = lambda name, *args: (
+        parameters(name, *args) if name == '/runtime_control'
+        else late_parameters(name, *args))
+    runner.prepare()
+    assert runtime.report.data['steps'][0]['automatic'] == 'PASS'
+    assert robot.now >= 145 and robot.images_released
+    assert not robot.spoken and not robot.manager.calls
+
+
+def test_sensor_probe_is_released_even_when_sensor_or_tf_never_becomes_ready(runtime):
+    runtime.robot.sensors_ready = lambda: False
+    with pytest.raises(runtime.smoke.SmokeError, match='sensor_or_tf_unavailable'):
+        runtime.runner.prepare()
+    assert runtime.robot.images_released
+
+
+def test_actual_parameter_probe_waits_for_delayed_discovery_and_reply(runtime):
+    from concurrent.futures import Future
+    robot, runner, smoke = runtime.robot, runtime.runner, runtime.smoke
+    future, destroyed = Future(), []
+    client = SimpleNamespace(service_is_ready=lambda: robot.now >= 12)
+
+    def call(request):
+        assert request.names == ['use_sim_time']
+        robot.later(18, lambda: future.set_result(SimpleNamespace(values=[False])))
+        return future
+
+    client.call_async = call
+    client.remove_pending_request = lambda _: pytest.fail('read-only RPC was abandoned early')
+    probe = object.__new__(smoke.RosRobot)
+    probe.rpc_timeout = 30
+    probe.node = SimpleNamespace(create_client=lambda *_: client,
+                                 destroy_client=destroyed.append)
+    probe.GetParameters = SimpleNamespace(Request=lambda **kwargs: SimpleNamespace(**kwargs))
+    assert probe.parameters('/runtime_control', ['use_sim_time'], runner.wait) == {
+        'use_sim_time': False}
+    assert robot.now >= 30 and destroyed == [client]
+
+
+@pytest.mark.parametrize('multiplier', [0.5, 1.0, 1.5])
+def test_entire_sequence_with_slow_callbacks_lifecycle_and_reordered_cloud(runtime, multiplier):
+    robot, runner, args = runtime.robot, runtime.runner, runtime.args
+    args.ready_timeout, args.transition_timeout, args.rpc_timeout = 180, 120, 30
+    args.turn_timeout, args.fall_timeout, args.cleanup_timeout = 90, 240, 60
+    robot.audio_delay, robot.dialogue_delay = 4 * multiplier, 12 * multiplier
+    robot.incident_delay, robot.closure_delay = 6 * multiplier, 20 * multiplier
+    robot.cloud_delay = 20 * multiplier  # Arrives AFTER incident_resolved on the other Topic.
+    robot.ledger_delay = 10 * multiplier  # A final reply alone is still not API proof.
+    submit = robot.manager.submit
+
+    def delayed_submit(*args, **kwargs):
+        uid = submit(*args, **kwargs)
+        robot.manager.record['state'] = 'PENDING'
+        robot.manager.visible = False
+
+        def active():
+            robot.manager.record['state'] = 'RUNNING'
+            robot.manager.visible = True
+
+        robot.later(50 * multiplier, active)
+        return uid
+
+    def delayed_cancel(uid):
+        robot.manager.calls.append(('cancel', uid))
+
+        def terminal():
+            robot.manager.record.update(state='CANCELED', terminal=True)
+            # The Action result precedes Nav2/perception's actual idle state.
+            robot.later(35 * multiplier, robot.idle)
+
+        robot.later(4 * multiplier, terminal)
+
+    robot.manager.submit, robot.manager.cancel = delayed_submit, delayed_cancel
+    runner.run()
+    runner.cleanup()
+    assert [step['automatic'] for step in runtime.report.data['steps']] == ['PASS'] * 6
+    assert runtime.report.data['cleanup'] == 'CONFIRMED'
+    assert [entry[0] for entry in robot.manager.calls] == ['submit', 'cancel']
+    assert runtime.report.data['steps'][3]['evidence']['cloud_looks_completed'] == 1
+    timing = runtime.report.data['steps'][2]['evidence']
+    assert 1.0 <= timing['observed_seconds'] < 1.2
+    assert timing['stop_and_idle_seconds'] >= 39 * multiplier
+
+
+def test_pending_feature_server_is_discovered_before_follow_is_submitted(runtime):
+    robot = runtime.robot
+    runtime.args.ready_timeout = 15
+    robot.actions_ready = lambda stage: robot.now >= 10
+    submit = robot.manager.submit
+
+    def checked_submit(*args, **kwargs):
+        assert robot.now >= 10
+        return submit(*args, **kwargs)
+
+    robot.manager.submit = checked_submit
+    runtime.runner.follow()
+    assert runtime.report.data['steps'][2]['automatic'] == 'PASS'
+
+
+def test_missing_feature_server_never_submits_an_action(runtime):
+    runtime.robot.actions_ready = lambda stage: False
+    with pytest.raises(runtime.smoke.SmokeError, match='follow_dependencies_not_discovered'):
+        runtime.runner.follow()
+    assert not runtime.robot.manager.calls and not runtime.robot.spoken
+
+
+def test_in_progress_periodic_cloud_scan_does_not_block_normal_fall_preparation(runtime):
+    runtime.robot.spin()
+    value = dict(runtime.robot.evidence.value('fall_status'), analysis_state='waiting_response')
+    runtime.robot.evidence.add('fall_status', value)
+    assert runtime.runner.fall_ready()
+
+
+def test_user_reply_received_as_instruction_finishes_is_not_lost(runtime):
+    robot = runtime.robot
+
+    def early_reply(text, pid):
+        robot.spoken.append((text, pid))
+        robot.later(0.1, robot.dialogue)
+        robot.later(0.2, lambda: robot.audio(pid))
+
+    robot.say = early_reply
+    assert runtime.runner.dialogue_turn('호출어를 부르고 이야기하세요.')['provider'] == 'openai'
+
+
+def test_normal_speech_barge_in_yields_guide_without_failing_tts(runtime):
+    robot = runtime.robot
+
+    def interrupted_guide(text, pid):
+        robot.spoken.append((text, pid))
+        robot.later(0.1, lambda: robot.audio(pid, 'stopped'))
+        robot.later(0.4, robot.dialogue)
+
+    robot.say = interrupted_guide
+    assert runtime.runner.dialogue_turn('호출어를 부르고 이야기하세요.')['provider'] == 'openai'
+    assert runtime.runner.tts_failed == 0
+
+
+def test_startup_journal_creation_is_waited_for_without_creating_it(runtime):
+    robot, args, runner = runtime.robot, runtime.args, runtime.runner
+    args.ready_timeout = 20
+    existing = args.conversation_db
+    args.conversation_db = existing.with_name('late-start.sqlite3')
+    robot.later(12, lambda: existing.rename(args.conversation_db))
+    runner.prepare()
+    assert runtime.report.data['steps'][0]['automatic'] == 'PASS' and robot.now >= 12
+
+
+@pytest.fixture
+def speech_probe(smoke, monkeypatch):
+    # Do not let a loaded CI worker turn the cache test into a wall-time race.
+    monkeypatch.setattr(smoke.time, 'monotonic', lambda: 100.0)
+    robot = object.__new__(smoke.RosRobot)
+    publishers, subscribers, queries = {}, {}, []
+
+    def add(mapping, topic, name, kind):
+        mapping.setdefault(topic, []).append(SimpleNamespace(
+            node_namespace='/', node_name=name, topic_type='malbut_interfaces/msg/' + kind))
+
+    add(publishers, '/malbut/speech/playback_status', 'manager', 'SpeechPlaybackStatus')
+    add(publishers, '/malbut/tts/playback_status', 'tts', 'SpeechPlaybackStatus')
+    add(publishers, '/malbut/speech/response', 'agent', 'SpeechRequest')
+    add(publishers, '/malbut/tts/request', 'manager', 'SpeechRequest')
+    add(subscribers, '/malbut/speech/response', 'manager', 'SpeechRequest')
+    add(subscribers, '/malbut/tts/playback_status', 'manager', 'SpeechPlaybackStatus')
+    add(subscribers, '/malbut/tts/request', 'tts', 'SpeechRequest')
+    add(subscribers, '/malbut/speech/transcript', 'agent', 'SpeechTranscript')
+    # The runner itself sees and publishes speech: those endpoints prove nothing.
+    add(publishers, '/malbut/speech/response', 'malbut_smoke', 'SpeechRequest')
+    add(subscribers, '/malbut/speech/response', 'malbut_smoke', 'SpeechRequest')
+    add(subscribers, '/malbut/speech/transcript', 'malbut_smoke', 'SpeechTranscript')
+
+    def query(mapping, topic):
+        queries.append(topic)
+        return mapping.get(topic, [])
+
+    robot.node = SimpleNamespace(
+        count_publishers=lambda _: 1, get_namespace=lambda: '/', get_name=lambda: 'malbut_smoke',
+        get_publishers_info_by_topic=lambda topic: query(publishers, topic),
+        get_subscriptions_info_by_topic=lambda topic: query(subscribers, topic))
+    robot.speech = SimpleNamespace(get_subscription_count=lambda: 2)
+    robot.speech_control = robot.worker_control = robot.classifier = SimpleNamespace(
+        service_is_ready=lambda: True)
+    robot._graph_at, robot._graph = -float('inf'), {}
+    return SimpleNamespace(robot=robot, publishers=publishers, subscribers=subscribers,
+                           queries=queries)
+
+
+def test_actual_speech_probe_checks_the_complete_route_not_just_stt_presence(speech_probe):
+    probe = speech_probe
+    assert probe.robot.speech_ready()
+    probe.subscribers['/malbut/speech/transcript'] = [
+        item for item in probe.subscribers['/malbut/speech/transcript']
+        if item.node_name == 'malbut_smoke']
+    probe.robot._graph_at = -float('inf')
+    assert not probe.robot.speech_ready()
+
+
+def test_actual_speech_probe_does_not_confuse_stt_with_manager(speech_probe):
+    probe = speech_probe
+    for item in probe.subscribers['/malbut/speech/response']:
+        if item.node_name == 'manager':
+            item.node_name = 'stt'
+    assert not probe.robot.speech_ready()
+
+
+def test_speech_probe_rejects_an_incomplete_worker_even_if_the_node_exists(speech_probe):
+    speech_probe.subscribers['/malbut/tts/request'] = []
+    assert not speech_probe.robot.speech_ready()
+
+
+def test_graph_queries_are_throttled_but_readiness_is_rechecked(speech_probe):
+    probe = speech_probe
+    assert probe.robot.speech_ready()
+    calls = len(probe.queries)
+    for _ in range(100):
+        assert probe.robot.endpoints() and probe.robot.speech_ready()
+    assert len(probe.queries) == calls
+    probe.subscribers['/malbut/tts/request'] = []
+    probe.robot._graph_at = -float('inf')
+    assert not probe.robot.speech_ready() and len(probe.queries) > calls
+
+
+def test_guide_waits_for_actual_speech_route_before_publishing(runtime):
+    robot = runtime.robot
+    runtime.args.ready_timeout = 15
+    robot.speech_ready = lambda: robot.now >= 10
+    say = robot.say
+
+    def checked_say(*args):
+        assert robot.now >= 10
+        say(*args)
+
+    robot.say = checked_say
+    runtime.runner.guide('연결이 준비된 뒤에만 한 번 안내합니다.')
+    assert len(robot.spoken) == 1
+
+
+def test_missing_cloud_evidence_still_times_out_instead_of_passing(runtime):
+    runtime.robot.cloud_delay = 100
+    runtime.runner.journal = runtime.args.journal
+    with pytest.raises(runtime.smoke.SmokeError, match='fall_final_result_timeout'):
+        runtime.runner.fall()
+    assert runtime.report.data['steps'][3]['automatic'] != 'PASS'
+
+
+def test_startup_never_creates_a_missing_ledger_or_waits_forever(runtime):
+    runtime.args.conversation_db = runtime.args.conversation_db.with_name('absent.sqlite3')
+    with pytest.raises(runtime.smoke.SmokeError, match='ledger_read_timeout'):
+        runtime.runner.prepare()
+    assert not runtime.args.conversation_db.exists()
+    assert not runtime.robot.spoken and not runtime.robot.manager.calls
+
+
+def test_actual_parameter_timeout_cancels_only_its_pending_read_and_destroys_client(runtime):
+    from concurrent.futures import Future
+    smoke, runner = runtime.smoke, runtime.runner
+    future, removed, destroyed = Future(), [], []
+    client = SimpleNamespace(service_is_ready=lambda: True, call_async=lambda _: future,
+                             remove_pending_request=removed.append)
+    probe = object.__new__(smoke.RosRobot)
+    probe.rpc_timeout = 2
+    probe.node = SimpleNamespace(create_client=lambda *_: client,
+                                 destroy_client=destroyed.append)
+    probe.GetParameters = SimpleNamespace(Request=lambda **kwargs: SimpleNamespace(**kwargs))
+    with pytest.raises(smoke.SmokeError, match='parameter_response_timeout'):
+        probe.parameters('/runtime_control', ['use_sim_time'], runner.wait)
+    assert removed == [future] and destroyed == [client] and future.cancelled()

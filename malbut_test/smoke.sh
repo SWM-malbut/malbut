@@ -88,9 +88,10 @@ def parser():
                                                     '/etc/malbut/fall_runtime.json')))
     result.add_argument('--report-dir', type=Path, default=Path(
         os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'malbut/smoke')
-    for name, default in (('ready-timeout', 60), ('turn-timeout', 90),
+    for name, default in (('ready-timeout', 180), ('rpc-timeout', 30),
+                          ('transition-timeout', 120), ('turn-timeout', 90),
                           ('follow-seconds', 30), ('fall-timeout', 240),
-                          ('cleanup-timeout', 25), ('prepare-seconds', 3),
+                          ('cleanup-timeout', 60), ('prepare-seconds', 3),
                           ('review-timeout', 60)):
         result.add_argument('--' + name, type=finite_seconds, default=float(default))
     result.add_argument('--no-review', action='store_true', help='사람 평가 없이 미평가로 저장')
@@ -282,7 +283,7 @@ class Report:
 class RosRobot:
     """Temporary observer; models and the existing Bringup remain in their owners."""
 
-    def __init__(self):
+    def __init__(self, *, rpc_timeout=30.0):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -293,6 +294,10 @@ class RosRobot:
         from malbut_interfaces.msg import (
             FallRuntimeStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript, SystemState)
         from malbut_interfaces.srv import ControlSpeechPlayback
+        from malbut_interfaces.srv import ClassifySpeechAddressee
+        from malbut_interfaces.action import ConfirmSituation, FallApproach, FollowPerson
+        from rclpy.action import ActionClient
+        from std_srvs.srv import Trigger
         from malbut_agent_server.manager_client import ManagerClient
         from tf2_ros import Buffer, TransformListener
         self.rclpy, self.String, self.SpeechRequest = rclpy, String, SpeechRequest
@@ -301,11 +306,19 @@ class RosRobot:
         from rclpy.signals import SignalHandlerOptions
         rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         self.node = Node('malbut_smoke')
+        self.rpc_timeout = rpc_timeout
+        self._graph_at, self._graph = -math.inf, {}
         self.evidence, self.sensor_subscriptions = Evidence(), []
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self.node)
         self.manager = ManagerClient(self.node, on_event=lambda value: self.evidence.add(
-            'mission', value), goal_response_timeout_s=8.0)
+            'mission', value), goal_response_timeout_s=rpc_timeout)
+        self.action_probes = {
+            name: ActionClient(self.node, kind, name) for name, kind in (
+                ('/follow_person', FollowPerson), ('/malbut/falls/approach', FallApproach),
+                ('/malbut/agent/confirm_situation', ConfirmSituation))}
+        self.prepare_probe = self.node.create_client(
+            Trigger, '/malbut/runtime/prepare/follow_person')
         reliable = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
@@ -358,6 +371,10 @@ class RosRobot:
         self.fall_stop = self.node.create_publisher(String, '/malbut/falls/check/voice', reliable)
         self.speech_control = self.node.create_client(
             ControlSpeechPlayback, '/malbut/speech/playback_control')
+        self.worker_control = self.node.create_client(
+            ControlSpeechPlayback, '/malbut/tts/playback_control')
+        self.classifier = self.node.create_client(
+            ClassifySpeechAddressee, '/malbut/speech/classify_addressee')
 
         def sensor_data(message):
             header = message.header
@@ -371,13 +388,12 @@ class RosRobot:
                 valid = valid and message.width > 0 and message.height > 0 and bool(message.data)
             return {'valid': bool(valid), 'stamp': stamp, 'frame': header.frame_id}
 
-        sensor_topics = (
+        self.sensor_topics = (
             ('scan', LaserScan, '/scan_raw'), ('rgb', Image, '/depth_cam/rgb0/image_raw'),
             ('depth', Image, '/depth_cam/depth0/image_raw'),
             ('camera_info', CameraInfo, '/depth_cam/rgb0/camera_info'))
-        for kind, message_type, topic in sensor_topics:
-            self.sensor_subscriptions.append(
-                subscribe(kind, message_type, topic, sensor_data, sensor))
+        self.subscribe_sensor = lambda kind, message_type, topic: subscribe(
+            kind, message_type, topic, sensor_data, sensor)
 
         def odometry(message):
             twist = message.twist.twist
@@ -401,9 +417,9 @@ class RosRobot:
         client = self.node.create_client(self.GetParameters, name + '/get_parameters')
         future = None
         try:
-            wait(client.service_is_ready, 8, 'parameter_service_unavailable')
+            wait(client.service_is_ready, self.rpc_timeout, 'parameter_service_unavailable')
             future = client.call_async(self.GetParameters.Request(names=keys))
-            wait(future.done, 8, 'parameter_response_timeout')
+            wait(future.done, self.rpc_timeout, 'parameter_response_timeout')
             values = future.result().values
             if len(values) != len(keys):
                 raise SmokeError('parameter_response_invalid')
@@ -415,10 +431,62 @@ class RosRobot:
             self.node.destroy_client(client)
 
     def endpoints(self):
+        return self._topology()['endpoints']
+
+    def _topology(self):
+        # Graph inspection is comparatively expensive on a busy robot. Cache
+        # presence for half a second, never sensor/stop or actual RPC results.
+        now = time.monotonic()
+        if now - self._graph_at < 0.5:
+            return self._graph
         expected = ('/malbut/state', '/malbut/runtime/state', '/malbut/speech/status',
                     '/malbut/speech/transcript', '/malbut/speech/playback_status',
                     '/malbut/falls/status', '/malbut/falls/check/status')
-        return all(self.node.count_publishers(topic) == 1 for topic in expected)
+        endpoints = all(self.node.count_publishers(topic) == 1 for topic in expected)
+        observer = (self.node.get_namespace(), self.node.get_name())
+
+        def owners(topic, kind, publishing):
+            query = (self.node.get_publishers_info_by_topic if publishing
+                     else self.node.get_subscriptions_info_by_topic)
+            return {(info.node_namespace, info.node_name) for info in query(topic)
+                    if info.topic_type == 'malbut_interfaces/msg/' + kind
+                    and (info.node_namespace, info.node_name) != observer}
+
+        manager = owners('/malbut/speech/playback_status', 'SpeechPlaybackStatus', True)
+        worker = owners('/malbut/tts/playback_status', 'SpeechPlaybackStatus', True)
+        # The observer publishes AND subscribes to speech/response itself. Do
+        # not mistake that self-match, or an STT subscriber, for Manager/Agent.
+        agent = owners('/malbut/speech/response', 'SpeechRequest', True)
+        route = bool(
+            len(manager) == len(worker) == 1 and agent
+            and manager <= owners('/malbut/speech/response', 'SpeechRequest', False)
+            and manager <= owners('/malbut/tts/request', 'SpeechRequest', True)
+            and manager <= owners('/malbut/tts/playback_status', 'SpeechPlaybackStatus', False)
+            and worker <= owners('/malbut/tts/request', 'SpeechRequest', False)
+            and agent & owners('/malbut/speech/transcript', 'SpeechTranscript', False))
+        self._graph = dict(endpoints=endpoints, speech=route)
+        self._graph_at = now
+        return self._graph
+
+    def speech_ready(self):
+        return bool(self._topology()['speech']
+                    and self.speech_control.service_is_ready()
+                    and self.worker_control.service_is_ready()
+                    and self.classifier.service_is_ready()
+                    and self.speech.get_subscription_count() >= 2)
+
+    def actions_ready(self, stage):
+        names = ('/follow_person',) if stage == 'follow' else (
+            '/malbut/falls/approach', '/malbut/agent/confirm_situation')
+        return (self.manager._client.server_is_ready()
+                and self.prepare_probe.service_is_ready()
+                and all(self.action_probes[name].server_is_ready() for name in names))
+
+    def start_sensors(self):
+        # Do not deserialize RGB/depth while models and Nav2 are still booting.
+        if not self.sensor_subscriptions:
+            for kind, message_type, topic in self.sensor_topics:
+                self.sensor_subscriptions.append(self.subscribe_sensor(kind, message_type, topic))
 
     def sensors_ready(self):
         from rclpy.time import Time
@@ -452,6 +520,9 @@ class RosRobot:
         self.fall_stop.publish(self.String(data=json.dumps({'kind': 'stop'})))
 
     def close(self):
+        self.release_images()
+        for client in self.action_probes.values():
+            client.destroy()
         self.manager.close()  # close() alone is NOT cancellation: Runner cleans up first.
         self.node.destroy_node()
         self.rclpy.shutdown()
@@ -486,12 +557,16 @@ class Runner:
                 raise SmokeError('unexpected_fall_check', unsafe=True)
 
     def wait(self, predicate, seconds, code, *, cleanup=False):
-        deadline = self.clock() + seconds
+        started = self.clock()
+        deadline, next_report = started + seconds, started + 5
         while self.clock() < deadline:
             self.tick(cleanup=cleanup)
             value = predicate()
             if value:
                 return value
+            if self.clock() >= next_report:
+                print(f'대기 중: {code} ({self.clock() - started:.0f}/{seconds:g}초)', flush=True)
+                next_report = self.clock() + 10
         raise SmokeError(code)
 
     def idle(self):
@@ -525,26 +600,36 @@ class Runner:
                               lambda predicate, seconds, code: self.wait(
                                   predicate, seconds, code, cleanup=cleanup))
         self.still_since = None
-        self.wait(self.settled, timeout or self.args.cleanup_timeout, 'idle_or_stop_unconfirmed',
-                  cleanup=cleanup)
+        self.wait(self.settled, timeout or self.args.transition_timeout,
+                  'idle_or_stop_unconfirmed', cleanup=cleanup)
 
-    def ledger(self, path, statement, arguments=()):
+    def ledger(self, path, statement, arguments=(), *, startup=False):
         def read():
             try:
                 return (read_rows(path, statement, arguments),)
             except SmokeError as error:
-                if error.code == 'ledger_busy':
+                if error.code == 'ledger_busy' or (startup and error.code in (
+                        'ledger_missing', 'ledger_unavailable_or_schema_mismatch')):
                     return None
                 raise
-        return self.wait(read, 5, 'ledger_read_timeout')[0]
+        return self.wait(read, self.args.ready_timeout if startup else self.args.rpc_timeout,
+                         'ledger_read_timeout')[0]
 
     def prepare(self):
         self.allow_fall = True  # Initial state has not been received yet.
         self.wait(lambda: self.robot.endpoints() and self.events.value('speech_ready') == 'ready',
                   self.args.ready_timeout, 'required_endpoints_or_speech_unavailable')
-        self.wait(self.robot.sensors_ready, self.args.ready_timeout, 'sensor_or_tf_unavailable')
-        self.require_idle()
+        self.require_idle(timeout=self.args.ready_timeout)
         self.allow_fall = False
+        self.wait(self.robot.speech_ready, self.args.ready_timeout, 'speech_route_not_ready')
+        self.wait(lambda: self.robot.actions_ready('follow') and self.robot.actions_ready('fall'),
+                  self.args.ready_timeout, 'feature_actions_not_discovered')
+        self.robot.start_sensors()
+        try:
+            self.wait(self.robot.sensors_ready, self.args.ready_timeout,
+                      'sensor_or_tf_unavailable')
+        finally:
+            self.robot.release_images()
         params = self.robot.parameters('/system_manager', ['use_sim_time'], self.wait)
         if params['use_sim_time'].type != 1 or params['use_sim_time'].bool_value:
             raise SmokeError('real_robot_wall_clock_required')
@@ -555,19 +640,18 @@ class Runner:
         backend = params['backend'].string_value
         if backend not in ('openai', 'piper', 'qwen-cuda'):
             raise SmokeError('tts_backend_unknown')
-        self.wait(lambda: self.robot.manager._client.server_is_ready(), 8,
-                  'manager_client_discovery_timeout')
-        self.ledger(self.args.conversation_db, 'SELECT request_id FROM conversation_turns LIMIT 0')
+        self.ledger(self.args.conversation_db, 'SELECT request_id FROM conversation_turns LIMIT 0',
+                    startup=True)
         from malbut_agent_server.fall_preflight import read_settings
         settings = read_settings(self.args.fall_config.expanduser())
         self.journal = settings.journal_path
-        open_incidents = self.ledger(
-            self.journal, 'SELECT incident_id FROM flow_incidents WHERE open=1 LIMIT 1')
-        if open_incidents:
-            raise SmokeError('existing_open_fall_incident')
         self.wait(self.fall_ready, self.args.ready_timeout,
                   'fall_settings_camera_consent_not_ready')
-        self.robot.release_images()
+        open_incidents = self.ledger(
+            self.journal, 'SELECT incident_id FROM flow_incidents WHERE open=1 LIMIT 1',
+            startup=True)
+        if open_incidents:
+            raise SmokeError('existing_open_fall_incident')
         self.report.set(0, 'PASS', tts_backend=backend,
                         llm_api='verified_in_dialogue_not_preflight',
                         guardian_delivery='not_verified')
@@ -579,9 +663,12 @@ class Runner:
                         'enabled', 'camera_enabled', 'cloud_consent', 'accepting_images'))
                     and value.get('runtime_state') == 'ready'
                     and 0 <= value.get('last_frame_age_s', -1) <= 3
-                    and value.get('analysis_state') not in ('failed', 'waiting_response'))
+                    # A periodic Cloud scan in progress is normal operation,
+                    # not an unready camera or a reason to wait for a lucky gap.
+                    and value.get('analysis_state') != 'failed')
 
-    def guide(self, text, *, may_yield_to_fall=False):
+    def guide(self, text, *, may_yield_to_fall=False, may_yield_to_dialogue=False):
+        self.wait(self.robot.speech_ready, self.args.ready_timeout, 'speech_route_not_ready')
         print('\n안내: ' + text, flush=True)
         self.started_work = True
         playback = 'smoke-' + uuid4().hex
@@ -598,8 +685,9 @@ class Runner:
         except SmokeError as error:
             if error.code == 'interrupted' or error.unsafe:
                 raise
-            yielded = (may_yield_to_fall and error.code == 'guide_playback_stopped'
-                       and self.events.value('fall_check', {}).get('active') is True)
+            fall_active = self.events.value('fall_check', {}).get('active') is True
+            yielded = (error.code == 'guide_playback_stopped'
+                       and (may_yield_to_dialogue or (may_yield_to_fall and fall_active)))
             if not yielded:
                 self.tts_failed += 1
                 self.report.set(5, 'FAIL', error.code)
@@ -610,14 +698,14 @@ class Runner:
             except SmokeError:
                 raise SmokeError('guide_stop_unconfirmed', unsafe=True) from None
             self.guides.discard(playback)
-            print('낙상 절차에 안내 양보' if yielded else
+            print('사용자 발화 또는 낙상 절차에 안내 양보' if yielded else
                   'TTS 실패: 위 터미널 안내를 따라 진행합니다.', flush=True)
 
     def dialogue_turn(self, instruction):
         self.require_idle()
-        self.guide(instruction)
         boundary = self.events.sequence
         self.dialogue_boundary = boundary
+        self.guide(instruction, may_yield_to_dialogue=True)
 
         def completed():
             # A user accidentally requesting motion must not advance this speech test.
@@ -626,8 +714,8 @@ class Runner:
             return self.events.dialogue(boundary, self.consumed_utterances)
 
         uid = self.wait(completed, self.args.turn_timeout, 'dialogue_turn_timeout')
-        proof = self.wait(lambda: api_evidence(self.args.conversation_db, uid), 5,
-                          'dialogue_api_ledger_timeout')
+        proof = self.wait(lambda: api_evidence(self.args.conversation_db, uid),
+                          self.args.rpc_timeout, 'dialogue_api_ledger_timeout')
         self.consumed_utterances.add(uid)
         self.dialogue_boundary = None
         self.tts_finished += 1
@@ -640,6 +728,8 @@ class Runner:
 
     def follow(self):
         self.require_idle()
+        self.wait(lambda: self.robot.actions_ready('follow'), self.args.ready_timeout,
+                  'follow_dependencies_not_discovered')
         self.guide('사람 추적을 시작합니다. 잠시 후 천천히 이동하고 방향을 바꿔 주세요. '
                    '멈추라고 말해도 되고, 시간이 지나면 자동으로 종료합니다.')
         deadline = self.clock() + self.args.prepare_seconds
@@ -662,7 +752,7 @@ class Runner:
             return (snapshot['state'] == 'RUNNING' and isinstance(feedback, dict)
                     and feedback.get('target_visible') is True)
 
-        self.wait(acquired, self.args.ready_timeout, 'follow_target_or_execution_timeout')
+        self.wait(acquired, self.args.transition_timeout, 'follow_target_or_execution_timeout')
         started = self.clock()
         while self.clock() - started < self.args.follow_seconds:
             self.tick()
@@ -671,6 +761,8 @@ class Runner:
                 break
             if snapshot['state'] == 'UNKNOWN':
                 raise SmokeError('follow_transport_unknown')
+        observed_seconds = self.clock() - started
+        stopping_at = self.clock()
         snapshot = self.robot.manager.snapshot(self.tracking)
         auto_cancel = not snapshot['terminal']
         if auto_cancel:
@@ -684,13 +776,16 @@ class Runner:
         stop_seen = any(entry[3]['stop_word']
                         for entry in self.events.since(boundary, 'transcript'))
         voice = not auto_cancel and stop_seen
-        self.report.set(2, 'PASS', observed_seconds=round(self.clock() - started, 2),
+        self.report.set(2, 'PASS', observed_seconds=round(observed_seconds, 2),
+                        stop_and_idle_seconds=round(self.clock() - stopping_at, 2),
                         cancellation='timer' if auto_cancel else 'external',
                         voice_stop='OBSERVED' if voice else 'NOT_TESTED',
                         target_seen=True, terminal=snapshot['state'])
 
     def fall(self):
         self.require_idle()
+        self.wait(lambda: self.robot.actions_ready('fall') and self.fall_ready(),
+                  self.args.ready_timeout, 'fall_dependencies_not_ready')
         # The person may react before the last syllable of the guide. Keep that
         # genuine detection, rather than losing it behind a post-guide boundary.
         boundary = self.events.sequence
@@ -733,7 +828,11 @@ class Runner:
             cloud = [entry[3] for entry in self.events.since(boundary, 'fall_event')
                      if entry[3].get('kind') == 'fall_look_result'
                      and entry[3].get('look_id') in looks]
-            if not cloud or any(value.get('verdict') in ('failed', 'guard') for value in cloud):
+            if not cloud:
+                # Cloud results and Agent decisions have different publishers.
+                # A busy executor may observe closure before the matching look.
+                return None
+            if any(value.get('verdict') in ('failed', 'guard') for value in cloud):
                 raise SmokeError('fall_cloud_result_not_verified')
             # A decision is not proof of a durable final record. Do not mutate it.
             rows = self.ledger(self.journal, 'SELECT open FROM flow_incidents WHERE incident_id=?',
@@ -917,7 +1016,7 @@ def main(argv=None):
     try:
         report = Report(args.report_dir)
         report.data['mode'] = 'execute' if args.execute else 'check'
-        robot = RosRobot()
+        robot = RosRobot(rpc_timeout=args.rpc_timeout)
         runner = Runner(robot, args, report)
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, lambda *_: setattr(runner, 'interrupted', True))
