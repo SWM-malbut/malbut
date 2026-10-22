@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "validated": true,
+  "simulated": true,
+  "range_m": 1,
+  "model": "gpt-5.6-luna",
+  "camera": {
+    "width": 640,
+    "height": 400,
+    "hfov_rad": 1.291543646,
+    "height_m": 0.12
+  },
+  "scope": "Object-presence inspection only; object-category recognition is not validated",
+  "calibration_kind": "object_presence",
+  "recognition_validated": false,
+  "supported_classes": [],
+  "unsupported_classes": [
+    "ball",
+    "barbell",
+    "bin",
+    "tablet"
+  ],
+  "global_semantic_range_m": null,
+  "class_ranges_m": {
+    "ball": null,
+    "barbell": null,
+    "bin": null,
+    "tablet": null
+  },
+  "evaluation_sha256": "8591b5eb7def64d727cd1322618f24613bc201150c1237eeb1a20c1c840779d0"
+}

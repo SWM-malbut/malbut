@@ -32,6 +32,8 @@ def generate_launch_description():
                                 else 'false'),
         'observation_directory': os.environ.get(
             'MALBUT_PATROL_OBSERVATION_DIR', '~/.local/share/malbut/patrol-observations'),
+        'inspection_calibration_file': '',
+        'inspection_analysis_timeout_s': '120.0',
     }
     parameters = {name: LaunchConfiguration(name) for name in defaults}
     parameters['use_sim_time'] = ParameterValue(
@@ -54,6 +56,10 @@ def generate_launch_description():
         LaunchConfiguration('depth_scale_m'), value_type=float)
     parameters['observation_directory'] = ParameterValue(
         LaunchConfiguration('observation_directory'), value_type=str)
+    parameters['inspection_calibration_file'] = ParameterValue(
+        LaunchConfiguration('inspection_calibration_file'), value_type=str)
+    parameters['inspection_analysis_timeout_s'] = ParameterValue(
+        LaunchConfiguration('inspection_analysis_timeout_s'), value_type=float)
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value)
           for name, value in defaults.items()],

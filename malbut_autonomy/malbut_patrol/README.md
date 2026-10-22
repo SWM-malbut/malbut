@@ -144,6 +144,53 @@ Nav2가 전체 격자 대신 부분 갱신을 발행할 때는 `costmap_topic`�
 
 ## 사진 관찰 기억
 
+### 분석 사진을 근거로 완료하는 순찰
+
+`inspection_calibration_file`을 지정하면 보정된 **사진 분석 기반 순찰**을 사용한다.
+빈 값이면 기존 4/3/2m 기하학적 관측과 순찰 종료 후 최대 24장 묶음 분석을 유지한다.
+포함된 `config/inspection_sim_20261022.json`은 합성 장면에서 얻은 1m 존재 감지용
+보정이며 **시뮬레이션 전용**이다. 종류 식별 검증이 아니고 실물 로봇에는 적용할 수 없다.
+카메라 640×400, 수평 화각 약 74도, 높이 12cm, 모델 `gpt-5.6-luna`에 한정한다.
+1m에서 존재 묘사는 11/12장, 종류 식별은 3/12장이었다. 1m 미만, 다른 조명과 물체,
+3D 표면 전체 및 물체 위치 정확도를 보증하지 않는다.
+
+- 시작점에서 먼저 360도 회전한다. 사진을 분석해 아직 확인하지 못한 면적과
+  이동 거리를 고려하여 다음 위치를 선택하며, 목표는 전체와 각 방의 95%다.
+  후보 간격은 기존 꼼꼼함 설정과 보정 거리의 절반 중 작은 값이다.
+- 다른 방에서 보더라도 평면 가림을 통과한 분석 사진이 충분하면 방 진입은 요구하지 않는다.
+  알려진 자유 공간 전체, 접근 가능한 후보의 관측 가능 면적, 제외 면적을 별도로 보고한다.
+- 촬영은 최소 0.25초, 방향은 화각의 절반 간격, 가까운 위치 중복 기준은 0.25m다.
+  이미 관측한 면적만 보이는 사진은 생략한다. 한 순찰의 수락 사진 상한은 160장이다.
+- 이 모드의 사진은 묶음 표시 없이 저장되어 기존 Agent의 개별 사진 분석 경로에서
+  순찰 중 처리한다. **사진마다 API 호출**이 발생하며 기존 분석 재시도 정책이 적용된다.
+  기존 24장 모음 분석과 비용·지연이 다르다. Agent의 `MALBUT_PATROL_VISION_MODEL`은 보정 모델과 같아야 한다.
+- 저장 완료와 DB의 `ready`만으로 성공하지 않는다. 현재 순찰·지도·환경·모델,
+  촬영 메타데이터·사진·공간 근거 해시 및 카메라 보정을 확인한 사진만 관측으로 인정한다.
+  완료 직전 이미 인정한 사진까지 다시 검증한다. 분석 결과는 종류 식별 보증이 아니다.
+- 각 회전 후 수락한 사진의 저장·분석을 기다리며 계속 취소·센서 상태를 확인한다.
+  `inspection_analysis_timeout_s`(기본 120초) 이내에 끝나지 않으면 실패한다.
+  저장·분석 실패, 증거 불일치, 목표 미달 상태의 사진 상한 도달도 성공으로 처리하지 않는다.
+  취소는 API 분석 종료를 기다리지 않고 기존 Nav2 취소 경계를 지킨다.
+- 관측 지도와 근거 집합은 매 실행 새로 만든다. 이전 순찰의 분석을 면적으로 재사용하지 않는다.
+
+시뮬레이션 Agent에는 `MALBUT_PATROL_SIMULATED=1`과 별도의
+`MALBUT_PATROL_OBSERVATION_DIR`을 지정한다. 순찰에도 같은 디렉터리를 전달한다.
+기존 실제 관찰 DB를 시뮬레이션 DB로 재사용하면 Agent가 거부한다.
+Agent의 기존 키 연결을 사용하며 테스트를 위해 새 키를 만들거나 사진 폴더에 복사하지 않는다.
+
+```bash
+ros2 launch malbut_patrol patrol.launch.py use_sim_time:=true \
+  observation_directory:=/absolute/path/to/simulation-observations \
+  inspection_calibration_file:="$(ros2 pkg prefix malbut_patrol)/share/malbut_patrol/config/inspection_sim_20261022.json"
+```
+
+실제 Gazebo 카메라의 topic·광학 frame도 실행 환경에 맞게 지정해야 한다.
+Bringup은 `patrol_inspection_calibration_file`과 `patrol_inspection_analysis_timeout_s`로
+동일 설정을 전달한다. 실물 검증 보정은 별도로 필요하며 포함된 시뮬레이션 파일로 대체하지 않는다.
+`/patrol/status`의 `coverage`는 분모와 방별 면적을, `evidence`는 분석 대기·실패·거부와
+`recognition_validated=false`를 제공한다. 이후 절의 24장·1.5초·모음 분석 설명은
+보정 파일을 지정하지 않은 기존 모드에 해당한다.
+
 ```mermaid
 flowchart LR
     A[수동 순찰 요청] --> B[Nav2 이동·회전]
@@ -184,8 +231,8 @@ flowchart LR
 로컬 통합 시험에서는 별도 폴더에 `PatrolMemoryStore(directory, owner_id,
 simulation=True)`를 명시해 가상 사진의 분석·재조회 경로를 검증할 수 있습니다.
 DB에 환경 구분이 고정되어 실제 관찰 DB와 바꾸어 열 수 없으며, 검색 결과에도
-`environment`, `simulated`, `analysis_model`을 남깁니다. 이 시험 전용 객체는
-일반 Agent 시작 경로에서 자동으로 활성화되지 않습니다. 외부 API 없이 분석 대역을
+`environment`, `simulated`, `analysis_model`을 남깁니다. 일반 Agent는 기본적으로 실제 관찰 DB를 사용하며, 시뮬레이션 분석은
+`MALBUT_PATROL_SIMULATED=1`을 명시했을 때만 활성화됩니다. 외부 API 없이 분석 대역을
 쓰는 시험은 해당 모델명을 명시하며 실제 AI 분석 결과와 구분해야 합니다.
 
 순찰과 Agent 프로세스에 같은 환경을 전달합니다.

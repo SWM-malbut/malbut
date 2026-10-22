@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -249,6 +250,62 @@ def test_real_database_cannot_be_repurposed_for_simulation(evidence):
         PatrolMemoryStore(store.directory, 'owner', simulation=True)
 
 
+def test_live_inspection_is_analyzed_before_patrol_sealing_and_credits_exact_photo(
+        tmp_path, monkeypatch):
+    """Join the real recorder, Agent worker and coverage reader using an offline model."""
+    import numpy as np
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.syspath_prepend(str(root / 'malbut_autonomy/malbut_patrol'))
+    from malbut_patrol.coverage import CoverageGrid, CoveragePlanner, CoverageProfile
+    from malbut_patrol.inspection import InspectionCalibration, InspectionEvidence
+    from malbut_patrol.photo_recorder import PhotoRecorder
+
+    calibration = InspectionCalibration(
+        root / 'malbut_autonomy/malbut_patrol/config/inspection_sim_20261022.json', True)
+    grid = CoverageGrid(np.zeros((30, 30)), .1, 0, 0)
+    recorder = PhotoRecorder(tmp_path, inspection=True)
+    store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+    calls = []
+
+    def analyze(metadata, image):
+        calls.append(metadata['observation_id'])
+        assert image.startswith(b'\xff\xd8')
+        assert 'analysis_batch' not in metadata and metadata['simulated']
+        return copy.deepcopy(ANALYSIS)
+
+    worker = PatrolObservationWorker(store, SimpleNamespace(
+        available=lambda: True, model=calibration.model, analyze=analyze), autostart=False)
+    try:
+        recorder.begin(grid, 'map', '')
+        camera = calibration.camera_record(640, 400, calibration.camera['hfov_rad'], .12)
+        image = SimpleNamespace(width=640, height=400, step=1920, encoding='rgb8',
+                                data=bytes([120] * 640 * 400 * 3),
+                                header=SimpleNamespace(frame_id='optical',
+                                                       stamp=SimpleNamespace(sec=1, nanosec=0)))
+        assert recorder.offer(image, x=1.5, y=1.5, yaw=0, room_names=[], phase='OBSERVING',
+                              simulated=True, inspection=camera)
+        deadline = time.monotonic() + 5
+        while recorder.status()['saved'] != 1 and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert recorder.status()['saved'] == 1 and not recorder.status()['batch_ready']
+        run, references = recorder.evidence()
+        evidence = InspectionEvidence(tmp_path, calibration, run)
+        assert not evidence.poll(references)
+        assert worker.run_once()
+        views = evidence.poll(references)
+        assert len(views) == 1 and calls == [references[0]['observation_id']]
+        planner = CoveragePlanner(grid, CoverageProfile(1, .95, .5), (1.5, 1.5),
+                                  require_room_entry=False)
+        planner.mark_observed(*views[0])
+        assert planner.observed_area_m2 > 0
+        assert not worker.run_once()
+        assert not (tmp_path / 'runs' / (run['patrol_id'] + '.json')).exists()
+    finally:
+        worker.close()
+        recorder.close()
+
+
 def test_vision_uses_rotated_managed_key_and_sends_image_without_tools(tmp_path):
     environment = {'OPENAI_API_KEY': 'offline-first-key'}
     key = ManagedKey('openai', environ=environment, directory=tmp_path)
@@ -364,7 +421,9 @@ def test_speech_worker_advertises_and_answers_visual_recall(evidence):
         dialogue.close()
 
 
-def test_robot_configuration_reuses_managed_key_and_honors_disable(tmp_path, monkeypatch):
+@pytest.mark.parametrize('simulation', [False, True])
+def test_robot_configuration_reuses_managed_key_and_honors_disable(
+        tmp_path, monkeypatch, simulation):
     from malbut_agent_server.factory import openai_key_for
     from malbut_agent_server.patrol_query import configure_patrol_from_settings
     import malbut_agent_server.patrol_observer as observer_module
@@ -373,6 +432,7 @@ def test_robot_configuration_reuses_managed_key_and_honors_disable(tmp_path, mon
     monkeypatch.setenv('MALBUT_PATROL_OBSERVATION_DIR', str(directory))
     monkeypatch.setenv('MALBUT_KEY_DIR', str(tmp_path / 'keys'))
     monkeypatch.setenv('MALBUT_PATROL_OBSERVATIONS', '1')
+    monkeypatch.setenv('MALBUT_PATROL_SIMULATED', '1' if simulation else '0')
     monkeypatch.setenv('MALBUT_PATROL_VISION_MODEL', 'configured-camera-model')
     monkeypatch.setattr(observer_module, 'PatrolObservationWorker',
                         lambda store, observer: PatrolObservationWorker(
@@ -384,6 +444,7 @@ def test_robot_configuration_reuses_managed_key_and_honors_disable(tmp_path, mon
         assert runtime.patrol_observation_worker.observer.key is openai_key_for(settings)
         assert runtime.patrol_observation_worker.observer.model == 'configured-camera-model'
         assert runtime.patrol_query_tools == ('search_patrol_observations',)
+        assert runtime.patrol_memory.simulation is simulation
         assert not (tmp_path / 'keys').exists()  # Never create or copy a credential.
         monkeypatch.setenv('MALBUT_PATROL_OBSERVATIONS', '0')
         configure_patrol_from_settings(runtime, settings, http_server=False)

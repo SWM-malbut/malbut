@@ -63,9 +63,11 @@ def _atomic_write(path, data):
 class PhotoRecorder:
     """Sample distinct views and publish a manifest only after its photo is durable."""
 
-    def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024):
+    def __init__(self, directory, *, max_photos=None, max_bytes=512 * 1024 * 1024,
+                 inspection=False):
         self.directory = Path(directory).expanduser()
-        self.max_photos = max_photos
+        self.inspection = inspection
+        self.max_photos = (160 if inspection else 24) if max_photos is None else max_photos
         self.max_bytes = max_bytes
         self._queue = Queue(maxsize=4)
         self._stop = threading.Event()
@@ -88,8 +90,9 @@ class PhotoRecorder:
             self.finish('interrupted')
             self._run = {'patrol_id': uuid4().hex, 'map_id': digest, 'map_frame': frame,
                          'room_map': Path(room_map_file).name if room_map_file else '',
-                         'analysis_batch': 'patrol_mosaic_v1',
                          '_regions': room_snapshot(rooms)}
+            if not self.inspection:
+                self._run['analysis_batch'] = 'patrol_mosaic_v1'
             self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': '',
                            'batch_ready': False}
             self._batches[self._run['patrol_id']] = {
@@ -98,7 +101,8 @@ class PhotoRecorder:
             self._poses = []
             self._last_capture = 0.0
 
-    def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None):
+    def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None,
+              inspection=None):
         """Queue a fresh frame already matched to its TF; return without disk I/O."""
         with self._lock:
             if (self._stop.is_set() or self._run is None
@@ -106,13 +110,20 @@ class PhotoRecorder:
                     or self._run['patrol_id'] not in self._batches):
                 return False
             # Capture the initial view even if the map is already covered.
-            if self._poses and phase != 'OBSERVING':
+            if self.inspection and phase not in ('PLANNING', 'NAVIGATING', 'OBSERVING'):
                 return False
+            if not self.inspection and self._poses and phase != 'OBSERVING':
+                return False
+            if self.inspection and inspection is None:
+                raise ValueError('Inspection capture requires camera calibration evidence')
             now = time.monotonic()
-            if self._stats['queued'] >= self.max_photos or now - self._last_capture < 1.5:
+            interval = 0.25 if self.inspection else 1.5
+            angle = inspection['hfov_rad'] / 2 if self.inspection else math.pi / 3
+            spacing = 0.25 if self.inspection else 0.6
+            if self._stats['queued'] >= self.max_photos or now - self._last_capture < interval:
                 return False
-            if any(math.hypot(x - px, y - py) < 0.6
-                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < math.pi / 3
+            if any(math.hypot(x - px, y - py) < spacing
+                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < angle
                    for px, py, pa in self._poses):
                 return False
             captured = (datetime.now(timezone.utc) if simulated else datetime.fromtimestamp(
@@ -124,6 +135,8 @@ class PhotoRecorder:
                             camera_frame=image.header.frame_id, simulated=simulated,
                             camera_pose={'x': x, 'y': y, 'yaw': yaw},
                             capture_rooms=list(room_names), _spatial=spatial)
+            if self.inspection:
+                metadata['inspection'] = inspection
             try:
                 self._queue.put_nowait((image, metadata, self._stats))
             except Full:
@@ -137,6 +150,13 @@ class PhotoRecorder:
         """Report accepted versus durably written evidence, never inferred success."""
         with self._lock:
             return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats}
+
+    def evidence(self):
+        """Return this producer's run identity and immutable committed-photo hashes."""
+        with self._lock:
+            run = {k: self._run[k] for k in ('patrol_id', 'map_id', 'map_frame')}
+            captures = self._batches.get(run['patrol_id'], {}).get('captures', [])
+            return run, [dict(item) for item in captures]
 
     def finish(self, outcome='completed'):
         """Seal this patrol without waiting for its accepted disk writes."""

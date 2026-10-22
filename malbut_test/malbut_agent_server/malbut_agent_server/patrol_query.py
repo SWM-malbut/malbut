@@ -34,7 +34,7 @@ def configure_patrol_queries(runtime, store, worker=None):
 
 
 def configure_patrol_from_settings(runtime, settings, *, http_server):
-    """Only the real robot dialogue runtime starts image analysis automatically."""
+    """Start image analysis with an explicitly separate simulation dataset when selected."""
     configure_patrol_queries(runtime, None)
     if settings.provider != 'openai' or os.environ.get('MALBUT_PATROL_OBSERVATIONS', '1') != '1':
         return
@@ -44,7 +44,9 @@ def configure_patrol_from_settings(runtime, settings, *, http_server):
     if http_server and not (directory / 'observations.sqlite3').is_file():
         return
     try:
-        store = PatrolMemoryStore(directory, settings.user_id)
+        store = PatrolMemoryStore(
+            directory, settings.user_id,
+            simulation=os.environ.get('MALBUT_PATROL_SIMULATED', '0') == '1')
         worker = None
         if not http_server:
             from malbut_agent_server.factory import openai_key_for

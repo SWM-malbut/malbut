@@ -42,7 +42,7 @@ setup(
             'share/' + package_name,
             ['package.xml', 'README.md'],
         ),
-    ] + collect_data_files('launch'),
+    ] + collect_data_files('launch', 'config'),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Malbut Team',
