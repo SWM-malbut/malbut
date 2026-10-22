@@ -172,6 +172,16 @@ def test_missing_database_remains_pending(photo):
     assert evidence.pending == 1
 
 
+@pytest.mark.parametrize('table', ['dataset', 'owner'])
+def test_agent_database_initialization_remains_pending(photo, table):
+    _, evidence, references, path, *_ = photo
+    ready(photo)
+    with sqlite3.connect(path.parent.parent / 'observations.sqlite3') as connection:
+        connection.execute('DELETE FROM ' + table)
+    assert evidence.poll(references) == []
+    assert evidence.pending == 1 and not evidence.credited
+
+
 def test_deleted_database_cannot_reuse_previously_credited_results(photo):
     _, evidence, references, path, *_ = photo
     ready(photo)

@@ -81,8 +81,11 @@ class InspectionEvidence:
             with connection:
                 dataset = connection.execute('SELECT simulated FROM dataset WHERE id=1').fetchone()
                 owner = connection.execute('SELECT user_id FROM owner WHERE id=1').fetchone()
-                if (dataset is None or bool(dataset[0]) != self.calibration.simulated
-                        or owner is None):
+                if dataset is None or owner is None:
+                    # The Agent creates tables before committing their identity rows.
+                    self.pending = len(references)
+                    return []
+                if bool(dataset[0]) != self.calibration.simulated:
                     raise ValueError('Inspection observation database environment mismatch')
                 views = []
                 ready = set()
