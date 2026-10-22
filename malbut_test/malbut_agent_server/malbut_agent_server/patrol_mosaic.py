@@ -26,6 +26,10 @@ camera_pose는 촬영 위치다. 물체 구역이나 지도 좌표는 추정하�
 [왼쪽, 위, 오른쪽, 아래] 정수 좌표다. 해당 F번호의 photo_rect_1000 안에만 있어야 한다.
 photo_rect_1000은 이미 같은 0~1000 좌표계로 주어졌으므로 픽셀 좌표와 혼동하지 않는다.
 사진 내부 기준 좌표가 아니다. 특정할 수 없으면 null로 쓴다.
+kind는 사람(하반신 등 일부만 보여도)이면 person, 그 외에는 object다.
+사람의 sheet_anchors에는 직접 보이는 몸통·팔·다리 표면 안쪽의 서로 떨어진 [x,y]
+3개를 sheet_bbox와 같은 모음 전체 0~1000 좌표계로 표시한다. 충분히 보이는 지점만 쓴다.
+배경·다리 사이 빈 공간·윤곽선·가려진 신체는 제외한다. 사람이 아니면 []다.
 서버가 모음 좌표를 원본 사진 좌표로 복원하고 원본 깊이·TF로 물체 구역을 계산한다.
 보이지 않는 물체의 부재·이동, 사람의 신원·감정·건강·소유관계는 추정하지 않는다.
 각 captured_at 시점의 관찰이며 실시간 현재 상태나 영구 사실이 아니다.
@@ -43,8 +47,8 @@ def schema_for(frame_ids, single_schema):
     frame['properties']['uncertainties']['maxItems'] = 2
     item = frame['properties']['objects']['items']
     item['properties']['sheet_bbox'] = item['properties'].pop('image_bbox')
-    item['required'] = [name if name != 'image_bbox' else 'sheet_bbox'
-                        for name in item['required']]
+    item['properties']['sheet_anchors'] = item['properties'].pop('image_anchors')
+    item['required'] = [name.replace('image_', 'sheet_') for name in item['required']]
     return {'type': 'object', 'additionalProperties': False, 'properties': {
         'frames': {'type': 'array', 'minItems': len(frame_ids), 'maxItems': len(frame_ids),
                    'items': frame}}, 'required': ['frames']}
@@ -162,5 +166,21 @@ def split_results(value, layout):
             if not isinstance(item, dict) or 'sheet_bbox' not in item or 'image_bbox' in item:
                 raise ValueError('missing sheet bbox')
             item['image_bbox'] = source_bbox(item.pop('sheet_bbox'), frame, layout)
+            if 'image_anchors' in item:
+                raise ValueError('unexpected source anchors')
+            if 'sheet_anchors' in item:
+                anchors = item.pop('sheet_anchors')
+                validate_analysis({'summary': 'anchors', 'objects': [dict(
+                    item, image_anchors=anchors)], 'uncertainties': []})
+                x0, y0, x1, y1 = frame['photo_rect']
+                pixels = [(p[0]*layout['width']/1000, p[1]*layout['height']/1000)
+                          for p in anchors]
+                if any(not (x0 <= x < x1 and y0 <= y < y1) for x, y in pixels):
+                    item['image_bbox'] = None
+                    item['image_anchors'] = []
+                else:
+                    item['image_anchors'] = [[round((x-x0)/(x1-x0)*1000),
+                                              round((y-y0)/(y1-y0)*1000)]
+                                             for x, y in pixels]
         results[frame['observation_id']] = validate_analysis(analysis)
     return results

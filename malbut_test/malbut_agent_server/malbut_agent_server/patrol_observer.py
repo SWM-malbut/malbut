@@ -22,6 +22,10 @@ summary에는 장면을 간결하게, objects에는 보이는 물건과 사진�
 capture_rooms는 카메라 촬영 위치다. 사진 속 모든 물체가 그 방에 있다고 단정하지 않는다.
 각 물체의 image_bbox는 보이는 물체를 감싼 [왼쪽, 위, 오른쪽, 아래] 정수 좌표다.
 사진 전체 가로·세로를 각각 0~1000으로 정규화한다. 물체를 특정할 수 없으면 null이다.
+kind는 사람(일부만 보여도)이면 person, 그 외에는 object다.
+사람은 image_anchors에 직접 보이는 몸통·팔·다리 표면 안쪽의 서로 떨어진 [x,y] 지점
+3개를 같은 좌표계로 표시한다. 다리 사이 빈 공간·배경·윤곽선·가려진 신체는 고르지 않는다.
+충분히 보이는 지점만 표시하며 사람이 아니거나 지점을 특정할 수 없으면 []다.
 지도 좌표나 실제 물체 구역을 추정하지 않는다. 구역 판정은 서버가 깊이 영상으로 수행한다.
 이것은 captured_at 시점의 관찰이다. 현재 상태나 영구 사실로 바꾸지 않는다.
 simulated=true이면 가상 환경에서 촬영한 사진이며 실제 집의 관찰로 표현하지 않는다.
@@ -34,13 +38,18 @@ SCHEMA = {
         'objects': {'type': 'array', 'maxItems': 20, 'items': {
             'type': 'object', 'additionalProperties': False,
             'properties': {'name': {'type': 'string', 'maxLength': 120},
+                           'kind': {'type': 'string', 'enum': ['person', 'object']},
+                           'image_anchors': {'type': 'array', 'maxItems': 3, 'items': {
+                               'type': 'array', 'minItems': 2, 'maxItems': 2,
+                               'items': {'type': 'integer', 'minimum': 0, 'maximum': 1000}}},
                            'location': {'type': 'string', 'maxLength': 120},
                            'confidence': {'type': 'string', 'enum': ['high', 'uncertain']},
                            'image_bbox': {'anyOf': [
                                {'type': 'array', 'items': {'type': 'integer', 'minimum': 0,
                                                            'maximum': 1000},
                                 'minItems': 4, 'maxItems': 4}, {'type': 'null'}]}},
-            'required': ['name', 'location', 'confidence', 'image_bbox']}},
+            'required': ['name', 'kind', 'location', 'confidence', 'image_bbox',
+                         'image_anchors']}},
         'uncertainties': {'type': 'array', 'maxItems': 5,
                           'items': {'type': 'string', 'maxLength': 160}},
     },
