@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import io
+from itertools import combinations
 import json
 import math
 import re
@@ -200,6 +201,81 @@ def _planar_support(roi, valid, x0, y0, spatial):
     return bounds, error, _map_points(support, spatial), plane
 
 
+def _person_position(item, spatial, regions, depth, unknown):
+    """Require independent visible body patches, never the gap between a person's legs."""
+    anchors = item.get('image_anchors', [])
+    if len(anchors) < 2:
+        return dict(unknown, reason='person_anchors_missing')
+    height, width = depth.shape
+    left, top, right, bottom = item['image_bbox']
+    if any(not (left < x < right and top < y < bottom) for x, y in anchors):
+        return dict(unknown, reason='person_anchor_outside_bbox')
+    # Small patches stay inside narrow limbs. Each needs real, coherent depth support.
+    radius = 2
+    samples, used = [], []
+    for x, y in anchors:
+        px, py = int(x/1000*width), int(y/1000*height)
+        if any(math.hypot(px-a, py-b) < 2*radius+1 for a, b in used):
+            continue
+        used.append((px, py))
+        x0, x1 = max(0, px-radius), min(width, px+radius+1)
+        y0, y1 = max(0, py-radius), min(height, py+radius+1)
+        roi = depth[y0:y1, x0:x1]
+        valid = np.isfinite(roi) & (roi >= .15) & (roi <= 10)
+        if np.count_nonzero(valid) < 16 or np.mean(valid) < .8:
+            continue
+        z = float(np.median(roi[valid]))
+        spread = float(np.quantile(np.abs(roi[valid]-z), .95))
+        if spread > max(.06, z*.03):
+            continue
+        # The selected pixel itself must agree; do not fill a hole or a depth edge.
+        center = float(depth[py, px])
+        if not math.isfinite(center) or abs(center-z) > max(.04, z*.02):
+            continue
+        ray = _rays([[px, py]], spatial)[0]
+        if not np.isfinite(ray).all():
+            continue
+        world = _map_points(np.r_[ray*z, z], spatial)
+        focal = min(spatial['intrinsics']['fx'], spatial['intrinsics']['fy'])
+        margin = .12 + .02*z + spread + z*radius/focal
+        region, reason = region_at(world[:2], regions, margin)
+        samples.append((world, z, margin, region, reason))
+    if len(samples) < 2:
+        return dict(unknown, reason='person_depth_insufficient')
+    points = np.asarray([s[0] for s in samples])
+    distances = np.linalg.norm(points[:, None, :2]-points[None, :, :2], axis=2)
+    groups = []
+    for size in range(len(samples), 1, -1):
+        groups = [ids for ids in combinations(range(len(samples)), size)
+                  if np.max(distances[np.ix_(ids, ids)]) <= .8]
+        if groups:
+            break
+    # A unique pair may reject a farther background point, never a nearer occluder.
+    # Ambiguous groups cannot be averaged into an invented position.
+    if len(groups) != 1:
+        return dict(unknown, reason='person_depth_disagreement')
+    selected = groups[0]
+    farthest = max(samples[i][1] for i in selected)
+    if any(sample[1] <= farthest+.15 for i, sample in enumerate(samples) if i not in selected):
+        return dict(unknown, reason='person_depth_disagreement')
+    samples = [samples[i] for i in selected]
+    points = points[list(selected)]
+    region = samples[0][3]
+    if region is None or any(s[3] != region for s in samples):
+        return dict(unknown, reason='person_region_disagreement')
+    world = np.median(points, axis=0)
+    margin = max(s[2] for s in samples) + float(np.max(
+        np.linalg.norm(points[:, :2]-world[:2], axis=1)))
+    if region_at(world[:2], regions, margin)[0] != region:
+        return dict(unknown, reason='region_boundary')
+    return {'status': 'located', 'region': region,
+            'map_position': dict(zip(('x', 'y', 'z'), np.round(world, 3).tolist())),
+            'method': 'registered_rgbd', 'reason': None,
+            'depth_m': round(float(np.median([s[1] for s in samples])), 3),
+            'boundary_margin_m': round(margin, 3),
+            'depth_support': 'visible_body_patches', 'anchor_count': len(samples)}
+
+
 def _object_position(item, metadata, regions, depth):
     unknown = {'status': 'unknown', 'region': None, 'map_position': None,
                'method': 'registered_rgbd', 'reason': None}
@@ -209,6 +285,8 @@ def _object_position(item, metadata, regions, depth):
         return dict(unknown, reason=spatial['status'])
     if bbox is None or item['confidence'] != 'high':
         return dict(unknown, reason='object_not_grounded')
+    if item.get('kind') == 'person':
+        return _person_position(item, spatial, regions, depth, unknown)
     height, width = depth.shape
     left, top, right, bottom = np.asarray(bbox) / 1000 * [width, height, width, height]
     # Avoid bounding-box background; use the central 40% of visible object pixels.

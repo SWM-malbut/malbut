@@ -228,6 +228,12 @@ def system_instructions_for_tools(
             '이는 촬영 당시 깊이 영상과 지도에 근거한 위치 추정입니다. '
             'spatial이 없거나 status=unknown이면 물체의 실제 구역은 미확정입니다. '
             '촬영 구역이나 사진 설명으로 미확정 물체 구역을 채우지 않습니다. '
+            'location_semantics=object_regions_only_camera_location_withheld이면 카메라 촬영 '
+            '구역은 답변 자료에서 의도적으로 제외됐습니다. 최신 대상의 spatial.status가 '
+            'unknown이면 첫 문장을 "마지막 관찰에서 실제 구역은 확인되지 않았어요"로 '
+            '시작하고 촬영 시각을 덧붙입니다. 질문·대화의 방 이름, 다른 물체의 구역, '
+            '이전 관찰로 최신 미확정 구역을 추측하거나 "거실 사진에서"처럼 표현하지 않습니다. '
+            'image_location은 사진 안에서의 상대 위치이며 지도 구역을 뜻하지 않습니다. '
             'environment=simulation 또는 simulated=true인 기록은 가상 환경의 테스트 관찰임을 밝힙니다. '
             '기록이 없거나 분석 중·실패한 사진으로 물체가 없다고 판단하지 않습니다.'
         )

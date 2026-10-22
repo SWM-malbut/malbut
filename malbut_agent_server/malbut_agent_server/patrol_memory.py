@@ -84,7 +84,9 @@ def validate_analysis(value, *, localized=False):
         raise ValueError('invalid observed objects')
     for item in value['objects']:
         required = {'name', 'location', 'confidence'}
-        optional = {'image_bbox', 'spatial'} if localized else {'image_bbox'}
+        optional = {'image_bbox', 'kind', 'image_anchors'}
+        if localized:
+            optional.add('spatial')
         if (not isinstance(item, dict) or not required <= set(item)
                 or not set(item) <= required | optional
                 or any(not isinstance(item[k], str) or not 1 <= len(item[k]) <= 120
@@ -97,6 +99,14 @@ def validate_analysis(value, *, localized=False):
                 or any(type(v) is not int or not 0 <= v <= 1000 for v in bbox)
                 or bbox[0] >= bbox[2] or bbox[1] >= bbox[3]):
             raise ValueError('invalid object bounding box')
+        if 'kind' in item and item['kind'] not in ('person', 'object'):
+            raise ValueError('invalid object kind')
+        anchors = item.get('image_anchors', [])
+        if (not isinstance(anchors, list) or len(anchors) > 3
+                or any(not isinstance(p, list) or len(p) != 2
+                       or any(type(v) is not int or not 0 <= v <= 1000 for v in p)
+                       for p in anchors)):
+            raise ValueError('invalid object anchors')
         if 'spatial' in item:
             spatial = item['spatial']
             if (not isinstance(spatial, dict)
