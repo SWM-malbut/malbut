@@ -599,6 +599,16 @@ def test_application_topic_wiring_and_manual_input_are_preserved(launch_module):
     assert options['map_topic'] == '/mapping/map'
     assert options['base_frame'] == 'robot/base'
     assert options['camera_image_topic'] == '/camera/color'
+    assert options['camera_image_rectified'] == 'false'
+    assert options['depth_registered_frame'] == 'rgb_camera_link'
+    assert options['depth_scale_m'] == '0.001'
+    context = _context(module, patrol_camera_image_rectified='true',
+                       patrol_depth_registered_frame='camera/optical',
+                       patrol_depth_scale_m='0.01')
+    options = dict(_includes(module._setup(context))[0].launch_arguments)
+    assert options['camera_image_rectified'] == 'true'
+    assert options['depth_registered_frame'] == 'camera/optical'
+    assert options['depth_scale_m'] == '0.01'
     module = _load('autoslam')
     context = _context(module, map_directory='/maps', robot_frame='robot/base')
     options = dict(_includes(module._setup(context))[0].launch_arguments)
