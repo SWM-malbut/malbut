@@ -48,6 +48,13 @@ def defaults():
         # following already reads this depth/RGB pair as aligned on the robot and
         # holds 0.6 m from a person with it (the fall approach stops 1 m away).
         'fall_depth_aligned_to_rgb': 'true',
+        'patrol_depth_aligned_to_rgb': 'true',
+        'patrol_camera_image_rectified': 'false',
+        # The supplied aligned driver retains the physical depth frame label
+        # and publishes millimetres as mono16. This is a deployment contract,
+        # not permission to treat arbitrary depth topics as registered.
+        'patrol_depth_registered_frame': 'rgb_camera_link',
+        'patrol_depth_scale_m': '0.001',
         'fall_depth_camera_info_topic': '/depth_cam/rgb0/camera_info',
         # The camera mount measured against the floor on the robot (2026-10-09,
         # twice: 11.5/11.6 cm, 1.6 degrees down, left side 1.6 degrees low). The

@@ -131,6 +131,16 @@ curl -X POST http://127.0.0.1:8765/v1/agent/respond \
 
 ## SWM25-165 동의 기반 장기기억
 
+수동 순찰의 사진 관찰은 별도의 로봇 소유자별 기록으로 보존합니다. 실제 OpenAI 음성
+런타임은 기존 키로 종료된 순찰 사진을 모음 이미지 한 장으로 묶어 1회 분석하며,
+`search_patrol_observations` 도구로 촬영 시각·촬영 장소·사진 근거를 조회합니다.
+촬영 구역(`capture_regions`)과 물체별 추정 구역(`objects[].spatial.region`)을
+구분합니다. 물체 구역은 LLM의 이미지 bbox와 촬영 당시 RGB-D·TF·구역 경계로
+계산하며, 깊이·정합·경계가 불확실하면 구역을 미확정으로 보존합니다.
+대화 기반 개인화 설정을 변경하지 않으며 사진 속 지시로 도구를 실행하지 않습니다.
+설정과 저장 구조는 [순찰의 사진 관찰 기억](../malbut_autonomy/malbut_patrol/README.md#사진-관찰-기억)을
+참고하세요. 로봇 적용본에서는 `malbut_patrol/README.md`의 같은 항목을 참고합니다.
+
 기존 HTTP 대화와 `agent_communication`의 STT 대화가 같은 기억 정책을
 사용한다. 사용자별 기억·동의는 **각 실행에 지정한 SQLite 파일**에 남는다.
 HTTP와 음성이 같은 기억을 사용하려면 같은 파일과 동일한 서버 사용자

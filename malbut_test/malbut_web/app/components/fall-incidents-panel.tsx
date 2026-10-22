@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 import { clipGroups, groupLabel, groupNote, skippedText } from "../fall-clip-groups";
@@ -8,14 +8,14 @@ import type { ClipGroup } from "../fall-clip-groups";
 import { fallHistoryLines, plainLabels } from "../fall-event-label";
 import { josa } from "../korean-particle";
 import type { FallHistoryEvent } from "../fall-event-label";
-import { clock, dayLabel, incidentBadges, incidentExtras, incidentSubtitle, incidentTitle, when } from "../fall-incident-view";
-import type { BadgeTone, IncidentSummary, OpinionLabel, SceneState } from "../fall-incident-view";
+import { clock, dayLabel, dayRange, incidentBadges, incidentExtras, incidentSubtitle, incidentTitle, when } from "../fall-incident-view";
+import type { BadgeTone, IncidentDay, IncidentSummary, OpinionLabel, SceneState } from "../fall-incident-view";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
 // a list page and a detail page in one column. The automatic judgment (robot /
 // Cloud AI) is shown but never edited here.
 
-export type IncidentFilter = "all" | "check" | "closed" | "normal" | "report";
+export type IncidentFilter = "all" | "check" | "help" | "okay" | "report" | "closed";
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
   clockStepped: boolean; playbackState: SceneState; hasPeople?: boolean;
@@ -44,9 +44,13 @@ type IncidentDetail = IncidentSummary & {
     questions: Array<{ askedBy: string; question: string; status: string; answer: string | null; createdAt: string }> }>;
 };
 
+// 목업 56번(SWM25-60): 날짜 칩 한 줄 + 결과 고르는 상자 한 줄.
+const DAYS: Array<[IncidentDay, string]> = [["today", "오늘"], ["yesterday", "어제"], ["week", "최근 7일"]];
 const FILTERS: Array<[IncidentFilter, string]> = [
-  ["all", "전체"], ["check", "우선 확인"], ["closed", "처리 완료"], ["normal", "정상"], ["report", "직접 신고"],
+  ["all", "전체"], ["check", "우선 확인"], ["help", "도움 요청"], ["okay", "괜찮다고 답함"], ["report", "직접 신고"],
+  ["closed", "처리 완료"],
 ];
+const PAGE = 50;
 const OPINIONS: Array<[OpinionLabel, string]> = [["fall", "낙상"], ["suspected_fall", "낙상 의심"], ["normal", "정상"]];
 const OPINION_LABEL: Record<string, string> = Object.fromEntries(OPINIONS);
 const ASSESSMENT: Record<string, [string, string]> = {
@@ -444,8 +448,13 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   /** Local UI demo: an in-memory API instead of the server. */
   demo?: boolean;
 }) {
+  const [day, setDay] = useState<IncidentDay | null>(null);
   const [filter, setFilter] = useState<IncidentFilter>("all");
+  // "더 보기"로 펼친 만큼: 15초 새로 고침과 사건에서 돌아올 때도 그만큼 다시 불러온다.
+  const [limit, setLimit] = useState(PAGE);
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const resultId = useId();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState(initialIncidentId ?? "");
@@ -465,13 +474,16 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     if (!deviceId) return;
     setLoading(true);
     try {
-      const body = await json(await request(`${base}/fall-incidents?filter=${filter}`, { cache: "no-store" }));
+      // 부를 때마다 지금 휴대폰 날짜로: 자정을 넘기면 다음 새로 고침부터 새 날짜다.
+      const query = new URLSearchParams({ filter, limit: String(limit), ...(day ? dayRange(day) : {}) });
+      const body = await json(await request(`${base}/fall-incidents?${query}`, { cache: "no-store" }));
       setIncidents(Array.isArray(body.incidents) ? body.incidents : []);
+      setHasMore(body.hasMore === true);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "사건 목록을 불러오지 못했어요.");
     } finally { setLoading(false); }
-  }, [base, deviceId, filter, request]);
+  }, [base, day, deviceId, filter, limit, request]);
 
   const loadDetail = useCallback(async (incidentId: string, keepDraft = false) => {
     if (!incidentId) { setDetail(null); return; }
@@ -514,6 +526,15 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     setNotice("");
     onIncidentChange?.(null);
     void loadList();
+  };
+  // 날짜나 결과를 바꾸면 처음 50건부터 다시.
+  const pickDay = (key: IncidentDay) => {
+    setDay(day === key ? null : key);
+    setLimit(PAGE);
+  };
+  const pickFilter = (key: IncidentFilter) => {
+    setFilter(key);
+    setLimit(PAGE);
   };
 
   const act = async (name: string, url: string, init: RequestInit, done: (body: Record<string, unknown>) => string) => {
@@ -783,8 +804,8 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   const rest = incidents.filter((i) => !i.unacknowledged);
   const groups: Array<[string, IncidentSummary[]]> = [];
   for (const incident of rest) {
-    const day = dayLabel(incident.origin === "user_report" ? incident.reportedMomentAt ?? incident.occurredAt : incident.occurredAt);
-    const label = day === "오늘" || day === "어제" ? day : "지난 기록";
+    const name = dayLabel(incident.origin === "user_report" ? incident.reportedMomentAt ?? incident.occurredAt : incident.occurredAt);
+    const label = name === "오늘" || name === "어제" ? name : "지난 기록";
     const group = groups.find(([name]) => name === label);
     if (group) group[1].push(incident); else groups.push([label, [incident]]);
   }
@@ -808,12 +829,24 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       {header}
       <div className="fall-page">
         <div className="fall-list-tools">
-          <div className="fall-chips" role="group" aria-label="사건 필터">
-            {FILTERS.map(([key, label]) => (
-              <button type="button" key={key} aria-pressed={filter === key} className={filter === key ? "is-on" : ""}
-                onClick={() => setFilter(key)}>{label}</button>
+          {/* 고른 날짜를 한 번 더 누르면 풀린다. 날짜를 고르면 맨 위 "응답 없음"도 그 날짜 것만. */}
+          <div className="fall-chips" role="group" aria-label="날짜">
+            <span className="fall-filter-label" aria-hidden="true">날짜</span>
+            {DAYS.map(([key, label]) => (
+              <button type="button" key={key} aria-pressed={day === key} className={day === key ? "is-on" : ""}
+                onClick={() => pickDay(key)}>{label}</button>
             ))}
-            {/* 마지막 필터 줄의 오른쪽 끝(남는 자리가 없으면 다음 줄 끝). 모양은 글자 링크라 필터와 구분된다. */}
+          </div>
+          <div className="fall-chips">
+            <label className="fall-filter-label" htmlFor={resultId}>결과</label>
+            <span className="fall-select">
+              <select id={resultId} value={filter} className={filter === "all" ? "" : "is-on"}
+                onChange={(e) => pickFilter(e.target.value as IncidentFilter)}>
+                {FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+              <svg aria-hidden="true" width="12" height="8" viewBox="0 0 12 8"><path d="M1 1.5l5 5 5-5" /></svg>
+            </span>
+            {/* 결과 줄의 남는 오른쪽 끝. 모양은 글자 링크라 필터와 구분된다. */}
             {onOpenTimeline && <button type="button" className="fall-link" onClick={() => onOpenTimeline()}>연속 녹화 보기 ›</button>}
           </div>
         </div>
@@ -821,7 +854,8 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           {error && <p className="fall-notice" role="alert">{error}</p>}
           {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중이에요…</p>}
           {!loading && !error && incidents.length === 0 && (
-            <p className="fall-empty">표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
+            <p className="fall-empty">{day || filter !== "all" ? "고른 날짜와 결과에 맞는 사건이 없어요."
+              : "표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요."}</p>
           )}
           {first.length > 0 && <div className="fall-group">응답 없음</div>}
           {first.map(card)}
@@ -831,6 +865,9 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
               {items.map(card)}
             </div>
           ))}
+          {hasMore && incidents.length > 0 && (
+            <button type="button" className="fall-more" disabled={loading} onClick={() => setLimit(limit + PAGE)}>더 보기</button>
+          )}
         </div>
       </div>
     </>

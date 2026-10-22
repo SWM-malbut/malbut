@@ -1,5 +1,7 @@
 """Start the camera patrol Action server using an already running Nav2 map."""
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -18,9 +20,18 @@ def generate_launch_description():
         'camera_image_topic': '/camera/color/image_raw',
         'camera_info_topic': '/camera/color/camera_info',
         'camera_optical_frame': '',
+        'camera_image_rectified': 'false',
+        'depth_image_topic': '/camera/depth/image_raw',
+        'depth_aligned_to_rgb': 'false',
+        'depth_registered_frame': '',
+        'depth_scale_m': '0.0',
         'base_frame': 'base_footprint',
         'nav2_action_name': 'navigate_to_pose',
         'spin_action_name': 'spin',
+        'record_observations': ('true' if os.environ.get('MALBUT_PATROL_OBSERVATIONS', '1') == '1'
+                                else 'false'),
+        'observation_directory': os.environ.get(
+            'MALBUT_PATROL_OBSERVATION_DIR', '~/.local/share/malbut/patrol-observations'),
     }
     parameters = {name: LaunchConfiguration(name) for name in defaults}
     parameters['use_sim_time'] = ParameterValue(
@@ -31,6 +42,18 @@ def generate_launch_description():
         LaunchConfiguration('room_map_file'), value_type=str)
     parameters['camera_optical_frame'] = ParameterValue(
         LaunchConfiguration('camera_optical_frame'), value_type=str)
+    parameters['record_observations'] = ParameterValue(
+        LaunchConfiguration('record_observations'), value_type=bool)
+    parameters['depth_aligned_to_rgb'] = ParameterValue(
+        LaunchConfiguration('depth_aligned_to_rgb'), value_type=bool)
+    parameters['camera_image_rectified'] = ParameterValue(
+        LaunchConfiguration('camera_image_rectified'), value_type=bool)
+    parameters['depth_registered_frame'] = ParameterValue(
+        LaunchConfiguration('depth_registered_frame'), value_type=str)
+    parameters['depth_scale_m'] = ParameterValue(
+        LaunchConfiguration('depth_scale_m'), value_type=float)
+    parameters['observation_directory'] = ParameterValue(
+        LaunchConfiguration('observation_directory'), value_type=str)
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value)
           for name, value in defaults.items()],

@@ -454,6 +454,7 @@ class DialogueWorker:
                         robot_state=RobotState(camera_available=image is not None),
                         scene_context=scene, turn_image=image,
                         available_tools=tuple(getattr(runtime, 'speech_mission_tools', ()))
+                        + tuple(getattr(runtime, 'patrol_query_tools', ()))
                         + tuple(getattr(runtime, 'homecam_query_tools', ())) + (
                             ('get_weather', 'set_weather_location')
                             if getattr(runtime, 'weather_executor', None)

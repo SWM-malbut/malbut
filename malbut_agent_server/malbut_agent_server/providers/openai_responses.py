@@ -377,6 +377,7 @@ class OpenAIResponsesProvider(AgentProvider):
             'model': self.model,
             'instructions': system_instructions_for_tools(
                 tools, homecam_result='homecam_query_result_untrusted' in (memory_context or {}),
+                patrol_result='patrol_observations_untrusted' in (memory_context or {}),
             ) + '\n\n'
             + CONVERSATION_INSTRUCTIONS,
             'input': prepared_context.text,

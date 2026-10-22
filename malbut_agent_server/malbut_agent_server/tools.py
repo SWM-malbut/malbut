@@ -49,8 +49,35 @@ HOMECAM_QUERY_TOOLS = (
     'get_homecam_recordings', 'get_homecam_falls',
 )
 
+PATROL_QUERY_TOOLS = ('search_patrol_observations',)
+
 
 TOOL_SPECS = {
+    'search_patrol_observations': ToolSpec(
+        name='search_patrol_observations',
+        description=(
+            'Search saved photos and observations from manual robot patrols. '
+            'Use for what was seen earlier, where an object was last seen, or a patrol recap '
+            '(아까 순찰 때 뭐 봤어, 리모컨 어디서 봤어). Always query fresh records. '
+            'This reads past evidence and never starts movement or takes a new photo. '
+            'query is a short Korean object/place keyword, or null for recent observations; '
+            'do not put a whole question in query. since/until are timezone-aware ISO timestamps '
+            'only when the requested time is known, otherwise null. '
+            'Results may include recent_context candidates with different wording; '
+            'check their visual descriptions for relevance, never assume they match the query. '
+            'Report the observation time; do not claim an object is still there.'
+        ),
+        parameters={
+            'type': 'object', 'additionalProperties': False,
+            'properties': {
+                'query': {'type': ['string', 'null'], 'maxLength': 120},
+                'since': {'type': ['string', 'null'], 'maxLength': 64},
+                'until': {'type': ['string', 'null'], 'maxLength': 64},
+                'limit': {'type': 'integer', 'minimum': 1, 'maximum': 5},
+            },
+            'required': ['query', 'since', 'until', 'limit'],
+        },
+    ),
     'request_navigation': ToolSpec(
         name='request_navigation',
         description=(

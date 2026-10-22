@@ -352,6 +352,9 @@ def build_orchestrator(
         from malbut_agent_server.homecam_query import HomecamQueryClient, configure_homecam_queries
 
         configure_homecam_queries(runtime, HomecamQueryClient.from_env())
+        from malbut_agent_server.patrol_query import configure_patrol_from_settings
+
+        configure_patrol_from_settings(runtime, settings, http_server=http_server)
         return runtime
     except Exception:
         if story_memory is not None:

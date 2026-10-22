@@ -482,6 +482,13 @@ class CoveragePlanner:
         """Return every labeled room this patrol uses, reachable or not."""
         return tuple(sorted(self._room_masks))
 
+    def rooms_at(self, x, y):
+        """Return labels at the camera origin, not claims about objects in view."""
+        row, col = self.grid.world_to_cell(x, y)
+        if not self.grid.contains(row, col):
+            return ()
+        return tuple(sorted(name for name, mask in self._room_masks.items() if mask[row, col]))
+
     @property
     def inaccessible_room_names(self):
         """Return labeled rooms with no safe connected navigation position."""
