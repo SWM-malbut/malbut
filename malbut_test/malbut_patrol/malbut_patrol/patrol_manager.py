@@ -520,12 +520,13 @@ class PatrolManager(Node):
         deadline = time.monotonic() + self.settings['inspection_analysis_timeout_s']
         while True:
             self._pump(handle)
-            self._poll_inspection(verify_all=True)
             stats = self.photo_recorder.status()
             if (stats['queued'] == stats['saved']
                     and len(self.inspection.credited) == stats['saved']
                     and not self.inspection.pending):
-                return
+                self._poll_inspection(verify_all=True)
+                if not self.inspection.pending:
+                    return
             if time.monotonic() >= deadline:
                 raise PatrolInterrupted('Inspection photo analysis timed out; coverage incomplete')
             self.stop_event.wait(0.05)
