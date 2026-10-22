@@ -40,6 +40,17 @@ export function dayLabel(value: string) {
 }
 export const when = (value: string) => `${dayLabel(value)} ${clock(value)}`;
 
+/** 날짜 필터(SWM25-60). 오늘·어제와 같은 휴대폰 날짜 기준이다. */
+export type IncidentDay = "today" | "yesterday" | "week";
+/** 그 날짜의 [from, to). 최근 7일은 오늘을 포함한 7일. */
+export function dayRange(day: IncidentDay, now = new Date()) {
+  const midnight = (days: number) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() + days).toISOString();
+  if (day === "today") return { from: midnight(0), to: midnight(1) };
+  if (day === "yesterday") return { from: midnight(-1), to: midnight(0) };
+  return { from: midnight(-6), to: midnight(1) };
+}
+
 export const ANSWER_LABEL: Record<string, string> = {
   help_request: "본인이 도움을 요청함", okay: "괜찮다고 답함", unclear: "답이 불분명", no_response: "무응답", failed: "질문 실패",
 };

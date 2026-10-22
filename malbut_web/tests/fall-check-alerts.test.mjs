@@ -252,7 +252,6 @@ test("처리 완료 reaches the robot until it stops; then the incident is not c
     const [summary] = await review.listFallIncidentSummaries("robot-a", "closed");
     assert.equal(summary.incidentId, id);
     assert.notEqual(summary.category, "normal");
-    assert.deepEqual(await review.listFallIncidentSummaries("robot-a", "normal"), []);
     const detail = await review.getFallIncidentDetail("robot-a", id);
     const { fallHistoryLines } = moduleLoader()("app/fall-event-label.ts");
     assert.equal(fallHistoryLines(detail.robotEvents).at(-1).label, "말벗: 보호자가 처리 완료해 확인을 멈춤");

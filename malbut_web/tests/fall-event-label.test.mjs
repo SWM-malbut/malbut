@@ -222,6 +222,15 @@ test("whole-body check events read as short history lines (mockup 25)", () => {
     "말벗: 사건 종료 · 바닥에 앉아 활동 중 (묻지 않음)");
 });
 
+test("the day filter is the phone's own days, 최근 7일 counting today (SWM25-60)", () => {
+  const { dayRange } = load("app/fall-incident-view.ts");
+  const local = (...date) => new Date(...date).toISOString();
+  const now = new Date(2026, 10, 1, 0, 30); // 11월 1일 0시 30분: 어제는 10월 31일.
+  assert.deepEqual(dayRange("today", now), { from: local(2026, 10, 1), to: local(2026, 10, 2) });
+  assert.deepEqual(dayRange("yesterday", now), { from: local(2026, 9, 31), to: local(2026, 10, 1) });
+  assert.deepEqual(dayRange("week", now), { from: local(2026, 9, 26), to: local(2026, 10, 2) });
+});
+
 test("the list says the robot is checking before it asks, and off-floor closures say so (mockup 25)", () => {
   const view = load("app/fall-incident-view.ts");
   const base = { incidentId: "i", origin: "robot", category: "check", state: "verifying", fallSeen: false,

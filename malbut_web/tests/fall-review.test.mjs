@@ -24,6 +24,10 @@ function clip(change = {}) {
     clockSource: "wall", clockStepped: false, ...change };
 }
 
+// 정상 칸은 없어졌다(SWM25-60): 말벗이 정상으로 본 사건은 카드 분류로 확인한다.
+const normals = async (review) => (await review.listFallIncidentSummaries("robot-a"))
+  .filter((i) => i.category === "normal").map((i) => i.incidentId);
+
 async function withRepo(work, overrides = {}) {
   const h = await fallDatabase(), load = moduleLoader(overrides);
   const pg = load("db/postgres.ts");
@@ -81,7 +85,7 @@ test("merged source keeps history and clips, but no duplicate check or robot rem
     const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
     assert.deepEqual(await ids("check"), [target.incidentId]);
     assert.deepEqual(await ids("closed"), [source.incidentId]);
-    assert.deepEqual(await ids("normal"), []);
+    assert.deepEqual(await normals(review), []);
     assert.equal(await review.claimFallNotice("robot-a"), null);
     await review.scheduleFallReminders(start + 180_002);
     assert.equal((await h.db.query("SELECT status FROM fall_web_notices WHERE incident_id=$1",
@@ -121,7 +125,7 @@ test("robot not-a-person closure is 처리 완료 without reminders; a fall opin
     const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
     assert.deepEqual(await ids("closed"), [incidentId]);
     assert.deepEqual(await ids("check"), [other.incidentId]);
-    assert.deepEqual(await ids("normal"), []);
+    assert.deepEqual(await normals(review), []);
     // Agreeing that it was nothing keeps it closed; seeing a fall reopens it for everyone.
     assert.equal((await review.setFallOpinion("robot-a", incidentId, testUserId("owner@example.com"),
       "normal", null)).reopened, false);
@@ -207,7 +211,7 @@ test("off-floor closure shows only under 처리 완료, never asks or reminds; a
     assert.ok(!(await ids("all")).includes(incidentId));
     assert.ok((await ids("all")).includes(answered.incidentId));
     assert.deepEqual(await ids("check"), [other.incidentId]);
-    assert.deepEqual(await ids("normal"), [answered.incidentId]);
+    assert.deepEqual(await normals(review), [answered.incidentId]);
     const timeline = await review.getFallTimeline("robot-a", at(-3_600_000), at(3_600_000), Date.parse(at(60_000)));
     assert.ok(!timeline.incidents.some((i) => i.incidentId === incidentId));
     assert.equal(await review.claimFallNotice("robot-a"), null);
@@ -284,7 +288,7 @@ test("playback state: preparing, available, partial, unavailable, expired", () =
   assert.equal(state(start, end, [span(-5_000, null)], Date.parse(T0) + 8 * 86_400_000), "expired");
 });
 
-test("incident list filters: needs check, AI failure, normal awaiting review, reports, closed", async () => {
+test("incident list filters: needs check, AI failure, help, okay, normal awaiting review, reports, closed", async () => {
   await withRepo(async ({ events, review }) => {
     const urgent = notice();
     await events.storeFallEvent("robot-a", urgent);
@@ -300,7 +304,9 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
     const report = await review.reportMissedFall("robot-a", "u-family", T0, Date.parse(T0) + 60_000);
     const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId).sort();
     assert.deepEqual(await ids("check"), [urgent.incidentId, failed.incidentId].sort());
-    assert.deepEqual(await ids("normal"), [normal.incidentId]);
+    assert.deepEqual(await ids("help"), [urgent.incidentId]);
+    assert.deepEqual(await ids("okay"), [normal.incidentId]);
+    assert.deepEqual(await normals(review), [normal.incidentId]);
     assert.deepEqual(await ids("report"), [report.incidentId]);
     assert.deepEqual(await ids("closed"), []);
     assert.equal((await ids("all")).length, 4);
@@ -322,8 +328,61 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
     await review.setFallOpinion("robot-a", normal.incidentId, "u-family", "normal", null);
     await review.closeFallIncident("robot-a", normal.incidentId, "u-owner");
     assert.deepEqual(await ids("closed"), [normal.incidentId]);
-    assert.equal((await review.listFallIncidentSummaries("robot-a", "normal"))[0].reviewPending, false);
+    assert.equal((await review.listFallIncidentSummaries("robot-a", "closed"))[0].reviewPending, false);
     assert.deepEqual(await review.listFallIncidentSummaries("robot-b"), []);
+  });
+});
+
+test("incident list: the last asked round's answer, a picked day and 더 보기 (SWM25-60)", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    const store = (e) => events.storeFallEvent("robot-a", e);
+    const later = (first, sequence, checkRound, change) =>
+      event({ incidentId: first.incidentId, sequence, checkRound, occurredAt: first.occurredAt, ...change });
+    // 1회차 "괜찮아" → 일어서서 2회차를 묻지 않고 닫음: 사건의 답은 비어도 괜찮다고 답함이다.
+    const stood = event({ checkRound: 1, occurredAt: at(-3_000) });
+    await store(stood);
+    await store(later(stood, 2, 1, { eventKind: "voice_result", answer: "okay" }));
+    await store(later(stood, 3, 1, { eventKind: "incident_resolved", state: "resolved",
+      reason: "response_completed", answer: "okay" }));
+    await store(later(stood, 4, 2, { eventKind: "recheck_started", reason: "stood_up" }));
+    await store(later(stood, 5, 2, { eventKind: "incident_resolved", state: "resolved", reason: "off_floor_verified" }));
+    assert.equal((await h.db.query("SELECT answer FROM fall_incidents WHERE incident_id=$1",
+      [stood.incidentId])).rows[0].answer, null);
+    // 1회차 "괜찮아" → 2회차에 물었는데 대답 없음: 그 회차의 답으로 친다.
+    const silent = event({ checkRound: 1, occurredAt: at(-2_000) });
+    await store(silent);
+    await store(later(silent, 2, 1, { eventKind: "voice_result", answer: "okay" }));
+    await store(later(silent, 3, 2, { eventKind: "recheck_started", reason: "floor_recheck" }));
+    await store(later(silent, 4, 2, { eventKind: "voice_result", answer: "no_response" }));
+    const help = notice({ occurredAt: at(-1_000) });
+    await store(help);
+    const ids = async (filter, page) => (await review.listFallIncidentPage("robot-a", filter, undefined, page))
+      .incidents.map((i) => i.incidentId);
+    assert.deepEqual(await ids("okay"), [stood.incidentId]);
+    assert.deepEqual(await ids("help"), [help.incidentId]);
+
+    // 날짜 [from, to): 0시 정각은 넣고 끝은 뺀다. 직접 신고는 신고한 순간으로 들어간다.
+    const DAY = 86_400_000;
+    const old = event({ occurredAt: at(-2 * DAY - 1) }), edge = event({ occurredAt: at(-2 * DAY) });
+    const late = event({ occurredAt: at(-DAY - 1) }), next = event({ occurredAt: at(-DAY) });
+    for (const e of [old, edge, late, next]) await store(e);
+    const report = await review.reportMissedFall("robot-a", "u-family", at(-2 * DAY + 60_000), Date.parse(T0) + 60_000);
+    // 날짜를 고르지 않으면 응답 없음이 전부 맨 위, 고르면 그 날짜 것만.
+    await h.db.query("UPDATE fall_incidents SET unacknowledged_since=$2 WHERE incident_id=$1", [next.incidentId, T0]);
+    assert.equal((await ids("all"))[0], next.incidentId);
+    const day = { from: at(-2 * DAY), to: at(-DAY) };
+    assert.deepEqual(await ids("all", day), [late.incidentId, report.incidentId, edge.incidentId]);
+    assert.deepEqual(await ids("report", day), [report.incidentId]);
+    assert.deepEqual(await ids("okay", day), []);
+
+    // 더 보기: 같은 순서로 이어지고, 남은 사건이 없으면 hasMore가 꺼진다.
+    const all = await ids("all", { limit: 100 });
+    assert.equal(all.length, 8);
+    const first = await review.listFallIncidentPage("robot-a", "all", undefined, { limit: 3 });
+    assert.deepEqual(first.incidents.map((i) => i.incidentId), all.slice(0, 3));
+    assert.equal(first.hasMore, true);
+    assert.equal((await review.listFallIncidentPage("robot-a", "all", undefined, { limit: 8 })).hasMore, false);
+    assert.deepEqual(await review.listFallIncidentPage("robot-b"), { incidents: [], hasMore: false });
   });
 });
 
@@ -623,6 +682,18 @@ test("HTTP: device clip upload, member-only review routes and same-origin mutati
     const listed = await (await list.GET(new Request("https://web.test/api?filter=check",
       { headers: { "x-test-email": "family@example.com" } }), params({ deviceId: "robot-a" }))).json();
     assert.deepEqual(listed.incidents.map((i) => i.incidentId), [opened.incidentId]);
+    assert.equal(listed.hasMore, false);
+    // 날짜 구간은 둘 다 있고 앞이 먼저, 개수는 1~10000 정수. 정상 칸은 없어졌다(SWM25-60).
+    const listGet = (query) => list.GET(new Request(`https://web.test/api?${query}`,
+      { headers: { "x-test-email": "family@example.com" } }), params({ deviceId: "robot-a" }));
+    const q = (value) => encodeURIComponent(value);
+    for (const query of ["filter=normal", `from=${q(at(0))}`, `to=${q(at(0))}`, `from=${q(at(0))}&to=${q(at(0))}`,
+      "from=x&to=y", "limit=0", "limit=1.5", "limit=abc", "limit=10001"]) {
+      assert.equal((await listGet(query)).status, 400, query);
+    }
+    const ranged = await (await listGet(`filter=all&from=${q(at(-1_000))}&to=${q(at(1_000))}&limit=1`)).json();
+    assert.deepEqual([ranged.incidents.map((i) => i.incidentId), ranged.hasMore], [[opened.incidentId], false]);
+    assert.deepEqual((await (await listGet(`from=${q(at(1_000))}&to=${q(at(2_000))}`)).json()).incidents, []);
     assert.equal((await detail.GET(user("stranger@example.com"), params(p))).status, 404);
     assert.equal((await detail.GET(user("family@example.com"), params({ ...p, incidentId: "x" }))).status, 404);
     const body = await (await detail.GET(user("family@example.com"), params(p))).json();
@@ -770,8 +841,9 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
     assert.equal((await review.scheduleFallReminders(c + 360_000)).created, 0);
     assert.deepEqual((await h.db.query("SELECT status FROM fall_web_notices WHERE incident_id=$1",
       [check.incidentId])).rows, [{ status: "canceled" }]);
-    const normal = (await review.listFallIncidentSummaries("robot-a", "normal"))
+    const normal = (await review.listFallIncidentSummaries("robot-a"))
       .find((i) => i.incidentId === check.incidentId);
+    assert.equal(normal.category, "normal");
     assert.equal(normal.unacknowledged, false);
     assert.equal(normal.reviewPending, true);
 

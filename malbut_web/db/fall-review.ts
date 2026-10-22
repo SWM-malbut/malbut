@@ -11,8 +11,13 @@ import { fallCheckResult, fallRobotCheck, type FallHistoryEvent } from "../app/f
 
 export const OPINION_LABELS = ["fall", "suspected_fall", "normal"] as const;
 export type OpinionLabel = (typeof OPINION_LABELS)[number];
-export const INCIDENT_FILTERS = ["all", "check", "closed", "normal", "report"] as const;
+export const INCIDENT_FILTERS = ["all", "check", "help", "okay", "report", "closed"] as const;
 export type IncidentFilter = (typeof INCIDENT_FILTERS)[number];
+/** 사건 목록 한 번에 50건, "더 보기"마다 50건 더(SWM25-60). */
+export const INCIDENT_PAGE = 50;
+export const INCIDENT_LIMIT_MAX = 10_000;
+/** 날짜 필터 구간 [from, to): 휴대폰 날짜로 계산해 보낸다. */
+export type IncidentPage = { from?: string; to?: string; limit?: number };
 
 export const RECORDING_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const REPORT_PRE_MS = 10_000;
@@ -64,12 +69,19 @@ export const OFF_FLOOR_HIDDEN_SQL = `(${ROBOT_OFF_FLOOR_SQL} AND i.reopened_at I
 // A reopened incident needs a human again even if the robot judged it normal.
 const NEEDS_CHECK_SQL = `((NOT ${ROBOT_NORMAL_SQL} AND NOT ${ROBOT_CLOSED_SQL})
   OR i.reopened_at IS NOT NULL)`;
+// The answer of the last round the robot asked. A later round closed without asking
+// (stood up, walked off) starts with no answer and must not hide it (SWM25-60).
+const LAST_ANSWER_SQL = `(SELECT e.payload_json::jsonb->>'answer' FROM fall_incident_events e
+    WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
+      AND e.payload_json::jsonb->>'answer' IS NOT NULL
+    ORDER BY e.sequence DESC LIMIT 1)`;
 const FILTER_SQL: Record<IncidentFilter, string> = {
   all: `NOT ${OFF_FLOOR_HIDDEN_SQL}`,
   check: `i.review_state='open' AND i.origin='robot' AND ${NEEDS_CHECK_SQL}`,
-  closed: `(i.review_state='closed' OR (${ROBOT_CLOSED_SQL} AND i.reopened_at IS NULL))`,
-  normal: ROBOT_NORMAL_SQL,
+  help: `${LAST_ANSWER_SQL}='help_request'`,
+  okay: `${LAST_ANSWER_SQL}='okay'`,
   report: "i.origin='user_report'",
+  closed: `(i.review_state='closed' OR (${ROBOT_CLOSED_SQL} AND i.reopened_at IS NULL))`,
 };
 const ANALYSIS_KINDS = ["analysis_completed", "analysis_unavailable", "recheck_unavailable"];
 
@@ -227,15 +239,31 @@ function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
 }
 
 export async function listFallIncidentSummaries(deviceId: string, filter: IncidentFilter = "all",
-  check?: ClipCheck) {
+  check?: ClipCheck, page: IncidentPage = {}) {
+  return (await listFallIncidentPage(deviceId, filter, check, page)).incidents;
+}
+
+/** One page of the list; hasMore shows "더 보기". A picked day narrows 응답 없음 too. */
+export async function listFallIncidentPage(deviceId: string, filter: IncidentFilter = "all",
+  check?: ClipCheck, { from, to, limit = INCIDENT_PAGE }: IncidentPage = {}) {
   await ensureFallReviewSchema();
-  const rows = (await getPostgresPool().query(
+  const params: unknown[] = [deviceId, ANALYSIS_KINDS];
+  let range = "";
+  if (from && to) {
+    // A report's occurred_at is the moment it reports, as the list groups it by.
+    params.push(from, to);
+    range = " AND i.occurred_at>=$3 AND i.occurred_at<$4";
+  }
+  params.push(limit + 1);
+  const found = (await getPostgresPool().query(
     `SELECT ${SUMMARY_COLUMNS} FROM fall_incidents i
-     WHERE i.device_id=$1 AND ${FILTER_SQL[filter]}
+     WHERE i.device_id=$1 AND ${FILTER_SQL[filter]}${range}
      ORDER BY (i.review_state='open' AND i.unacknowledged_since IS NOT NULL) DESC,
-       i.occurred_at DESC,i.incident_id LIMIT 50`, [deviceId, ANALYSIS_KINDS],
+       i.occurred_at DESC,i.incident_id LIMIT $${params.length}`, params,
   )).rows;
-  if (!rows.length) return [];
+  const hasMore = found.length > limit;
+  const rows = found.slice(0, limit);
+  if (!rows.length) return { incidents: [], hasMore };
   const pool = getPostgresPool();
   const ids = rows.map((row) => row.incident_id);
   // List cards show the scene state, same-scene incidents and how many alerts went out.
@@ -265,7 +293,7 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
     const first = clips.find((c) => c.incident_id === row.incident_id);
     return first ? checkedState(iso(first.start_at)!, iso(first.end_at)!, spans, check) : null;
   });
-  return rows.map((row, index) => {
+  const incidents = rows.map((row, index) => {
     const level = levels.get(row.incident_id) ?? null;
     const total = level === "urgent" ? 3 : level === "check" ? 2 : 1;
     return {
@@ -276,6 +304,7 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
       notification: level ? { level, sent: Math.min(total, 1 + (resends.get(row.incident_id) ?? 0)), total } : null,
     };
   });
+  return { incidents, hasMore };
 }
 
 type RecordingSpan = { start: number; end: number | null; streamArn: string };
