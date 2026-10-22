@@ -250,9 +250,11 @@ const FILTER: Record<string, (row: Row) => boolean> = {
   // 바닥에 있지 않아 묻지 않은 사건은 처리 완료에만 보인다(목업 25번).
   all: (r) => r.category !== "off_floor",
   check: (r) => r.reviewState === "open" && r.category === "check",
-  closed: (r) => r.reviewState === "closed" || ["not_person", "merged", "off_floor"].includes(r.category as string),
-  normal: (r) => r.category === "normal",
+  // 데모 사건은 한 번만 물어서 답이 곧 마지막으로 물어본 회차의 답이다.
+  help: (r) => r.answer === "help_request",
+  okay: (r) => r.answer === "okay",
   report: (r) => r.category === "report",
+  closed: (r) => r.reviewState === "closed" || ["not_person", "merged", "off_floor"].includes(r.category as string),
 };
 
 function reply(body: unknown, status = 200) {
@@ -321,11 +323,15 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
   }
   const list = /\/fall-incidents$/.test(path);
   if (list) {
-    const filter = new URL(url, "http://demo").searchParams.get("filter") ?? "all";
+    const params = parsed.searchParams;
+    const filter = params.get("filter") ?? "all";
+    const from = Date.parse(params.get("from") ?? ""), to = Date.parse(params.get("to") ?? "");
+    const limit = Number(params.get("limit") ?? 50);
     const rows = incidents.filter(FILTER[filter] ?? FILTER.all)
+      .filter((r) => !(from < to) || (Date.parse(String(r.occurredAt)) >= from && Date.parse(String(r.occurredAt)) < to))
       .sort((a, b) => Number(b.unacknowledged) - Number(a.unacknowledged) ||
         Date.parse(String(b.occurredAt)) - Date.parse(String(a.occurredAt)));
-    return reply({ filter, incidents: rows });
+    return reply({ filter, incidents: rows.slice(0, limit), hasMore: rows.length > limit });
   }
   const match = /\/fall-incidents\/([^/]+)(\/[a-z/0-9-]+)?$/.exec(path);
   const row = match && incidents.find((i) => i.incidentId === match[1]);
