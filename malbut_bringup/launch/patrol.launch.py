@@ -11,6 +11,7 @@ ARGUMENTS = [
     'camera_info_topic', 'depth_topic', 'patrol_depth_aligned_to_rgb',
     'patrol_camera_image_rectified', 'patrol_depth_registered_frame', 'patrol_depth_scale_m',
     'room_map_file', 'use_sim_time', 'scan_topic',
+    'patrol_inspection_calibration_file', 'patrol_inspection_analysis_timeout_s',
 ]
 
 
@@ -32,6 +33,8 @@ def _setup(context):
             'depth_registered_frame': value('patrol_depth_registered_frame'),
             'depth_scale_m': value('patrol_depth_scale_m'),
             'room_map_file': value('room_map_file'),
+            'inspection_calibration_file': value('patrol_inspection_calibration_file'),
+            'inspection_analysis_timeout_s': value('patrol_inspection_analysis_timeout_s'),
             'use_sim_time': value('use_sim_time'),
             'start_enabled': 'false',
         })]

@@ -1,6 +1,8 @@
 """Exercise patrol ownership and camera accounting through real ROS Actions."""
 
 import json
+import math
+import sqlite3
 from threading import Event, RLock, Thread
 import time
 
@@ -48,6 +50,8 @@ class _Navigation(Node):
         super().__init__('patrol_test_navigation')
         self.requests = []
         self.spin_requests = []
+        self.on_spin = None
+        self.on_navigate = None
         self.request_received = Event()
         self.allow_accept = Event()
         self.allow_accept.set()
@@ -94,6 +98,8 @@ class _Navigation(Node):
                 if self.abort_navigation:
                     handle.abort()
                 else:
+                    if self.on_navigate is not None:
+                        self.on_navigate(handle.request)
                     handle.succeed()
                 return NavigateToPose.Result()
             time.sleep(0.01)
@@ -102,6 +108,8 @@ class _Navigation(Node):
 
     def _execute_spin(self, handle):
         self.spin_requests.append(handle.request)
+        if self.on_spin is not None:
+            self.on_spin()
         handle.succeed()
         return Spin.Result()
 
@@ -163,6 +171,29 @@ class _Sensors(Node):
         optical.transform.rotation.w = 0.5
         self._transforms.sendTransform([robot, camera, optical])
         self._timer = self.create_timer(0.05, self._publish)
+
+    def camera_yaw(self, yaw):
+        """Rotate the optical frame while continuing to publish fresh RGB."""
+        transform = TransformStamped()
+        transform.header.frame_id = 'patrol_test_camera_link'
+        transform.child_frame_id = 'patrol_test_optical'
+        c, s = math.cos(yaw / 2), math.sin(yaw / 2)
+        q = transform.transform.rotation
+        q.x, q.y, q.z, q.w = -.5*(c+s), .5*(c-s), .5*(s-c), .5*(c+s)
+        self._transforms.sendTransform(transform)
+
+    def move_robot(self, request):
+        """Report the navigation endpoint through TF, including its heading."""
+        transform = TransformStamped()
+        transform.header.frame_id = 'map'
+        transform.child_frame_id = 'base_footprint'
+        pose = request.pose.pose
+        transform.transform.translation.x = pose.position.x
+        transform.transform.translation.y = pose.position.y
+        transform.transform.rotation = pose.orientation
+        self._transforms.sendTransform(transform)
+        self.camera_yaw(0)
+        time.sleep(.15)
 
     def _publish(self):
         stamp = self.get_clock().now().to_msg()
@@ -232,7 +263,18 @@ def patrol_runtime(request, tmp_path):
         'reobserve_enabled': False,
         'observation_directory': str(tmp_path / 'observations'),
     }
-    values.update(getattr(request, 'param', {}))
+    overrides = dict(getattr(request, 'param', {}))
+    if overrides.pop('inspection_fixture', False):
+        calibration = tmp_path / 'synthetic-test-calibration.json'
+        calibration.write_text(json.dumps({
+            'version': 1, 'validated': True, 'simulated': False,
+            'analysis_batch': 'patrol_mosaic_v1',
+            'calibration_kind': 'object_presence', 'model': 'offline-fixture',
+            'range_m': overrides.pop('inspection_fixture_range', 1.0),
+            'camera': {'width': 2, 'height': 2, 'hfov_rad': 2 * math.atan2(2, 4),
+                       'height_m': 0.5}}))
+        values['inspection_calibration_file'] = str(calibration)
+    values.update(overrides)
     manager = PatrolManager(
         parameter_overrides=[Parameter(name, value=value)
                              for name, value in values.items()],
@@ -693,3 +735,189 @@ def test_costmap_patch_updates_candidate_safety_without_corrupting_grid():
         assert list(grid.data) == [0, 0, 0, 0]
         assert grid.header.stamp.sec == 42
         assert manager.costmap_received == receipt
+
+
+def _analyze_inspection_photos(recorder, objects=()):
+    # Like the production worker, consume only a completely sealed batch.
+    _wait_until(lambda: recorder.status()['batch_ready'])
+    _, references = recorder.evidence()
+    with sqlite3.connect(recorder.directory / 'observations.sqlite3') as connection:
+        connection.executescript('''
+            CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, simulated INTEGER);
+            INSERT OR IGNORE INTO dataset VALUES (1, 0);
+            CREATE TABLE IF NOT EXISTS owner (id INTEGER PRIMARY KEY, user_id TEXT);
+            INSERT OR IGNORE INTO owner VALUES (1, 'fixture-owner');
+            CREATE TABLE IF NOT EXISTS observations (
+                id TEXT PRIMARY KEY, user_id TEXT, metadata TEXT, status TEXT,
+                model TEXT, error TEXT, analysis TEXT);
+        ''')
+        for index, reference in enumerate(references):
+            identity = reference['observation_id']
+            metadata = (recorder.directory / 'captures' / (identity + '.json')).read_text()
+            connection.execute('INSERT OR REPLACE INTO observations VALUES (?,?,?,?,?,?,?)',
+                               (identity, 'fixture-owner', metadata, 'ready', 'offline-fixture',
+                                None, json.dumps({'summary': 'scene',
+                                                  'objects': list(objects) if index == 0 else [],
+                                                  'uncertainties': []})))
+
+
+@pytest.mark.parametrize('patrol_runtime', [{'inspection_fixture': True}], indirect=True)
+def test_inspection_rotates_first_and_cancel_does_not_wait_for_analysis(patrol_runtime):
+    """Keep pending photos uncredited and release a canceled inspection promptly."""
+    manager, navigation, _sensors, client = patrol_runtime
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    assert handle.accepted
+    _wait_until(lambda: manager.phase == 'ANALYZING' and manager.photo_recorder.status()['saved'])
+    assert len(navigation.spin_requests) == 1
+    assert not navigation.requests
+    assert manager.planner.observed_area_m2 == 0
+    assert not manager.planner.require_room_entry
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_CANCELED
+    assert not result.result.success and not manager.busy
+
+
+@pytest.mark.parametrize('patrol_runtime', [
+    {'inspection_fixture': True, 'inspection_fixture_range': 5.0},
+], indirect=True)
+def test_inspection_completes_only_after_initial_rotation_photos_are_analyzed(patrol_runtime):
+    """Exercise real Action completion after a full camera sweep and delayed analysis."""
+    manager, navigation, sensors, client = patrol_runtime
+
+    def rotate_camera():
+        for step in range(8):
+            sensors.camera_yaw(step * math.pi / 4)
+            time.sleep(.35)
+
+    navigation.on_spin = rotate_camera
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    _wait_until(lambda: manager.phase == 'ANALYZING')
+    _wait_until(lambda: manager.photo_recorder.status()['saved']
+                == manager.photo_recorder.status()['queued'])
+    assert manager.planner.coverage_ratio == 0 and not navigation.requests
+    recorder = manager.photo_recorder
+    _, references = recorder.evidence()
+    assert len(references) >= 8
+    _analyze_inspection_photos(recorder)
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_SUCCEEDED and result.result.success
+    assert result.result.coverage_ratio >= .95
+    assert not navigation.requests and not manager.busy
+    assert len(manager.inspection.credited) == len(references)
+
+
+@pytest.mark.parametrize('patrol_runtime', [{'inspection_fixture': True}], indirect=True)
+def test_inspection_photo_limit_with_partial_analysis_is_not_success(patrol_runtime):
+    """Stop at the accepted-photo cap even when every saved image was analyzed."""
+    manager, navigation, _sensors, client = patrol_runtime
+    manager.photo_recorder.max_photos = 1
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    _wait_until(lambda: manager.phase == 'ANALYZING' and manager.photo_recorder.status()['saved'])
+    _analyze_inspection_photos(manager.photo_recorder)
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'photo limit reached' in result.result.message
+    assert 0 < result.result.coverage_ratio < .95
+    assert not result.result.success and not navigation.requests and not manager.busy
+
+
+@pytest.mark.parametrize('patrol_runtime', [{'inspection_fixture': True}], indirect=True)
+def test_inspection_photo_budget_is_shared_across_viewpoint_batches(patrol_runtime):
+    """Starting another spot must not reset the patrol's total basic-photo quota."""
+    manager, navigation, sensors, client = patrol_runtime
+    recorder = manager.photo_recorder
+    recorder.max_photos = 2
+    navigation.on_navigate = sensors.move_robot
+    navigation.finish_navigation.set()
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    _wait_until(lambda: manager.phase == 'ANALYZING' and recorder.status()['batch_ready'])
+    first = recorder.identity()['patrol_id']
+    _analyze_inspection_photos(recorder)
+    _wait_until(lambda: recorder.identity()['patrol_id'] != first
+                and manager.phase == 'ANALYZING' and recorder.status()['batch_ready'])
+    _analyze_inspection_photos(recorder)
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'photo limit reached' in result.result.message
+    assert len(manager.inspection.runs) == 2
+    assert len(manager.inspection.references) == len(manager.inspection.credited) == 2
+    assert manager.return_status['state'] == 'arrived'
+    assert len(navigation.requests) == 2  # One coverage goal and the original home.
+    assert manager.return_pose[:2] == (1.5, 1.5)
+    assert len(list((recorder.directory / 'captures').glob('[a-f0-9]'*32+'.jpg'))) == 2
+
+
+@pytest.mark.parametrize('patrol_runtime', [{
+    'inspection_fixture': True, 'inspection_fixture_range': 5.0, 'reobserve_enabled': True,
+}], indirect=True)
+def test_analyzed_coverage_still_reobserves_unknowns_then_returns_home(patrol_runtime):
+    """Combine calibrated coverage, real DB feedback, retry capture and measured return."""
+    manager, navigation, sensors, client = patrol_runtime
+    recorder = manager.photo_recorder
+
+    def rotate_camera():
+        for step in range(8):
+            sensors.camera_yaw(step * math.pi / 4)
+            time.sleep(.35)
+
+    navigation.on_spin = rotate_camera
+    navigation.on_navigate = sensors.move_robot
+    navigation.finish_navigation.set()
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    _wait_until(lambda: manager.phase == 'ANALYZING' and recorder.status()['batch_ready'])
+    root, originals = recorder.evidence()
+    _analyze_inspection_photos(recorder, [{
+        'name': '상자', 'kind': 'box', 'confidence': 'high',
+        'spatial': {'status': 'unknown', 'reobserve_hint': {
+            'xy': [2., 1.5], 'purpose': 'aim_only_not_object_position'}}}])
+    _wait_until(lambda: recorder.identity()['patrol_id'] != root['patrol_id']
+                and manager.phase == 'ANALYZING' and recorder.status()['batch_ready'])
+    assert manager.planner.complete
+    assert recorder.status()['saved'] == 1  # Already covered area must allow retry photos.
+    _, retry = recorder.evidence()
+    path = recorder.directory / 'captures' / (retry[0]['observation_id'] + '.json')
+    metadata = json.loads(path.read_text())
+    assert metadata['analysis_batch'] == 'patrol_mosaic_v1'
+    assert metadata['reobserve_of'] == root['patrol_id']
+    assert metadata['reobserve_target']['observation_id'] == originals[0]['observation_id']
+    _analyze_inspection_photos(recorder)
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_SUCCEEDED and result.result.success
+    assert manager.reobserve_status['views'] == 1
+    assert manager.return_status['state'] == 'arrived'
+    assert len(navigation.requests) == 2
+    assert len(manager.inspection.credited) == len(originals)
+    assert set(manager.inspection.runs) == {root['patrol_id']}
+    home = navigation.requests[-1].pose.pose.position
+    assert (home.x, home.y) == manager.return_pose[:2] == (1.5, 1.5)
+
+
+@pytest.mark.parametrize('patrol_runtime', [
+    {'inspection_fixture': True, 'inspection_analysis_timeout_s': 0.3},
+], indirect=True)
+def test_inspection_analysis_timeout_is_not_a_success(patrol_runtime):
+    """Abort an inspection without an analysis worker instead of crediting RGB."""
+    manager, navigation, _sensors, client = patrol_runtime
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'analysis timed out' in result.result.message
+    assert result.result.coverage_ratio == 0 and not result.result.success
+    assert not navigation.requests and not manager.busy
+
+
+@pytest.mark.parametrize('patrol_runtime', [{'inspection_fixture': True}], indirect=True)
+def test_inspection_photo_save_failure_aborts_without_credit(patrol_runtime):
+    """Do not turn disk failures into observed space or successful patrols."""
+    manager, _navigation, _sensors, client = patrol_runtime
+
+    def fail_save(*_args):
+        raise OSError('offline disk failure')
+
+    manager.photo_recorder._save = fail_save
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'photo save failed' in result.result.message
+    assert not result.result.success and result.result.coverage_ratio == 0

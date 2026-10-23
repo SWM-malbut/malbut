@@ -63,8 +63,10 @@ def _atomic_write(path, data):
 class PhotoRecorder:
     """Sample distinct views and publish a manifest only after its photo is durable."""
 
-    def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024):
+    def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024,
+                 inspection=False):
         self.directory = Path(directory).expanduser()
+        self.inspection = inspection
         self.max_photos = max_photos
         self.max_bytes = max_bytes
         self._queue = Queue(maxsize=4)
@@ -80,7 +82,7 @@ class PhotoRecorder:
         self._thread.start()
 
     def begin(self, grid, frame, room_map_file, rooms=None, *, reobserve_of=None,
-              reobserve_round=0, capture_limit=None):
+              reobserve_round=0, capture_limit=None, inspection_of=None):
         """Start a new observation run with a stable map identity."""
         geometry = [grid.width, grid.height, grid.resolution, grid.origin_x,
                     grid.origin_y, grid.origin_yaw]
@@ -93,17 +95,20 @@ class PhotoRecorder:
                          '_regions': room_snapshot(rooms)}
             if reobserve_of is not None:
                 self._run.update(reobserve_of=reobserve_of, reobserve_round=reobserve_round)
+            if inspection_of is not None:
+                self._run['inspection_of'] = inspection_of
             self._limit = min(self.max_photos, capture_limit or self.max_photos)
             self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': '',
                            'batch_ready': False}
             self._batches[self._run['patrol_id']] = {
                 'stats': self._stats, 'captures': [], 'outcome': None,
             }
+            self._references = self._batches[self._run['patrol_id']]['captures']
             self._poses = []
             self._last_capture = 0.0
 
     def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None,
-              lidar=None, reobserve_target=None):
+              lidar=None, reobserve_target=None, inspection=None):
         """Queue a fresh frame already matched to its TF; return without disk I/O."""
         with self._lock:
             if (self._stop.is_set() or self._run is None
@@ -114,13 +119,21 @@ class PhotoRecorder:
             if self._run.get('reobserve_of'):
                 if phase != 'REOBSERVING' or reobserve_target is None:
                     return False
-            elif self._poses and phase != 'OBSERVING':
+            elif self.inspection and phase not in ('PLANNING', 'NAVIGATING', 'OBSERVING'):
                 return False
+            elif not self.inspection and self._poses and phase != 'OBSERVING':
+                return False
+            if self.inspection and inspection is None:
+                raise ValueError('Inspection capture requires camera calibration evidence')
             now = time.monotonic()
-            if self._stats['queued'] >= self._limit or now - self._last_capture < 1.5:
+            interval = .25 if self.inspection else 1.5
+            angle = inspection['hfov_rad']/2 if self.inspection else math.pi/3
+            spacing = .25 if self.inspection else .6
+            if (self._stats['queued'] >= min(self._limit, self.max_photos)
+                    or now - self._last_capture < interval):
                 return False
-            if any(math.hypot(x - px, y - py) < 0.6
-                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < math.pi / 3
+            if any(math.hypot(x - px, y - py) < spacing
+                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < angle
                    for px, py, pa in self._poses):
                 return False
             captured = (datetime.now(timezone.utc) if simulated else datetime.fromtimestamp(
@@ -134,6 +147,8 @@ class PhotoRecorder:
                             capture_rooms=list(room_names), _spatial=spatial, _lidar=lidar)
             if reobserve_target is not None:
                 metadata['reobserve_target'] = dict(reobserve_target)
+            if self.inspection:
+                metadata['inspection'] = inspection
             try:
                 self._queue.put_nowait((image, metadata, self._stats))
             except Full:
@@ -152,6 +167,12 @@ class PhotoRecorder:
         """Expose the current run identity without mutable sensor metadata."""
         with self._lock:
             return {k: self._run[k] for k in ('patrol_id', 'map_id')} if self._run else None
+
+    def evidence(self):
+        """Keep producer references available after the batch has been sealed and flushed."""
+        with self._lock:
+            run = {k: self._run[k] for k in ('patrol_id', 'map_id', 'map_frame')}
+            return run, [dict(item) for item in self._references]
 
     def finish(self, outcome='completed'):
         """Seal this patrol without waiting for its accepted disk writes."""

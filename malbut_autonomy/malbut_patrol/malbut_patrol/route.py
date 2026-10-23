@@ -103,7 +103,7 @@ class ReturnRoutePlanner:
         for _ in range(maximum_stops+1):
             if checkpoint:
                 checkpoint()
-            missing_visits = set(p._room_cells)-visits
+            missing_visits = set(p._room_cells)-visits if p.require_room_entry else set()
             deficient = {name for name, cells in p._room_cells.items()
                          if not cells.size or np.count_nonzero(predicted[cells])
                          < cells.size*p.profile.target_ratio}

@@ -85,8 +85,8 @@ def patrol(request, monkeypatch):
     manager.get_logger = Mock()
     manager.status = Mock()
 
-    def make_planner(*args):
-        planner = coverage.CoveragePlanner(*args)
+    def make_planner(*args, **kwargs):
+        planner = coverage.CoveragePlanner(*args, **kwargs)
         # A legitimate partial patrol; no Nav2 goal is needed to exercise
         # feedback, room metadata, terminal result and processing cleanup.
         return planner
