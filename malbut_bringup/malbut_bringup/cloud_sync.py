@@ -21,7 +21,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import yaml
 
-from .navigation import escape_point, NavigationError, Navigator
+from .navigation import NavigationError, Navigator
 from .drive_mode import FOLLOW_DISTANCE_M, robot_drive_mode
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
@@ -619,11 +619,6 @@ class CloudSync:
         try:
             if operation in LOCAL_OPERATIONS:
                 result = {'ok': True, 'result': self._local(operation, payload)}
-            elif self._patrol_escape(operation, payload):
-                result = {'ok': True, 'result': {
-                    'accepted': True, 'requestId': None, 'status': 'escaping',
-                    'robotInterface': ROBOT_INTERFACE,
-                }}
             else:
                 request_id = self.bridge.submit(panel_command(operation, payload))
                 result = {'ok': True, 'result': {
@@ -688,44 +683,10 @@ class CloudSync:
                    'last_warning': self.last_warning})
         return json.loads(json.dumps(diagnostics, default=str))
 
-    def _zone_escape(self, runtime, floor, blocked, pose):
-        """
-        Return (escape, zones) for a robot whose body touches a no-entry Zone.
-
-        A Zone drawn under the robot or a jump in its map pose freezes every
-        motion; ``escape`` is where to drive with the Zones lifted (None: clear).
-        """
-        override = getattr(self.bridge, 'zone_override', None)
-        if (override is None or pose is None or not floor
-                or runtime.get('mode') != 'navigation'):
-            return None, None
-        return (escape_point((pose['x'], pose['y']), floor, blocked),
-                lambda on: override.end_escape() if on else override.start_escape())
-
     def _nav_submit(self, goal):
         return self.bridge.submit({
             'command': 'start', 'capability': 'navigate_to_pose',
             'arguments': {key: goal[key] for key in ('x', 'y', 'yaw')}})
-
-    def _patrol_escape(self, operation, payload):
-        """Start a patrol only after driving out of a no-entry Zone; True when it does."""
-        if operation != 'drive_mode_start' or not isinstance(payload, dict) or (
-                payload.get('mode') != 'patrol'):
-            return False
-        command = panel_command(operation, payload)
-        runtime = self.bridge.data.snapshot()['runtime']
-        user_map, zones, _revision = space_documents(runtime, self.bridge.catalog)
-        if zones is None:
-            return False
-        floor, blocked = _floor_and_blocked(user_map, zones)
-        info = self.bridge.data.map_snapshot()
-        escape, toggle = self._zone_escape(runtime, floor, blocked,
-                                           info.get('pose') if info.get('active') else None)
-        if escape is None:
-            return False
-        self.navigator.escape_then(escape, submit=self._nav_submit, zones=toggle,
-                                   then=lambda: self.bridge.submit(command))
-        return True
 
     def _navigation(self, operation, payload, runtime):
         """Preview, start or cancel a destination drive picked on the web map."""
@@ -746,9 +707,8 @@ class CloudSync:
         if operation == 'navigation_start':
             if set(payload) != {'previewToken'} or not isinstance(payload['previewToken'], str):
                 raise ValueError('Navigation start needs only the preview token')
-            escape, toggle = self._zone_escape(runtime, floor, blocked, pose)
             return self.navigator.start(payload['previewToken'], map_key=map_key, busy=busy,
-                                        submit=self._nav_submit, escape=escape, zones=toggle)
+                                        submit=self._nav_submit)
         if (set(payload) != {'x', 'y'} or not all(
                 type(payload[key]) in (int, float) and math.isfinite(payload[key])
                 for key in ('x', 'y'))):
@@ -782,8 +742,6 @@ class CloudSync:
             self.maps_at = now
         snapshot = self.bridge.data.snapshot()
         info = self.bridge.data.map_snapshot()
-        # A Zone escape moves on as soon as its step ends, at every poll.
-        self.navigator.advance(snapshot.get('requests', []))
         # Fast manual polls only claim commands; state keeps its normal cadence.
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
             navigation = self.navigator.target(snapshot.get('requests', []),

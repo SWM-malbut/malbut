@@ -138,7 +138,7 @@ controller_server:
     use_sim_time: False
     controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.5
+    min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
@@ -171,7 +171,7 @@ controller_server:
       # Only person-following paths require facing their person-directed endpoint.
       yaw_goal_tolerance: 0.35
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      plugin: "malbut_bringup::keepout::Controller"
       debug_trajectory_details: True
       # Driver /cmd_vel limits instead of the vendor's 0.4 m/s and 1.0 rad/s.
       min_vel_x: -0.2
@@ -235,7 +235,7 @@ controller_server:
     # A second plugin in the SAME controller server, not a second Nav2 process.
     # Keep DWB and the robot limits; soften only the reverse-vs-turn preference.
     FollowPerson:
-      plugin: "dwb_core::DWBLocalPlanner"
+      plugin: "malbut_bringup::keepout::Controller"
       debug_trajectory_details: True
       min_vel_x: -0.2
       min_vel_y: 0.0
@@ -300,10 +300,11 @@ local_costmap:
       # the inflation layer adds the graded preference beyond it.
       footprint_padding: 0.01
       plugins: ["obstacle_layer", "inflation_layer"]
-      # Saved-map Zones: zone_filter loads the mask for the selected map.
+      # Both costmaps remain strict. The planner/controller share physical costs
+      # separately, solely for a collision-checked exit from an occupied zone.
       filters: ["keepout_filter"]
       keepout_filter:
-        plugin: "nav2_costmap_2d::KeepoutFilter"
+        plugin: "malbut_bringup::keepout::Filter"
         enabled: True
         filter_info_topic: "/keepout_costmap_filter_info"
       inflation_layer:
@@ -358,7 +359,7 @@ global_costmap:
       # Saved-map Zones: zone_filter loads the mask for the selected map.
       filters: ["keepout_filter"]
       keepout_filter:
-        plugin: "nav2_costmap_2d::KeepoutFilter"
+        plugin: "malbut_bringup::keepout::Filter"
         enabled: True
         filter_info_topic: "/keepout_costmap_filter_info"
       obstacle_layer:
@@ -430,7 +431,7 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased", "FollowPersonAStar"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
+      plugin: "malbut_bringup::keepout::Planner"
       # An unreachable goal cell (inside a wall, furniture or a person's own
       # LiDAR blob plus the 0.106 m inscribed inflation) is moved to the nearest
       # reachable cell within this radius. Keep the existing general planner.
@@ -438,7 +439,7 @@ planner_server:
       use_astar: false
       allow_unknown: true
     FollowPersonAStar:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
+      plugin: "malbut_bringup::keepout::Planner"
       tolerance: 0.5
       use_astar: true
       allow_unknown: true
@@ -510,10 +511,11 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.2, 0.0, 0.5]
-    min_velocity: [-0.2, 0.0, -0.5]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    # Lateral motion is used only by the slow fixed-heading keepout exit.
+    max_velocity: [0.2, 0.08, 0.5]
+    min_velocity: [-0.2, -0.08, -0.5]
+    max_accel: [2.5, 0.5, 3.2]
+    max_decel: [-2.5, -0.5, -3.2]
     odom_topic: odom
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
