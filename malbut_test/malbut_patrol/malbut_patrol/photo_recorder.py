@@ -16,7 +16,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from malbut_patrol.spatial_capture import encode_spatial, room_snapshot
+from malbut_patrol.spatial_capture import encode_lidar, encode_spatial, room_snapshot
 
 
 DEFAULT_DIRECTORY = '~/.local/share/malbut/patrol-observations'
@@ -63,8 +63,10 @@ def _atomic_write(path, data):
 class PhotoRecorder:
     """Sample distinct views and publish a manifest only after its photo is durable."""
 
-    def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024):
+    def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024,
+                 inspection=False):
         self.directory = Path(directory).expanduser()
+        self.inspection = inspection
         self.max_photos = max_photos
         self.max_bytes = max_bytes
         self._queue = Queue(maxsize=4)
@@ -79,7 +81,8 @@ class PhotoRecorder:
         self._thread = threading.Thread(target=self._work, name='patrol-photo-writer', daemon=True)
         self._thread.start()
 
-    def begin(self, grid, frame, room_map_file, rooms=None):
+    def begin(self, grid, frame, room_map_file, rooms=None, *, reobserve_of=None,
+              reobserve_round=0, capture_limit=None, inspection_of=None):
         """Start a new observation run with a stable map identity."""
         geometry = [grid.width, grid.height, grid.resolution, grid.origin_x,
                     grid.origin_y, grid.origin_yaw]
@@ -90,15 +93,22 @@ class PhotoRecorder:
                          'room_map': Path(room_map_file).name if room_map_file else '',
                          'analysis_batch': 'patrol_mosaic_v1',
                          '_regions': room_snapshot(rooms)}
+            if reobserve_of is not None:
+                self._run.update(reobserve_of=reobserve_of, reobserve_round=reobserve_round)
+            if inspection_of is not None:
+                self._run['inspection_of'] = inspection_of
+            self._limit = min(self.max_photos, capture_limit or self.max_photos)
             self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': '',
                            'batch_ready': False}
             self._batches[self._run['patrol_id']] = {
                 'stats': self._stats, 'captures': [], 'outcome': None,
             }
+            self._references = self._batches[self._run['patrol_id']]['captures']
             self._poses = []
             self._last_capture = 0.0
 
-    def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None):
+    def offer(self, image, *, x, y, yaw, room_names, phase, simulated=False, spatial=None,
+              lidar=None, reobserve_target=None, inspection=None):
         """Queue a fresh frame already matched to its TF; return without disk I/O."""
         with self._lock:
             if (self._stop.is_set() or self._run is None
@@ -106,13 +116,24 @@ class PhotoRecorder:
                     or self._run['patrol_id'] not in self._batches):
                 return False
             # Capture the initial view even if the map is already covered.
-            if self._poses and phase != 'OBSERVING':
+            if self._run.get('reobserve_of'):
+                if phase != 'REOBSERVING' or reobserve_target is None:
+                    return False
+            elif self.inspection and phase not in ('PLANNING', 'NAVIGATING', 'OBSERVING'):
                 return False
+            elif not self.inspection and self._poses and phase != 'OBSERVING':
+                return False
+            if self.inspection and inspection is None:
+                raise ValueError('Inspection capture requires camera calibration evidence')
             now = time.monotonic()
-            if self._stats['queued'] >= self.max_photos or now - self._last_capture < 1.5:
+            interval = .25 if self.inspection else 1.5
+            angle = inspection['hfov_rad']/2 if self.inspection else math.pi/3
+            spacing = .25 if self.inspection else .6
+            if (self._stats['queued'] >= min(self._limit, self.max_photos)
+                    or now - self._last_capture < interval):
                 return False
-            if any(math.hypot(x - px, y - py) < 0.6
-                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < math.pi / 3
+            if any(math.hypot(x - px, y - py) < spacing
+                   and abs(math.atan2(math.sin(yaw - pa), math.cos(yaw - pa))) < angle
                    for px, py, pa in self._poses):
                 return False
             captured = (datetime.now(timezone.utc) if simulated else datetime.fromtimestamp(
@@ -123,7 +144,11 @@ class PhotoRecorder:
                                          'nanosec': image.header.stamp.nanosec},
                             camera_frame=image.header.frame_id, simulated=simulated,
                             camera_pose={'x': x, 'y': y, 'yaw': yaw},
-                            capture_rooms=list(room_names), _spatial=spatial)
+                            capture_rooms=list(room_names), _spatial=spatial, _lidar=lidar)
+            if reobserve_target is not None:
+                metadata['reobserve_target'] = dict(reobserve_target)
+            if self.inspection:
+                metadata['inspection'] = inspection
             try:
                 self._queue.put_nowait((image, metadata, self._stats))
             except Full:
@@ -137,6 +162,17 @@ class PhotoRecorder:
         """Report accepted versus durably written evidence, never inferred success."""
         with self._lock:
             return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats}
+
+    def identity(self):
+        """Expose the current run identity without mutable sensor metadata."""
+        with self._lock:
+            return {k: self._run[k] for k in ('patrol_id', 'map_id')} if self._run else None
+
+    def evidence(self):
+        """Keep producer references available after the batch has been sealed and flushed."""
+        with self._lock:
+            run = {k: self._run[k] for k in ('patrol_id', 'map_id', 'map_frame')}
+            return run, [dict(item) for item in self._references]
 
     def finish(self, outcome='completed'):
         """Seal this patrol without waiting for its accepted disk writes."""
@@ -177,6 +213,9 @@ class PhotoRecorder:
         metadata = dict(metadata)
         regions = metadata.pop('_regions')
         spatial, depth = encode_spatial(image, metadata.pop('_spatial'))
+        lidar, scan = encode_lidar(image, metadata.pop('_lidar', None))
+        if lidar is not None:
+            metadata['lidar'] = lidar
         metadata['spatial'] = spatial
         metadata['regions_sha256'] = hashlib.sha256(regions).hexdigest()
         metadata['capture_regions'] = [
@@ -184,11 +223,15 @@ class PhotoRecorder:
             for room in json.loads(regions)['regions']
             if room['name'] in metadata['capture_rooms']]
         used = sum(path.stat().st_size for path in folder.iterdir() if path.is_file())
-        if used + len(data) + len(regions) + len(depth or b'') + 16384 > self.max_bytes:
+        if (used + len(data) + len(regions) + len(depth or b'') + len(scan or b'')
+                + 16384 > self.max_bytes):
             raise OSError('photo storage limit reached')
         identifier = metadata['observation_id']
         metadata = dict(metadata, image_sha256=hashlib.sha256(data).hexdigest())
         files = {'.jpg': data, '.regions.json': regions}
+        if scan is not None:
+            files['.lidar.npy'] = scan
+            lidar['sha256'] = hashlib.sha256(scan).hexdigest()
         if depth is not None:
             files['.depth.npy'] = depth
             spatial['depth_sha256'] = hashlib.sha256(depth).hexdigest()

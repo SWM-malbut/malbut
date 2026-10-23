@@ -55,6 +55,8 @@ def defaults():
         # not permission to treat arbitrary depth topics as registered.
         'patrol_depth_registered_frame': 'rgb_camera_link',
         'patrol_depth_scale_m': '0.001',
+        'patrol_inspection_calibration_file': '',
+        'patrol_inspection_analysis_timeout_s': '120.0',
         'fall_depth_camera_info_topic': '/depth_cam/rgb0/camera_info',
         # The camera mount measured against the floor on the robot (2026-10-09,
         # twice: 11.5/11.6 cm, 1.6 degrees down, left side 1.6 degrees low). The

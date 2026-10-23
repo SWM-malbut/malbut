@@ -9,6 +9,7 @@ import threading
 
 from malbut_agent_server.endpoint_policy import is_official_openai_base_url
 from malbut_agent_server.patrol_memory import read_capture, validate_analysis
+from malbut_agent_server.patrol_lidar import read_lidar
 from malbut_agent_server.patrol_spatial import localize_objects, read_spatial
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.service_keys import key_value
@@ -22,7 +23,7 @@ summary에는 장면을 간결하게, objects에는 보이는 물건과 사진�
 capture_rooms는 카메라 촬영 위치다. 사진 속 모든 물체가 그 방에 있다고 단정하지 않는다.
 각 물체의 image_bbox는 보이는 물체를 감싼 [왼쪽, 위, 오른쪽, 아래] 정수 좌표다.
 사진 전체 가로·세로를 각각 0~1000으로 정규화한다. 물체를 특정할 수 없으면 null이다.
-kind는 사람(일부만 보여도)이면 person, 그 외에는 object다.
+kind는 사람(일부만 보여도)이면 person, 상자·박스·큐브형 물체이면 box, 그 외에는 object다.
 사람은 image_anchors에 직접 보이는 몸통·팔·다리 표면 안쪽의 서로 떨어진 [x,y] 지점
 3개를 같은 좌표계로 표시한다. 다리 사이 빈 공간·배경·윤곽선·가려진 신체는 고르지 않는다.
 충분히 보이는 지점만 표시하며 사람이 아니거나 지점을 특정할 수 없으면 []다.
@@ -38,7 +39,7 @@ SCHEMA = {
         'objects': {'type': 'array', 'maxItems': 20, 'items': {
             'type': 'object', 'additionalProperties': False,
             'properties': {'name': {'type': 'string', 'maxLength': 120},
-                           'kind': {'type': 'string', 'enum': ['person', 'object']},
+                           'kind': {'type': 'string', 'enum': ['person', 'box', 'object']},
                            'image_anchors': {'type': 'array', 'maxItems': 3, 'items': {
                                'type': 'array', 'minItems': 2, 'maxItems': 2,
                                'items': {'type': 'integer', 'minimum': 0, 'maximum': 1000}}},
@@ -195,7 +196,9 @@ class PatrolObservationWorker:
                 validate_analysis(analysis)
                 regions, depth = read_spatial(
                     self.store.directory / 'captures' / (row['id'] + '.json'), metadata)
-                analysis = localize_objects(analysis, metadata, regions, depth)
+                lidar = read_lidar(
+                    self.store.directory / 'captures' / (row['id'] + '.json'), metadata)
+                analysis = localize_objects(analysis, metadata, regions, depth, lidar)
                 self.store.complete(row['id'], analysis, self.observer.model)
             except Exception:
                 self.store.fail(row['id'])
@@ -231,7 +234,8 @@ class PatrolObservationWorker:
                 if current != metadata:
                     raise ValueError('capture changed during batch analysis')
                 regions, depth = read_spatial(path, metadata)
-                localized[identity] = localize_objects(results[identity], metadata, regions, depth)
+                localized[identity] = localize_objects(
+                    results[identity], metadata, regions, depth, read_lidar(path, metadata))
             folder = self.store.directory / 'batches'
             folder.mkdir(exist_ok=True, mode=0o700)
             path = folder / (manifest['patrol_id'] + '.jpg')
