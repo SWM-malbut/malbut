@@ -99,7 +99,7 @@ class CoverageGrid:
         return 0 <= row < self.height and 0 <= col < self.width
 
 
-def _flood_distances(mask, start):
+def _flood_distances(mask, start, checkpoint=None):
     """Compute four-connected distances, disallowing diagonal corner cutting."""
     distances = np.full(mask.shape, -1, dtype=np.int32)
     row, col = start
@@ -109,7 +109,11 @@ def _flood_distances(mask, start):
     distances[row, col] = 0
     pending = deque([(row, col)])
     height, width = mask.shape
+    processed = 0
     while pending:
+        if checkpoint is not None and processed % 1024 == 0:
+            checkpoint()
+        processed += 1
         row, col = pending.popleft()
         distance = distances[row, col] + 1
         for nr, nc in ((row - 1, col), (row + 1, col),

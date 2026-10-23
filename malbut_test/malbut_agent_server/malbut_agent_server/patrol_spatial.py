@@ -201,6 +201,29 @@ def _planar_support(roi, valid, x0, y0, spatial):
     return bounds, error, _map_points(support, spatial), plane
 
 
+def _support_clear(points, regions, margin):
+    """Check the measured footprint itself, including holes, instead of its enclosing disc."""
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    hull = cv2.convexHull(points).reshape(-1, 2)
+    for region in regions:
+        for polygon in region['polygons']:
+            for ring in polygon:
+                boundary = np.asarray(ring, dtype=np.float32)
+                if len(hull) >= 3 and any(
+                        cv2.pointPolygonTest(hull, tuple(map(float, p)), False) >= 0
+                        for p in boundary):
+                    return False
+                # Sample a continuous segment conservatively: the extra half-step
+                # bounds the distance of any unsampled point to the boundary.
+                for a, b in zip(hull, np.roll(hull, -1, axis=0)):
+                    count = max(1, math.ceil(float(np.linalg.norm(b-a)) / .02))
+                    allowance = margin + float(np.linalg.norm(b-a)) / count / 2
+                    if any(_distance(p, ring) <= allowance
+                           for p in np.linspace(a, b, count+1)):
+                        return False
+    return True
+
+
 def _person_position(item, spatial, regions, depth, unknown):
     """Require independent visible body patches, never the gap between a person's legs."""
     anchors = item.get('image_anchors', [])
@@ -264,16 +287,45 @@ def _person_position(item, spatial, regions, depth, unknown):
     if region is None or any(s[3] != region for s in samples):
         return dict(unknown, reason='person_region_disagreement')
     world = np.median(points, axis=0)
-    margin = max(s[2] for s in samples) + float(np.max(
-        np.linalg.norm(points[:, :2]-world[:2], axis=1)))
-    if region_at(world[:2], regions, margin)[0] != region:
+    margin = max(s[2] for s in samples)
+    if (region_at(world[:2], regions, margin)[0] != region
+            or not _support_clear(points[:, :2], regions, margin)):
         return dict(unknown, reason='region_boundary')
+    if _person_crosses_region(item, spatial, depth, regions, region, world):
+        return dict(unknown, reason='visible_body_crosses_region')
     return {'status': 'located', 'region': region,
             'map_position': dict(zip(('x', 'y', 'z'), np.round(world, 3).tolist())),
             'method': 'registered_rgbd', 'reason': None,
             'depth_m': round(float(np.median([s[1] for s in samples])), 3),
             'boundary_margin_m': round(margin, 3),
             'depth_support': 'visible_body_patches', 'anchor_count': len(samples)}
+
+
+def _person_crosses_region(item, spatial, depth, regions, region, center):
+    """Veto a room claim when another visible nearby body surface crosses its boundary."""
+    height, width = depth.shape
+    left, top, right, bottom = (np.asarray(item['image_bbox']) / 1000
+                                * [width, height, width, height])
+    yy, xx = np.nonzero(np.isfinite(depth) & (depth >= .15) & (depth <= 10))
+    inside = (xx > left) & (xx < right) & (yy > top) & (yy < bottom)
+    xx, yy = xx[inside], yy[inside]
+    if not len(xx):
+        return False
+    z = depth[yy, xx]
+    rays = _rays(np.column_stack((xx, yy)), spatial)
+    points = _map_points(np.column_stack((rays*z[:, None], z)), spatial)
+    # Background and floor are not evidence of a person's extent. Nearby uncertain
+    # foreground may veto an assignment but can never establish a different room.
+    nearby = ((np.linalg.norm(points[:, :2]-center[:2], axis=1) <= 1.2)
+              & (points[:, 2] > .05))
+    if not np.any(nearby):
+        return False
+    # Keep every valid foreground pixel when building the footprint: sparse
+    # sampling could miss a thin limb in the adjacent region.
+    hull = cv2.convexHull(points[nearby, :2].astype(np.float32)).reshape(-1, 2)
+    margin = .12 + .02*float(np.max(z[nearby]))
+    return (any(region_at(p, regions, margin)[0] != region for p in hull)
+            or not _support_clear(hull, regions, margin))
 
 
 def _object_position(item, metadata, regions, depth):
@@ -347,9 +399,51 @@ def _object_position(item, metadata, regions, depth):
     return result
 
 
-def localize_objects(analysis, metadata, regions, depth):
+def localize_objects(analysis, metadata, regions, depth, lidar=None):
     """Only trusted geometry assigns object regions; never copy the capture room."""
     result = copy.deepcopy(analysis)
     for item in result['objects']:
         item['spatial'] = _object_position(item, metadata, regions, depth)
+        if item['spatial']['status'] == 'unknown' and regions:
+            hint = _reobserve_hint(item, metadata, depth)
+            if hint is not None:
+                item['spatial']['reobserve_hint'] = hint
+        if item.get('kind') == 'person' and lidar is not None:
+            from malbut_agent_server.patrol_lidar import compare_person_lidar
+            other_boxes = [o['image_bbox'] for o in result['objects']
+                           if o is not item and o.get('kind') == 'person' and o.get('image_bbox')]
+            item['spatial']['lidar_comparison'] = compare_person_lidar(
+                item, metadata, depth, lidar, other_boxes)
     return result
+
+
+def _reobserve_hint(item, metadata, depth):
+    """Estimate an aiming point only; never turn uncertain geometry into a room claim."""
+    spatial = metadata.get('spatial', {})
+    if (depth is None or spatial.get('status') != 'available'
+            or item.get('confidence') != 'high' or not item.get('image_bbox')):
+        return None
+    if item.get('kind') == 'person':
+        from malbut_agent_server.patrol_lidar import _body_mask
+        mask = _body_mask(item, depth)
+    else:
+        height, width = depth.shape
+        left, top, right, bottom = np.asarray(item['image_bbox']) / 1000
+        x0, x1 = int((left*.7+right*.3)*width), int((left*.3+right*.7)*width)
+        y0, y1 = int((top*.7+bottom*.3)*height), int((top*.3+bottom*.7)*height)
+        mask = np.zeros(depth.shape, dtype=bool)
+        mask[y0:y1, x0:x1] = True
+    mask &= np.isfinite(depth) & (depth >= .15) & (depth <= 5)
+    yy, xx = np.nonzero(mask)
+    if len(xx) < 16:
+        return None
+    z = depth[yy, xx]
+    if np.quantile(z, .9)-np.quantile(z, .1) > .8:
+        return None
+    rays = _rays(np.column_stack((xx, yy)), spatial)
+    points = _map_points(np.column_stack((rays*z[:, None], z)), spatial)
+    center = np.median(points[:, :2], axis=0)
+    if (not np.isfinite(center).all()
+            or np.quantile(np.linalg.norm(points[:, :2]-center, axis=1), .9) > .8):
+        return None
+    return {'xy': np.round(center, 3).tolist(), 'purpose': 'aim_only_not_object_position'}

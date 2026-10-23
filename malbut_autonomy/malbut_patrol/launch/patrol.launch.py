@@ -25,6 +25,13 @@ def generate_launch_description():
         'depth_aligned_to_rgb': 'false',
         'depth_registered_frame': '',
         'depth_scale_m': '0.0',
+        'scan_topic': '/scan',
+        'reobserve_enabled': 'true',
+        'reobserve_rounds': '2',
+        'reobserve_targets': '2',
+        'reobserve_analysis_timeout_s': '120.0',
+        'reobserve_max_travel_m': '3.0',
+        'return_tolerance_m': '0.25',
         'base_frame': 'base_footprint',
         'nav2_action_name': 'navigate_to_pose',
         'spin_action_name': 'spin',
@@ -34,6 +41,10 @@ def generate_launch_description():
             'MALBUT_PATROL_OBSERVATION_DIR', '~/.local/share/malbut/patrol-observations'),
     }
     parameters = {name: LaunchConfiguration(name) for name in defaults}
+    for name, kind in [('reobserve_enabled', bool), ('reobserve_rounds', int),
+                       ('reobserve_targets', int), ('reobserve_analysis_timeout_s', float),
+                       ('reobserve_max_travel_m', float), ('return_tolerance_m', float)]:
+        parameters[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
     parameters['use_sim_time'] = ParameterValue(
         LaunchConfiguration('use_sim_time'), value_type=bool)
     parameters['start_enabled'] = ParameterValue(

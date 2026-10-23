@@ -132,3 +132,24 @@ def test_room_edit_after_capture_does_not_change_snapshot(tmp_path):
     assert snapshot['regions'][0]['name'] == '거실'
     assert metadata['spatial']['status'] == 'available'
     assert manifest.with_name(manifest.stem + '.depth.npy').stat().st_mode & 0o777 == 0o600
+
+
+def test_lidar_capture_requires_timing_and_motion_bounds():
+    import copy
+    from types import SimpleNamespace as NS
+    from malbut_patrol.spatial_capture import encode_lidar
+
+    image = NS(header=NS(stamp=NS(sec=42, nanosec=0)))
+    scan = NS(header=NS(stamp=NS(sec=42, nanosec=0), frame_id='laser'),
+              ranges=[1., 2., float('inf')], angle_min=-.1, angle_increment=.1,
+              range_min=.03, range_max=8., time_increment=.01)
+    transform = NS(translation=NS(x=0., y=0., z=.2), rotation=NS(x=0., y=0., z=0., w=1.))
+    bundle = dict(scan=scan, transform=transform, end_transform=copy.deepcopy(transform))
+    header, data = encode_lidar(image, bundle)
+    assert header['status'] == 'available' and data
+    bundle['end_transform'].translation.x = .1
+    assert encode_lidar(image, bundle)[0]['status'] == 'lidar_sensor_moving'
+    bundle['end_transform'] = transform
+    scan.header.stamp.sec = 41
+    assert encode_lidar(image, bundle)[0]['status'] == 'lidar_unsynchronized'
+    assert encode_lidar(image, dict(scan=scan))[0]['status'] == 'lidar_transform_missing'

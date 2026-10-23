@@ -71,6 +71,8 @@ def read_capture(path):
         raise ValueError('capture photo integrity check failed')
     from malbut_agent_server.patrol_spatial import read_spatial
     read_spatial(path, data)
+    from malbut_agent_server.patrol_lidar import read_lidar
+    read_lidar(path, data)
     return data, image
 
 
@@ -99,7 +101,7 @@ def validate_analysis(value, *, localized=False):
                 or any(type(v) is not int or not 0 <= v <= 1000 for v in bbox)
                 or bbox[0] >= bbox[2] or bbox[1] >= bbox[3]):
             raise ValueError('invalid object bounding box')
-        if 'kind' in item and item['kind'] not in ('person', 'object'):
+        if 'kind' in item and item['kind'] not in ('person', 'box', 'object'):
             raise ValueError('invalid object kind')
         anchors = item.get('image_anchors', [])
         if (not isinstance(anchors, list) or len(anchors) > 3
@@ -312,6 +314,10 @@ class PatrolMemoryStore:
             item.update(json.loads(row['analysis']))
             item['capture_rooms'] = item['capture_rooms'][:4]
             objects = item['objects']
+            # Navigation-only aiming hints must not become asserted object locations in answers.
+            for obj in objects:
+                if isinstance(obj.get('spatial'), dict):
+                    obj['spatial'].pop('reobserve_hint', None)
             # Keep matching objects first when one scene contains many items.
             objects.sort(key=lambda obj: -sum(
                 term in json.dumps(obj, ensure_ascii=False).casefold() for term in terms))
