@@ -25,7 +25,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -34,6 +34,9 @@ from malbut_patrol.coverage import (
     CoverageGrid, CoveragePlanner, CoverageProfile, read_room_map,
 )
 from malbut_patrol.photo_recorder import DEFAULT_DIRECTORY, PhotoRecorder
+from malbut_patrol.inspection import InspectionCalibration, InspectionEvidence
+from malbut_patrol.reobserve import plan_reobservations, read_results, unresolved_targets
+from malbut_patrol.route import ReturnRoutePlanner
 from malbut_patrol.spatial_capture import stamp_seconds
 
 
@@ -130,6 +133,15 @@ class PatrolManager(Node):
             'depth_aligned_to_rgb': False,
             'depth_registered_frame': '',
             'depth_scale_m': 0.0,
+            'scan_topic': '/scan',
+            'reobserve_enabled': True,
+            'reobserve_rounds': 2,
+            'reobserve_targets': 2,
+            'reobserve_analysis_timeout_s': 120.0,
+            'reobserve_max_travel_m': 3.0,
+            'return_tolerance_m': 0.25,
+            'inspection_calibration_file': '',
+            'inspection_analysis_timeout_s': 120.0,
             'room_map_file': '',
             'base_frame': 'base_footprint',
             'nav2_action_name': 'navigate_to_pose',
@@ -157,13 +169,18 @@ class PatrolManager(Node):
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         self.settings = {name: self.get_parameter(name).value for name in defaults}
+        for name in ('reobserve_rounds', 'reobserve_targets'):
+            if type(self.settings[name]) is not int or not 1 <= self.settings[name] <= 2:
+                raise ValueError(f'{name} must be 1 or 2')
         if (not math.isfinite(self.settings['depth_scale_m'])
                 or self.settings['depth_scale_m'] < 0):
             raise ValueError('depth_scale_m must be zero or positive and finite')
         for name in ('observation_hz', 'sensor_timeout_s', 'costmap_timeout_s',
                      'goal_response_timeout_s', 'cancel_completion_timeout_s',
                      'navigation_timeout_s', 'spin_time_allowance_s',
-                     'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m'):
+                     'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m',
+                     'reobserve_analysis_timeout_s', 'reobserve_max_travel_m',
+                     'return_tolerance_m', 'inspection_analysis_timeout_s'):
             if not math.isfinite(self.settings[name]) or self.settings[name] <= 0:
                 raise ValueError(f'{name} must be positive and finite')
         for name in ('observation_ranges_m', 'coverage_targets',
@@ -178,6 +195,10 @@ class PatrolManager(Node):
             self.settings['candidate_spacing_m'])]
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
+        self.return_pose = None
+        self.return_status = {'state': 'not_started', 'distance_m': None}
+        self.route_status = {'revision': 0, 'remaining': []}
+        self.route_planner = None
         self.busy = False
         self.child = None
         self.map_message = None
@@ -188,15 +209,28 @@ class PatrolManager(Node):
         self.image_received = 0.0
         self.camera_info = None
         self.depth_images = deque(maxlen=8)
+        self.lidar_scans = deque(maxlen=8)
         self.planner = None
         self.phase = 'IDLE'
         self.visited = 0
+        self.reobserve_target = None
+        self.reobserve_status = {}
         self.last_image_stamp = None
         self.last_observation = 0.0
         self.last_pump = 0.0
         self.last_feedback = 0.0
+        self.calibration = None
+        self.inspection = None
+        self.last_inspection_poll = 0.0
+        calibration_file = self.settings['inspection_calibration_file']
+        if calibration_file:
+            if not self.settings['record_observations']:
+                raise ValueError('Inspection requires photo recording')
+            self.calibration = InspectionCalibration(
+                calibration_file, bool(self.get_parameter('use_sim_time').value))
         self.group = ReentrantCallbackGroup()
-        self.photo_recorder = (PhotoRecorder(self.settings['observation_directory'])
+        self.photo_recorder = (PhotoRecorder(self.settings['observation_directory'],
+                                             inspection=self.calibration is not None)
                                if self.settings['record_observations'] else None)
         self.tf = Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf, self)
@@ -217,6 +251,7 @@ class PatrolManager(Node):
                                  self._receive_info, qos_profile_sensor_data,
                                  callback_group=self.group)
         self._depth_subscription = self._subscribe_depth()
+        self._scan_subscription = self._subscribe_scan()
         self.navigation = ActionClient(self, NavigateToPose,
                                        self.settings['nav2_action_name'],
                                        callback_group=self.group)
@@ -247,6 +282,7 @@ class PatrolManager(Node):
                 self.tf.clear()
             self.image = self.costmap = None
             self.depth_images.clear()
+            self.lidar_scans.clear()
             self.image_received = self.costmap_received = 0.0
             self.last_image_stamp = None
             if enabled:
@@ -261,15 +297,25 @@ class PatrolManager(Node):
                     Image, self.settings['camera_image_topic'], self._receive_image,
                     qos_profile_sensor_data, callback_group=self.group)
                 self._depth_subscription = self._subscribe_depth()
+                self._scan_subscription = self._subscribe_scan()
             else:
                 for subscription in (
                         self._costmap_subscription, self._updates_subscription,
-                        self._image_subscription, self._depth_subscription):
+                        self._image_subscription, self._depth_subscription,
+                        self._scan_subscription):
                     if subscription is not None:
                         self.destroy_subscription(subscription)
                 self._costmap_subscription = self._updates_subscription = None
                 self._image_subscription = None
                 self._depth_subscription = None
+                self._scan_subscription = None
+
+    def _subscribe_scan(self):
+        if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
+            return None
+        return self.create_subscription(
+            LaserScan, self.settings['scan_topic'], self._receive_scan,
+            qos_profile_sensor_data, callback_group=self.group)
 
     def _subscribe_depth(self):
         if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
@@ -357,6 +403,29 @@ class PatrolManager(Node):
             if self._processing_enabled and self.photo_recorder is not None:
                 self.depth_images.append(message)
 
+    def _receive_scan(self, message):
+        with self.lock:
+            if self._processing_enabled and self.photo_recorder is not None:
+                self.lidar_scans.append(message)
+
+    def _lidar_bundle(self, scan):
+        if scan is None:
+            return None
+        bundle = {'scan': scan}
+        duration = scan.time_increment * max(0, len(scan.ranges)-1)
+        if not math.isfinite(duration) or not 0 <= duration <= .25:
+            return bundle
+        start = Time.from_msg(scan.header.stamp)
+        try:
+            bundle['transform'] = self.tf.lookup_transform(
+                self.map_message.header.frame_id, scan.header.frame_id, start).transform
+            bundle['end_transform'] = self.tf.lookup_transform(
+                self.map_message.header.frame_id, scan.header.frame_id,
+                start + Duration(seconds=duration)).transform
+        except TransformException:
+            pass
+        return bundle
+
     def _robot_xy(self):
         transform = self.tf.lookup_transform(
             self.map_message.header.frame_id, self.settings['base_frame'], Time())
@@ -428,6 +497,10 @@ class PatrolManager(Node):
             depth = min(self.depth_images, key=lambda value: abs(
                 stamp_seconds(value.header.stamp) - stamp_seconds(image.header.stamp)),
                 default=None)
+            scan = min(self.lidar_scans, key=lambda value: abs(
+                stamp_seconds(value.header.stamp)
+                + value.time_increment*max(0, len(value.ranges)-1)/2
+                - stamp_seconds(image.header.stamp)), default=None)
         stamp = (image.header.stamp.sec, image.header.stamp.nanosec)
         if stamp == self.last_image_stamp:
             return
@@ -454,17 +527,29 @@ class PatrolManager(Node):
         focal_length = info.p[0] if self.settings['camera_image_rectified'] else info.k[0]
         fov = 2.0 * math.atan2(info.width, 2.0 * focal_length)
         p = transform.transform.translation
-        self.planner.mark_observed(p.x, p.y, math.atan2(forward_y, forward_x), fov)
+        yaw = math.atan2(forward_y, forward_x)
+        calibration = getattr(self, 'calibration', None)
+        camera = None
+        if calibration is None:
+            self.planner.mark_observed(p.x, p.y, yaw, fov)
+        else:
+            camera = calibration.camera_record(image.width, image.height, fov, p.z)
         self.last_image_stamp = stamp
         self.last_observation = time.monotonic()
 
         recorder = getattr(self, 'photo_recorder', None)
         if recorder is not None:
+            if (calibration is not None and self.phase != 'REOBSERVING'
+                    and self.planner.observation_gain(p.x, p.y, yaw, fov) == 0):
+                return
             try:
                 recorder.offer(
-                    image, x=float(p.x), y=float(p.y), yaw=math.atan2(forward_y, forward_x),
+                    image, x=float(p.x), y=float(p.y), yaw=yaw,
                     room_names=self.planner.rooms_at(p.x, p.y), phase=self.phase,
                     simulated=bool(self.get_parameter('use_sim_time').value),
+                    lidar=self._lidar_bundle(scan),
+                    reobserve_target=self.reobserve_target,
+                    inspection=camera,
                     spatial={'aligned': self.settings['depth_aligned_to_rgb'],
                              'depth': depth, 'info': info, 'transform': transform.transform,
                              'image_rectified': self.settings['camera_image_rectified'],
@@ -472,7 +557,52 @@ class PatrolManager(Node):
                              'depth_scale_m': self.settings['depth_scale_m'],
                              'optical_frame': optical_frame or image.header.frame_id})
             except Exception:
+                if calibration is not None:
+                    raise PatrolInterrupted('Inspection photo capture unavailable')
                 self.get_logger().warning('Patrol photo capture unavailable')
+
+    def _poll_inspection(self, *, verify_all=False):
+        if self.inspection is None:
+            return
+        now = time.monotonic()
+        if not verify_all and now - self.last_inspection_poll < .25:
+            return
+        self.last_inspection_poll = now
+        run, captures = self.photo_recorder.evidence()
+        # Retry batches carry their own evidence and never reset the coverage audit.
+        current = run['patrol_id'] in self.inspection.runs
+        stats = self.photo_recorder.status()
+        if current and stats['failed']:
+            raise PatrolInterrupted('Inspection photo save failed')
+        for view in self.inspection.poll(captures if current else [], verify_all=verify_all):
+            self.planner.mark_observed(*view)
+        if current:
+            self.inspection.pending += max(0, stats['queued'] - stats['saved'])
+
+    def _await_inspection(self, handle):
+        """Seal one viewpoint batch before analysis, keeping all earlier credit auditable."""
+        self.photo_recorder.finish()
+        self.phase = 'ANALYZING'
+        deadline = time.monotonic() + self.settings['inspection_analysis_timeout_s']
+        while True:
+            self._pump(handle)
+            stats = self.photo_recorder.status()
+            if (stats['batch_ready'] and stats['queued'] == stats['saved']
+                    and not self.inspection.pending):
+                self._poll_inspection(verify_all=True)
+                if not self.inspection.pending:
+                    return
+            if time.monotonic() >= deadline:
+                raise PatrolInterrupted('Inspection photo analysis timed out; coverage incomplete')
+            self.stop_event.wait(.05)
+
+    def _spin(self, handle):
+        self.phase = 'OBSERVING'
+        request = Spin.Goal()
+        request.target_yaw = 2.0 * math.pi
+        allowance = self.settings['spin_time_allowance_s']
+        request.time_allowance = Duration(seconds=allowance).to_msg()
+        return self._run_child(self.spin_client, request, handle, allowance + 5.0)
 
     def _pump(self, handle):
         if self.stop_event.is_set() or handle.is_cancel_requested or not rclpy.ok():
@@ -486,6 +616,8 @@ class PatrolManager(Node):
         if now - self.last_pump >= 1.0 / self.settings['observation_hz']:
             self.last_pump = now
             self._observe()
+        if getattr(self, 'inspection', None) is not None:
+            self._poll_inspection()
         if now - self.last_observation > self.settings['sensor_timeout_s']:
             raise PatrolInterrupted('No current camera frame with matching TF')
         if now - self.last_feedback >= 1.0:
@@ -578,6 +710,14 @@ class PatrolManager(Node):
         self.phase = 'PLANNING'
         self.last_image_stamp = None
         self.last_feedback = 0.0
+        self.reobserve_target = None
+        self.reobserve_status = {'rounds': 0, 'views': 0, 'state': 'not_started'}
+        self.return_pose = None
+        self.return_status = {'state': 'pending', 'distance_m': None}
+        self.route_status = {'revision': 0, 'remaining': []}
+        self.route_planner = None
+        self.inspection = None
+        self.last_inspection_poll = 0.0
         self.last_observation = time.monotonic()
         success = False
         detail = ''
@@ -592,25 +732,59 @@ class PatrolManager(Node):
                 if reason:
                     self.get_logger().info(reason)
             info = self.camera_info
+            start = self.tf.lookup_transform(
+                self.map_message.header.frame_id, self.settings['base_frame'], Time()).transform
+            self.return_pose = (start.translation.x, start.translation.y, _yaw(start.rotation))
+            calibration = getattr(self, 'calibration', None)
+            profile = self.profiles[handle.request.thoroughness]
+            fov = 2.0 * math.atan2(info.width, 2.0 * info.k[0])
+            if calibration is not None:
+                profile = CoverageProfile(calibration.range_m, .95,
+                                          min(profile.candidate_spacing_m,
+                                              calibration.range_m/2))
+                fov = calibration.camera['hfov_rad']
             self.planner = CoveragePlanner(
-                grid, self.profiles[handle.request.thoroughness],
-                self._robot_xy(), self.settings['robot_clearance_m'], rooms,
-                2.0 * math.atan2(info.width, 2.0 * info.k[0]))
+                grid, profile,
+                self.return_pose[:2], self.settings['robot_clearance_m'], rooms,
+                fov, require_room_entry=calibration is None)
+            self.route_planner = ReturnRoutePlanner(self.planner, self.return_pose[:2])
             recorder = getattr(self, 'photo_recorder', None)
             if recorder is not None:
                 recorder.begin(grid, self.map_message.header.frame_id, room_file, rooms)
             self.last_observation = time.monotonic()
+            if calibration is not None:
+                run, _ = recorder.evidence()
+                self.inspection = InspectionEvidence(recorder.directory, calibration, run)
+                self._pump(handle)
+                if not self._spin(handle):
+                    raise PatrolInterrupted('Initial inspection rotation failed')
+                self._await_inspection(handle)
             while True:
                 self._pump(handle)
                 if self.planner.complete:
+                    if self.inspection is not None:
+                        self._await_inspection(handle)
                     success = True
-                    detail = 'Requested coverage and reachable room visits completed'
+                    detail = ('Analyzed photo coverage completed' if self.inspection is not None
+                              else 'Requested coverage and reachable room visits completed')
                     break
-                viewpoint = self.planner.select(self._robot_xy(), self._allowed)
-                if viewpoint is None:
+                if (self.inspection is not None
+                        and len(self.inspection.references) >= recorder.max_photos):
+                    detail = 'Inspection photo limit reached; partial coverage returned'
+                    break
+                route = self._plan_remaining(handle, 'coverage_update')
+                if not route.viewpoints:
                     detail = 'No usable untried viewpoint remains; partial coverage returned'
                     break
+                viewpoint = route.viewpoints[0]
                 self.planner.mark_attempted(viewpoint.index)
+                if self.inspection is not None:
+                    recorder.begin(
+                        grid, self.map_message.header.frame_id, room_file, rooms,
+                        inspection_of=self.inspection.run['patrol_id'],
+                        capture_limit=recorder.max_photos-len(self.inspection.references))
+                    run, _ = recorder.evidence()
+                    self.inspection.register_batch(run)
                 request = NavigateToPose.Goal()
                 request.pose = PoseStamped()
                 request.pose.header.frame_id = self.map_message.header.frame_id
@@ -622,17 +796,32 @@ class PatrolManager(Node):
                 self.phase = 'NAVIGATING'
                 if not self._run_child(self.navigation, request, handle,
                                        self.settings['navigation_timeout_s'], stall=True):
+                    if self.inspection is not None:
+                        self._await_inspection(handle)
                     continue
                 self.visited += 1
-                self.phase = 'OBSERVING'
-                request = Spin.Goal()
-                request.target_yaw = 2.0 * math.pi
-                allowance = self.settings['spin_time_allowance_s']
-                request.time_allowance = Duration(seconds=allowance).to_msg()
-                self._run_child(self.spin_client, request, handle, allowance + 5.0)
+                spun = self._spin(handle)
+                if self.inspection is not None:
+                    if not spun:
+                        raise PatrolInterrupted('Inspection rotation failed')
+                    self._await_inspection(handle)
+            if recorder is not None and self.settings['reobserve_enabled']:
+                self._reobserve(handle, grid, room_file, rooms)
+                detail += '; reobservation: ' + self.reobserve_status['state']
+            returned = self._return_to_start(handle)
+            success = success and returned
+            if self.inspection is not None:
+                self._poll_inspection(verify_all=True)
+                success = success and not self.inspection.pending
+            detail += '; return: ' + self.return_status['state']
         except (PatrolInterrupted, ValueError, OSError, TransformException) as error:
+            success = False
+            if self.return_status['state'] != 'arrived':
+                self.return_status['state'] = ('canceled' if handle.is_cancel_requested
+                                               else 'interrupted')
             detail = str(error)
         except Exception as error:
+            success = False
             self.get_logger().error(f'Patrol failed: {error}')
             detail = f'Patrol failed: {error}'
         finally:
@@ -660,11 +849,204 @@ class PatrolManager(Node):
                 self._publish_status(state, result.message)
                 return result
             finally:
+                self.reobserve_target = None
                 # Diagnostic/result publication must not strand busy after
                 # Nav2 has stopped. An unconfirmed stop still owns the inputs.
                 with self.lock:
                     if settled:
                         self.busy = False
+
+    def _record_route(self, views, distance, reason):
+        """Publish a replaceable remaining route, always ending at the original start."""
+        self.route_status = {
+            'revision': self.route_status['revision']+1, 'reason': reason,
+            'estimated_distance_m': distance,
+            'distance_model': 'static_clearance_grid_4_connected',
+            'remaining': [dict(kind=kind, x=view.x, y=view.y) for kind, view in views]
+            + [dict(kind='return', x=self.return_pose[0], y=self.return_pose[1])],
+        }
+        self._publish_status(self.phase.lower(), '')
+
+    def _plan_remaining(self, handle, reason):
+        self.phase = 'PLANNING'
+        route = self.route_planner.plan(
+            self._robot_xy(), self._allowed, lambda: self._pump(handle))
+        self._record_route([('observe', v) for v in route.viewpoints],
+                           route.distance_m, reason)
+        return route
+
+    def _return_to_start(self, handle):
+        """Verify measured return distance in addition to the completed Nav2 action."""
+        self._pump(handle)
+        self.phase = 'RETURNING'
+        xy = self._robot_xy()
+        plan = self.route_planner.plan(xy, self._allowed, lambda: self._pump(handle),
+                                       maximum_stops=0)
+        self._record_route([], plan.distance_m, 'return_after_observations')
+        distance = math.dist(xy, self.return_pose[:2])
+        self.return_status = {'state': 'returning', 'distance_m': distance}
+        if distance > self.settings['return_tolerance_m']:
+            if not self._allowed(*self.return_pose[:2]):
+                self.return_status['state'] = 'blocked'
+                return False
+            request = NavigateToPose.Goal()
+            request.pose.header.frame_id = self.map_message.header.frame_id
+            request.pose.header.stamp = self.get_clock().now().to_msg()
+            request.pose.pose.position.x, request.pose.pose.position.y = self.return_pose[:2]
+            request.pose.pose.orientation.z = math.sin(self.return_pose[2]/2)
+            request.pose.pose.orientation.w = math.cos(self.return_pose[2]/2)
+            if not self._run_child(self.navigation, request, handle,
+                                   self.settings['navigation_timeout_s'], stall=True):
+                self.return_status['state'] = 'navigation_failed'
+                return False
+            distance = math.dist(self._robot_xy(), self.return_pose[:2])
+        arrived = distance <= self.settings['return_tolerance_m']
+        self.return_status = {'state': 'arrived' if arrived else 'outside_tolerance',
+                              'distance_m': distance}
+        if arrived:
+            self.route_status['remaining'] = []
+        return arrived
+
+    def _await_analysis(self, handle):
+        """Keep cancellation and live sensor checks active while the Agent analyzes a batch."""
+        recorder = self.photo_recorder
+        identity = recorder.identity()
+        recorder.finish()
+        self.phase = 'ANALYZING'
+        deadline = time.monotonic() + self.settings['reobserve_analysis_timeout_s']
+        while time.monotonic() < deadline:
+            self._pump(handle)
+            stats = recorder.status()
+            if stats['queued'] == stats['saved'] + stats['failed']:
+                if not stats['saved']:
+                    self.reobserve_status['state'] = 'no_saved_photos'
+                    return []
+                rows = read_results(recorder.directory, **identity,
+                                    simulated=bool(self.get_parameter('use_sim_time').value))
+                if rows is not None:
+                    self.reobserve_status['state'] = 'analyzed' if rows else 'analysis_unavailable'
+                    return rows
+            self.stop_event.wait(.1)
+        self.reobserve_status['state'] = 'analysis_timeout'
+        return []
+
+    def _reobserve_heading_error(self, target):
+        """Aim from the measured optical pose, not Nav2's permissive goal yaw."""
+        image = self.image
+        transform = self.tf.lookup_transform(
+            self.map_message.header.frame_id,
+            self.settings['camera_optical_frame'] or image.header.frame_id,
+            Time.from_msg(image.header.stamp)).transform
+        p, q = transform.translation, transform.rotation
+        forward_x = 2.0 * (q.x * q.z + q.w * q.y)
+        forward_y = 2.0 * (q.y * q.z - q.w * q.x)
+        if math.hypot(forward_x, forward_y) < 1e-6:
+            raise ValueError('Reobservation camera has no horizontal viewing direction')
+        desired = math.atan2(target['xy'][1]-p.y, target['xy'][0]-p.x)
+        error = desired - math.atan2(forward_y, forward_x)
+        return math.atan2(math.sin(error), math.cos(error))
+
+    def _orient_reobservation(self, handle, target):
+        """Confirm the camera faces the target before consuming a retry photo."""
+        self.phase = 'REORIENTING'
+        # A second bounded correction handles residual Nav2 Spin tolerance.
+        for attempt in range(3):
+            self._pump(handle)
+            error = self._reobserve_heading_error(target)
+            if abs(error) <= .15:
+                return True
+            if attempt == 2:
+                return False
+            request = Spin.Goal()
+            request.target_yaw = error
+            allowance = self.settings['spin_time_allowance_s']
+            request.time_allowance = Duration(seconds=allowance).to_msg()
+            if not self._run_child(self.spin_client, request, handle, allowance+5.):
+                return False
+            # Wait for an image taken after the rotation, while remaining cancellable.
+            finished = self.get_clock().now().nanoseconds / 1e9
+            deadline = time.monotonic()+self.settings['sensor_timeout_s']
+            while stamp_seconds(self.image.header.stamp) <= finished:
+                self._pump(handle)
+                if time.monotonic() >= deadline:
+                    return False
+                self.stop_event.wait(.05)
+        return False
+
+    def _reobserve(self, handle, grid, room_file, rooms):
+        """Use bounded alternate views and linked batches with separate photo evidence."""
+        inspection = getattr(self, 'inspection', None)
+        root = (inspection.run['patrol_id'] if inspection is not None
+                else self.photo_recorder.identity()['patrol_id'])
+        previous = []
+        if inspection is None:
+            rows = self._await_analysis(handle)
+        else:
+            rows = []
+            for run in inspection.runs.values():
+                batch = read_results(self.photo_recorder.directory, run['patrol_id'],
+                                     run['map_id'], inspection.calibration.simulated)
+                if batch is None:
+                    raise ValueError('Inspection batch analysis disappeared')
+                rows.extend(batch)
+        for round_index in range(self.settings['reobserve_rounds']):
+            if not rows:
+                return
+            targets = unresolved_targets(rows, self.settings['reobserve_targets'])
+            if not targets:
+                self.reobserve_status['state'] = 'no_actionable_unknowns'
+                return
+            self.photo_recorder.begin(
+                grid, self.map_message.header.frame_id, room_file, rooms,
+                reobserve_of=root, reobserve_round=round_index+1, capture_limit=len(targets))
+            self.reobserve_status['rounds'] = round_index+1
+            pending = list(targets)
+            while pending:
+                self.phase = 'REPOSITIONING'
+                self._pump(handle)
+                steps, distance = plan_reobservations(
+                    self.planner, pending, self._robot_xy(), self.return_pose[:2], previous,
+                    self._allowed, self.settings['reobserve_max_travel_m'],
+                    lambda: self._pump(handle))
+                self._record_route([('reobserve', view) for _, view in steps], distance,
+                                   'reobserve_remaining')
+                if not steps:
+                    break
+                target, view = steps[0]
+                pending.remove(target)
+                previous.append([view.x, view.y])
+                request = NavigateToPose.Goal()
+                request.pose.header.frame_id = self.map_message.header.frame_id
+                request.pose.header.stamp = self.get_clock().now().to_msg()
+                request.pose.pose.position.x, request.pose.pose.position.y = view.x, view.y
+                request.pose.pose.orientation.z = math.sin(view.yaw/2)
+                request.pose.pose.orientation.w = math.cos(view.yaw/2)
+                if not self._run_child(self.navigation, request, handle,
+                                       self.settings['navigation_timeout_s'], stall=True):
+                    continue
+                # Wait for a post-arrival image; moving images must not consume the quota.
+                settle_until = time.monotonic()+.5
+                while time.monotonic() < settle_until:
+                    self._pump(handle)
+                    self.stop_event.wait(.05)
+                if not self._orient_reobservation(handle, target):
+                    continue
+                self.reobserve_target = {k: target[k] for k in ('observation_id', 'object_index')}
+                before = self.photo_recorder.status()['queued']
+                self.phase = 'REOBSERVING'
+                deadline = time.monotonic()+3.
+                while time.monotonic() < deadline:
+                    self._pump(handle)
+                    if self.photo_recorder.status()['queued'] > before:
+                        self.reobserve_status['views'] += 1
+                        break
+                    self.stop_event.wait(.05)
+                self.reobserve_target = None
+                self.phase = 'REPOSITIONING'
+            rows = self._await_analysis(handle)
+        if rows:
+            self.reobserve_status['state'] = ('attempt_limit' if unresolved_targets(rows)
+                                              else 'no_actionable_unknowns')
 
     def _publish_status(self, state, detail):
         # This diagnostic topic is not the Action result or motion ownership.
@@ -681,6 +1063,12 @@ class PatrolManager(Node):
                 if self.planner else [],
                 # 0: no rooms for this map, so the web says it patrolled without rooms.
                 'room_count': len(self.planner.room_names) if self.planner else 0,
+                'reobservation': self.reobserve_status,
+                'return_to_start': dict(self.return_status, start_pose=self.return_pose),
+                'route': self.route_status,
+                'coverage': self.planner.summary() if self.planner else None,
+                'evidence': self.inspection.status()
+                if getattr(self, 'inspection', None) is not None else None,
                 'photos': (self.photo_recorder.status()
                            if getattr(self, 'photo_recorder', None) is not None else None),
             })

@@ -257,3 +257,22 @@ def test_batch_request_declares_frame_before_its_contents(tmp_path):
     context = json.loads(calls[0]['input'][0]['content'][0]['text'])
     assert all('photo_rect_1000' in f and 'grid_row' in f and 'grid_column' in f
                for f in context['frames'])
+
+
+@pytest.mark.parametrize('wrong_frame', [False, True])
+def test_person_anchors_are_restored_only_from_their_own_card(tmp_path, wrong_frame):
+    captures, _ = batch(tmp_path, 4)
+    _, layout = make_mosaic(captures)
+    frame, other = layout['frames'][:2]
+    value = analysis_for(layout)
+    obj = value['frames'][-1]['objects'][0]
+    obj['kind'] = 'person'
+    x0, y0, x1, y1 = (other if wrong_frame else frame)['photo_rect']
+    obj['sheet_anchors'] = [[round((x0+u*(x1-x0))/layout['width']*1000),
+                             round((y0+v*(y1-y0))/layout['height']*1000)]
+                            for u, v in [(.4, .4), (.6, .6)]]
+    restored = split_results(value, layout)[frame['observation_id']]['objects'][0]
+    if wrong_frame:
+        assert restored['image_bbox'] is None and restored['image_anchors'] == []
+    else:
+        assert np.allclose(restored['image_anchors'], [[400, 400], [600, 600]], atol=7)

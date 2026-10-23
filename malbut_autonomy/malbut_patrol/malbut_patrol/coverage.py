@@ -99,7 +99,7 @@ class CoverageGrid:
         return 0 <= row < self.height and 0 <= col < self.width
 
 
-def _flood_distances(mask, start):
+def _flood_distances(mask, start, checkpoint=None):
     """Compute four-connected distances, disallowing diagonal corner cutting."""
     distances = np.full(mask.shape, -1, dtype=np.int32)
     row, col = start
@@ -109,7 +109,11 @@ def _flood_distances(mask, start):
     distances[row, col] = 0
     pending = deque([(row, col)])
     height, width = mask.shape
+    processed = 0
     while pending:
+        if checkpoint is not None and processed % 1024 == 0:
+            checkpoint()
+        processed += 1
         row, col = pending.popleft()
         distance = distances[row, col] + 1
         for nr, nc in ((row - 1, col), (row + 1, col),
@@ -155,7 +159,7 @@ class CoveragePlanner:
 
     def __init__(
         self, grid, profile, robot_xy, robot_clearance_m=0.25,
-        rooms=None, camera_fov_rad=1.05,
+        rooms=None, camera_fov_rad=1.05, require_room_entry=True,
     ):
         """Preprocess static clearance, reachable candidates, rooms, and sight."""
         if not math.isfinite(robot_clearance_m) or robot_clearance_m < 0.0:
@@ -164,6 +168,7 @@ class CoveragePlanner:
         self.grid = grid
         self.profile = profile
         self.camera_fov_rad = camera_fov_rad
+        self.require_room_entry = require_room_entry
         self._clearance_m = robot_clearance_m
         self._attempted = set()
         self._observed = np.zeros(grid.cells.size, dtype=bool)
@@ -220,7 +225,9 @@ class CoveragePlanner:
         # The denominator includes areas observable from reachable viewpoints,
         # not enclosed rooms or corners that no legal camera position can see.
         for name, mask in self._room_masks.items():
-            if np.any(mask & self.reachable):
+            eligible = (self.reachable if require_room_entry
+                        else self._target.reshape(grid.cells.shape))
+            if np.any(mask & eligible):
                 self._room_cells[name] = np.flatnonzero(mask.ravel() & self._target)
             else:
                 self._inaccessible_names.append(name)
@@ -350,16 +357,15 @@ class CoveragePlanner:
             self._visibility_cache.popitem(last=False)
         return result
 
-    def mark_observed(self, x, y, yaw, fov_rad=None):
-        """Credit coverage only when the caller received an actual camera frame."""
+    def _frame_cells(self, x, y, yaw, fov_rad=None):
         fov = self.camera_fov_rad if fov_rad is None else fov_rad
         self._validate_fov(fov)
         if not all(math.isfinite(value) for value in (x, y, yaw)):
-            return 0.0
+            return np.empty(0, dtype=np.int32)
         row, col = self.grid.world_to_cell(x, y)
         visible = self._visible_from(row, col)
         if not visible.size:
-            return 0.0
+            return visible
         rows, cols = np.divmod(visible, self.grid.width)
         xs, ys = self.grid.cell_to_world(rows, cols)
         angles = np.arctan2(ys - y, xs - x) - yaw
@@ -368,12 +374,26 @@ class CoveragePlanner:
         visible = visible[((np.abs(angles) <= fov / 2.0 + 1e-12) | (distance <= 1e-24))
                           & (distance <= self.profile.range_m ** 2 + 1e-12)
                           & self._target[visible]]
+        return visible
+
+    def observation_gain(self, x, y, yaw, fov_rad=None):
+        """Measure useful unobserved area without granting observation credit."""
+        visible = self._frame_cells(x, y, yaw, fov_rad)
+        return float(np.count_nonzero(~self._observed[visible]) * self.grid.resolution ** 2)
+
+    def mark_observed(self, x, y, yaw, fov_rad=None):
+        """Credit a view only after the caller has validated its required evidence."""
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            return 0.0
+        visible = self._frame_cells(x, y, yaw, fov_rad)
+        row, col = self.grid.world_to_cell(x, y)
         newly_seen = visible[~self._observed[visible]]
         self._observed[newly_seen] = True
         self._observed_count += newly_seen.size
         for name in self._room_cells:
             mask = self._room_masks[name]
-            if mask[row, col] and np.any(mask.ravel()[visible]):
+            if (self.grid.contains(row, col) and mask[row, col]
+                    and np.any(mask.ravel()[visible])):
                 self._visit_names.add(name)
         return float(newly_seen.size * self.grid.resolution ** 2)
 
@@ -465,6 +485,8 @@ class CoveragePlanner:
     @property
     def unvisited_room_names(self):
         """Return reachable labels not yet physically entered with a camera frame."""
+        if not self.require_room_entry:
+            return ()
         return tuple(sorted(set(self._room_cells) - self._visit_names))
 
     @property
@@ -472,7 +494,7 @@ class CoveragePlanner:
         """Return reachable rooms lacking either a visit or desired coverage."""
         return tuple(sorted(
             name for name, cells in self._room_cells.items()
-            if (name not in self._visit_names or not cells.size
+            if ((self.require_room_entry and name not in self._visit_names) or not cells.size
                 or np.count_nonzero(self._observed[cells]) / cells.size
                 < self.profile.target_ratio)
         ))
@@ -500,3 +522,23 @@ class CoveragePlanner:
         return (self.candidate_count > 0
                 and self.coverage_ratio >= self.profile.target_ratio
                 and not self.uncovered_room_names)
+
+    def summary(self):
+        """Keep observable-target and whole-free-map denominators explicit."""
+        cell_area = self.grid.resolution ** 2
+        known = float(np.count_nonzero(self.grid.free) * cell_area)
+        return {'target_area_m2': self.target_area_m2,
+                'observed_area_m2': self.observed_area_m2,
+                'remaining_area_m2': self.remaining_area_m2,
+                'known_free_area_m2': known,
+                'excluded_free_area_m2': max(0.0, known - self.target_area_m2),
+                'known_free_coverage_ratio': self.observed_area_m2 / known if known else 0.0,
+                'range_m': self.profile.range_m, 'target_ratio': self.profile.target_ratio,
+                'require_room_entry': self.require_room_entry,
+                'rooms': {name: {'target_area_m2': float(cells.size * cell_area),
+                                 'observed_area_m2': float(
+                                     np.count_nonzero(self._observed[cells]) * cell_area),
+                                 'coverage_ratio': float(np.mean(self._observed[cells]))
+                                 if cells.size else 0.0,
+                                 'physically_entered': name in self._visit_names}
+                          for name, cells in self._room_cells.items()}}

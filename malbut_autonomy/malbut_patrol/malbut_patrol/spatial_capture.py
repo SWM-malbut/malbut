@@ -134,3 +134,48 @@ def encode_spatial(image, bundle):
         'optical_frame': bundle['optical_frame'],
     }
     return spatial, output.getvalue()
+
+
+def encode_lidar(image, bundle):
+    """Store optional scan evidence only with known timing and negligible sensor motion."""
+    if bundle is None:
+        return None, None
+    scan = bundle.get('scan')
+    start, end = bundle.get('transform'), bundle.get('end_transform')
+    if scan is None or start is None or end is None:
+        return {'status': 'lidar_transform_missing'}, None
+    count = len(scan.ranges)
+    parameters = (scan.angle_min, scan.angle_increment, scan.range_min,
+                  scan.range_max, scan.time_increment)
+    if (not 1 <= count <= 4096 or not all(math.isfinite(v) for v in parameters)
+            or not 0 < scan.angle_increment <= math.pi
+            or not 0 <= scan.range_min < scan.range_max <= 1000
+            or not 0 <= scan.time_increment*(count-1) <= .25):
+        return {'status': 'lidar_invalid'}, None
+    a, b = scan.header.stamp, image.header.stamp
+    offset = a.sec-b.sec + (a.nanosec-b.nanosec)/1e9
+    times = offset + np.arange(count)*scan.time_increment
+    if np.min(np.abs(times)) > .05:
+        return {'status': 'lidar_unsynchronized'}, None
+    p, q = start.translation, start.rotation
+    ep, eq = end.translation, end.rotation
+    translation, quaternion = [p.x, p.y, p.z], [q.x, q.y, q.z, q.w]
+    other_position, other_quaternion = [ep.x, ep.y, ep.z], [eq.x, eq.y, eq.z, eq.w]
+    if (not all(math.isfinite(v) for v in translation+quaternion+other_position+other_quaternion)
+            or abs(np.linalg.norm(quaternion)-1) > .001
+            or abs(np.linalg.norm(other_quaternion)-1) > .001):
+        return {'status': 'lidar_transform_invalid'}, None
+    motion = np.linalg.norm(np.asarray(translation)-other_position)
+    rotation = 2*math.acos(min(1., abs(float(np.dot(quaternion, other_quaternion)))))
+    if motion > .02 or rotation > .02:
+        return {'status': 'lidar_sensor_moving'}, None
+    stream = io.BytesIO()
+    np.save(stream, np.asarray(scan.ranges, dtype=np.float32), allow_pickle=False)
+    return {'status': 'available', 'count': count,
+            'stamp': {'sec': scan.header.stamp.sec, 'nanosec': scan.header.stamp.nanosec},
+            'frame': scan.header.frame_id, 'angle_min': float(scan.angle_min),
+            'angle_increment': float(scan.angle_increment),
+            'time_increment': float(scan.time_increment),
+            'range_min': float(scan.range_min), 'range_max': float(scan.range_max),
+            'map_from_lidar': {'translation': translation,
+                               'rotation_xyzw': quaternion}}, stream.getvalue()

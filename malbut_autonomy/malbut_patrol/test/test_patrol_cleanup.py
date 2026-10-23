@@ -20,6 +20,8 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
+from malbut_patrol.route import PatrolRoute, ReturnRoutePlanner
+
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 LAYOUTS = ('malbut_autonomy/malbut_patrol', 'malbut_test/malbut_patrol')
@@ -43,6 +45,7 @@ def patrol(request, monkeypatch):
             Result=SimpleNamespace, Feedback=SimpleNamespace),
         'TransformException': type('TransformException', (Exception,), {}),
         'rclpy': SimpleNamespace(ok=lambda: True),
+        'Time': lambda: None, '_yaw': lambda q: 0.,
         'NavigateToPose': SimpleNamespace(Goal=SimpleNamespace),
         'PoseStamped': lambda: SimpleNamespace(
             header=SimpleNamespace(), pose=SimpleNamespace(
@@ -59,11 +62,15 @@ def patrol(request, monkeypatch):
     manager.last_pump = 0.0
     manager.map_message = SimpleNamespace(header=SimpleNamespace(frame_id='map'))
     manager.camera_info = SimpleNamespace(width=640, k=[320.0])
+    manager.tf = Mock()
+    manager.tf.lookup_transform.return_value = SimpleNamespace(transform=SimpleNamespace(
+        translation=SimpleNamespace(x=.55, y=.55), rotation=SimpleNamespace()))
     manager.settings = {
         'room_map_file': '', 'robot_clearance_m': 0.0,
         'observation_hz': 5.0, 'sensor_timeout_s': 10.0,
         'navigation_timeout_s': 10.0,
         'cancel_completion_timeout_s': 1.0,
+        'base_frame': 'base_footprint', 'return_tolerance_m': .25,
     }
     manager.profiles = {1: coverage.CoverageProfile(3.0, 0.9, 0.8)}
     manager._ready = Mock(return_value='')
@@ -78,14 +85,19 @@ def patrol(request, monkeypatch):
     manager.get_logger = Mock()
     manager.status = Mock()
 
-    def make_planner(*args):
-        planner = coverage.CoveragePlanner(*args)
+    def make_planner(*args, **kwargs):
+        planner = coverage.CoveragePlanner(*args, **kwargs)
         # A legitimate partial patrol; no Nav2 goal is needed to exercise
         # feedback, room metadata, terminal result and processing cleanup.
-        planner.select = Mock(return_value=None)
         return planner
 
+    def make_route(planner, home):
+        route = ReturnRoutePlanner(planner, home)
+        route.plan = Mock(return_value=PatrolRoute((), 0., False))
+        return route
+
     namespace['CoveragePlanner'] = make_planner
+    namespace['ReturnRoutePlanner'] = make_route
     handle = Mock(request=SimpleNamespace(thoroughness=1), is_cancel_requested=False)
     return manager, handle
 
@@ -126,16 +138,17 @@ def test_status_serialization_failure_cannot_prevent_child_cancellation(patrol):
 def test_deployed_patrol_reaches_navigation_instead_of_failing_on_room_metadata(patrol):
     manager, handle = patrol
     namespace = manager._execute.__func__.__globals__
-    original = namespace['CoveragePlanner']
+    original = namespace['ReturnRoutePlanner']
 
     def make_one_viewpoint(*args):
-        planner = original(*args)
-        viewpoint = type(planner).select(planner, manager._robot_xy(), manager._allowed)
-        assert viewpoint is not None
-        planner.select.side_effect = [viewpoint, None]
-        return planner
+        route = original(*args)
+        plan = type(route).plan(route, manager._robot_xy(), manager._allowed)
+        assert plan.viewpoints
+        route.plan.side_effect = [PatrolRoute(plan.viewpoints[:1], plan.distance_m, False),
+                                  PatrolRoute((), 0., False), PatrolRoute((), 0., False)]
+        return route
 
-    namespace['CoveragePlanner'] = make_one_viewpoint
+    namespace['ReturnRoutePlanner'] = make_one_viewpoint
     manager._run_child.return_value = False  # A confirmed failed Nav2 result.
     result = manager._execute(handle)
     assert not result.message.startswith('Patrol failed:'), result.message
