@@ -1,0 +1,587 @@
+"""
+Exercise the hardware Nav2 configuration on a Fortress robot, without hardware.
+
+Run after building/sourcing malbut_description, malbut_gazebo and
+malbut_gazebo_plugins. The generated room is synthetic; no household map is used.
+"""
+
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import time
+import uuid
+from xml.etree import ElementTree as ET
+
+import cv2
+import numpy as np
+import yaml
+
+
+def pose_error_statistics(truth, estimates):
+    """Compare poses at sensor timestamps, interpolating translation and wrapped yaw."""
+    truth, estimates = np.asarray(truth), np.asarray(estimates)
+    if len(truth) < 2 or len(estimates) < 1:
+        raise ValueError('Pose error measurement needs ground truth and estimated samples')
+    matched = estimates[(estimates[:, 0] >= truth[0, 0])
+                        & (estimates[:, 0] <= truth[-1, 0])]
+    if not len(matched):
+        raise ValueError('No estimated pose has a matching ground truth timestamp')
+    positions = np.column_stack([np.interp(matched[:, 0], truth[:, 0], truth[:, i])
+                                 for i in (1, 2)])
+    yaw = np.interp(matched[:, 0], truth[:, 0], np.unwrap(truth[:, 3]))
+    heading = np.abs(np.arctan2(np.sin(matched[:, 3]-yaw), np.cos(matched[:, 3]-yaw)))
+    distance = np.linalg.norm(matched[:, 1:3]-positions, axis=1)
+    return {'samples': len(matched), 'excluded_samples': len(estimates)-len(matched),
+            'max_position_m': float(distance.max()),
+            'p95_position_m': float(np.quantile(distance, .95)),
+            'mean_position_m': float(distance.mean()), 'max_heading_rad': float(heading.max())}
+
+
+def rectangle(x0, y0, x1, y1):
+    """Return a closed polygon for a rectangular hazard or room."""
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
+
+
+def make_fixture(folder, gazebo_share, args):
+    """Give the simulator and the map server identical physical walls."""
+    from malbut_bringup.zones import build_mask
+
+    origin, resolution, shape = (-2., -2.), .05, (90, 100)
+    boxes = [(-2., -2., -1.9, 2.5), (2.9, -2., 3., 2.5),
+             (-2., -2., 3., -1.9), (-2., 2.4, 3., 2.5),
+             (1.7, .9, 2., 1.6), (.3, 1.7, .6, 2.)]
+    rings = [rectangle(.95, -.75, 1.9, .75)]
+    if args.scenario != 'original':
+        origin, shape = (-1., -1.5), (60, 100)
+        boxes = [(-1., -1.5, -.9, 1.5), (3.9, -1.5, 4., 1.5),
+                 (-1., -1.5, 4., -1.4), (-1., 1.4, 4., 1.5)]
+        barriers = [(.5, args.width/2, 2.5, 1.4),
+                    (.5, -1.4, 2.5, -args.width/2)]
+        physical = {'physical': 2, 'mixed': 1, 'keepout': 0}[args.barriers]
+        boxes += barriers[:physical]
+        rings = [rectangle(*box) for box in barriers[physical:]]
+        rooms = [{'type': 'Feature', 'properties': {'role': 'room', 'name': name},
+                  'geometry': {'type': 'Polygon', 'coordinates': [rectangle(*bounds)]}}
+                 for name, bounds in [('west', (-.9, -1.4, .5, 1.4)),
+                                      ('east', (2.5, -1.4, 3.9, 1.4))]]
+        (folder / 'rooms.geojson').write_text(json.dumps({
+            'type': 'FeatureCollection', 'features': rooms}))
+    tree = ET.parse(gazebo_share / 'worlds/empty.sdf')
+    world = tree.getroot().find('world')
+    image = np.full(shape, 254, dtype=np.uint8)
+    for index, (x0, y0, x1, y1) in enumerate(boxes):
+        model = ET.SubElement(world, 'model', name=f'fixture_wall_{index}')
+        ET.SubElement(model, 'static').text = 'true'
+        ET.SubElement(model, 'pose').text = f'{(x0+x1)/2} {(y0+y1)/2} .5 0 0 0'
+        link = ET.SubElement(model, 'link', name='body')
+        for kind in ('collision', 'visual'):
+            element = ET.SubElement(link, kind, name=kind)
+            geometry = ET.SubElement(element, 'geometry')
+            ET.SubElement(ET.SubElement(geometry, 'box'), 'size').text = f'{x1-x0} {y1-y0} 1'
+        col0, col1 = [round((x-origin[0])/resolution) for x in (x0, x1)]
+        row0, row1 = [round((y-origin[1])/resolution) for y in (y0, y1)]
+        # The last box is deliberately absent from the static map: only the
+        # simulator's lidar can add it to Nav2's obstacle layer.
+        if args.scenario != 'original' or index != len(boxes)-1:
+            image[shape[0]-row1:shape[0]-row0, col0:col1] = 0
+    tree.write(folder / 'world.sdf')
+    cv2.imwrite(str(folder / 'map.pgm'), image)
+    geometry = {'image': 'map.pgm', 'resolution': resolution, 'origin': [*origin, 0.],
+                'negate': 0, 'occupied_thresh': .65, 'free_thresh': .196}
+    (folder / 'map.yaml').write_text(yaml.safe_dump(geometry))
+    features = [{'type': 'Feature', 'properties': {
+        'role': 'semantic_zone', 'behavior': 'restricted'},
+        'geometry': {'type': 'Polygon', 'coordinates': [ring]}} for ring in rings]
+    mask, _ = build_mask(folder / 'map.yaml', features)
+    cv2.imwrite(str(folder / 'mask.pgm'), mask)
+    return image, mask, geometry, rings, boxes
+
+
+def run(args):
+    """Use actual Gazebo odometry, lidar, planner and controller in a private domain."""
+    # Set isolation before importing/initializing ROS or launching any process.
+    os.environ['ROS_DOMAIN_ID'] = str(args.domain)
+    os.environ['ROS_LOCALHOST_ONLY'] = '1'
+    os.environ['IGN_PARTITION'] = 'malbut-keepout-' + uuid.uuid4().hex
+    os.environ.pop('CYCLONEDDS_URI', None)
+    from ament_index_python.packages import get_package_share_directory
+    import rclpy
+    from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
+    from lifecycle_msgs.srv import ChangeState, GetState
+    from nav2_msgs.action import ComputePathToPose, NavigateToPose
+    from nav2_msgs.msg import CostmapFilterInfo
+    from nav2_msgs.srv import GetCostmap
+    from nav_msgs.msg import OccupancyGrid, Odometry
+    from rcl_interfaces.msg import Log
+    from rclpy.action import ActionClient
+    from rclpy.parameter import Parameter
+    from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+    from rclpy.time import Time
+    from sensor_msgs.msg import LaserScan
+    from std_msgs.msg import String
+    from tf2_ros import Buffer, StaticTransformBroadcaster, TransformListener
+
+    folder = args.output.resolve()
+    folder.mkdir(parents=True, exist_ok=False)
+    root = Path(__file__).resolve().parents[2]
+    share = Path(get_package_share_directory('malbut_gazebo'))
+    pixels, mask, geometry, rings, boxes = make_fixture(folder, share, args)
+    config = args.params or root / 'malbut_bringup/config/nav2_params.yaml'
+    params = yaml.safe_load(config.read_text())
+    for scope in ('local_costmap', 'global_costmap'):
+        costmap = params[scope][scope]['ros__parameters']
+        costmap['use_sim_time'] = True
+        costmap['obstacle_layer']['scan']['topic'] = '/scan'
+        if args.baseline:
+            costmap['filters'] = ['keepout_filter']
+            costmap.pop('keepout_inflation_layer', None)
+    for name in ('controller_server', 'planner_server', 'behavior_server',
+                 'velocity_smoother', 'bt_navigator',
+                 'bt_navigator_navigate_to_pose_rclcpp_node',
+                 'bt_navigator_navigate_through_poses_rclcpp_node'):
+        params[name]['ros__parameters']['use_sim_time'] = True
+        params[name]['ros__parameters']['bond_heartbeat_period'] = 0.
+    params['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'] = str(
+        root / 'malbut_bringup/config/navigate_to_pose.xml')
+    params['bt_navigator']['ros__parameters']['default_nav_through_poses_bt_xml'] = str(
+        root / 'malbut_bringup/config/navigate_through_poses.xml')
+    use_amcl = (args.amcl or args.scenario == 'patrol') and not args.ground_truth
+    if use_amcl:
+        params['amcl']['ros__parameters'].update(
+            use_sim_time=True, scan_topic='/scan', set_initial_pose=True,
+            initial_pose={'x': 0., 'y': 0., 'z': 0., 'yaw': 0.}, bond_heartbeat_period=0.)
+    (folder / 'nav2.yaml').write_text(yaml.safe_dump(params))
+    processes, streams = [], []
+    started = time.monotonic()
+    result = {'baseline': args.baseline, 'domain': args.domain, 'legs': [], 'errors': [],
+              'validation_passed': None if args.baseline else False,
+              'warnings': [], 'pose_samples': [], 'commands': [], 'zones': rings,
+              'scenario': args.scenario, 'width_m': args.width, 'barriers': args.barriers,
+              'physical_boxes': boxes, 'expect_blocked': args.expect_blocked,
+              'pose_sample_time_basis': 'message.header.stamp',
+              'localization': 'Gazebo odometry with identity map-to-odom; AMCL excluded',
+              'config': str(config)}
+    if use_amcl:
+        result['localization'] = 'AMCL from Gazebo lidar; ground truth from Gazebo odometry'
+        result['amcl_samples'] = []
+    if args.scenario == 'patrol':
+        result['patrol_status'] = []
+
+    def start(label, command):
+        stream = (folder / f'{label}.log').open('w')
+        streams.append(stream)
+        process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+        processes.append(process)
+        return process
+
+    rclpy.init()
+    node = rclpy.create_node('keepout_sim_verifier', parameter_overrides=[
+        Parameter('use_sim_time', value=True)])
+    latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    latest = {}
+
+    def odometry(message):
+        latest['odom'] = message
+        p = message.pose.pose
+        result['pose_samples'].append([message.header.stamp.sec
+                                       + message.header.stamp.nanosec / 1e9,
+                                       p.position.x, p.position.y,
+                                       2*math.atan2(p.orientation.z, p.orientation.w)])
+
+    def laser(message):
+        latest['scan'] = message
+        latest['scan_received'] = time.monotonic()
+
+    def log(message):
+        if message.level >= 30:
+            result['errors' if message.level >= 40 else 'warnings'].append({
+                'name': message.name, 'message': message.msg})
+
+    def velocity(message):
+        result['commands'].append([message.linear.x, message.linear.y, message.angular.z])
+
+    def patrol_status(message):
+        status = json.loads(message.data)
+        latest['patrol_status'] = status
+        result['patrol_status'].append(status)
+
+    def localization(message):
+        p = message.pose.pose
+        latest['amcl'] = message
+        result['amcl_samples'].append([message.header.stamp.sec
+                                      + message.header.stamp.nanosec / 1e9,
+                                      p.position.x, p.position.y,
+                                      2*math.atan2(p.orientation.z, p.orientation.w)])
+
+    subs = [node.create_subscription(Odometry, '/odom', odometry, qos_profile_sensor_data),
+            node.create_subscription(LaserScan, '/scan', laser, qos_profile_sensor_data),
+            node.create_subscription(Log, '/rosout', log, 100),
+            node.create_subscription(Twist, '/cmd_vel', velocity, 100)]
+    publishers = []
+    stop_pub = node.create_publisher(Twist, '/cmd_vel', 10)
+    if args.scenario == 'patrol':
+        subs.append(node.create_subscription(String, '/patrol/status', patrol_status, latched))
+    if use_amcl:
+        tf_buffer = Buffer(node=node)
+        tf_listener = TransformListener(tf_buffer, node)
+        subs.append(node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose',
+                                             localization, latched))
+    else:
+        tf = StaticTransformBroadcaster(node)
+        transform = TransformStamped()
+        transform.header.frame_id, transform.child_frame_id = 'map', 'odom'
+        transform.transform.rotation.w = 1.
+        tf.sendTransform(transform)
+    active_handle = None
+
+    def spin_until(predicate, timeout=30.):
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            if time.monotonic() > deadline:
+                raise TimeoutError('Simulation operation timed out')
+            for process in processes:
+                if process.poll() is not None:
+                    raise RuntimeError('Simulation child exited: ' + str(process.args))
+            rclpy.spin_once(node, timeout_sec=.03)
+
+    def pump(seconds):
+        deadline = time.monotonic() + seconds
+        spin_until(lambda: time.monotonic() >= deadline, seconds + 1)
+
+    def wait(future, timeout=30.):
+        spin_until(future.done, timeout)
+        return future.result()
+
+    def rpc(kind, name, request):
+        client = node.create_client(kind, name)
+        try:
+            assert client.wait_for_service(timeout_sec=20), name
+            # Fast DDS can discover the request reader before the response
+            # writer is matched. Let discovery settle before the first call.
+            pump(.2)
+            try:
+                return wait(client.call_async(request))
+            except TimeoutError:
+                if kind is not ChangeState:
+                    raise
+                # Never repeat a possibly completed transition. Confirm its
+                # resulting state through the read-only lifecycle service.
+                state = rpc(GetState, name.replace('/change_state', '/get_state'),
+                            GetState.Request()).current_state.id
+                expected = {1: 2, 3: 3}[request.transition.id]
+                if state != expected:
+                    raise RuntimeError(f'{name}: expected state {expected}, got {state}')
+                result.setdefault('lost_transition_acknowledgements', []).append(name)
+                return ChangeState.Response(success=True)
+        finally:
+            node.destroy_client(client)
+
+    def grid(topic, values):
+        pub = node.create_publisher(OccupancyGrid, topic, latched)
+        publishers.append(pub)
+        message = OccupancyGrid()
+        message.header.frame_id = 'map'
+        message.header.stamp = node.get_clock().now().to_msg()
+        message.info.width, message.info.height = values.shape[1], values.shape[0]
+        message.info.resolution = geometry['resolution']
+        message.info.origin.position.x, message.info.origin.position.y = geometry['origin'][:2]
+        message.info.origin.orientation.w = 1.
+        message.data = np.flipud(values).astype(np.int8).flatten().tolist()
+        pub.publish(message)
+
+    def read_costs():
+        response = rpc(GetCostmap, '/global_costmap/get_costmap', GetCostmap.Request())
+        m = response.map
+        data = np.asarray(m.data).reshape(m.metadata.size_y, m.metadata.size_x)
+        np.savez_compressed(folder / 'costmap.npz', data=data)
+
+        def at(x, y):
+            row = int((y-m.metadata.origin.position.y)/m.metadata.resolution)
+            col = int((x-m.metadata.origin.position.x)/m.metadata.resolution)
+            return int(data[row, col])
+
+        if args.scenario != 'original':
+            column = int((1.5-m.metadata.origin.position.x)/m.metadata.resolution)
+            section = data[:, column]
+            return {'corridor_center': at(1.5, 0.), 'free_space': at(0., 0.),
+                    'center_column': section.tolist(),
+                    'nonlethal_gap_m': float(np.count_nonzero(section < 253)
+                                             * m.metadata.resolution)}
+
+        sensor_cost = max(at(x, y) for x in np.arange(.25, .66, .025)
+                          for y in np.arange(1.65, 1.81, .025))
+        return {'zone_interior': at(1.3, .3), 'outside_zone_10cm': at(1.3, .85),
+                'physical_wall': at(1.8, 1.2), 'free_space': at(0., 0.),
+                'unmapped_lidar_obstacle': sensor_cost}
+
+    try:
+        start('gazebo', ['ros2', 'launch', 'malbut_gazebo', 'simulation.launch.py',
+                         f'world:={folder / "world.sdf"}', 'gui:=false', 'headless:=true',
+                         'rviz:=false',
+                         f'depth_camera_enabled:={str(args.scenario == "patrol").lower()}',
+                         'imu_enabled:=false',
+                         'x:=0', 'y:=0', 'yaw:=0', 'z:=0.002'])
+        spin_until(lambda: 'odom' in latest and 'scan' in latest, 60)
+        assert node.get_clock().now().nanoseconds > 0
+        assert len(latest['scan'].ranges) > 100
+        result['lidar_samples'] = len(latest['scan'].ranges)
+        grid('/map', np.where(pixels < 65, 100, 0))
+        grid('/keepout_filter_mask', mask)
+        info = node.create_publisher(CostmapFilterInfo, '/keepout_costmap_filter_info', latched)
+        publishers.append(info)
+        info.publish(CostmapFilterInfo(type=0, filter_mask_topic='/keepout_filter_mask',
+                                       base=0., multiplier=1.))
+        servers = [('nav2_amcl', 'amcl', [])] if use_amcl else []
+        servers += [
+                ('nav2_planner', 'planner_server', []),
+                ('nav2_controller', 'controller_server', ['-r', 'cmd_vel:=cmd_vel_nav']),
+                ('nav2_behaviors', 'behavior_server', []),
+                ('nav2_velocity_smoother', 'velocity_smoother',
+                 ['-r', 'cmd_vel:=cmd_vel_nav', '-r', 'cmd_vel_smoothed:=cmd_vel']),
+                ('nav2_bt_navigator', 'bt_navigator', [])]
+        for package, executable, remaps in servers:
+            start(executable, ['ros2', 'run', package, executable, '--ros-args',
+                               '--params-file', str(folder / 'nav2.yaml'), *remaps])
+            request = ChangeState.Request()
+            request.transition.id = 1
+            assert rpc(ChangeState, f'/{executable}/change_state', request).success
+        # Match the lifecycle manager: configure every node before activating
+        # any of them. This also creates all costmap TF listeners before AMCL
+        # starts broadcasting map->odom, and lets BT action discovery settle.
+        for _, executable, _ in servers:
+            request = ChangeState.Request()
+            request.transition.id = 3
+            assert rpc(ChangeState, f'/{executable}/change_state', request).success
+            if executable == 'amcl':
+                # Do not let keepout filters activate in odom before AMCL has
+                # provided the map transform they need to place the mask.
+                spin_until(lambda: 'amcl' in latest and tf_buffer.can_transform(
+                    'map', 'base_footprint', Time()), 30)
+        pump(3)
+        result['costs'] = read_costs()
+        if args.scenario == 'original':
+            assert result['costs']['zone_interior'] == 254
+            assert result['costs']['physical_wall'] == 254
+            assert result['costs']['unmapped_lidar_obstacle'] == 254
+            if not args.baseline:
+                assert result['costs']['outside_zone_10cm'] >= 253, result['costs']
+        if args.scenario == 'patrol':
+            from malbut_interfaces.action import Patrol
+
+            if use_amcl:
+                spin_until(lambda: 'amcl' in latest, 30)
+            patrol_params = {'patrol_manager': {'ros__parameters': {
+                'use_sim_time': True, 'room_map_file': str(folder / 'rooms.geojson'),
+                'camera_optical_frame': 'camera_depth_optical_frame',
+                'depth_aligned_to_rgb': True,
+                'observation_directory': str(folder / 'observations')}}}
+            (folder / 'patrol.yaml').write_text(yaml.safe_dump(patrol_params))
+            start('patrol_manager', ['ros2', 'run', 'malbut_patrol', 'patrol_manager',
+                                     '--ros-args', '--params-file', str(folder / 'patrol.yaml')])
+            patrol = ActionClient(node, Patrol, '/patrol')
+            assert patrol.wait_for_server(timeout_sec=30)
+            pump(5)
+            active_handle = wait(patrol.send_goal_async(Patrol.Goal(thoroughness=1)))
+            assert active_handle.accepted, 'Patrol prerequisites are not ready'
+            future = active_handle.get_result_async()
+            deadline, next_report = time.monotonic()+args.timeout, time.monotonic()
+            while not future.done():
+                rclpy.spin_once(node, timeout_sec=.03)
+                if time.monotonic() > deadline:
+                    raise TimeoutError('Full patrol exceeded the wall-clock timeout')
+                if time.monotonic() >= next_report:
+                    state = latest.get('patrol_status', {})
+                    print(json.dumps({key: state.get(key) for key in (
+                        'state', 'coverage_ratio', 'viewpoints_visited',
+                        'unvisited_rooms', 'return_to_start', 'detail')}), flush=True)
+                    next_report = time.monotonic()+15
+            completed = future.result()
+            active_handle = None
+            pump(.5)
+            p = latest['odom'].pose.pose.position
+            result['patrol_result'] = {
+                'status': completed.status, 'success': completed.result.success,
+                'message': completed.result.message,
+                'coverage_ratio': completed.result.coverage_ratio,
+                'viewpoints_visited': completed.result.viewpoints_visited,
+                'ground_truth_return_distance_m': math.hypot(p.x, p.y),
+                'final_status': latest.get('patrol_status')}
+            captures = [json.loads(path.read_text())
+                        for path in (folder / 'observations/captures').glob('*.json')
+                        if not path.name.endswith('.regions.json')]
+            result['camera_evidence'] = {
+                'captures': len(captures),
+                'registered_depth': sum(c.get('spatial', {}).get('status') == 'available'
+                                        for c in captures),
+                'lidar': sum(c.get('lidar', {}).get('status') == 'available' for c in captures),
+                'rooms': sorted({room for c in captures for room in c.get('capture_rooms', [])})}
+            result['success'] = completed.status == 4 and completed.result.success
+            print(json.dumps(result['patrol_result']), flush=True)
+        planner = ActionClient(node, ComputePathToPose, '/compute_path_to_pose')
+        navigator = ActionClient(node, NavigateToPose, '/navigate_to_pose')
+        assert planner.wait_for_server(timeout_sec=10)
+        assert navigator.wait_for_server(timeout_sec=10)
+        goals = [('viewpoint', (1.13, 1.13)), ('return', (0., 0.))]
+        if args.scenario == 'corridor':
+            goals[0] = ('far_room', (3.15, 0.))
+        if args.scenario == 'patrol':
+            goals = []
+        for label, target in goals:
+            goal = ComputePathToPose.Goal()
+            goal.goal.header.frame_id = 'map'
+            goal.goal.header.stamp = node.get_clock().now().to_msg()
+            goal.goal.pose.position.x, goal.goal.pose.position.y = target
+            goal.goal.pose.orientation.w = 1.
+            goal.planner_id = 'GridBased'
+            handle = wait(planner.send_goal_async(goal))
+            assert handle.accepted
+            plan = wait(handle.get_result_async())
+            leg = {'name': label, 'target': target, 'planning_status': plan.status,
+                   'path': [[p.pose.position.x, p.pose.position.y]
+                            for p in plan.result.path.poses]}
+            result['legs'].append(leg)
+            if plan.status != 4:
+                break
+            command = NavigateToPose.Goal(pose=goal.goal)
+            active_handle = wait(navigator.send_goal_async(command))
+            assert active_handle.accepted
+            future = active_handle.get_result_async()
+            deadline = time.monotonic() + args.timeout
+            while not future.done():
+                rclpy.spin_once(node, timeout_sec=.03)
+                if time.monotonic() > deadline or time.monotonic()-latest['scan_received'] > 2:
+                    wait(active_handle.cancel_goal_async())
+                    wait(future, 10)
+                    raise TimeoutError('Navigation timed out or lidar became stale')
+            leg['navigation_status'] = future.result().status
+            active_handle = None
+            pump(.3)
+            p = latest['odom'].pose.pose.position
+            leg['final_xy'] = [p.x, p.y]
+            leg['distance_m'] = math.hypot(p.x-target[0], p.y-target[1])
+            print(json.dumps({k: v for k, v in leg.items() if k != 'path'}), flush=True)
+            if leg['navigation_status'] != 4:
+                break
+        if args.scenario != 'patrol':
+            result['success'] = (len(result['legs']) == 2 and all(
+                leg.get('navigation_status') == 4 and leg['distance_m'] < .2
+                for leg in result['legs']))
+        if use_amcl:
+            result['localization_error'] = pose_error_statistics(
+                result['pose_samples'], result['amcl_samples'])
+        outline = np.array([[.1485, .116], [.1485, -.116],
+                            [-.1485, -.116], [-.1485, .116]])
+        hazards = [np.asarray(ring[:-1], dtype=np.float32) for ring in rings]
+        hazards.extend(np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                                  dtype=np.float32) for x0, y0, x1, y1 in boxes)
+        intersections = [0] * len(hazards)
+        for _, x, y, yaw in result['pose_samples']:
+            c, s = math.cos(yaw), math.sin(yaw)
+            body = (outline @ np.array([[c, s], [-s, c]]) + [x, y]).astype(np.float32)
+            for index, hazard in enumerate(hazards):
+                if cv2.intersectConvexConvex(body, hazard)[0] > 1e-7:
+                    intersections[index] += 1
+        result['footprint_intersections'] = {
+            'restricted_zone': sum(intersections[:len(rings)]),
+            'physical_geometry': sum(intersections[len(rings):])}
+        if args.expect_blocked:
+            assert not result['success'], 'A blocked passage must not complete the round trip'
+            assert max(p[1] for p in result['pose_samples']) < .5, 'Entered a blocked passage'
+            assert not any(intersections), result['footprint_intersections']
+            result['expected_block_confirmed'] = True
+            result['validation_passed'] = True
+            return
+        if not args.baseline:
+            assert result['success'], 'The fixed configuration must complete the mission'
+            assert not any(intersections), result['footprint_intersections']
+            assert not result['errors'], result['errors']
+            if args.scenario == 'patrol':
+                status = result['patrol_result']['final_status']
+                assert not status['inaccessible_rooms'], status
+                assert not status['unvisited_rooms'], status
+                assert status['room_count'] == 2, status
+                assert status['photos']['saved'] > 0, status
+                assert result['camera_evidence']['registered_depth'] > 0
+                assert result['camera_evidence']['rooms'] == ['east', 'west']
+                assert result['patrol_result']['ground_truth_return_distance_m'] < .25
+            if use_amcl:
+                error = result['localization_error']
+                assert error['samples'] > 10, error
+                assert error['max_position_m'] < .1, error
+                assert error['max_heading_rad'] < .15, error
+            result['validation_passed'] = True
+    except (Exception, KeyboardInterrupt) as error:
+        result['verification_failure'] = f'{type(error).__name__}: {error}'
+        raise
+    finally:
+        if active_handle is not None:
+            try:
+                wait(active_handle.cancel_goal_async(), 5)
+                wait(active_handle.get_result_async(), 5)
+            except Exception as error:
+                result['cancel_error'] = str(error)
+        try:
+            stop_pub.publish(Twist())
+        except Exception:
+            # SIGINT can invalidate the ROS context before cleanup starts.
+            pass
+        for process in reversed(processes):
+            # A launch error can exit the parent while Gazebo still belongs to
+            # its session. Stop the owned group even when the parent has exited.
+            try:
+                os.killpg(process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+        for process in reversed(processes):
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+        for process in reversed(processes):
+            # A launch parent can exit while a Gazebo child ignores SIGINT.
+            # Each group was created exclusively for this verifier.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for stream in streams:
+            stream.close()
+        result['wall_duration_s'] = time.monotonic()-started
+        (folder / 'results.json').write_text(json.dumps(result, indent=2))
+        del subs
+        if use_amcl:
+            tf_listener.unregister()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def main():
+    """Create a new evidence directory; never overwrite an existing run."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--params', type=Path, help='Optional candidate robot Nav2 parameters')
+    parser.add_argument('--domain', type=int, default=74, choices=range(70, 101))
+    parser.add_argument('--scenario', choices=('original', 'corridor', 'patrol'),
+                        default='original')
+    parser.add_argument('--width', type=float, default=.6)
+    parser.add_argument('--barriers', choices=('physical', 'mixed', 'keepout'), default='mixed')
+    parser.add_argument('--expect-blocked', action='store_true')
+    parser.add_argument('--timeout', type=float, default=90.)
+    localization = parser.add_mutually_exclusive_group()
+    localization.add_argument('--ground-truth', action='store_true',
+                              help='Isolate patrol from AMCL with identity map-to-odom')
+    localization.add_argument('--amcl', action='store_true',
+                              help='Also use AMCL in the original or corridor fixtures')
+    run(parser.parse_args())
+
+
+if __name__ == '__main__':
+    main()
