@@ -3,6 +3,7 @@
 import json
 import math
 import sqlite3
+from collections import deque
 from threading import Event, RLock, Thread
 import time
 
@@ -20,7 +21,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
-from tf2_ros import StaticTransformBroadcaster
+from tf2_ros import ExtrapolationException, StaticTransformBroadcaster
 
 from malbut_interfaces.action import Patrol
 from malbut_patrol.patrol_manager import PatrolManager
@@ -149,6 +150,8 @@ class _Sensors(Node):
         self.depth = self.create_publisher(Image, '/patrol_test/depth', 1)
         self.scan = self.create_publisher(LaserScan, '/scan', 1)
         self.emit_images = True
+        self.depth_delay_frames = 0
+        self.pending_depths = deque()
         self.image_frame = 'patrol_test_optical'
         self._transforms = StaticTransformBroadcaster(self)
         robot = TransformStamped()
@@ -209,6 +212,8 @@ class _Sensors(Node):
             for row in range(12) for col in range(12)
         ]
         self.map.publish(grid)
+        for row, col in getattr(self, 'live_obstacles', ()):
+            grid.data[row * grid.info.width + col] = 100
         self.costmap.publish(grid)
         info = CameraInfo()
         info.header.stamp = stamp
@@ -240,7 +245,9 @@ class _Sensors(Node):
             depth.encoding = '16UC1'
             depth.step = 4
             depth.data = [208, 7] * 4  # 2000 mm, little endian.
-            self.depth.publish(depth)
+            self.pending_depths.append(depth)
+            if len(self.pending_depths) > self.depth_delay_frames:
+                self.depth.publish(self.pending_depths.popleft())
 
 
 @pytest.fixture
@@ -264,6 +271,7 @@ def patrol_runtime(request, tmp_path):
         'observation_directory': str(tmp_path / 'observations'),
     }
     overrides = dict(getattr(request, 'param', {}))
+    sensors.depth_delay_frames = overrides.pop('depth_delay_frames', 0)
     if overrides.pop('inspection_fixture', False):
         calibration = tmp_path / 'synthetic-test-calibration.json'
         calibration.write_text(json.dumps({
@@ -325,6 +333,21 @@ def test_reject_invalid_and_duplicate_goals(patrol_runtime):
     assert not outcome.result.success
     assert navigation.cancel_received.is_set()
     assert not manager.busy
+
+
+def test_arrival_rechecks_turning_space_before_sending_spin(patrol_runtime):
+    """A new obstacle beside a free centre prevents a turn and invalidates the spot."""
+    manager, navigation, sensors, _client = patrol_runtime
+    manager.return_pose = manager._robot_pose()
+    manager._refresh_maneuvers()
+    assert manager._observation_allowed(*manager._robot_xy())
+    # The robot is in (6, 6); its centre stays free but its swept body is blocked.
+    sensors.live_obstacles = [(5, 6)]
+    _wait_until(lambda: manager.costmap.data[5 * 12 + 6] == 100)
+    assert manager.costmap.data[6 * 12 + 6] == 0
+    assert not manager._spin(None)
+    assert not navigation.spin_requests
+    assert not manager._observation_allowed(*manager._robot_xy())
 
 
 @pytest.mark.parametrize('patrol_runtime', [{'reobserve_enabled': True}], indirect=True)
@@ -443,7 +466,7 @@ def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, mo
     monkeypatch.setattr('malbut_patrol.patrol_manager.read_results', feedback)
     # Navigation can succeed with any yaw. The first camera pose faces away.
     monkeypatch.setattr(manager, '_reobserve_heading_error',
-                        lambda target: 0.0 if navigation.spin_requests else 1.2)
+                        lambda target, not_before: 0.0 if navigation.spin_requests else 1.2)
     navigation.finish_navigation.set()
     handle = _result(client.send_goal_async(Patrol.Goal()))
     outcome = _result(handle.get_result_async())
@@ -462,12 +485,13 @@ def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, mo
     assert retry['reobserve_target']['observation_id'] == original['observation_id']
 
 
-@pytest.mark.parametrize('patrol_runtime', [{
-    'depth_aligned_to_rgb': True, 'depth_image_topic': '/patrol_test/depth',
-}], indirect=True)
+@pytest.mark.parametrize('patrol_runtime', [
+    {'depth_aligned_to_rgb': True, 'depth_image_topic': '/patrol_test/depth',
+     'depth_delay_frames': frames} for frames in (0, 3)
+], indirect=True)
 def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runtime):
     """Release depth traffic while idle and preserve a synchronized pair on restart."""
-    manager, _navigation, _sensors, client = patrol_runtime
+    manager, navigation, sensors, client = patrol_runtime
     _wait_until(lambda: bool(manager.depth_images) and bool(manager.lidar_scans))
     manager._change_processing(False)
     assert manager._depth_subscription is None and not manager.depth_images
@@ -479,11 +503,21 @@ def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runti
     assert manager._scan_subscription is not None
     handle = _result(client.send_goal_async(Patrol.Goal()))
     assert handle.accepted
+    assert navigation.request_received.wait(TIMEOUT_S)
+    time.sleep(.3)
+    assert manager.photo_recorder.status()['queued'] == 0
+    navigation.on_navigate = sensors.move_robot
+    navigation.finish_navigation.set()
     _wait_until(lambda: manager.photo_recorder.status().get('saved') == 1)
     manifest, = (manager.photo_recorder.directory / 'captures').glob('[a-f0-9]' * 32 + '.json')
     metadata = json.loads(manifest.read_text())
     assert metadata['spatial']['status'] == 'available'
     assert metadata['spatial']['depth_shape'] == [2, 2]
+    stamp = metadata['image_stamp']
+    assert stamp['sec'] + stamp['nanosec']/1e9 >= manager.capture_not_before
+    depth_stamp = metadata['spatial']['depth_stamp']
+    assert abs(stamp['sec']-depth_stamp['sec'] +
+               (stamp['nanosec']-depth_stamp['nanosec'])/1e9) <= .05
     assert manifest.with_name(manifest.stem + '.depth.npy').exists()
     assert metadata['lidar']['status'] == 'available'
     assert manifest.with_name(manifest.stem + '.lidar.npy').exists()
@@ -613,7 +647,54 @@ def test_nav2_success_without_new_rgb_does_not_credit_coverage(patrol_runtime):
     assert not outcome.result.success
     assert outcome.result.viewpoints_visited > 0
     assert outcome.result.coverage_ratio == pytest.approx(observed)
-    assert 'partial coverage' in outcome.result.message
+    # Arrival settling can let the live-camera watchdog expire before all
+    # viewpoints are exhausted; neither terminal reason may credit new pixels.
+    assert ('partial coverage' in outcome.result.message
+            or outcome.result.message == 'RGB camera is stale')
+
+
+@pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': .6}], indirect=True)
+def test_delayed_camera_tf_uses_buffered_frame_without_starving(patrol_runtime, monkeypatch):
+    """Continuous fresh RGB must not discard every frame before its TF arrives."""
+    manager, navigation, _sensors, client = patrol_runtime
+    lookup = manager.tf.lookup_transform
+
+    def delayed(target, source, when, *args, **kwargs):
+        if (source == 'patrol_test_optical' and when.nanoseconds
+                > manager.get_clock().now().nanoseconds-150_000_000):
+            raise ExtrapolationException('Camera frame precedes its TF arrival')
+        return lookup(target, source, when, *args, **kwargs)
+
+    monkeypatch.setattr(manager.tf, 'lookup_transform', delayed)
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    assert handle.accepted
+    assert navigation.request_received.wait(TIMEOUT_S)
+    _wait_until(lambda: manager.last_image_stamp is not None)
+    stamp = manager.last_image_stamp
+    time.sleep(.8)  # Longer than the unchanged camera watchdog.
+    assert manager.busy
+    assert manager.last_image_stamp > stamp
+    assert manager.planner.coverage_ratio > 0
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+
+
+def test_reobservation_heading_waits_for_exact_post_arrival_tf(patrol_runtime, monkeypatch):
+    manager, _navigation, _sensors, _client = patrol_runtime
+    lookup = manager.tf.lookup_transform
+    accepted_stamps = []
+    started = manager.get_clock().now().nanoseconds/1e9
+
+    def delayed(target, source, when, *args, **kwargs):
+        if when.nanoseconds > manager.get_clock().now().nanoseconds-150_000_000:
+            raise ExtrapolationException('TF callback delayed behind RGB')
+        accepted_stamps.append(when.nanoseconds/1e9)
+        return lookup(target, source, when, *args, **kwargs)
+
+    monkeypatch.setattr(manager.tf, 'lookup_transform', delayed)
+    monkeypatch.setattr(manager, '_pump', lambda _: None)
+    assert manager._orient_reobservation(None, {'xy': [2.5, 1.5]})
+    assert accepted_stamps and min(accepted_stamps) >= started
 
 
 def test_unreachable_viewpoints_return_partial_failure(patrol_runtime):

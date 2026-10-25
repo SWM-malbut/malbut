@@ -67,15 +67,11 @@ def read_results(directory, patrol_id, map_id, simulated):
 
 
 def unresolved_targets(rows, maximum=2):
-    """Request fresh evidence for grounded people/boxes; hints are never identity matches."""
+    """Request fresh evidence for visible objects; hints are never identity matches."""
     targets = []
     for metadata, analysis in sorted(rows, key=lambda r: r[0]['captured_at'], reverse=True):
         for index, item in enumerate(analysis['objects']):
             person = item.get('kind') == 'person'
-            if (not person and item.get('kind') != 'box'
-                    and not re.search(r'상자|박스|\bbox\b|\bcarton\b',
-                                      item['name'], re.IGNORECASE)):
-                continue
             spatial = item.get('spatial', {})
             hint = spatial.get('reobserve_hint', {})
             xy = hint.get('xy')
@@ -88,15 +84,17 @@ def unresolved_targets(rows, maximum=2):
             pose = [camera['x'], camera['y']]
             if not .15 <= math.dist(xy, pose) <= 5:
                 continue
-            kind = 'person' if person else 'box'
-            if any(t['kind'] == kind and math.dist(xy, t['xy']) < .7 for t in targets):
+            kind = 'person' if person else item.get('kind', 'object')
+            if any(t['kind'] == kind and t.get('name') == item['name']
+                   and math.dist(xy, t['xy']) < .7 for t in targets):
                 continue
-            targets.append({'xy': xy, 'camera_xy': pose, 'kind': kind,
+            targets.append({'xy': xy, 'camera_xy': pose, 'kind': kind, 'name': item['name'],
                             'observation_id': metadata['observation_id'],
                             'object_index': index, 'reason': spatial.get('reason')})
-            if len(targets) >= maximum:
-                return targets
-    return targets
+    # Prefer people before static furniture; keep the newest evidence within
+    # each priority and retain the configured bound on additional captures.
+    targets.sort(key=lambda t: t['kind'] != 'person')
+    return targets[:maximum]
 
 
 def select_view(planner, target, robot_xy, previous=(), allowed=None, max_travel=3.,

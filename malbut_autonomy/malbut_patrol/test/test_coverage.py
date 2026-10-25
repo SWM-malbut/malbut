@@ -34,6 +34,52 @@ def _room(name, x0, y0, x1, y1):
     }
 
 
+def test_live_obstacle_replaces_sparse_room_spots_without_changing_evidence():
+    planner = _planner(rooms={'features': [_room('living', 1.5, 0, 3, 3)]})
+    original = list(planner._candidates)
+    planner.mark_observed(.55, .55, 0.)
+    planner.mark_attempted(0)
+    target, observed = planner._target.copy(), planner._observed.copy()
+    summary = planner.summary()
+
+    def allowed(x, y):
+        return (x > 1.5 and planner.grid.world_to_cell(x, y) not in original)
+
+    assert not any(allowed(*planner.grid.cell_to_world(*c)) for c in original)
+    assert planner.refresh_candidates(allowed) > 0
+    assert planner._candidates[:len(original)] == original
+    assert planner._attempted == {0}
+    assert planner.summary() == summary
+    assert np.array_equal(planner._target, target)
+    assert np.array_equal(planner._observed, observed)
+    candidate = planner.select((.55, .55), allowed)
+    assert candidate is not None and 'living' in planner.rooms_at(candidate.x, candidate.y)
+    assert planner.refresh_candidates(allowed) == 0
+
+
+def test_live_candidates_never_cross_static_wall_and_remain_bounded():
+    cells = np.zeros((30, 60), dtype=np.int8)
+    cells[:, 30] = 100
+    planner = _planner(cells, robot=(.55, .55), spacing_m=.4)
+    assert planner.refresh_candidates(lambda x, y: x > 3.1) == 0
+    original_count = planner.candidate_count
+    for _ in range(30):
+        old = set(planner._candidates)
+        planner.refresh_candidates(lambda x, y: planner.grid.world_to_cell(x, y) not in old)
+    assert planner.candidate_count - original_count == 64
+    assert all(c < 30 for r, c in planner._candidates)
+
+
+def test_live_candidate_search_remains_cancellable():
+    planner = _planner()
+
+    def cancel():
+        raise RuntimeError('canceled')
+
+    with pytest.raises(RuntimeError, match='canceled'):
+        planner.refresh_candidates(lambda x, y: True, cancel)
+
+
 def test_grid_preserves_ros_order_and_rotated_origin():
     grid = CoverageGrid(np.zeros((12, 20)), 0.1, 10.0, -4.0, math.pi / 2.0)
     x, y = grid.cell_to_world(3, 7)

@@ -1,7 +1,7 @@
 """Retry capture must not trust a position-only Nav2 success as camera alignment."""
 
 import math
-from threading import Event
+from threading import Event, RLock
 from types import SimpleNamespace as NS
 
 import pytest
@@ -23,8 +23,11 @@ def test_heading_uses_actual_camera_origin_and_optical_forward():
 
     fixture = NS(image=NS(header=NS(stamp=stamp, frame_id='raw_camera')),
                  tf=NS(lookup_transform=lookup),
-                 settings={'camera_optical_frame': 'optical'},
+                 lock=RLock(),
+                 get_clock=lambda: NS(now=lambda: NS(nanoseconds=1_200_000_000)),
+                 settings={'camera_optical_frame': 'optical', 'sensor_timeout_s': 3.},
                  map_message=NS(header=NS(frame_id='map')))
+    fixture.rgb_images = [fixture.image]
     error = PatrolManager._reobserve_heading_error(fixture, {'xy': [1., 3.]})
     assert error == pytest.approx(math.pi/2)
     assert seen[0][:2] == ('map', 'optical')
@@ -47,7 +50,7 @@ def test_rotation_is_bounded_and_failed_alignment_prevents_capture(
         return spin_ok
 
     fixture = NS(_pump=lambda handle: None,
-                 _reobserve_heading_error=lambda target: next(pending),
+                 _reobserve_heading_error=lambda target, not_before: next(pending),
                  _run_child=run, spin_client=object(), stop_event=Event(),
                  get_clock=lambda: NS(now=lambda: NS(nanoseconds=1_000_000_000)),
                  image=NS(header=NS(stamp=NS(sec=2, nanosec=0))),

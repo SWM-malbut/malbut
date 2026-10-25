@@ -68,7 +68,10 @@ bt_navigator:
     robot_base_frame: base_footprint
     odom_topic: /odom
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # Action/service acknowledgement budget in milliseconds, not motion time.
+    # 20 ms caused false planner/clear-costmap failures on the loaded robot,
+    # sending valid navigation requests straight into recovery turns.
+    default_server_timeout: 500
     #enable_groot_monitoring: True
     #groot_zmq_publisher_port: 1666
     #groot_zmq_server_port: 1667

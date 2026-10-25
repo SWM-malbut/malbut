@@ -37,6 +37,7 @@ from malbut_patrol.photo_recorder import DEFAULT_DIRECTORY, PhotoRecorder
 from malbut_patrol.inspection import InspectionCalibration, InspectionEvidence
 from malbut_patrol.reobserve import plan_reobservations, read_results, unresolved_targets
 from malbut_patrol.route import ReturnRoutePlanner
+from malbut_patrol.maneuver import ManeuverSpace
 from malbut_patrol.spatial_capture import stamp_seconds
 
 
@@ -147,6 +148,11 @@ class PatrolManager(Node):
             'nav2_action_name': 'navigate_to_pose',
             'spin_action_name': 'spin',
             'robot_clearance_m': 0.26,
+            'robot_length_m': 0.277,
+            'robot_width_m': 0.212,
+            'footprint_padding_m': 0.01,
+            # Match Nav2 general_goal_checker.xy_goal_tolerance.
+            'goal_position_tolerance_m': 0.12,
             'observation_ranges_m': [4.0, 3.0, 2.0],
             'coverage_targets': [0.80, 0.90, 0.95],
             'candidate_spacing_m': [1.5, 1.0, 0.65],
@@ -179,10 +185,14 @@ class PatrolManager(Node):
                      'goal_response_timeout_s', 'cancel_completion_timeout_s',
                      'navigation_timeout_s', 'spin_time_allowance_s',
                      'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m',
+                     'robot_length_m', 'robot_width_m',
                      'reobserve_analysis_timeout_s', 'reobserve_max_travel_m',
                      'return_tolerance_m', 'inspection_analysis_timeout_s'):
             if not math.isfinite(self.settings[name]) or self.settings[name] <= 0:
                 raise ValueError(f'{name} must be positive and finite')
+        for name in ('footprint_padding_m', 'goal_position_tolerance_m'):
+            if not math.isfinite(self.settings[name]) or self.settings[name] < 0:
+                raise ValueError(f'{name} must be nonnegative and finite')
         for name in ('observation_ranges_m', 'coverage_targets',
                      'candidate_spacing_m'):
             if len(self.settings[name]) != 3:
@@ -205,7 +215,10 @@ class PatrolManager(Node):
         self.map_changed = False
         self.costmap = None
         self.costmap_received = 0.0
+        self.maneuver_space = None
+        self.observation_cells = None
         self.image = None
+        self.rgb_images = deque(maxlen=8)
         self.image_received = 0.0
         self.camera_info = None
         self.depth_images = deque(maxlen=8)
@@ -281,6 +294,7 @@ class PatrolManager(Node):
                 self.tf_listener = None
                 self.tf.clear()
             self.image = self.costmap = None
+            self.rgb_images.clear()
             self.depth_images.clear()
             self.lidar_scans.clear()
             self.image_received = self.costmap_received = 0.0
@@ -386,12 +400,13 @@ class PatrolManager(Node):
             self.costmap_received = time.monotonic()
 
     def _receive_image(self, message):
-        # Keep only the latest image. No image processing or coverage work idle.
+        # TF can arrive after RGB; retain a bounded window of original frames.
         if message.width and message.height and len(message.data):
             with self.lock:
                 if not self._processing_enabled:
                     return
                 self.image = message
+                self.rgb_images.append(message)
                 self.image_received = time.monotonic()
 
     def _receive_info(self, message):
@@ -431,6 +446,39 @@ class PatrolManager(Node):
             self.map_message.header.frame_id, self.settings['base_frame'], Time())
         p = transform.transform.translation
         return p.x, p.y
+
+    def _robot_pose(self):
+        transform = self.tf.lookup_transform(
+            self.map_message.header.frame_id, self.settings['base_frame'], Time())
+        p = transform.transform.translation
+        return p.x, p.y, _yaw(transform.transform.rotation)
+
+    def _make_maneuver_space(self, grid):
+        return ManeuverSpace(
+            grid, self.settings['robot_length_m'], self.settings['robot_width_m'],
+            self.settings['footprint_padding_m'])
+
+    def _refresh_maneuvers(self):
+        """Use one immutable live-map snapshot per planning/arrival decision."""
+        pose = self._robot_pose()
+        with self.lock:
+            grid = _grid(self.costmap)
+        self.maneuver_space = self._make_maneuver_space(grid)
+        self.observation_cells = self.maneuver_space.observation_mask(
+            pose, self.return_pose, self.settings['goal_position_tolerance_m'])
+
+    def _observation_allowed(self, x, y):
+        space = self.maneuver_space
+        if space is None or self.observation_cells is None:
+            return False
+        row, col = space.grid.world_to_cell(x, y)
+        return bool(space.grid.contains(row, col) and self.observation_cells[row, col]
+                    and 0 <= space.grid.cells[row, col] <= self.settings['maximum_goal_cost'])
+
+    def _can_observe_here(self):
+        pose = self._robot_pose()
+        return (self._allowed(*pose[:2])
+                and self.maneuver_space.connected(pose, self.return_pose))
 
     def _ready(self):
         now = time.monotonic()
@@ -492,32 +540,51 @@ class PatrolManager(Node):
 
     def _observe(self):
         with self.lock:
-            image = self.image
+            images = tuple(self.rgb_images)
             info = self.camera_info
-            depth = min(self.depth_images, key=lambda value: abs(
-                stamp_seconds(value.header.stamp) - stamp_seconds(image.header.stamp)),
-                default=None)
-            scan = min(self.lidar_scans, key=lambda value: abs(
-                stamp_seconds(value.header.stamp)
-                + value.time_increment*max(0, len(value.ranges)-1)/2
-                - stamp_seconds(image.header.stamp)), default=None)
-        stamp = (image.header.stamp.sec, image.header.stamp.nanosec)
-        if stamp == self.last_image_stamp:
-            return
-        image_time = Time.from_msg(image.header.stamp)
-        age = (self.get_clock().now() - image_time).nanoseconds / 1e9
-        if age < -0.1 or age > self.settings['sensor_timeout_s']:
-            return
+            depths, scans = tuple(self.depth_images), tuple(self.lidar_scans)
         optical_frame = self.settings['camera_optical_frame']
-        if not optical_frame and image.header.frame_id != info.header.frame_id:
+        registered = self.settings['depth_aligned_to_rgb']
+        # Use the newest uncredited frame with its exact capture-time TF. Never
+        # substitute the current robot pose or repeatedly credit an older frame.
+        for image in sorted(images, key=lambda m: stamp_seconds(m.header.stamp), reverse=True):
+            stamp = (image.header.stamp.sec, image.header.stamp.nanosec)
+            if self.last_image_stamp is not None and stamp <= self.last_image_stamp:
+                continue
+            image_time = Time.from_msg(image.header.stamp)
+            age = (self.get_clock().now() - image_time).nanoseconds / 1e9
+            if age < -0.1 or age > self.settings['sensor_timeout_s']:
+                continue
+            if registered and self.phase in ('OBSERVING', 'REOBSERVING') and age < .12:
+                continue
+            # RGB can precede its matching depth callback. Prefer a complete
+            # pair in the bounded buffer instead of consuming the newest RGB
+            # immediately with an older depth frame.
+            depth = min(
+                depths, key=lambda d: abs(
+                    stamp_seconds(d.header.stamp) - stamp_seconds(image.header.stamp)),
+                default=None)
+            if (registered and age < .35 and (depth is None or abs(
+                    stamp_seconds(depth.header.stamp)-stamp_seconds(image.header.stamp)) > .05)):
+                continue
+            if not optical_frame and image.header.frame_id != info.header.frame_id:
+                continue
+            try:
+                transform = self.tf.lookup_transform(
+                    self.map_message.header.frame_id,
+                    optical_frame or image.header.frame_id, image_time)
+                break
+            except TransformException:
+                continue
+        else:
             return
-        try:
-            transform = self.tf.lookup_transform(
-                self.map_message.header.frame_id,
-                optical_frame or image.header.frame_id,
-                image_time)
-        except TransformException:
-            return
+        depth = min(depths, key=lambda value: abs(
+            stamp_seconds(value.header.stamp) - stamp_seconds(image.header.stamp)),
+            default=None)
+        scan = min(scans, key=lambda value: abs(
+            stamp_seconds(value.header.stamp)
+            + value.time_increment*max(0, len(value.ranges)-1)/2
+            - stamp_seconds(image.header.stamp)), default=None)
         q = transform.transform.rotation
         # CameraInfo uses an optical frame: +Z is the viewing direction.
         forward_x = 2.0 * (q.x * q.z + q.w * q.y)
@@ -539,6 +606,10 @@ class PatrolManager(Node):
 
         recorder = getattr(self, 'photo_recorder', None)
         if recorder is not None:
+            if registered and (self.phase not in ('OBSERVING', 'REOBSERVING')
+                               or stamp_seconds(image.header.stamp)
+                               < getattr(self, 'capture_not_before', 0.)):
+                return
             if (calibration is not None and self.phase != 'REOBSERVING'
                     and self.planner.observation_gain(p.x, p.y, yaw, fov) == 0):
                 return
@@ -597,12 +668,56 @@ class PatrolManager(Node):
             self.stop_event.wait(.05)
 
     def _spin(self, handle):
-        self.phase = 'OBSERVING'
-        request = Spin.Goal()
-        request.target_yaw = 2.0 * math.pi
-        allowance = self.settings['spin_time_allowance_s']
-        request.time_allowance = Duration(seconds=allowance).to_msg()
-        return self._run_child(self.spin_client, request, handle, allowance + 5.0)
+        self._refresh_maneuvers()
+        if not self._can_observe_here():
+            self.get_logger().warning(
+                'Observation skipped: turning space or return connection blocked')
+            return False
+        # NavigateToPose has settled, but velocity_smoother may still be
+        # decelerating its last translation command. Let that tail finish before
+        # the Spin server takes over /cmd_vel with zero linear velocity.
+        settle_until = time.monotonic() + .3
+        while time.monotonic() < settle_until:
+            self._pump(handle)
+            self.stop_event.wait(.05)
+        self._refresh_maneuvers()
+        if not self._can_observe_here():
+            return False
+        stationary = (getattr(self, 'photo_recorder', None) is not None
+                      and self.settings['depth_aligned_to_rgb'])
+        steps = 6 if stationary else 1
+        for _ in range(steps):
+            self._refresh_maneuvers()
+            if not self._can_observe_here():
+                return False
+            self.phase = 'ROTATING' if stationary else 'OBSERVING'
+            request = Spin.Goal()
+            request.target_yaw = 2.0 * math.pi / steps
+            allowance = self.settings['spin_time_allowance_s']
+            request.time_allowance = Duration(seconds=allowance).to_msg()
+            if not self._run_child(self.spin_client, request, handle, allowance + 5.0):
+                return False
+            if stationary:
+                self._stationary_observation(handle, 'OBSERVING')
+        return True
+
+    def _stationary_observation(self, handle, phase):
+        """Wait out motion/scan exposure, then offer fresh synchronized frames."""
+        self.phase = 'SETTLING'
+        settled = time.monotonic()+.4
+        while time.monotonic() < settled:
+            self._pump(handle)
+            self.stop_event.wait(.05)
+        self.capture_not_before = self.get_clock().now().nanoseconds/1e9
+        self.phase = phase
+        before = self.photo_recorder.status()['queued']
+        deadline = time.monotonic()+1.8
+        while time.monotonic() < deadline:
+            self._pump(handle)
+            if self.photo_recorder.status()['queued'] > before:
+                return True
+            self.stop_event.wait(.05)
+        return False
 
     def _pump(self, handle):
         if self.stop_event.is_set() or handle.is_cancel_requested or not rclpy.ok():
@@ -799,8 +914,12 @@ class PatrolManager(Node):
                     if self.inspection is not None:
                         self._await_inspection(handle)
                     continue
-                self.visited += 1
                 spun = self._spin(handle)
+                if spun:
+                    self.visited += 1
+                else:
+                    self.get_logger().warning(
+                        'Observation turn failed; replanning remaining viewpoints')
                 if self.inspection is not None:
                     if not spun:
                         raise PatrolInterrupted('Inspection rotation failed')
@@ -869,11 +988,20 @@ class PatrolManager(Node):
 
     def _plan_remaining(self, handle, reason):
         self.phase = 'PLANNING'
+        self._refresh_viewpoints(handle)
         route = self.route_planner.plan(
-            self._robot_xy(), self._allowed, lambda: self._pump(handle))
+            self._robot_xy(), self._observation_allowed, lambda: self._pump(handle))
         self._record_route([('observe', v) for v in route.viewpoints],
                            route.distance_m, reason)
         return route
+
+    def _refresh_viewpoints(self, handle):
+        self._refresh_maneuvers()
+        if self.planner.refresh_candidates(self._observation_allowed,
+                                           lambda: self._pump(handle)):
+            # Cached distance vectors include every candidate and the home
+            # index. Rebuild them when live-map alternatives are appended.
+            self.route_planner = ReturnRoutePlanner(self.planner, self.return_pose[:2])
 
     def _return_to_start(self, handle):
         """Verify measured return distance in addition to the completed Nav2 action."""
@@ -930,13 +1058,25 @@ class PatrolManager(Node):
         self.reobserve_status['state'] = 'analysis_timeout'
         return []
 
-    def _reobserve_heading_error(self, target):
+    def _reobserve_heading_error(self, target, not_before=0.):
         """Aim from the measured optical pose, not Nav2's permissive goal yaw."""
-        image = self.image
-        transform = self.tf.lookup_transform(
-            self.map_message.header.frame_id,
-            self.settings['camera_optical_frame'] or image.header.frame_id,
-            Time.from_msg(image.header.stamp)).transform
+        with self.lock:
+            images = tuple(self.rgb_images)
+        for image in sorted(images, key=lambda m: stamp_seconds(m.header.stamp), reverse=True):
+            captured = stamp_seconds(image.header.stamp)
+            age = self.get_clock().now().nanoseconds/1e9-captured
+            if captured < not_before or not 0 <= age <= self.settings['sensor_timeout_s']:
+                continue
+            try:
+                transform = self.tf.lookup_transform(
+                    self.map_message.header.frame_id,
+                    self.settings['camera_optical_frame'] or image.header.frame_id,
+                    Time.from_msg(image.header.stamp)).transform
+                break
+            except TransformException:
+                continue
+        else:
+            raise TransformException('Post-arrival camera transform is not available yet')
         p, q = transform.translation, transform.rotation
         forward_x = 2.0 * (q.x * q.z + q.w * q.y)
         forward_y = 2.0 * (q.y * q.z - q.w * q.x)
@@ -949,10 +1089,19 @@ class PatrolManager(Node):
     def _orient_reobservation(self, handle, target):
         """Confirm the camera faces the target before consuming a retry photo."""
         self.phase = 'REORIENTING'
+        not_before = self.get_clock().now().nanoseconds/1e9
         # A second bounded correction handles residual Nav2 Spin tolerance.
         for attempt in range(3):
-            self._pump(handle)
-            error = self._reobserve_heading_error(target)
+            deadline = time.monotonic()+self.settings['sensor_timeout_s']
+            while True:
+                self._pump(handle)
+                try:
+                    error = self._reobserve_heading_error(target, not_before)
+                    break
+                except TransformException:
+                    if time.monotonic() >= deadline:
+                        return False
+                    self.stop_event.wait(.05)
             if abs(error) <= .15:
                 return True
             if attempt == 2:
@@ -963,14 +1112,8 @@ class PatrolManager(Node):
             request.time_allowance = Duration(seconds=allowance).to_msg()
             if not self._run_child(self.spin_client, request, handle, allowance+5.):
                 return False
-            # Wait for an image taken after the rotation, while remaining cancellable.
-            finished = self.get_clock().now().nanoseconds / 1e9
-            deadline = time.monotonic()+self.settings['sensor_timeout_s']
-            while stamp_seconds(self.image.header.stamp) <= finished:
-                self._pump(handle)
-                if time.monotonic() >= deadline:
-                    return False
-                self.stop_event.wait(.05)
+            # The next check must use a post-rotation frame AND its exact TF.
+            not_before = self.get_clock().now().nanoseconds/1e9
         return False
 
     def _reobserve(self, handle, grid, room_file, rooms):
@@ -1004,9 +1147,10 @@ class PatrolManager(Node):
             while pending:
                 self.phase = 'REPOSITIONING'
                 self._pump(handle)
+                self._refresh_viewpoints(handle)
                 steps, distance = plan_reobservations(
                     self.planner, pending, self._robot_xy(), self.return_pose[:2], previous,
-                    self._allowed, self.settings['reobserve_max_travel_m'],
+                    self._observation_allowed, self.settings['reobserve_max_travel_m'],
                     lambda: self._pump(handle))
                 self._record_route([('reobserve', view) for _, view in steps], distance,
                                    'reobserve_remaining')
@@ -1029,18 +1173,14 @@ class PatrolManager(Node):
                 while time.monotonic() < settle_until:
                     self._pump(handle)
                     self.stop_event.wait(.05)
+                self._refresh_maneuvers()
+                if not self._can_observe_here():
+                    continue
                 if not self._orient_reobservation(handle, target):
                     continue
                 self.reobserve_target = {k: target[k] for k in ('observation_id', 'object_index')}
-                before = self.photo_recorder.status()['queued']
-                self.phase = 'REOBSERVING'
-                deadline = time.monotonic()+3.
-                while time.monotonic() < deadline:
-                    self._pump(handle)
-                    if self.photo_recorder.status()['queued'] > before:
-                        self.reobserve_status['views'] += 1
-                        break
-                    self.stop_event.wait(.05)
+                if self._stationary_observation(handle, 'REOBSERVING'):
+                    self.reobserve_status['views'] += 1
                 self.reobserve_target = None
                 self.phase = 'REPOSITIONING'
             rows = self._await_analysis(handle)

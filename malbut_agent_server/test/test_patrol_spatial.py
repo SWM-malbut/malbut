@@ -155,6 +155,108 @@ def test_mixed_depth_uncertain_identity_and_missing_bbox_remain_unknown(capture)
         assert result['objects'][0]['spatial']['reason'] == 'object_not_grounded'
 
 
+def test_vertical_height_is_not_horizontal_boundary_uncertainty(capture):
+    _, metadata = capture
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0]['image_bbox'] = [400, 20, 600, 980]
+    spatial = localize_objects(analysis, metadata, REGIONS, np.full((100, 100), 1.25))
+    assert spatial['objects'][0]['spatial']['region']['name'] == '작업실'
+    # The same real surface close enough to the boundary must remain unknown.
+    spatial = localize_objects(analysis, metadata, REGIONS, np.full((100, 100), 1.1))
+    assert spatial['objects'][0]['spatial']['status'] == 'unknown'
+
+
+def test_furniture_uses_surface_anchors_instead_of_gap_background(capture):
+    _, metadata = capture
+    analysis = copy.deepcopy(ANALYSIS)
+    obj = analysis['objects'][0]
+    obj.update(name='의자', image_bbox=[200, 100, 800, 900],
+               image_anchors=[[350, 350], [650, 350], [350, 650]])
+    depth = np.full((100, 100), 4.)
+    depth[15:85, 28:43] = 2.
+    depth[15:85, 58:73] = 2.1
+    spatial = localize_objects(analysis, metadata, REGIONS, depth)['objects'][0]['spatial']
+    assert spatial['region']['name'] == '작업실'
+    assert spatial['depth_support'] == 'visible_surface_patches'
+    assert spatial['anchor_count'] == 2  # One continuous chair surface, not the gap.
+    depth[15:85, 58:73] = .5
+    spatial = localize_objects(analysis, metadata, REGIONS, depth)['objects'][0]['spatial']
+    assert spatial['status'] == 'unknown'
+
+
+@pytest.mark.parametrize('outlier', [2.4, 1.6])
+def test_nearby_wall_anchor_cannot_join_an_object_surface(capture, outlier):
+    _, metadata = capture
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0].update(image_bbox=[100, 100, 900, 900],
+                                  image_anchors=[[300, 300], [300, 700], [650, 300]])
+    depth = np.full((100, 100), 2., np.float32)
+    depth[:, 50:] = outlier  # Only 40 cm away: old XY consensus accepted all three.
+    result = localize_objects(analysis, metadata, REGIONS, depth)['objects'][0]['spatial']
+    if outlier > 2:
+        assert result['status'] == 'located' and result['anchor_count'] == 2
+        assert result['depth_m'] == 2.
+    else:
+        assert result['status'] == 'unknown'  # Do not discard a foreground occluder.
+
+
+def test_missing_object_anchors_never_fall_back_to_background_at_box_center(capture):
+    _, metadata = capture
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0]['image_anchors'] = []
+    result = localize_objects(analysis, metadata, REGIONS, np.full((100, 100), 2.))
+    assert result['objects'][0]['spatial']['reason'] == 'object_anchors_missing'
+
+
+def test_source_frame_surface_coordinates_survive_semantic_snapshot_and_db(capture):
+    path, metadata = capture
+    raw = [region('living', '거실', -3, 0), region('workroom', '작업실', 0, .9)]
+    snapshot = dict(version=2, regions=raw, object_regions=[
+        raw[0], region('workroom', '작업실', 0, 1.35)],
+                    object_region_policy=dict(method='bounded_nonfree_room_envelope',
+                                              extension_m=.45, resolution_m=.05))
+    encoded = json.dumps(snapshot, ensure_ascii=False).encode()
+    path.with_name(path.stem+'.regions.json').write_bytes(encoded)
+    metadata['regions_sha256'] = hashlib.sha256(encoded).hexdigest()
+    path.write_text(json.dumps(metadata, ensure_ascii=False))
+    regions, depth = read_spatial(path, metadata)
+    assert region_at((1., 0.), regions, 0.)[0] is None
+    analysis = copy.deepcopy(ANALYSIS)
+    analysis['objects'][0]['image_anchors'] = [[400, 400], [600, 600]]
+    result = localize_objects(analysis, metadata, regions, depth)
+    spatial = result['objects'][0]['spatial']
+    assert spatial['region']['name'] == '작업실'
+    assert spatial['region_basis'] == snapshot['object_region_policy']
+    store = PatrolMemoryStore(path.parent.parent, 'owner', simulation=True)
+    store.ingest()
+    store.complete(path.stem, result, 'fixture')
+    found = PatrolMemoryStore(store.directory, 'owner', simulation=True).search(
+        'owner', dict(query='상자', since=None, until=None, limit=5))
+    assert found['observations'][0]['capture_rooms'] == ['거실']
+    assert found['observations'][0]['objects'][0]['spatial'] == spatial
+    path.with_name(path.stem+'.regions.json').write_bytes(encoded+b' ')
+    with pytest.raises(ValueError, match='changed'):
+        read_spatial(path, metadata)
+
+
+def test_missing_depth_preserves_only_a_bearing_hint_for_reobservation(capture):
+    path, metadata = capture
+    metadata['spatial'] = {'status': 'depth_missing'}
+    metadata['camera_hfov_rad'] = 1.2
+    path.write_text(json.dumps(metadata))
+    assert read_capture(path)[0]['camera_hfov_rad'] == 1.2
+    spatial = localize_objects(ANALYSIS, metadata, REGIONS, None)['objects'][0]['spatial']
+    assert spatial['region'] is None and spatial['map_position'] is None
+    assert spatial['status'] == 'unknown'
+    assert spatial['reobserve_hint'] == {
+        'xy': [.5, 0.], 'source': 'camera_bearing', 'assumed_range_m': 1.5,
+        'purpose': 'aim_only_not_object_position'}
+    for fov in (None, float('nan'), -1):
+        metadata['camera_hfov_rad'] = fov
+        spatial = localize_objects(ANALYSIS, metadata, REGIONS, None)['objects'][0]['spatial']
+        assert 'reobserve_hint' not in spatial
+
+
 def test_rotated_map_transform_moves_object_into_capture_region(capture):
     _, metadata = capture
     # 180 degrees around map Z, composed with the original optical orientation.

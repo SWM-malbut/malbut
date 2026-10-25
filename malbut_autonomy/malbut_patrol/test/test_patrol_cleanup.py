@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from malbut_patrol.route import PatrolRoute, ReturnRoutePlanner
+from malbut_patrol.maneuver import ManeuverSpace
 
 
 REPOSITORY = Path(__file__).resolve().parents[3]
@@ -40,7 +41,7 @@ def patrol(request, monkeypatch):
                 and node.name in ('PatrolInterrupted', 'PatrolManager')]
     selected[-1].bases = []  # No Node initialization or ROS transport in this test.
     namespace = {
-        'json': json, 'math': math, 'time': time,
+        'json': json, 'math': math, 'time': time, 'ManeuverSpace': ManeuverSpace,
         'String': SimpleNamespace, 'Patrol': SimpleNamespace(
             Result=SimpleNamespace, Feedback=SimpleNamespace),
         'TransformException': type('TransformException', (Exception,), {}),
@@ -61,6 +62,7 @@ def patrol(request, monkeypatch):
     manager.map_changed = False
     manager.last_pump = 0.0
     manager.map_message = SimpleNamespace(header=SimpleNamespace(frame_id='map'))
+    manager.costmap = SimpleNamespace()
     manager.camera_info = SimpleNamespace(width=640, k=[320.0])
     manager.tf = Mock()
     manager.tf.lookup_transform.return_value = SimpleNamespace(transform=SimpleNamespace(
@@ -71,6 +73,9 @@ def patrol(request, monkeypatch):
         'navigation_timeout_s': 10.0,
         'cancel_completion_timeout_s': 1.0,
         'base_frame': 'base_footprint', 'return_tolerance_m': .25,
+        'robot_length_m': .277, 'robot_width_m': .212, 'footprint_padding_m': .01,
+        'goal_position_tolerance_m': .12,
+        'maximum_goal_cost': 80,
     }
     manager.profiles = {1: coverage.CoverageProfile(3.0, 0.9, 0.8)}
     manager._ready = Mock(return_value='')
@@ -100,6 +105,33 @@ def patrol(request, monkeypatch):
     namespace['ReturnRoutePlanner'] = make_route
     handle = Mock(request=SimpleNamespace(thoroughness=1), is_cancel_requested=False)
     return manager, handle
+
+
+@pytest.mark.parametrize('failed_step', [None, 3])
+def test_depth_sweep_stops_between_six_rotations_and_aborts_on_failed_motion(
+        patrol, monkeypatch, failed_step):
+    manager, handle = patrol
+    ns = manager._spin.__globals__
+    monkeypatch.setitem(ns, 'Spin', SimpleNamespace(Goal=SimpleNamespace))
+    monkeypatch.setitem(ns, 'Duration', lambda **kw: SimpleNamespace(to_msg=lambda: kw))
+    manager.settings.update(depth_aligned_to_rgb=True, spin_time_allowance_s=30.)
+    manager.photo_recorder = Mock()
+    manager.spin_client = Mock()
+    manager._pump = Mock()
+    manager._refresh_maneuvers = Mock()
+    manager._can_observe_here = Mock(return_value=True)
+    manager._stationary_observation = Mock()
+    goals = []
+
+    def motion(_client, goal, _handle, _timeout):
+        assert manager.phase == 'ROTATING'
+        goals.append(goal.target_yaw)
+        return len(goals) != failed_step
+
+    manager._run_child = motion
+    assert manager._spin(handle) is (failed_step is None)
+    assert goals == [pytest.approx(math.pi/3)]*(failed_step or 6)
+    assert manager._stationary_observation.call_count == (failed_step-1 if failed_step else 6)
 
 
 @pytest.mark.parametrize('publisher_fails', [False, True])

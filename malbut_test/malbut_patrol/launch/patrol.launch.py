@@ -32,6 +32,10 @@ def generate_launch_description():
         'reobserve_analysis_timeout_s': '120.0',
         'reobserve_max_travel_m': '3.0',
         'return_tolerance_m': '0.25',
+        'robot_length_m': '0.277',
+        'robot_width_m': '0.212',
+        'footprint_padding_m': '0.01',
+        'goal_position_tolerance_m': '0.12',
         'base_frame': 'base_footprint',
         'nav2_action_name': 'navigate_to_pose',
         'spin_action_name': 'spin',
@@ -45,7 +49,9 @@ def generate_launch_description():
     parameters = {name: LaunchConfiguration(name) for name in defaults}
     for name, kind in [('reobserve_enabled', bool), ('reobserve_rounds', int),
                        ('reobserve_targets', int), ('reobserve_analysis_timeout_s', float),
-                       ('reobserve_max_travel_m', float), ('return_tolerance_m', float)]:
+                       ('reobserve_max_travel_m', float), ('return_tolerance_m', float),
+                       ('robot_length_m', float), ('robot_width_m', float),
+                       ('footprint_padding_m', float), ('goal_position_tolerance_m', float)]:
         parameters[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
     parameters['use_sim_time'] = ParameterValue(
         LaunchConfiguration('use_sim_time'), value_type=bool)

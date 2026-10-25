@@ -16,7 +16,9 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from malbut_patrol.spatial_capture import encode_lidar, encode_spatial, room_snapshot
+from malbut_patrol.spatial_capture import (
+    camera_calibration, encode_lidar, encode_spatial, room_snapshot,
+)
 
 
 DEFAULT_DIRECTORY = '~/.local/share/malbut/patrol-observations'
@@ -92,7 +94,7 @@ class PhotoRecorder:
             self._run = {'patrol_id': uuid4().hex, 'map_id': digest, 'map_frame': frame,
                          'room_map': Path(room_map_file).name if room_map_file else '',
                          'analysis_batch': 'patrol_mosaic_v1',
-                         '_regions': room_snapshot(rooms)}
+                         '_regions': room_snapshot(rooms, grid)}
             if reobserve_of is not None:
                 self._run.update(reobserve_of=reobserve_of, reobserve_round=reobserve_round)
             if inspection_of is not None:
@@ -212,7 +214,15 @@ class PhotoRecorder:
         data = encode_image(image)
         metadata = dict(metadata)
         regions = metadata.pop('_regions')
-        spatial, depth = encode_spatial(image, metadata.pop('_spatial'))
+        bundle = metadata.pop('_spatial')
+        spatial, depth = encode_spatial(image, bundle)
+        if bundle:
+            try:
+                intrinsics, _ = camera_calibration(
+                    bundle['info'], bundle.get('image_rectified', False))
+                metadata['camera_hfov_rad'] = 2*math.atan2(image.width, 2*intrinsics['fx'])
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass
         lidar, scan = encode_lidar(image, metadata.pop('_lidar', None))
         if lidar is not None:
             metadata['lidar'] = lidar

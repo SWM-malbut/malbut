@@ -34,6 +34,19 @@ NAVIGATION_GROUPS = {
 }
 # runtime_control selects the default/saved map, independently of the manager.
 LOCALIZATION_NODES = ('map_server', 'amcl')
+# A bond has its own DDS publisher and subscription for every managed server,
+# including the manager's end. A shared topic fans each heartbeat out to every
+# group, waking unrelated executors and blocking synchronous publishers. Keep
+# the normal heartbeat period/failure detection, but contain traffic to its owner.
+BOND_GROUPS = {
+    **NAVIGATION_GROUPS,
+    'lifecycle_manager_localization': LOCALIZATION_NODES,
+}
+BOND_REMAPPINGS = {
+    node: [('bond', f'{manager}/bond')]
+    for manager, members in BOND_GROUPS.items()
+    for node in (manager, *members)
+}
 COMPONENTS = {
     'zone_filter_mask_server': ('nav2_map_server', 'nav2_map_server::MapServer'),
     'zone_filter_info_server': (
@@ -110,7 +123,8 @@ def nav2_actions(params_file, *, scan_topic, odom_topic, use_sim_time=False):
             package=package, plugin=plugin, name=name,
             parameters=[params_file, {'use_sim_time': use_sim_time}] + (
                 [overrides] if overrides else []),
-            remappings=remappings + MOTION_REMAPPINGS.get(name, []))
+            remappings=remappings + MOTION_REMAPPINGS.get(name, [])
+            + BOND_REMAPPINGS[name])
 
     def lifecycle_manager(name, nodes, autostart):
         return ComposableNode(
@@ -120,7 +134,8 @@ def nav2_actions(params_file, *, scan_topic, odom_topic, use_sim_time=False):
                          # Keep bond failure detection, but only the explicit
                          # manual recovery may reactivate a failed group.
                          'attempt_respawn_reconnection': False,
-                         'node_names': list(nodes)}])
+                         'node_names': list(nodes)}],
+            remappings=BOND_REMAPPINGS[name])
 
     nodes = [component(name) for name in NAVIGATION_NODES]
     nodes.extend(lifecycle_manager(name, members, name == 'lifecycle_manager_zones')

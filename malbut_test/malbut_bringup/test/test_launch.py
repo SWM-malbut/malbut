@@ -365,6 +365,32 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
         'lifecycle_manager_global_navigation']
 
 
+def test_nav2_bonds_connect_only_to_their_owner_on_start_and_recovery(launch_module):
+    """AMCL must not receive motion/planning heartbeats; recovery keeps the wiring."""
+    context = _context(launch_module)
+    actions = _core_actions(launch_module, context)
+    container = _nodes(actions, 'component_container_isolated')[0]
+    restored = container._malbut_recovery_followup({'mode': 'MAPPING'}, None)
+    for launch in (actions, restored):
+        components = _components(context, launch)
+        owners = [name for name in components if name.startswith('lifecycle_manager_')]
+        topics = set()
+        managed = set()
+        for name in owners:
+            owner = components[name]
+            topic = owner['remappings']['bond']
+            assert topic != 'bond' and topic not in topics
+            topics.add(topic)
+            parameters = owner['parameters'][0]
+            assert parameters.get('bond_timeout', 4.0) > 0.0
+            for member in parameters['node_names']:
+                assert member not in managed
+                managed.add(member)
+                assert components[member]['remappings']['bond'] == topic
+        assert managed == set(components) - set(owners)
+        assert len(topics) == 4
+
+
 def test_general_navigation_trees_select_the_position_only_checker():
     """Two installed checkers must not make ordinary FollowPath goals ambiguous."""
     for name in ('navigate_to_pose.xml', 'navigate_through_poses.xml'):

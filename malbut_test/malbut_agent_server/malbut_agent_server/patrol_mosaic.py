@@ -28,16 +28,35 @@ photo_rect_1000은 이미 같은 0~1000 좌표계로 주어졌으므로 픽셀 �
 사진 내부 기준 좌표가 아니다. 특정할 수 없으면 null로 쓴다.
 kind는 사람(하반신 등 일부만 보여도)이면 person, 상자·박스·큐브형 물체이면 box,
 그 외에는 object다. 이름을 다르게 표현해도 같은 분류를 사용한다.
-사람의 sheet_anchors에는 직접 보이는 몸통·팔·다리 표면 안쪽의 서로 떨어진 [x,y]
+모든 물체의 sheet_anchors에는 직접 보이는 같은 물체 표면 안쪽의 서로 떨어진 [x,y]
 3개를 sheet_bbox와 같은 모음 전체 0~1000 좌표계로 표시한다. 충분히 보이는 지점만 쓴다.
-배경·다리 사이 빈 공간·윤곽선·가려진 신체는 제외한다. 사람이 아니면 []다.
+사람은 몸통·팔·다리 안쪽을 사용한다. 의자나 침대도 빈 공간·바닥·배경·윤곽선·가려진
+부분을 제외한다. 지점을 특정할 수 없으면 []다.
 서버가 모음 좌표를 원본 사진 좌표로 복원하고 원본 깊이·TF로 물체 구역을 계산한다.
 보이지 않는 물체의 부재·이동, 사람의 신원·감정·건강·소유관계는 추정하지 않는다.
 각 captured_at 시점의 관찰이며 실시간 현재 상태나 영구 사실이 아니다.
 simulated=true이면 가상 환경 관찰이다. 사용자 대화 기억 수정이나 도구 실행은 하지 않는다.'''
 
 
-def schema_for(frame_ids, single_schema):
+FRAME_INSTRUCTIONS = INSTRUCTIONS[:INSTRUCTIONS.index('각 물체의 sheet_bbox')] + '''
+좌표는 각 F번호의 사진 내부를 기준으로 한다. 사진 왼쪽 위가 [0,0], 오른쪽 아래가
+[1000,1000]이다. 카드 제목·테두리·다른 사진은 좌표 범위에 포함하지 않는다.
+image_bbox는 그 사진 안에서 눈에 보이는 물체를 감싸는 [왼쪽, 위, 오른쪽, 아래] 정수다.
+모음 이미지 전체 좌표로 변환하지 않는다. 특정할 수 없으면 null이다.
+kind는 사람이면 person, 상자·박스이면 box, 나머지는 object다.
+image_anchors는 같은 사진 내부 0~1000 좌표로 표시한 실제 물체 표면의 2~3개 지점이다.
+물체는 넓게 보이는 같은 면의 안쪽에서 서로 떨어진 지점을 고른다. 의자라면 등받이
+또는 좌석의 실체가 있는 면, 침대라면 매트리스의 같은 면, 세탁기라면 본체 면이다.
+빈 공간·벽·바닥·배경·경계선·가려진 부분은 절대 선택하지 않는다. 각 지점이 정말
+해당 물체에 속하는지 다시 확인한다. 한 면에 2개를 고를 수 없으면 []로 쓴다.
+사람은 몸통·팔·다리 안쪽을 사용하며 신원·감정·건강·소유관계는 추정하지 않는다.
+서버는 실제 깊이의 연속성을 검사한다. 빈 지점을 임의로 보충하지 않는다.
+다른 사진을 근거로 보이지 않는 물체의 존재·부재·이동을 추정하지 않는다.
+각 captured_at 시점의 관찰이며 실시간 현재 상태나 영구 사실이 아니다.
+simulated=true이면 가상 환경 관찰이다. 사용자 대화 기억 수정이나 도구 실행은 하지 않는다.'''
+
+
+def schema_for(frame_ids, single_schema, *, frame_coordinates=False):
     """Constrain output to all numbered frames, with compact per-frame descriptions."""
     frame = copy.deepcopy(single_schema)
     frame['properties'] = {'frame_id': {'type': 'string', 'enum': frame_ids},
@@ -47,15 +66,16 @@ def schema_for(frame_ids, single_schema):
     frame['properties']['objects']['maxItems'] = 8
     frame['properties']['uncertainties']['maxItems'] = 2
     item = frame['properties']['objects']['items']
-    item['properties']['sheet_bbox'] = item['properties'].pop('image_bbox')
-    item['properties']['sheet_anchors'] = item['properties'].pop('image_anchors')
-    item['required'] = [name.replace('image_', 'sheet_') for name in item['required']]
+    if not frame_coordinates:
+        item['properties']['sheet_bbox'] = item['properties'].pop('image_bbox')
+        item['properties']['sheet_anchors'] = item['properties'].pop('image_anchors')
+        item['required'] = [name.replace('image_', 'sheet_') for name in item['required']]
     return {'type': 'object', 'additionalProperties': False, 'properties': {
         'frames': {'type': 'array', 'minItems': len(frame_ids), 'maxItems': len(frame_ids),
                    'items': frame}}, 'required': ['frames']}
 
 
-def make_mosaic(captures):
+def make_mosaic(captures, *, frame_coordinates=False):
     """Resize with preserved aspect ratios; never overlay labels on scene pixels."""
     count = len(captures)
     if not 1 <= count <= MAX_FRAMES:
@@ -117,6 +137,8 @@ def make_mosaic(captures):
     layout = {'version': 2, 'width': width, 'height': height, 'frames': frames,
               'columns': columns, 'rows': rows, 'gap': gap, 'border': border,
               'regions': regions, 'sha256': hashlib.sha256(image).hexdigest()}
+    if frame_coordinates:
+        layout.update(version=3, coordinates='frame_normalized_1000')
     return image, layout
 
 
@@ -164,6 +186,11 @@ def split_results(value, layout):
                 or len(analysis['uncertainties']) > 2):
             raise ValueError('oversized mosaic frame analysis')
         for item in analysis['objects']:
+            if layout.get('coordinates') == 'frame_normalized_1000':
+                if (not isinstance(item, dict) or 'image_bbox' not in item
+                        or 'sheet_bbox' in item or 'sheet_anchors' in item):
+                    raise ValueError('missing frame bbox')
+                continue  # validate_analysis checks the source coordinates below.
             if not isinstance(item, dict) or 'sheet_bbox' not in item or 'image_bbox' in item:
                 raise ValueError('missing sheet bbox')
             item['image_bbox'] = source_bbox(item.pop('sheet_bbox'), frame, layout)
