@@ -93,3 +93,31 @@ def test_planning_can_be_interrupted_during_distance_search():
 
     with pytest.raises(RuntimeError, match='canceled by caller'):
         routes.plan((.55, .55), checkpoint=cancel)
+
+
+def test_no_redundant_spins_when_only_unavailable_room_entry_remains():
+    room = {'features': [{'properties': {'name': 'living'}, 'geometry': {
+        'type': 'Polygon', 'coordinates': [[[4, 0], [8, 0], [8, 4], [4, 4], [4, 0]]]}}]}
+    p = CoveragePlanner(CoverageGrid(np.zeros((40, 80)), .1, 0, 0),
+                        CoverageProfile(2, .9, 1), (.55, .55), .15, room)
+    # Coverage already exceeds the target, but the required room was not entered.
+    p._observed[:] = p._target
+    left = np.flatnonzero(p._target & (np.tile(np.arange(80), 40) < 30))
+    p._observed[left[:10]] = False
+    p._observed_count = int(p._observed.sum())
+    assert not p.complete and p.coverage_ratio > .9
+    route = ReturnRoutePlanner(p, (.55, .55)).plan((.55, .55), lambda x, y: x < 4)
+    assert route.viewpoints == () and not route.predicted_complete
+
+
+def test_added_live_viewpoints_can_be_planned_with_a_fixed_return():
+    p = planner()
+    original = set(p._candidates)
+
+    def allowed(x, y):
+        return p.grid.world_to_cell(x, y) not in original
+    assert p.refresh_candidates(allowed) > 0
+    route = ReturnRoutePlanner(p, (.55, .55)).plan((.55, .55), allowed)
+    assert route.viewpoints and math.isfinite(route.distance_m)
+    assert all(allowed(v.x, v.y) for v in route.viewpoints)
+    assert not p._observed.any()

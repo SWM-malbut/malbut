@@ -181,6 +181,7 @@ class CoveragePlanner:
         self._candidate_visible = []
         self._candidate_angles = []
         self._candidate_rooms = []
+        self._live_candidate_additions = 0
         self._room_cells = {}
         self._room_masks = self._load_rooms(rooms)
         self._inaccessible_names = []
@@ -211,7 +212,7 @@ class CoveragePlanner:
             self._inaccessible_names = sorted(self._room_masks)
             return
         self.reachable = _flood_distances(safe, start) >= 0
-        self._make_candidates()
+        self._candidates = self._sample_candidates(self.reachable)
         for row, col in self._candidates:
             visible = self._visible_from(row, col)
             visible = visible[free_component.ravel()[visible]]
@@ -293,7 +294,7 @@ class CoveragePlanner:
             result[name] = mask.astype(bool)
         return result
 
-    def _make_candidates(self):
+    def _sample_candidates(self, reachable):
         """Sample safe cells in metric tiles and include every reachable room."""
         stride = max(1, int(round(
             self.profile.candidate_spacing_m / self.grid.resolution
@@ -301,7 +302,7 @@ class CoveragePlanner:
         selected = set()
         for row in range(0, self.grid.height, stride):
             for col in range(0, self.grid.width, stride):
-                tile = self.reachable[row:row + stride, col:col + stride]
+                tile = reachable[row:row + stride, col:col + stride]
                 if not np.any(tile):
                     continue
                 rr, cc = np.nonzero(tile)
@@ -311,13 +312,50 @@ class CoveragePlanner:
                 choice = int(np.argmax(clearance))
                 selected.add((int(rr[choice] + row), int(cc[choice] + col)))
         for mask in self._room_masks.values():
-            room = mask & self.reachable
+            room = mask & reachable
             if not np.any(room) or any(room[row, col] for row, col in selected):
                 continue
             rr, cc = np.nonzero(room)
             best = int(np.argmax(self._clearance[rr, cc]))
             selected.add((int(rr[best]), int(cc[best])))
-        self._candidates = sorted(selected)
+        return sorted(selected)
+
+    def refresh_candidates(self, allowed, checkpoint=None):
+        """Add bounded live-map alternatives without changing evidence or its denominator."""
+        # Keep indices stable, including failed/reached goals. A changing live
+        # obstacle must not produce an unbounded sequence of replacement goals.
+        remaining = 64 - self._live_candidate_additions
+        if remaining <= 0:
+            return 0
+        usable = np.zeros_like(self.reachable)
+        rows, cols = np.nonzero(self.reachable)
+        for index, (row, col) in enumerate(zip(rows, cols)):
+            if checkpoint is not None and index % 512 == 0:
+                checkpoint()
+            usable[row, col] = allowed(*map(float, self.grid.cell_to_world(row, col)))
+        selected = self._sample_candidates(usable)
+        existing = set(self._candidates)
+        added = 0
+        for row, col in selected:
+            if (row, col) in existing:
+                continue
+            if checkpoint is not None:
+                checkpoint()
+            visible = self._visible_from(row, col)
+            # Live-map replanning must not shrink/expand the saved-map target
+            # or turn a newly proposed viewpoint into observation evidence.
+            visible = visible[self._target[visible]]
+            self._candidates.append((row, col))
+            self._candidate_visible.append(visible)
+            vr, vc = np.divmod(visible, self.grid.width)
+            self._candidate_angles.append(np.arctan2(vr-row, vc-col))
+            self._candidate_rooms.append(tuple(
+                name for name, mask in self._room_masks.items() if mask[row, col]))
+            self._live_candidate_additions += 1
+            added += 1
+            if added >= remaining:
+                break
+        return added
 
     def _visible_from(self, row, col):
         """Cast local supercover rays; walls and unknown cells terminate sight."""

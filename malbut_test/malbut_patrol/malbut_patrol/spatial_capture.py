@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 
-def room_snapshot(rooms):
+def room_snapshot(rooms, grid=None):
     """Freeze map-frame polygons and the same display names used by coverage."""
     result, names = [], set()
     features = rooms.get('features', []) if isinstance(rooms, dict) else (rooms or [])
@@ -39,7 +39,12 @@ def room_snapshot(rooms):
                 clean.append(rings)
         if clean:
             result.append({'id': identity[:120], 'name': name[:120], 'polygons': clean})
-    data = json.dumps({'version': 1, 'regions': result}, ensure_ascii=False).encode()
+    snapshot = {'version': 1, 'regions': result}
+    if grid is not None:
+        from malbut_patrol.object_regions import object_room_snapshot
+        objects, policy = object_room_snapshot(result, grid)
+        snapshot.update(version=2, object_regions=objects, object_region_policy=policy)
+    data = json.dumps(snapshot, ensure_ascii=False).encode()
     if len(data) > 1024 * 1024 or len(result) > 256:
         raise ValueError('room snapshot too large')
     return data

@@ -60,6 +60,10 @@ def read_capture(path):
             raise ValueError('invalid capture frame')
     if type(data.get('simulated')) is not bool:
         raise ValueError('invalid capture clock')
+    if 'camera_hfov_rad' in data:
+        fov = data['camera_hfov_rad']
+        if type(fov) not in (int, float) or not math.isfinite(fov) or not 0 < fov < math.pi:
+            raise ValueError('invalid camera field of view')
     if 'analysis_batch' in data and data['analysis_batch'] != 'patrol_mosaic_v1':
         raise ValueError('unsupported capture batch policy')
     photo = path.with_suffix('.jpg')
@@ -270,6 +274,7 @@ class PatrolMemoryStore:
                                       + ' ORDER BY captured_at DESC, id DESC LIMIT ?',
                                       values + [arguments['limit']]).fetchall()
             matching_ids = {row['id'] for row in rows}
+            history = self._confirmed_history(connection, clauses, values, terms)
             if include_recent_context and terms:
                 recent = connection.execute(
                     'SELECT * FROM observations WHERE ' + ' AND '.join(recent_clauses)
@@ -293,6 +298,10 @@ class PatrolMemoryStore:
                   'ordering': 'captured_at_desc',
                   'object_identity': 'untracked_visual_descriptions',
                   'time_semantics': 'past_photo_observations_not_current_state'}
+        if history:
+            # Reserve this compact evidence before trimming verbose scene records.
+            # It must never replace the latest unknown observation or claim identity.
+            result['last_confirmed_observations'] = history
         if include_recent_context and terms:
             result['matching_semantics'] = 'keyword_evidence_and_unconfirmed_recent_context'
         for row in rows:
@@ -333,4 +342,53 @@ class PatrolMemoryStore:
             if len(json.dumps(result, ensure_ascii=False)) > 4000:
                 result['observations'].pop()
                 break
+        return result
+
+    def _confirmed_history(self, connection, clauses, values, terms):
+        """Find bounded, verified historical room evidence independently of hit limit."""
+        if not terms:
+            return []
+        candidates = connection.execute(
+            'SELECT * FROM observations WHERE ' + ' AND '.join(clauses)
+            + ' AND instr(analysis, ?) > 0 ORDER BY captured_at DESC, id DESC LIMIT 200',
+            values + ['"located"']).fetchall()
+        result, newest, seen = [], {}, set()
+        for row in candidates:
+            metadata = json.loads(row['metadata'])
+            matches = []
+            for obj in json.loads(row['analysis'])['objects']:
+                spatial = obj.get('spatial', {})
+                region = spatial.get('region')
+                if (spatial.get('status') != 'located' or not region
+                        or obj.get('confidence') != 'high'):
+                    continue
+                text = (obj['name'] + ' ' + region['name']).casefold()
+                name = obj['name'].casefold()
+                if (row['captured_at'] < newest.get(name, -math.inf)
+                        or not all(term in text for term in terms)):
+                    continue
+                matches.append((name, obj, region))
+            if not matches:
+                continue
+            try:
+                current, _ = read_capture(self.directory/'captures'/(row['id']+'.json'))
+                if current != metadata:
+                    continue
+            except (ValueError, OSError, TypeError, KeyError):
+                continue
+            for name, obj, region in matches:
+                identity = (name, metadata['captured_at'], metadata['map_id'], region['id'])
+                if identity in seen:
+                    continue
+                item = {'name': obj['name'], 'kind': obj.get('kind', 'object'),
+                        'captured_at': metadata['captured_at'], 'region': region,
+                        'observation_id': row['id'], 'map_id': metadata['map_id'],
+                        'simulated': metadata['simulated']}
+                if len(json.dumps(result+[item], ensure_ascii=False)) > 1400:
+                    return result
+                result.append(item)
+                newest[name] = row['captured_at']
+                seen.add(identity)
+                if len(result) == 3:
+                    return result
         return result

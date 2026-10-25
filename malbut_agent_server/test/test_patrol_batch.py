@@ -54,6 +54,10 @@ def analysis_for(layout):
                         'objects': [{'name': '빨간 상자', 'location': '사진 가운데',
                                      'confidence': 'high', 'sheet_bbox': bbox}],
                         'uncertainties': []})
+        if layout.get('coordinates') == 'frame_normalized_1000':
+            item = entries[-1]['objects'][0]
+            item.pop('sheet_bbox')
+            item['image_bbox'] = [350, 350, 650, 650]
     return {'frames': list(reversed(entries))}  # Reply order must not change source association.
 
 
@@ -65,6 +69,7 @@ def observer(calls, *, mutate=lambda response: response):
         assert sum(c['type'] == 'input_image' for c in contents) == 1
         context = json.loads(contents[0]['text'])
         layout = {'frames': context['frames'],
+                  'coordinates': context.get('coordinates'),
                   'width': context['sheet_size'][0], 'height': context['sheet_size'][1]}
         response = {'status': 'completed', 'usage': {
             'input_tokens': 2500, 'output_tokens': 1200, 'total_tokens': 3700,
@@ -255,8 +260,25 @@ def test_batch_request_declares_frame_before_its_contents(tmp_path):
     schema = calls[0]['text']['format']['schema']['properties']['frames']['items']
     assert next(iter(schema['properties'])) == 'frame_id'
     context = json.loads(calls[0]['input'][0]['content'][0]['text'])
-    assert all('photo_rect_1000' in f and 'grid_row' in f and 'grid_column' in f
+    assert context['coordinates'] == 'frame_normalized_1000'
+    assert all('photo_rect_1000' not in f and 'grid_row' in f and 'grid_column' in f
                for f in context['frames'])
+
+
+def test_frame_coordinates_preserve_anchors_without_sheet_rounding(tmp_path):
+    captures, _ = batch(tmp_path, 24)
+    _, layout = make_mosaic(captures, frame_coordinates=True)
+    value = analysis_for(layout)
+    for index, entry in enumerate(value['frames']):
+        entry['objects'][0]['image_bbox'] = [100+index, 150, 850, 900]
+        entry['objects'][0]['image_anchors'] = [[225+index, 333], [500, 666]]
+    results = split_results(value, layout)
+    for entry in value['frames']:
+        frame = next(f for f in layout['frames'] if f['frame_id'] == entry['frame_id'])
+        assert results[frame['observation_id']]['objects'] == entry['objects']
+    value['frames'][0]['objects'][0]['sheet_bbox'] = [1, 2, 3, 4]
+    with pytest.raises(ValueError, match='frame bbox'):
+        split_results(value, layout)
 
 
 @pytest.mark.parametrize('wrong_frame', [False, True])

@@ -82,7 +82,7 @@ def row():
     return metadata, analysis
 
 
-def test_only_unknown_people_and_boxes_generate_bounded_requests():
+def test_unknown_furniture_people_and_boxes_generate_bounded_requests():
     m, a = row()
     assert len(unresolved_targets([(m, a)]*10)) == 1
     assert unresolved_targets([(m, a)])[0]['observation_id'] == m['observation_id']
@@ -90,13 +90,25 @@ def test_only_unknown_people_and_boxes_generate_bounded_requests():
     assert not unresolved_targets([(m, a)])
     a['objects'][0]['spatial']['status'] = 'unknown'
     a['objects'][0].update(kind='object', name='의자')
-    assert not unresolved_targets([(m, a)])
+    assert len(unresolved_targets([(m, a)])) == 1
     a['objects'][0]['name'] = '빨간 상자'
     assert len(unresolved_targets([(m, a)])) == 1
     a['objects'][0].update(kind='box', name='붉은 직육면체')
     assert len(unresolved_targets([(m, a)])) == 1
     a['objects'][0]['spatial']['reobserve_hint']['xy'][0] = float('nan')
     assert not unresolved_targets([(m, a)])
+
+
+def test_people_take_priority_without_exceeding_retry_budget():
+    import copy
+    m, a = row()
+    chair = copy.deepcopy(a['objects'][0])
+    chair.update(name='의자', kind='object')
+    shelf = copy.deepcopy(chair)
+    shelf['name'] = '선반'
+    a['objects'] = [chair, shelf, a['objects'][0]]
+    targets = unresolved_targets([(m, a)], maximum=2)
+    assert [t['name'] for t in targets] == ['사람', '의자']
 
 
 def test_feedback_requires_ready_owner_map_environment_and_sealed_metadata(tmp_path):

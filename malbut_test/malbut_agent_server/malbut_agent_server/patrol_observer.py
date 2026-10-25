@@ -24,9 +24,11 @@ capture_rooms는 카메라 촬영 위치다. 사진 속 모든 물체가 그 방
 각 물체의 image_bbox는 보이는 물체를 감싼 [왼쪽, 위, 오른쪽, 아래] 정수 좌표다.
 사진 전체 가로·세로를 각각 0~1000으로 정규화한다. 물체를 특정할 수 없으면 null이다.
 kind는 사람(일부만 보여도)이면 person, 상자·박스·큐브형 물체이면 box, 그 외에는 object다.
-사람은 image_anchors에 직접 보이는 몸통·팔·다리 표면 안쪽의 서로 떨어진 [x,y] 지점
-3개를 같은 좌표계로 표시한다. 다리 사이 빈 공간·배경·윤곽선·가려진 신체는 고르지 않는다.
-충분히 보이는 지점만 표시하며 사람이 아니거나 지점을 특정할 수 없으면 []다.
+모든 물체의 image_anchors에 직접 보이는 같은 물체 표면 안쪽의 서로 떨어진 [x,y] 지점
+2~3개를 같은 좌표계로 표시한다. 물체는 넓게 보이는 같은 면을 고르고,
+사람은 몸통·팔·다리 안쪽을 사용한다. 각 지점이 해당 물체인지 다시 확인한다.
+의자나 침대도 빈 공간·바닥·배경·윤곽선·가려진 부분을 고르지 않는다.
+충분히 보이는 지점만 표시하며 지점을 특정할 수 없으면 []다.
 지도 좌표나 실제 물체 구역을 추정하지 않는다. 구역 판정은 서버가 깊이 영상으로 수행한다.
 이것은 captured_at 시점의 관찰이다. 현재 상태나 영구 사실로 바꾸지 않는다.
 simulated=true이면 가상 환경에서 촬영한 사진이며 실제 집의 관찰로 표현하지 않는다.
@@ -108,17 +110,19 @@ class OpenAIPatrolObserver:
     def analyze_batch(self, captures):
         """Analyze one contact sheet; preserve frame identities and measured API usage."""
         from malbut_agent_server.patrol_mosaic import (
-            INSTRUCTIONS as BATCH_INSTRUCTIONS, make_mosaic, schema_for, split_results,
+            FRAME_INSTRUCTIONS as BATCH_INSTRUCTIONS, make_mosaic, schema_for, split_results,
         )
 
         credential = key_value(self.key)
         if not credential:
             raise ValueError('patrol analysis key unavailable')
-        image, layout = make_mosaic(captures)
+        image, layout = make_mosaic(captures, frame_coordinates=True)
         metadata = {'simulated': captures[0][0]['simulated'],
+                    'coordinates': layout['coordinates'],
                     'sheet_size': [layout['width'], layout['height']],
                     'region_legend': layout['regions'],
-                    'frames': [{k: v for k, v in f.items() if k != 'observation_id'}
+                    'frames': [{k: v for k, v in f.items() if k not in (
+                        'observation_id', 'photo_rect_1000')}
                                for f in layout['frames']]}
         payload = {
             'model': self.model, 'instructions': BATCH_INSTRUCTIONS, 'store': False,
@@ -130,7 +134,7 @@ class OpenAIPatrolObserver:
             ]}],
             'text': {'format': {'type': 'json_schema', 'name': 'patrol_mosaic', 'strict': True,
                                 'schema': schema_for([f['frame_id'] for f in layout['frames']],
-                                                     SCHEMA)}},
+                                                     SCHEMA, frame_coordinates=True)}},
         }
         response = self.transport(self.base_url + '/responses',
                                   {'Authorization': 'Bearer ' + credential,

@@ -68,6 +68,8 @@ def _answer_evidence(result):
     """Keep camera provenance in storage; expose only measured object regions to answers."""
     evidence = copy.deepcopy(result)
     evidence['location_semantics'] = 'object_regions_only_camera_location_withheld'
+    if evidence.get('last_confirmed_observations'):
+        evidence['history_semantics'] = 'past_confirmed_sightings_not_current_or_tracked_identity'
     room_names = {name for o in result['observations'] for name in o.get('capture_rooms', [])}
     room_names.update(r['name'] for o in result['observations']
                       for r in o.get('capture_regions', []))
@@ -108,7 +110,7 @@ def answer_patrol(runtime, request, memories, turns, summary, first_result, *, m
         return replace(first_result, decision=AgentDecision(
             'message', '순찰 관찰 기록을 조회하지 못했어요.', reason='patrol_query_unavailable'),
             memory_proposal=None)
-    if not result['observations']:
+    if not result['observations'] and not result.get('last_confirmed_observations'):
         counts = result['counts']
         message = '질문에 맞는 순찰 사진 관찰 기록을 찾지 못했어요.'
         if counts.get('pending'):

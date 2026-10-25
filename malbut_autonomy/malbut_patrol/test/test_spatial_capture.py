@@ -134,6 +134,20 @@ def test_room_edit_after_capture_does_not_change_snapshot(tmp_path):
     assert manifest.with_name(manifest.stem + '.depth.npy').stat().st_mode & 0o777 == 0o600
 
 
+def test_camera_bearing_calibration_is_saved_even_when_depth_is_missing(tmp_path):
+    image, bundle = sensors()
+    bundle['depth'] = None
+    recorder = PhotoRecorder(tmp_path)
+    recorder.begin(CoverageGrid(np.zeros((10, 10)), .1, 0, 0), 'map', '')
+    assert recorder.offer(image, x=0., y=0., yaw=0., room_names=[],
+                          phase='OBSERVING', spatial=bundle, simulated=True)
+    recorder.close()
+    manifest, = (tmp_path / 'captures').glob('[a-f0-9]'*32+'.json')
+    metadata = json.loads(manifest.read_text())
+    assert metadata['spatial']['status'] == 'depth_missing'
+    assert metadata['camera_hfov_rad'] == pytest.approx(2*np.arctan(.5))
+
+
 def test_lidar_capture_requires_timing_and_motion_bounds():
     import copy
     from types import SimpleNamespace as NS

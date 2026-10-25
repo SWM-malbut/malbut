@@ -12,6 +12,15 @@ import cv2
 import numpy as np
 
 
+class RegionSnapshot(list):
+    """Capture rooms and object envelopes have separate, immutable evidence roles."""
+
+    def __init__(self, regions, object_regions=None, policy=None):
+        super().__init__(regions)
+        self.object_regions = regions if object_regions is None else object_regions
+        self.object_region_policy = policy
+
+
 def _sidecar(path, suffix, digest, limit):
     evidence = path.with_name(path.stem + suffix)
     if (not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest)
@@ -29,12 +38,28 @@ def read_spatial(path, metadata):
         return [], None
     snapshot = json.loads(_sidecar(
         path, '.regions.json', metadata.get('regions_sha256'), 1024 * 1024))
-    if snapshot.get('version') != 1 or not isinstance(snapshot.get('regions'), list):
+    if snapshot.get('version') not in (1, 2) or not isinstance(snapshot.get('regions'), list):
         raise ValueError('invalid room snapshot')
     regions = snapshot['regions']
     if len(regions) > 256:
         raise ValueError('too many regions')
-    for region in regions:
+    objects = snapshot.get('object_regions', regions)
+    policy = snapshot.get('object_region_policy')
+    if snapshot['version'] == 2:
+        if (set(snapshot) != {'version', 'regions', 'object_regions', 'object_region_policy'}
+                or not isinstance(objects, list) or len(objects) != len(regions)
+                or not isinstance(policy, dict) or set(policy) != {
+                    'method', 'extension_m', 'resolution_m'}
+                or policy['method'] not in ('bounded_nonfree_room_envelope', 'floor_polygons_only')
+                or policy['extension_m'] != .45
+                or type(policy['resolution_m']) not in (int, float)
+                or not 0 < policy['resolution_m'] <= 100
+                or [(r.get('id'), r.get('name')) for r in regions]
+                != [(r.get('id'), r.get('name')) for r in objects]):
+            raise ValueError('invalid object room snapshot')
+    elif objects != regions or policy is not None:
+        raise ValueError('unexpected object room snapshot')
+    for region in regions + objects:
         if (set(region) != {'id', 'name', 'polygons'} or not region['polygons']
                 or any(not isinstance(region[k], str) or not 1 <= len(region[k]) <= 120
                        for k in ('id', 'name'))):
@@ -47,6 +72,7 @@ def read_spatial(path, metadata):
                 if (points.ndim != 2 or points.shape[0] < 3 or points.shape[1] != 2
                         or not np.isfinite(points).all()):
                     raise ValueError('invalid region ring')
+    regions = RegionSnapshot(regions, objects, policy)
     captures = metadata.get('capture_regions')
     expected = [{'id': r['id'], 'name': r['name']} for r in regions
                 if r['name'] in metadata['capture_rooms']]
@@ -224,18 +250,54 @@ def _support_clear(points, regions, margin):
     return True
 
 
-def _person_position(item, spatial, regions, depth, unknown):
-    """Require independent visible body patches, never the gap between a person's legs."""
+def _surface_link(a, b, depth):
+    """Two object anchors must have measured, continuous surface between them.
+
+    Smooth nonplanar surfaces are allowed. A wall behind the object cannot join
+    the object's consensus through a depth jump.
+    Missing pixels are never replaced by the expected/interpolated values.
+    """
+    count = max(5, int(math.ceil(math.dist(a, b)))+1)
+    pixels = np.rint(np.linspace(a, b, count)).astype(int)
+    values = depth[pixels[:, 1], pixels[:, 0]]
+    valid = np.isfinite(values) & (values >= .15) & (values <= 10)
+    if np.mean(valid) < .8 or not valid[0] or not valid[-1]:
+        return False
+    indices = np.flatnonzero(valid)
+    # Follow measured local continuity, including folds and curved surfaces.
+    # A global plane fit wrongly rejects a continuous blanket or chair back.
+    # Do not bridge a missing strip or interpolate across an occlusion.
+    if np.max(np.diff(indices), initial=0) > 2:
+        return False
+    measured = values[indices]
+    jumps = np.abs(np.diff(measured))
+    tolerance = .025 + .01*np.minimum(measured[:-1], measured[1:])
+    return bool(np.all(jumps <= tolerance))
+
+
+def _connected_group(links):
+    """Require one measured surface component, not a straight line for every pair."""
+    reached = {0}
+    while True:
+        others = {i for j in reached for i in np.flatnonzero(links[j])}
+        if others <= reached:
+            return len(reached) == len(links)
+        reached.update(others)
+
+
+def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
+    """Require independent visible surface patches, never bounding-box background."""
+    prefix = 'person' if person else 'object'
     anchors = item.get('image_anchors', [])
     if len(anchors) < 2:
-        return dict(unknown, reason='person_anchors_missing')
+        return dict(unknown, reason=prefix+'_anchors_missing')
     height, width = depth.shape
     left, top, right, bottom = item['image_bbox']
     if any(not (left < x < right and top < y < bottom) for x, y in anchors):
-        return dict(unknown, reason='person_anchor_outside_bbox')
+        return dict(unknown, reason=prefix+'_anchor_outside_bbox')
     # Small patches stay inside narrow limbs. Each needs real, coherent depth support.
     radius = 2
-    samples, used = [], []
+    samples, used, pixels = [], [], []
     for x, y in anchors:
         px, py = int(x/1000*width), int(y/1000*height)
         if any(math.hypot(px-a, py-b) < 2*radius+1 for a, b in used):
@@ -263,42 +325,51 @@ def _person_position(item, spatial, regions, depth, unknown):
         margin = .12 + .02*z + spread + z*radius/focal
         region, reason = region_at(world[:2], regions, margin)
         samples.append((world, z, margin, region, reason))
+        pixels.append((px, py))
     if len(samples) < 2:
-        return dict(unknown, reason='person_depth_insufficient')
+        return dict(unknown, reason=prefix+'_depth_insufficient')
     points = np.asarray([s[0] for s in samples])
     distances = np.linalg.norm(points[:, None, :2]-points[None, :, :2], axis=2)
+    connected = np.ones(distances.shape, dtype=bool)
+    if not person:
+        for a, b in combinations(range(len(samples)), 2):
+            connected[a, b] = connected[b, a] = _surface_link(pixels[a], pixels[b], depth)
     groups = []
     for size in range(len(samples), 1, -1):
         groups = [ids for ids in combinations(range(len(samples)), size)
-                  if np.max(distances[np.ix_(ids, ids)]) <= .8]
+                  if np.max(distances[np.ix_(ids, ids)]) <= (.8 if person else 3.)
+                  and _connected_group(connected[np.ix_(ids, ids)])]
         if groups:
             break
     # A unique pair may reject a farther background point, never a nearer occluder.
     # Ambiguous groups cannot be averaged into an invented position.
     if len(groups) != 1:
-        return dict(unknown, reason='person_depth_disagreement')
+        return dict(unknown, reason=prefix+'_depth_disagreement')
     selected = groups[0]
     farthest = max(samples[i][1] for i in selected)
-    if any(sample[1] <= farthest+.15 for i, sample in enumerate(samples) if i not in selected):
-        return dict(unknown, reason='person_depth_disagreement')
+    separation = .15 if person else max(.04, farthest*.02)
+    if any(sample[1] <= farthest+separation
+           for i, sample in enumerate(samples) if i not in selected):
+        return dict(unknown, reason=prefix+'_depth_disagreement')
     samples = [samples[i] for i in selected]
     points = points[list(selected)]
     region = samples[0][3]
     if region is None or any(s[3] != region for s in samples):
-        return dict(unknown, reason='person_region_disagreement')
+        return dict(unknown, reason=prefix+'_region_disagreement')
     world = np.median(points, axis=0)
     margin = max(s[2] for s in samples)
     if (region_at(world[:2], regions, margin)[0] != region
             or not _support_clear(points[:, :2], regions, margin)):
         return dict(unknown, reason='region_boundary')
-    if _person_crosses_region(item, spatial, depth, regions, region, world):
+    if person and _person_crosses_region(item, spatial, depth, regions, region, world):
         return dict(unknown, reason='visible_body_crosses_region')
     return {'status': 'located', 'region': region,
             'map_position': dict(zip(('x', 'y', 'z'), np.round(world, 3).tolist())),
             'method': 'registered_rgbd', 'reason': None,
             'depth_m': round(float(np.median([s[1] for s in samples])), 3),
             'boundary_margin_m': round(margin, 3),
-            'depth_support': 'visible_body_patches', 'anchor_count': len(samples)}
+            'depth_support': 'visible_body_patches' if person else 'visible_surface_patches',
+            'anchor_count': len(samples)}
 
 
 def _person_crosses_region(item, spatial, depth, regions, region, center):
@@ -338,7 +409,9 @@ def _object_position(item, metadata, regions, depth):
     if bbox is None or item['confidence'] != 'high':
         return dict(unknown, reason='object_not_grounded')
     if item.get('kind') == 'person':
-        return _person_position(item, spatial, regions, depth, unknown)
+        return _anchor_position(item, spatial, regions, depth, unknown)
+    if 'image_anchors' in item:
+        return _anchor_position(item, spatial, regions, depth, unknown, person=False)
     height, width = depth.shape
     left, top, right, bottom = np.asarray(bbox) / 1000 * [width, height, width, height]
     # Avoid bounding-box background; use the central 40% of visible object pixels.
@@ -370,7 +443,6 @@ def _object_position(item, metadata, regions, depth):
         if spread > max(.025, z * .015):
             return dict(unknown, reason='mixed_depth')
     yy, xx = np.nonzero(valid & (np.abs(roi - z) <= max(.025, spread * 2)))
-    k = spatial['intrinsics']
     pixel = [float(np.median(xx)) + x0, float(np.median(yy)) + y0]
     ray = _rays([pixel], spatial)[0]
     if not np.isfinite(ray).all():
@@ -381,20 +453,24 @@ def _object_position(item, metadata, regions, depth):
             return dict(unknown, reason='mixed_depth')
     camera = np.array([ray[0] * z, ray[1] * z, z])
     world = _map_points(camera, spatial)
-    # Include depth noise, calibration/localization allowance and visible ROI extent.
-    margin = (.12 + .02 * z + max(spread, fit_error)
-              + z * max(x1-x0, y1-y0) / min(k['fx'], k['fy']) / 2)
+    # Check uncertainty and the measured floor-plane extent separately: an object's
+    # vertical image height is not uncertainty in its horizontal map position.
+    margin = .12 + .02 * z + max(spread, fit_error)
+    if support is None:
+        rays = _rays(np.column_stack((xx+x0, yy+y0)), spatial)
+        measured = roi[yy, xx]
+        support = _map_points(np.column_stack((rays*measured[:, None], measured)), spatial)
     region, reason = region_at(world[:2], regions, margin)
-    if region and support is not None:
+    if region:
         # A small anchor must not hide a broad surface spanning several map regions.
-        if any(region_at(point[:2], regions, 0)[0] != region for point in support):
+        if not _support_clear(support[:, :2], regions, margin):
             region, reason = None, 'surface_crosses_regions'
     result = {
         'status': 'located' if region else 'unknown', 'region': region,
         'map_position': dict(zip(('x', 'y', 'z'), map(lambda v: round(float(v), 3), world))),
         'method': 'registered_rgbd', 'reason': reason,
         'depth_m': round(z, 3), 'boundary_margin_m': round(margin, 3)}
-    if support is not None:
+    if plane_coefficients is not None:
         result.update(depth_support='planar_center_patch', surface_fit_error_m=round(fit_error, 3))
     return result
 
@@ -402,12 +478,20 @@ def _object_position(item, metadata, regions, depth):
 def localize_objects(analysis, metadata, regions, depth, lidar=None):
     """Only trusted geometry assigns object regions; never copy the capture room."""
     result = copy.deepcopy(analysis)
+    object_regions = getattr(regions, 'object_regions', regions)
     for item in result['objects']:
-        item['spatial'] = _object_position(item, metadata, regions, depth)
+        item['spatial'] = _object_position(item, metadata, object_regions, depth)
+        policy = getattr(regions, 'object_region_policy', None)
+        if policy is not None:
+            item['spatial']['region_basis'] = copy.deepcopy(policy)
         if item['spatial']['status'] == 'unknown' and regions:
             hint = _reobserve_hint(item, metadata, depth)
             if hint is not None:
                 item['spatial']['reobserve_hint'] = hint
+            else:
+                hint = _bearing_hint(item, metadata)
+                if hint is not None:
+                    item['spatial']['reobserve_hint'] = hint
         if item.get('kind') == 'person' and lidar is not None:
             from malbut_agent_server.patrol_lidar import compare_person_lidar
             other_boxes = [o['image_bbox'] for o in result['objects']
@@ -415,6 +499,22 @@ def localize_objects(analysis, metadata, regions, depth, lidar=None):
             item['spatial']['lidar_comparison'] = compare_person_lidar(
                 item, metadata, depth, lidar, other_boxes)
     return result
+
+
+def _bearing_hint(item, metadata):
+    """Keep a sighting direction even without usable depth; the range is an assumption."""
+    bbox = item.get('image_bbox')
+    fov = metadata.get('camera_hfov_rad')
+    if (item.get('confidence') != 'high' or not bbox
+            or type(fov) not in (float, int) or not math.isfinite(fov) or not 0 < fov < math.pi):
+        return None
+    pose = metadata['camera_pose']
+    horizontal = ((bbox[0]+bbox[2])/2000-.5)*2*math.tan(fov/2)
+    bearing = pose['yaw']-math.atan(horizontal)
+    return {'xy': [round(pose['x']+1.5*math.cos(bearing), 3),
+                   round(pose['y']+1.5*math.sin(bearing), 3)],
+            'purpose': 'aim_only_not_object_position', 'source': 'camera_bearing',
+            'assumed_range_m': 1.5}
 
 
 def _reobserve_hint(item, metadata, depth):

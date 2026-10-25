@@ -113,10 +113,18 @@ class ReturnRoutePlanner:
                         and not missing_visits and not deficient)
             if complete or len(route)-2 >= maximum_stops:
                 break
+            useful = p._target.copy()
+            if np.count_nonzero(predicted & p._target) >= p._target_count*p.profile.target_ratio:
+                # Once total coverage is sufficient, extra pixels in completed
+                # rooms cannot satisfy a missing room visit. Only pursue the
+                # remaining room coverage or an actual entry into that room.
+                useful[:] = False
+                for name in deficient:
+                    useful[p._room_cells[name]] = True
             best = None
             for index in available:
                 visible = p._candidate_visible[index]
-                gain = np.count_nonzero(~predicted[visible])*p.grid.resolution**2
+                gain = np.count_nonzero(~predicted[visible] & useful[visible])*p.grid.resolution**2
                 rooms = set(p._candidate_rooms[index])
                 visit = bool(rooms & missing_visits)
                 if gain <= 0 and not visit:
