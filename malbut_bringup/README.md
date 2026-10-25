@@ -305,5 +305,56 @@ launch 인자에 OSNet 모델이 있다고 해서 실기기에서 외형 재식�
 | [음성 가이드](README_SPEECH.md) | STT·Agent·TTS 준비와 연결 |
 | [웹 가이드](README_WEB.md) · [실기기 클라우드 연결](../malbut_test/README_CLOUD.md) | 서비스 웹·기기 인증·LAN 테스트 패널 |
 
-이 패키지는 Gazebo·시나리오 실행을 포함하지 않습니다.
+일반 Bringup 실행은 Gazebo·시나리오를 시작하지 않습니다.
 실기기 적용본의 배치·빌드 방식은 [배포 구성](../malbut_test/README.md)에 있습니다.
+
+## 금지구역 경계의 Gazebo 회귀 검증
+
+Nav2는 일반 레이어의 inflation 뒤에 keepout 필터를 적용합니다. 로봇용
+설정은 전역·지역 costmap 모두 `keepout_filter` 다음에
+`keepout_inflation_layer`를 실행해 금지구역에도 차체 여유거리를 반영합니다.
+금지구역 자체와 라이다 장애물은 계속 lethal cost로 유지됩니다.
+
+[검증 스크립트](test/keepout_navigation_sim.py)는 합성 방과 가상 금지구역을
+만들고 Fortress의 실제 차체 물리·라이다·odom을 로봇용 Nav2 설정에 연결합니다.
+로봇용 `zones.build_mask`, DWB, 속도 smoother, 재계획·복구 BT를 사용합니다.
+Gazebo 기본 User Map의 별도 hard clearance 마스크는 사용하지 않습니다.
+위치 추정의 영향을 분리하기 위해 AMCL 대신 Gazebo odom을 지도 좌표로 사용하므로,
+이 검증이 실환경 위치 추정이나 전체 순찰 성공을 보장하지는 않습니다.
+
+저장소 루트에서 다음과 같이 실행합니다. ROS 2 Humble, Nav2, Gazebo Fortress,
+ROS–Gazebo bridge가 설치되어 있어야 합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon --log-base /tmp/malbut-keepout-build/log build \
+  --base-paths malbut_description malbut_gazebo malbut_gazebo_plugins \
+  --build-base /tmp/malbut-keepout-build/build \
+  --install-base /tmp/malbut-keepout-build/install --symlink-install
+source /tmp/malbut-keepout-build/install/setup.bash
+export PYTHONPATH="$PWD/malbut_bringup:$PYTHONPATH"
+
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --baseline --output /tmp/keepout-before
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --output /tmp/keepout-after
+
+# 수정 설정의 비용·센서 장애물·왕복 주행·차체 접촉 검증을 pytest로 실행
+MALBUT_KEEPOUT_SIM_TEST=1 python3 -m pytest -q \
+  malbut_bringup/test/test_keepout_navigation_sim.py
+```
+
+스크립트는 loopback DDS domain 74와 실행마다 별도 Gazebo partition을 사용합니다.
+동시에 실행하려면 `--domain 75`처럼 사용하지 않는 70–100 범위의 domain을 지정합니다.
+출력 디렉터리는 새 경로여야 하며 `results.json`, 비용 지도와 프로세스 로그를 남깁니다.
+`--baseline`은 수정 전 필터 순서만 복원하고 성공·실패를 그대로 기록합니다. 기본 실행은
+금지구역 바깥의 차체 여유 비용, 지도에 없는 라이다 장애물, 두 번의 이동 성공,
+금지구역·물리 장애물과의 차체 비접촉, 주행 오류 부재를 확인하며
+실패하면 0이 아닌 코드로 끝납니다.
+
+2026-10-26 비교에서는 전체 NavigateToPose 왕복은 두 설정 모두 성공했으며,
+기존 설정은 progress 오류를 복구했고 수정 설정은 오류가 없었습니다.
+금지구역으로부터 최소 중심 거리는 18.4cm에서 23.3cm로 늘었고,
+라이다 전용 장애물 비용은 두 경우 모두 254였습니다.
+[측정 결과](../docs/validation/keepout_inflation/summary.json)와
+[경로 비교](../docs/validation/keepout_inflation/comparison.png)를 함께 보십시오.

@@ -155,7 +155,8 @@ def test_saved_map_zones_reach_both_costmaps_through_keepout_filter(config):
     assert info['base'] == 0.0 and info['multiplier'] == 1.0
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
-        assert costmap['filters'] == ['keepout_filter']
+        assert costmap['filters'] == ['keepout_filter', 'keepout_inflation_layer']
+        assert costmap['keepout_inflation_layer'] == costmap['inflation_layer']
         keepout = costmap['keepout_filter']
         assert keepout['plugin'] == 'nav2_costmap_2d::KeepoutFilter'
         assert keepout['enabled'] is True

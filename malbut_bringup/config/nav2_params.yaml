@@ -304,11 +304,17 @@ local_costmap:
       footprint_padding: 0.01
       plugins: ["obstacle_layer", "inflation_layer"]
       # Saved-map Zones: zone_filter loads the mask for the selected map.
-      filters: ["keepout_filter"]
+      # Filters run after the ordinary inflation plugin. Inflate keepout
+      # costs here too, so path planning and footprint collision checks agree.
+      filters: ["keepout_filter", "keepout_inflation_layer"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True
         filter_info_topic: "/keepout_costmap_filter_info"
+      keepout_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.30
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
@@ -359,7 +365,9 @@ global_costmap:
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       # Saved-map Zones: zone_filter loads the mask for the selected map.
-      filters: ["keepout_filter"]
+      # Filters run after the ordinary inflation plugin. Inflate keepout
+      # costs here too, so path planning and footprint collision checks agree.
+      filters: ["keepout_filter", "keepout_inflation_layer"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True
@@ -381,6 +389,10 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+      keepout_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.30
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0
