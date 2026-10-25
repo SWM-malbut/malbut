@@ -21,6 +21,26 @@ import numpy as np
 import yaml
 
 
+def pose_error_statistics(truth, estimates):
+    """Compare poses at sensor timestamps, interpolating translation and wrapped yaw."""
+    truth, estimates = np.asarray(truth), np.asarray(estimates)
+    if len(truth) < 2 or len(estimates) < 1:
+        raise ValueError('Pose error measurement needs ground truth and estimated samples')
+    matched = estimates[(estimates[:, 0] >= truth[0, 0])
+                        & (estimates[:, 0] <= truth[-1, 0])]
+    if not len(matched):
+        raise ValueError('No estimated pose has a matching ground truth timestamp')
+    positions = np.column_stack([np.interp(matched[:, 0], truth[:, 0], truth[:, i])
+                                 for i in (1, 2)])
+    yaw = np.interp(matched[:, 0], truth[:, 0], np.unwrap(truth[:, 3]))
+    heading = np.abs(np.arctan2(np.sin(matched[:, 3]-yaw), np.cos(matched[:, 3]-yaw)))
+    distance = np.linalg.norm(matched[:, 1:3]-positions, axis=1)
+    return {'samples': len(matched), 'excluded_samples': len(estimates)-len(matched),
+            'max_position_m': float(distance.max()),
+            'p95_position_m': float(np.quantile(distance, .95)),
+            'mean_position_m': float(distance.mean()), 'max_heading_rad': float(heading.max())}
+
+
 def rectangle(x0, y0, x1, y1):
     """Return a closed polygon for a rectangular hazard or room."""
     return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
@@ -100,9 +120,10 @@ def run(args):
     from rclpy.action import ActionClient
     from rclpy.parameter import Parameter
     from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+    from rclpy.time import Time
     from sensor_msgs.msg import LaserScan
     from std_msgs.msg import String
-    from tf2_ros import StaticTransformBroadcaster
+    from tf2_ros import Buffer, StaticTransformBroadcaster, TransformListener
 
     folder = args.output.resolve()
     folder.mkdir(parents=True, exist_ok=False)
@@ -128,7 +149,7 @@ def run(args):
         root / 'malbut_bringup/config/navigate_to_pose.xml')
     params['bt_navigator']['ros__parameters']['default_nav_through_poses_bt_xml'] = str(
         root / 'malbut_bringup/config/navigate_through_poses.xml')
-    use_amcl = args.scenario == 'patrol' and not args.ground_truth
+    use_amcl = (args.amcl or args.scenario == 'patrol') and not args.ground_truth
     if use_amcl:
         params['amcl']['ros__parameters'].update(
             use_sim_time=True, scan_topic='/scan', set_initial_pose=True,
@@ -141,13 +162,14 @@ def run(args):
               'warnings': [], 'pose_samples': [], 'commands': [], 'zones': rings,
               'scenario': args.scenario, 'width_m': args.width, 'barriers': args.barriers,
               'physical_boxes': boxes, 'expect_blocked': args.expect_blocked,
+              'pose_sample_time_basis': 'message.header.stamp',
               'localization': 'Gazebo odometry with identity map-to-odom; AMCL excluded',
               'config': str(config)}
-    if args.scenario == 'patrol':
-        if use_amcl:
-            result['localization'] = 'AMCL from Gazebo lidar; ground truth from Gazebo odometry'
-        result['patrol_status'] = []
+    if use_amcl:
+        result['localization'] = 'AMCL from Gazebo lidar; ground truth from Gazebo odometry'
         result['amcl_samples'] = []
+    if args.scenario == 'patrol':
+        result['patrol_status'] = []
 
     def start(label, command):
         stream = (folder / f'{label}.log').open('w')
@@ -166,7 +188,8 @@ def run(args):
     def odometry(message):
         latest['odom'] = message
         p = message.pose.pose
-        result['pose_samples'].append([node.get_clock().now().nanoseconds / 1e9,
+        result['pose_samples'].append([message.header.stamp.sec
+                                       + message.header.stamp.nanosec / 1e9,
                                        p.position.x, p.position.y,
                                        2*math.atan2(p.orientation.z, p.orientation.w)])
 
@@ -190,7 +213,8 @@ def run(args):
     def localization(message):
         p = message.pose.pose
         latest['amcl'] = message
-        result['amcl_samples'].append([node.get_clock().now().nanoseconds / 1e9,
+        result['amcl_samples'].append([message.header.stamp.sec
+                                      + message.header.stamp.nanosec / 1e9,
                                       p.position.x, p.position.y,
                                       2*math.atan2(p.orientation.z, p.orientation.w)])
 
@@ -203,6 +227,8 @@ def run(args):
     if args.scenario == 'patrol':
         subs.append(node.create_subscription(String, '/patrol/status', patrol_status, latched))
     if use_amcl:
+        tf_buffer = Buffer(node=node)
+        tf_listener = TransformListener(tf_buffer, node)
         subs.append(node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose',
                                              localization, latched))
     else:
@@ -321,10 +347,21 @@ def run(args):
         for package, executable, remaps in servers:
             start(executable, ['ros2', 'run', package, executable, '--ros-args',
                                '--params-file', str(folder / 'nav2.yaml'), *remaps])
-            for transition in (1, 3):
-                request = ChangeState.Request()
-                request.transition.id = transition
-                assert rpc(ChangeState, f'/{executable}/change_state', request).success
+            request = ChangeState.Request()
+            request.transition.id = 1
+            assert rpc(ChangeState, f'/{executable}/change_state', request).success
+        # Match the lifecycle manager: configure every node before activating
+        # any of them. This also creates all costmap TF listeners before AMCL
+        # starts broadcasting map->odom, and lets BT action discovery settle.
+        for _, executable, _ in servers:
+            request = ChangeState.Request()
+            request.transition.id = 3
+            assert rpc(ChangeState, f'/{executable}/change_state', request).success
+            if executable == 'amcl':
+                # Do not let keepout filters activate in odom before AMCL has
+                # provided the map transform they need to place the mask.
+                spin_until(lambda: 'amcl' in latest and tf_buffer.can_transform(
+                    'map', 'base_footprint', Time()), 30)
         pump(3)
         result['costs'] = read_costs()
         if args.scenario == 'original':
@@ -434,6 +471,9 @@ def run(args):
             result['success'] = (len(result['legs']) == 2 and all(
                 leg.get('navigation_status') == 4 and leg['distance_m'] < .2
                 for leg in result['legs']))
+        if use_amcl:
+            result['localization_error'] = pose_error_statistics(
+                result['pose_samples'], result['amcl_samples'])
         outline = np.array([[.1485, .116], [.1485, -.116],
                             [-.1485, -.116], [-.1485, .116]])
         hazards = [np.asarray(ring[:-1], dtype=np.float32) for ring in rings]
@@ -459,9 +499,8 @@ def run(args):
         if not args.baseline:
             assert result['success'], 'The fixed configuration must complete the mission'
             assert not any(intersections), result['footprint_intersections']
-            if args.scenario != 'patrol':
-                assert not result['errors'], result['errors']
-            else:
+            assert not result['errors'], result['errors']
+            if args.scenario == 'patrol':
                 status = result['patrol_result']['final_status']
                 assert not status['inaccessible_rooms'], status
                 assert not status['unvisited_rooms'], status
@@ -470,8 +509,13 @@ def run(args):
                 assert result['camera_evidence']['registered_depth'] > 0
                 assert result['camera_evidence']['rooms'] == ['east', 'west']
                 assert result['patrol_result']['ground_truth_return_distance_m'] < .25
+            if use_amcl:
+                error = result['localization_error']
+                assert error['samples'] > 10, error
+                assert error['max_position_m'] < .1, error
+                assert error['max_heading_rad'] < .15, error
             result['validation_passed'] = True
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         result['verification_failure'] = f'{type(error).__name__}: {error}'
         raise
     finally:
@@ -481,7 +525,11 @@ def run(args):
                 wait(active_handle.get_result_async(), 5)
             except Exception as error:
                 result['cancel_error'] = str(error)
-        stop_pub.publish(Twist())
+        try:
+            stop_pub.publish(Twist())
+        except Exception:
+            # SIGINT can invalidate the ROS context before cleanup starts.
+            pass
         for process in reversed(processes):
             # A launch error can exit the parent while Gazebo still belongs to
             # its session. Stop the owned group even when the parent has exited.
@@ -493,11 +541,13 @@ def run(args):
             try:
                 process.wait(timeout=8)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGTERM)
+                os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
         for process in reversed(processes):
+            # A launch parent can exit while a Gazebo child ignores SIGINT.
+            # Each group was created exclusively for this verifier.
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         for stream in streams:
@@ -505,8 +555,11 @@ def run(args):
         result['wall_duration_s'] = time.monotonic()-started
         (folder / 'results.json').write_text(json.dumps(result, indent=2))
         del subs
+        if use_amcl:
+            tf_listener.unregister()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 def main():
@@ -522,8 +575,11 @@ def main():
     parser.add_argument('--barriers', choices=('physical', 'mixed', 'keepout'), default='mixed')
     parser.add_argument('--expect-blocked', action='store_true')
     parser.add_argument('--timeout', type=float, default=90.)
-    parser.add_argument('--ground-truth', action='store_true',
-                        help='Isolate patrol navigation from AMCL with identity map-to-odom')
+    localization = parser.add_mutually_exclusive_group()
+    localization.add_argument('--ground-truth', action='store_true',
+                              help='Isolate patrol from AMCL with identity map-to-odom')
+    localization.add_argument('--amcl', action='store_true',
+                              help='Also use AMCL in the original or corridor fixtures')
     run(parser.parse_args())
 
 

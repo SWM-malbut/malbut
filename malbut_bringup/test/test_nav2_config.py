@@ -58,15 +58,19 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert config['map_server']['ros__parameters']['yaml_filename'] == ''
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased', 'FollowPersonAStar']
-    assert planner['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
+    assert planner['GridBased']['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
     assert planner['GridBased']['tolerance'] == 0.5
-    assert planner['GridBased']['use_astar'] is False
+    assert planner['GridBased']['downsample_costmap'] is False
+    assert planner['GridBased']['smoother']['max_iterations'] == 0
 
 
 def test_person_astar_keeps_the_existing_live_obstacle_layers(config):
     """Dedicated arrival/controller settings do not remove real obstacles."""
     planner = config['planner_server']['ros__parameters']
-    assert planner['FollowPersonAStar'] == {**planner['GridBased'], 'use_astar': True}
+    assert planner['FollowPersonAStar'] == {
+        'plugin': 'nav2_navfn_planner/NavfnPlanner', 'tolerance': 0.5,
+        'use_astar': True, 'allow_unknown': True,
+    }
     for scope in ('global_costmap', 'local_costmap'):
         assert 'obstacle_layer' in config[scope][scope]['ros__parameters']['plugins']
     root = Path(__file__).parents[2]
@@ -83,14 +87,26 @@ def test_person_astar_keeps_the_existing_live_obstacle_layers(config):
 
 
 def test_person_controller_has_its_own_heading_checker_without_new_speed_limits(config):
-    """Both controllers share a horizon; only arrival tolerances differ."""
+    """Patrol can align before translation without changing the person controller."""
     controller = config['controller_server']['ros__parameters']
     assert controller['controller_plugins'] == ['FollowPath', 'FollowPerson']
+    path = controller['FollowPath']
+    assert path['plugin'] == 'nav2_rotation_shim_controller::RotationShimController'
+    assert path['primary_controller'] == 'dwb_core::DWBLocalPlanner'
+    assert 0 < path['angular_disengage_threshold'] < path['angular_dist_threshold']
+    assert path['rotate_to_heading_angular_vel'] <= path['max_vel_theta']
+    assert path['max_angular_accel'] <= path['acc_lim_theta']
+    assert path['rotate_to_goal_heading'] is False
+    shim_keys = {'primary_controller', 'angular_dist_threshold', 'angular_disengage_threshold',
+                 'forward_sampling_distance', 'rotate_to_heading_angular_vel',
+                 'max_angular_accel', 'simulate_ahead_time', 'rotate_to_goal_heading'}
     assert controller['FollowPerson'] == {
-        **controller['FollowPath'],
+        **{key: value for key, value in path.items() if key not in shim_keys},
+        'plugin': path['primary_controller'],
         'xy_goal_tolerance': 0.08,
+        'sim_time': 3.0,
     }
-    assert controller['FollowPath']['sim_time'] == 3.0
+    assert controller['FollowPath']['sim_time'] == 1.5
     assert controller['FollowPerson']['sim_time'] == 3.0
     assert controller['person_follow_goal_checker'] == {
         **controller['general_goal_checker'], 'yaw_goal_tolerance': 0.35,
@@ -255,7 +271,7 @@ def test_autonomous_driving_prefers_forward_without_forbidding_reverse(config):
     assert follow['PreferForward.theta_scale'] == 0.0
     # Keep reverse usable on short return paths while preferring forward.
     assert follow['PreferForward.scale'] == 10.0
-    assert follow['sim_time'] == 3.0
+    assert follow['sim_time'] == 1.5
     assert follow['PreferForward.scale'] <= follow['PathDist.scale'] + follow['GoalDist.scale']
     behavior = config['behavior_server']['ros__parameters']
     assert behavior['backup']['plugin'] == 'nav2_behaviors/BackUp'

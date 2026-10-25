@@ -24,8 +24,10 @@ amcl:
     laser_likelihood_max_dist: 2.0
     laser_max_range: 10.0
     laser_min_range: 0.2
-    laser_model_type: "likelihood_field"
-    max_beams: 60
+    # Joint scan likelihood avoids accepting poses supported by only part of
+    # the scan. Keep the Omni motion model and its odometry-noise parameters.
+    laser_model_type: "likelihood_field_prob"
+    max_beams: 120
     max_particles: 3000
     min_particles: 500
     odom_frame_id: "odom"
@@ -37,14 +39,19 @@ amcl:
     # Mecanum base: joystick and manual driving command lateral motion.
     robot_model_type: "nav2_amcl::OmniMotionModel"
     save_pose_rate: 0.5
-    sigma_hit: 0.2
+    # Resolve wall residuals at the 5 cm map scale. The old 20 cm likelihood
+    # remained broad enough to accept body-width position errors in corridors.
+    sigma_hit: 0.05
     tf_broadcast: true
     transform_tolerance: 1.0
-    update_min_a: 0.2
-    update_min_d: 0.25
-    z_hit: 0.5
+    # Correct at one map cell / 0.1 rad, before a slow turn or passage entry
+    # accumulates the old 25 cm motion threshold.
+    update_min_a: 0.1
+    update_min_d: 0.05
+    # likelihood_field_prob uses z_hit and z_rand; z_max/z_short belong to beam.
+    z_hit: 0.95
     z_max: 0.05
-    z_rand: 0.5
+    z_rand: 0.05
     z_short: 0.05
     scan_topic: /scan_raw
     set_initial_pose: False
@@ -149,7 +156,10 @@ controller_server:
     controller_plugins: ["FollowPath", "FollowPerson"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
+      # A 0.5 m displacement requirement falsely aborts low-speed approaches
+      # and corridor turns. Keep the 10 s stall timeout, but accept 10 cm
+      # progress (within the general goal checker's 12 cm arrival tolerance).
+      required_movement_radius: 0.1
       movement_time_allowance: 10.0
     general_goal_checker:
       stateful: True
@@ -174,7 +184,17 @@ controller_server:
       # Only person-following paths require facing their person-directed endpoint.
       yaw_goal_tolerance: 0.35
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      # Align with the path before translating through a tight entrance. The
+      # shim checks the same padded footprint and obeys the driver's limits.
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.2
+      angular_disengage_threshold: 0.05
+      forward_sampling_distance: 0.4
+      rotate_to_heading_angular_vel: 0.5
+      max_angular_accel: 3.2
+      simulate_ahead_time: 1.0
+      rotate_to_goal_heading: False
       debug_trajectory_details: True
       # Driver /cmd_vel limits instead of the vendor's 0.4 m/s and 1.0 rad/s.
       min_vel_x: -0.2
@@ -194,7 +214,10 @@ controller_server:
       vx_samples: 20
       vy_samples: 5
       vtheta_samples: 20
-      sim_time: 3.0
+      # At 0.2 m/s, a 3 s constant-turn projection rejects small corrective
+      # turns in a 40 cm passage. Replan over 0.3 m while retaining footprint
+      # collision checks and the existing velocity/acceleration limits.
+      sim_time: 1.5
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
@@ -445,13 +468,17 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased", "FollowPersonAStar"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      # An unreachable goal cell (inside a wall, furniture or a person's own
-      # LiDAR blob plus the 0.106 m inscribed inflation) is moved to the nearest
-      # reachable cell within this radius. Keep the existing general planner.
+      # NavFn could find a legal potential yet fail to extract the path next
+      # to an inflated corner. Grid A* avoids that gradient-extraction step.
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      # Retain the existing search tolerance for an unreachable goal cell.
       tolerance: 0.5
-      use_astar: false
       allow_unknown: true
+      downsample_costmap: false
+      cost_travel_multiplier: 2.0
+      # Preserve the searched clearance path; DWB follows it directly.
+      smoother:
+        max_iterations: 0
     FollowPersonAStar:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
