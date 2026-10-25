@@ -1,0 +1,7 @@
+<class_libraries>
+  <library path="malbut_keepout">
+    <class type="malbut_bringup::keepout::Filter" base_class_type="nav2_costmap_2d::Layer"/>
+    <class type="malbut_bringup::keepout::Planner" base_class_type="nav2_core::GlobalPlanner"/>
+    <class type="malbut_bringup::keepout::Controller" base_class_type="nav2_core::Controller"/>
+  </library>
+</class_libraries>

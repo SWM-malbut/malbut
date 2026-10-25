@@ -19,6 +19,10 @@
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <depend>slam_toolbox</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_navfn_planner</depend>
+  <depend>dwb_core</depend>
+  <depend>nav2_core</depend>
   <depend>rclcpp</depend>
   <depend>boost</depend>
   <build_depend>message_filters</build_depend>
@@ -55,6 +59,8 @@
   <exec_depend>malbut_fall_approach</exec_depend>
   <exec_depend>homecam_media_agent</exec_depend>
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>nav2_util</test_depend>
   <exec_depend>malbut_agent_server</exec_depend>
   <exec_depend>malbut_stt</exec_depend>
   <exec_depend>malbut_tts</exec_depend>

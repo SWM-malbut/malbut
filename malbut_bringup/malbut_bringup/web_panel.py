@@ -24,7 +24,6 @@ import yaml
 from .drive_mode import PatrolFallStops
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
-from .zone_override import ZoneOverride
 from .zones import (
     COSTS, MAX_POINTS, MAX_ZONES, read_zones, valid_zone_id, with_zone_ids, write_zones,
     zone_feature, ZoneError,
@@ -445,7 +444,7 @@ class RosBridge:
         from action_msgs.srv import CancelGoal
         from geometry_msgs.msg import Twist
         from nav2_msgs.srv import LoadMap
-        from std_srvs.srv import SetBool, Trigger
+        from std_srvs.srv import Trigger
         from nav_msgs.msg import OccupancyGrid
         from rclpy.action import ActionClient
         from rclpy.node import Node
@@ -492,10 +491,6 @@ class RosBridge:
         self.load_map_request = LoadMap.Request
         self.start_mapping = self.node.create_client(Trigger, START_MAPPING_SERVICE)
         self.start_mapping_request = Trigger.Request
-        self.zone_override = ZoneOverride()
-        self.zone_toggle_request = SetBool.Request
-        self.zone_toggles = {name: self.node.create_client(SetBool, name)
-                             for name in self.zone_override.wanted()}
         self.localization = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -572,22 +567,6 @@ class RosBridge:
         self.guard.trigger()
         return request_id
 
-    def _apply_zone_override(self):
-        """Apply manual driving and zone-escape filter changes."""
-        with self.data.lock:
-            system = self.data.system or {}
-        self.zone_override.set_manual(any(
-            isinstance(mission, dict) and mission.get('capability_id') == 'manual_drive'
-            for mission in system.get('active_foreground_missions') or []))
-        for service, enabled in self.zone_override.due():
-            client = self.zone_toggles.get(service)
-            if client is None or not client.service_is_ready():
-                continue
-            request = self.zone_toggle_request()
-            request.data = enabled
-            client.call_async(request)
-            self.zone_override.mark_sent(service, enabled)
-
     def _refresh(self):
         with self.data.lock:
             self.data.servers = {name: client.server_is_ready()
@@ -598,7 +577,6 @@ class RosBridge:
             self.data.map_active = bool(self.node.count_publishers(self.topics['map_topic']))
             self.data.robot_pose = self._robot_pose()
         self._finish_runtime_stop()
-        self._apply_zone_override()
         status = (self.runtime.snapshot() if self.runtime else {
             'state': 'STOPPED', 'mode': None, 'map': None, 'log_path': None,
             'message': 'Embedded viewer: start a standalone web panel to control Bringup',
