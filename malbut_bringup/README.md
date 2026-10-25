@@ -308,206 +308,82 @@ launch 인자에 OSNet 모델이 있다고 해서 실기기에서 외형 재식�
 일반 Bringup 실행은 Gazebo·시나리오를 시작하지 않습니다.
 실기기 적용본의 배치·빌드 방식은 [배포 구성](../malbut_test/README.md)에 있습니다.
 
-## 금지구역 경계의 Gazebo 회귀 검증
+## 금지구역·좁은 통로·AMCL 시뮬레이션 검증
 
-Nav2는 일반 레이어의 inflation 뒤에 keepout 필터를 적용합니다. 로봇용
-설정은 전역·지역 costmap 모두 `keepout_filter` 다음에
-`keepout_inflation_layer`를 실행해 금지구역에도 차체 여유거리를 반영합니다.
-금지구역 자체와 라이다 장애물은 계속 lethal cost로 유지됩니다.
+[검증 스크립트](test/keepout_navigation_sim.py)는 합성 지도에서 Gazebo Fortress의
+차체 물리·라이다·카메라와 로봇용 Nav2 설정을 연결합니다. 실기기에 배포하지 않았습니다.
 
-[검증 스크립트](test/keepout_navigation_sim.py)는 합성 방과 가상 금지구역을
-만들고 Fortress의 실제 차체 물리·라이다·odom을 로봇용 Nav2 설정에 연결합니다.
-로봇용 `zones.build_mask`, DWB, 속도 smoother, 재계획·복구 BT를 사용합니다.
-Gazebo 기본 User Map의 별도 hard clearance 마스크는 사용하지 않습니다.
-기본 왕복 시험은 위치 추정의 영향을 분리하기 위해 AMCL 대신 Gazebo odom을
-지도 좌표로 사용합니다. 아래의 확장 순찰 시험은 AMCL도 포함하며,
-실제 좌표로 대조해 위치 오차와 차체 침범을 검사합니다. 초기 실패와 수정 후 결과를 함께 기록합니다.
+- 전역·지역 costmap의 keepout 필터 뒤에 inflation을 적용합니다. 반경 30cm는
+  비용 그라데이션이며, 패딩된 차체가 들어갈 수 있는 통로는 통행할 수 있습니다.
+- 진행 판정은 10cm/10초, 순찰용 FollowPath는 RotationShim + DWB 예측 1.5초,
+  GridBased는 SmacPlanner2D를 사용합니다. 사람 추종용 제어기·플래너는 유지합니다.
+- AMCL은 `likelihood_field_prob`, 120 beam, `sigma_hit=0.05`,
+  `z_hit/z_rand=0.95/0.05`, 갱신 간격 5cm/0.1rad를 사용합니다.
+- 차체·패딩, 속도 제한 0.2m/s·0.5rad/s, Omni 이동 모델과 odom 잡음은 유지합니다.
 
-저장소 루트에서 다음과 같이 실행합니다. ROS 2 Humble, Nav2, Gazebo Fortress,
-ROS–Gazebo bridge가 설치되어 있어야 합니다.
+### 최종 결과
+
+2026-10-26, `09ae359`의 설정·검증 코드로 실행한 결과입니다.
+
+| 시험 | 결과 |
+| --- | --- |
+| 기본 금지구역 왕복 | 완료, 오류·경계 침범 0회, 라이다 전용 장애물 lethal 비용 유지 |
+| 20cm 실제 벽 / 양쪽 금지구역 | 두 경우 모두 경로 거부, 진입·차체 침범 없음 |
+| 40/50cm 실제 벽 / 혼합 통로 | 4조건 모두 왕복 완료, 오류·경계 침범 0회 |
+| 40cm 실제 벽 / 혼합 + AMCL | 모두 왕복, 최대 위치 오차 7.37 / 5.63cm, 오류·침범 0회 |
+| 지도에 없는 라이다 장애물 + AMCL | 회피·왕복, 최대 위치 오차 6.27cm, 오류·침범 0회 |
+| 60cm 혼합 통로 전체 순찰, 2회 | 두 방 관측 100%, 각 RGB-D·라이다 10세트, 오류·경계 침범 0회 |
+| 전체 순찰 AMCL 최대 위치 오차 | 7.01 / 7.05cm (기준 <10cm) |
+| 전체 순찰 실제 복귀 오차 | 12.7 / 13.8cm (기준 <25cm) |
+
+설정·Zone·스타일·시각 보간·Gazebo 회귀: **35 passed, 1 skipped**.
+건너뛴 전체 순찰은 별도 실행으로 2회 통과했고, 40cm AMCL 통로도 2조건 별도 통과했습니다.
+주행 중 검증 도구 중단 시험에서 남은 전용 프로세스는 0개였습니다.
+
+`success`는 Action 완료, `validation_passed`는 오류·경계 침범·위치 오차의 독립 판정입니다.
+AMCL은 측정 시각에 보간한 Gazebo 실제 좌표와 비교하며 최대 방향 오차도 0.15rad 미만이어야 합니다.
+경계 침범은 odom 표본의 패딩된 footprint와 형상 교차로 검사하며 3D 접촉 센서 판정은 아닙니다.
+외부 AI 분석·재관측은 연결하지 않고 기본 120초 분석 대기 후 복귀했습니다.
+합성 지도에서 시험한 결과이며 과거 실기 정지 원인을 단독으로 확정하지 않습니다.
+
+### 재현
+
+ROS 2 Humble, Nav2, Gazebo Fortress, ROS–Gazebo bridge와 `ros-humble-ros-gz-image`가 필요합니다.
+저장소 루트에서 실행합니다. 혼합 통로는 실제 벽과 금지구역으로 구성됩니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
 colcon --log-base /tmp/malbut-keepout-build/log build \
   --base-paths malbut_description malbut_gazebo malbut_gazebo_plugins \
+    malbut_interfaces malbut_autonomy/malbut_patrol \
   --build-base /tmp/malbut-keepout-build/build \
   --install-base /tmp/malbut-keepout-build/install --symlink-install
 source /tmp/malbut-keepout-build/install/setup.bash
 export PYTHONPATH="$PWD/malbut_bringup:$PYTHONPATH"
 
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --baseline --output /tmp/keepout-before
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --output /tmp/keepout-after
-
-# 수정 설정의 비용·센서 장애물·왕복 주행·차체 접촉 검증을 pytest로 실행
-MALBUT_KEEPOUT_SIM_TEST=1 python3 -m pytest -q \
-  malbut_bringup/test/test_keepout_navigation_sim.py
-```
-
-스크립트는 loopback DDS domain 74와 실행마다 별도 Gazebo partition을 사용합니다.
-동시에 실행하려면 `--domain 75`처럼 사용하지 않는 70–100 범위의 domain을 지정합니다.
-출력 디렉터리는 새 경로여야 하며 `results.json`, 비용 지도와 프로세스 로그를 남깁니다.
-`--baseline`은 수정 전 필터 순서만 복원하고 성공·실패를 그대로 기록합니다. 기본 실행은
-금지구역 바깥의 차체 여유 비용, 지도에 없는 라이다 장애물, 두 번의 이동 성공,
-금지구역·물리 장애물과의 차체 비접촉, 주행 오류 부재를 확인하며
-실패하면 0이 아닌 코드로 끝납니다.
-
-2026-10-26 비교에서는 전체 NavigateToPose 왕복은 두 설정 모두 성공했으며,
-기존 설정은 progress 오류를 복구했고 수정 설정은 오류가 없었습니다.
-금지구역으로부터 최소 중심 거리는 18.4cm에서 23.3cm로 늘었고,
-라이다 전용 장애물 비용은 두 경우 모두 254였습니다.
-[측정 결과](../docs/validation/keepout_inflation/summary.json)와
-[경로 비교](../docs/validation/keepout_inflation/comparison.png)를 함께 보십시오.
-
-### 좁은 통로와 전체 순찰 검증
-
-`--scenario corridor`는 두 방 사이에 길이 2m의 통로를 만듭니다.
-`--width`는 물리 형상·금지구역 경계 사이의 명목 폭이며, costmap의 셀 크기와
-차체 여유 비용을 제외한 유효 폭은 더 작습니다. `--barriers`는 `physical`
-(양쪽 실제 벽), `mixed`(실제 벽과 금지구역), `keepout`(양쪽 금지구역)입니다.
-
-```bash
-# 실제 벽/가상 경계를 통과할 수 없는 폭: 진입하지 않아야 성공
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --scenario corridor --width .2 --barriers physical --expect-blocked \
-  --output /tmp/corridor-blocked
-
-# 좁은 통로 왕복. 주행 완료와 오류 없이 완료한 검증을 구분한다.
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --scenario corridor --width .4 --barriers mixed --output /tmp/corridor-040
-
-# 순찰에는 실제 RGB-D 이미지 bridge(ros-humble-ros-gz-image)도 필요하다.
-colcon --log-base /tmp/malbut-keepout-build/log build \
-  --base-paths malbut_interfaces malbut_autonomy/malbut_patrol \
-  --packages-select malbut_interfaces malbut_patrol \
-  --build-base /tmp/malbut-keepout-build/build \
-  --install-base /tmp/malbut-keepout-build/install --symlink-install
-source /tmp/malbut-keepout-build/install/setup.bash
-
-# 실제 /patrol Action: NORMAL, 방별 90% 목표, 촬영, 분석 대기, 시작점 복귀
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --scenario patrol --width .6 --barriers mixed --timeout 900 \
-  --output /tmp/patrol-amcl
-
-# 같은 순찰에서 위치 추정 영향만 분리
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --scenario patrol --width .6 --barriers mixed --ground-truth --timeout 900 \
-  --output /tmp/patrol-known-pose
-```
-
-순찰은 실제 Gazebo 카메라·라이다를 사용하고 두 방의 방문/관측 커버리지,
-사진·깊이 저장, 시작점 복귀를 확인합니다. 외부 사진 분석 서비스는 연결하지
-않으므로 기본 120초 분석 대기 후 `analysis_timeout`으로 복귀하는 흐름입니다.
-AI 분석과 재관측까지 성공한 시험은 아닙니다.
-
-`results.json`의 `success`는 이동/순찰 Action 완료 여부이고,
-`validation_passed`는 독립 검증 결과입니다. AMCL이 완료를 보고해도 Gazebo 실제
-좌표에서 금지구역·물리 벽과 차체가 겹치거나 복귀 오차가 25cm 이상이면 실패합니다.
-모든 양성 시험은 주행·순찰 완료 후에도 Nav2 오류가 기록되면 실패합니다.
-AMCL 시험은 측정 시각(`header.stamp`)에 보간한 Gazebo 실제 좌표와 비교해
-최대 위치 오차 10cm 미만, 최대 방향 오차 0.15rad 미만도 요구합니다.
-메시지 수신 시각의 지연을 위치 오차로 계산하지 않습니다.
-
-2026-10-26 초기 결과 — `271f1fa`까지의 keepout inflation만 추가한 설정:
-
-| 시험 | 결과 |
-| --- | --- |
-| 20cm 실제 벽 / 금지구역 | 경로 생성 거부, 진입·차체 침범 없음 |
-| 40cm 실제 벽 | 수정 설정에서 진입 성공 후 복귀 실패. 기존 설정은 progress 오류 2회 후 복귀 |
-| 40cm 실제 벽 + 금지구역 | 왕복 완료, progress 오류 1회 |
-| 50cm 실제 벽 / 혼합 | 두 경우 모두 왕복 완료, 각각 progress 오류 1회 |
-| 60cm 연결 통로 전체 순찰 + AMCL, 2회 | 두 방의 관측 커버리지 100%, 각 10장 촬영, Action 완료. 실제 좌표 기준 금지구역 침범 및 복귀 오차 31.9 / 26.6cm로 독립 검증 실패 |
-| 동일한 60cm 전체 순찰 + 실제 위치 사용 | 관측 커버리지 100%, 사진·등록 깊이·라이다 10세트, 침범 0회, 복귀 오차 11.7cm. progress 오류 1회 복구 후 독립 검증 통과 |
-
-첫 AMCL 시험의 깊이 frame override는 검증 도구의 설정 오류였으며 반복 시험에서
-제거했습니다. 반복 시험의 사진 10장 모두 등록 깊이와 라이다가 저장됐지만
-금지구역 침범은 여전히 재현됐습니다. 이 초기 설정은 좁은 통로와
-AMCL 전체 순찰 검증에 실패했으며, 아래 추가 수정의 비교 기준입니다.
-이 시험은 합성 지도이므로 과거 실기 정지 원인을 단독으로 확정하지도 않습니다.
-
-[전체 측정값](../docs/validation/keepout_inflation/corridor_patrol.json)과
-[실제/추정 경로 비교](../docs/validation/keepout_inflation/corridor_patrol.png)에
-성공과 실패를 함께 남겼습니다. 새 회귀 시험은 `MALBUT_CORRIDOR_SIM_TEST=1`,
-전체 순찰 검증은 `MALBUT_PATROL_SIM_TEST=1`로 pytest에서 선택할 수 있습니다.
-
-
-### 좁은 통로 제어·AMCL 보완
-
-추가 수정은 저장소 설정과 시뮬레이션에서만 검증하며 실기기에 배포하지 않았습니다.
-
-- `SimpleProgressChecker`의 이동 판정을 50cm/10초에서 10cm/10초로 바꿉니다.
-  저속 통로 진입과 회전 뒤 접근을 정체로 오판하던 조건이며, 정체 제한 시간은 유지합니다.
-- 순찰용 `FollowPath`에 RotationShimController를 적용해 먼저 경로 방향을 맞춘 뒤
-  DWB로 이동합니다. 0.2rad에서 정렬하고 0.05rad에서 해제하며,
-  기존 패딩 footprint로 회전 충돌을 검사합니다. 순찰용 DWB 예측 시간은
-  3초에서 1.5초로 줄여 통로 안의 작은 조향이 긴 정속 원호 예측 때문에
-  모두 거부되던 조건을 완화합니다. 최대 속도에서 30cm를 예측하고 충돌 검사는
-  유지합니다. 사람 추종용 DWB와 그 3초 예측 시간은 유지합니다.
-- AMCL은 `likelihood_field_prob`, 120개 beam, `sigma_hit=0.05`,
-  `z_hit/z_rand=0.95/0.05`, 갱신 간격 5cm/0.1rad를 사용합니다.
-  기존 Omni 이동 모델, odom 잡음 계수, 입자 수와 실제 초기 위치 입력 정책은 유지합니다.
-- 순찰용 `GridBased`는 SmacPlanner2D로 바꿉니다. NavFn은 추가 장애물 옆에서
-  유효 potential을 찾고도 경로 추출에 실패했고, 저장한 비용 지도에서도 재현됐습니다.
-  NavFn A* 옵션 역시 다른 셀에서 같은 추출 실패를 남겨 대안으로 채택하지 않았습니다.
-  Smac은 격자 A* 경로를 직접 사용하며 costmap 다운샘플과 내부 smoothing을 끕니다.
-  사람 추종용 `FollowPersonAStar`는 유지합니다.
-
-inflation 반경 30cm, 차체 크기·패딩, 실제 장애물/금지구역 lethal 비용과
-속도 제한 0.2m/s·0.5rad/s는 유지합니다. inflation 전체를 통행 금지 폭으로
-계산하는 것은 아닙니다. 그라데이션 비용 안에서도 패딩된 차체가 안전하게 들어가면
-경로를 만들 수 있으며, 20cm 통로는 계속 거부해야 합니다.
-
-관측 모델과 제어기 동작은 Nav2 Humble의
-[확률 likelihood field](https://github.com/ros-navigation/navigation2/blob/humble/nav2_amcl/src/sensors/laser/likelihood_field_model_prob.cpp),
-[회전 정렬 제어기](https://github.com/ros-navigation/navigation2/blob/humble/nav2_rotation_shim_controller/src/nav2_rotation_shim_controller.cpp),
-[Smac 2D](https://github.com/ros-navigation/navigation2/blob/humble/nav2_smac_planner/src/smac_planner_2d.cpp)
-구현을 기준으로 확인했습니다.
-
-검증 도구는 lifecycle manager와 같이 모든 노드를 configure한 다음 activate합니다.
-AMCL의 map 변환이 준비된 뒤 costmap을 활성화해 시작 순서 때문에 발생하던
-TF 오류를 제거합니다. 중단 요청 때 검증 프로세스가 취소·정리를 마칠 시간을 주고,
-launch 부모가 먼저 끝나도 남은 전용 프로세스 그룹을 정리합니다.
-실제 설정의 서버 응답·주행 제한 시간을 바꾸지는 않습니다.
-
-```bash
-# 지도에 없는 장애물이 있어도 AMCL·회피·왕복을 함께 검증
-python3 malbut_bringup/test/keepout_navigation_sim.py \
-  --amcl --output /tmp/keepout-amcl
-
-# 기본 왕복, 미등록 장애물+AMCL, 20cm 차단, 40/50cm 왕복, 전체 순찰
-MALBUT_KEEPOUT_SIM_TEST=1 MALBUT_CORRIDOR_SIM_TEST=1 MALBUT_PATROL_SIM_TEST=1 \
+# 기본 왕복, 미등록 장애물+AMCL, 20cm 차단, 40/50cm 왕복
+MALBUT_KEEPOUT_SIM_TEST=1 MALBUT_CORRIDOR_SIM_TEST=1 \
   python3 -m pytest -q malbut_bringup/test/test_nav2_config.py \
     malbut_bringup/test/test_zones.py malbut_bringup/test/test_quality.py \
     malbut_bringup/test/test_sim_pose_error.py \
     malbut_bringup/test/test_keepout_navigation_sim.py
+
+# 40cm 통로의 AMCL 왕복
+for barriers in physical mixed; do
+  python3 malbut_bringup/test/keepout_navigation_sim.py \
+    --scenario corridor --width .4 --barriers "$barriers" --amcl \
+    --output "/tmp/corridor-amcl-$barriers"
+done
+
+# 실제 /patrol Action: 두 방 관측·촬영·분석 대기·시작점 복귀, 2회
+for run in 1 2; do
+  python3 malbut_bringup/test/keepout_navigation_sim.py \
+    --scenario patrol --width .6 --barriers mixed --timeout 900 \
+    --output "/tmp/patrol-amcl-$run"
+done
 ```
 
-
-최종 설정의 2026-10-26 결과:
-
-| 시험 | 결과 |
-| --- | --- |
-| 기본 금지구역 왕복 | 오류·경고·경계 침범 0회, 라이다 전용 장애물 lethal 비용 유지 |
-| 20cm 실제 벽 / 양쪽 금지구역 | 두 경우 모두 경로 거부, 진입·차체 침범 없음 |
-| 40/50cm 실제 벽 / 혼합 통로 | 4조건 모두 왕복 완료, Nav2 오류·경계 침범 0회 |
-| 40cm 실제 벽 + AMCL | 왕복 완료, 최대 위치 오차 7.37cm, 오류·경고·침범 0회 |
-| 40cm 혼합 통로 + AMCL | 왕복 완료, 최대 위치 오차 5.63cm, 오류·경고·침범 0회 |
-| 지도에 없는 라이다 장애물 + AMCL | 회피·왕복 완료, 최대 위치 오차 6.27cm, 오류·경고·침범 0회 |
-| 60cm 연결 통로 전체 순찰 + AMCL, 2회 | 두 방 관측 100%, 각 사진·등록 깊이·라이다 10세트, 오류·경고·경계 침범 0회 |
-| 전체 순찰의 최대 AMCL 위치 오차 | 7.01 / 7.05cm |
-| 전체 순찰의 실제 복귀 오차 | 12.7 / 13.8cm |
-
-설정·Zone·스타일·시각 보간·기본/좁은 통로 Gazebo 회귀는 **35 passed, 1 skipped**입니다.
-건너뛴 전체 순찰은 별도 domain에서 위와 같이 2회 직접 실행했고, 40cm AMCL
-통로 2조건도 직접 실행했습니다. 검증 도구를 주행 중 25초 시점에 중단하는
-추가 시험에서는 전용 시뮬레이션 프로세스가 하나도 남지 않았습니다.
-
-[최종 수치와 중간 실패 기록](../docs/validation/keepout_inflation/patrol_control_fix.json),
-[순찰 경로·위치 오차·복귀 오차 비교](../docs/validation/keepout_inflation/patrol_control_fix.png)를
-함께 남겼습니다. 초기 AMCL 결과는 수신 시각으로 기록되어 새 측정 시각 기반 오차와
-직접 비교하지 않으며, 실제 복귀 거리와 차체 경계 침범은 비교할 수 있습니다.
-
-위 결과는 합성 지도와 시험한 폭에서의 결과입니다. 외부 AI 분석·재관측은 연결하지
-않았고 기본 분석 대기 후 복귀했습니다. 실기기 배포나 과거 실기 정지 원인의 확정은
-이 검증에 포함하지 않습니다.
+검증은 loopback DDS domain 74와 실행마다 별도 Gazebo partition을 사용합니다.
+동시 실행은 `--domain`으로 사용하지 않는 70–100 범위의 domain을 지정합니다.
+출력 경로는 새 디렉터리여야 합니다. 상세 `results.json`·비용 지도·로그는 실행 출력에만
+보관하고 저장소에 추가하지 않습니다. 전체 순찰 pytest는 `MALBUT_PATROL_SIM_TEST=1`로 선택합니다.
