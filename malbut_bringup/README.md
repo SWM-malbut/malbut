@@ -319,8 +319,9 @@ Nav2는 일반 레이어의 inflation 뒤에 keepout 필터를 적용합니다. 
 만들고 Fortress의 실제 차체 물리·라이다·odom을 로봇용 Nav2 설정에 연결합니다.
 로봇용 `zones.build_mask`, DWB, 속도 smoother, 재계획·복구 BT를 사용합니다.
 Gazebo 기본 User Map의 별도 hard clearance 마스크는 사용하지 않습니다.
-위치 추정의 영향을 분리하기 위해 AMCL 대신 Gazebo odom을 지도 좌표로 사용하므로,
-이 검증이 실환경 위치 추정이나 전체 순찰 성공을 보장하지는 않습니다.
+기본 왕복 시험은 위치 추정의 영향을 분리하기 위해 AMCL 대신 Gazebo odom을
+지도 좌표로 사용합니다. 아래의 확장 순찰 시험은 AMCL도 포함하며,
+실제 좌표로 대조했을 때 실패한 결과까지 기록합니다.
 
 저장소 루트에서 다음과 같이 실행합니다. ROS 2 Humble, Nav2, Gazebo Fortress,
 ROS–Gazebo bridge가 설치되어 있어야 합니다.
@@ -358,3 +359,71 @@ MALBUT_KEEPOUT_SIM_TEST=1 python3 -m pytest -q \
 라이다 전용 장애물 비용은 두 경우 모두 254였습니다.
 [측정 결과](../docs/validation/keepout_inflation/summary.json)와
 [경로 비교](../docs/validation/keepout_inflation/comparison.png)를 함께 보십시오.
+
+### 좁은 통로와 전체 순찰 검증
+
+`--scenario corridor`는 두 방 사이에 길이 2m의 통로를 만듭니다.
+`--width`는 물리 형상·금지구역 경계 사이의 명목 폭이며, costmap의 셀 크기와
+차체 여유 비용을 제외한 유효 폭은 더 작습니다. `--barriers`는 `physical`
+(양쪽 실제 벽), `mixed`(실제 벽과 금지구역), `keepout`(양쪽 금지구역)입니다.
+
+```bash
+# 실제 벽/가상 경계를 통과할 수 없는 폭: 진입하지 않아야 성공
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --scenario corridor --width .2 --barriers physical --expect-blocked \
+  --output /tmp/corridor-blocked
+
+# 좁은 통로 왕복. 주행 완료와 오류 없이 완료한 검증을 구분한다.
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --scenario corridor --width .4 --barriers mixed --output /tmp/corridor-040
+
+# 순찰에는 실제 RGB-D 이미지 bridge(ros-humble-ros-gz-image)도 필요하다.
+colcon --log-base /tmp/malbut-keepout-build/log build \
+  --base-paths malbut_interfaces malbut_autonomy/malbut_patrol \
+  --packages-select malbut_interfaces malbut_patrol \
+  --build-base /tmp/malbut-keepout-build/build \
+  --install-base /tmp/malbut-keepout-build/install --symlink-install
+source /tmp/malbut-keepout-build/install/setup.bash
+
+# 실제 /patrol Action: NORMAL, 방별 90% 목표, 촬영, 분석 대기, 시작점 복귀
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --scenario patrol --width .6 --barriers mixed --timeout 900 \
+  --output /tmp/patrol-amcl
+
+# 같은 순찰에서 위치 추정 영향만 분리
+python3 malbut_bringup/test/keepout_navigation_sim.py \
+  --scenario patrol --width .6 --barriers mixed --ground-truth --timeout 900 \
+  --output /tmp/patrol-known-pose
+```
+
+순찰은 실제 Gazebo 카메라·라이다를 사용하고 두 방의 방문/관측 커버리지,
+사진·깊이 저장, 시작점 복귀를 확인합니다. 외부 사진 분석 서비스는 연결하지
+않으므로 기본 120초 분석 대기 후 `analysis_timeout`으로 복귀하는 흐름입니다.
+AI 분석과 재관측까지 성공한 시험은 아닙니다.
+
+`results.json`의 `success`는 이동/순찰 Action 완료 여부이고,
+`validation_passed`는 독립 검증 결과입니다. AMCL이 완료를 보고해도 Gazebo 실제
+좌표에서 금지구역·물리 벽과 차체가 겹치거나 복귀 오차가 25cm 이상이면 실패합니다.
+좁은 통로 시험은 왕복 완료 후에도 Nav2 오류가 기록되면 엄격 검증에 실패합니다.
+
+2026-10-26 실측 결과:
+
+| 시험 | 결과 |
+| --- | --- |
+| 20cm 실제 벽 / 금지구역 | 경로 생성 거부, 진입·차체 침범 없음 |
+| 40cm 실제 벽 | 수정 설정에서 진입 성공 후 복귀 실패. 기존 설정은 progress 오류 2회 후 복귀 |
+| 40cm 실제 벽 + 금지구역 | 왕복 완료, progress 오류 1회 |
+| 50cm 실제 벽 / 혼합 | 두 경우 모두 왕복 완료, 각각 progress 오류 1회 |
+| 60cm 연결 통로 전체 순찰 + AMCL, 2회 | 두 방의 관측 커버리지 100%, 각 10장 촬영, Action 완료. 실제 좌표 기준 금지구역 침범 및 복귀 오차 31.9 / 26.6cm로 독립 검증 실패 |
+| 동일한 60cm 전체 순찰 + 실제 위치 사용 | 관측 커버리지 100%, 사진·등록 깊이·라이다 10세트, 침범 0회, 복귀 오차 11.7cm. progress 오류 1회 복구 후 독립 검증 통과 |
+
+첫 AMCL 시험의 깊이 frame override는 검증 도구의 설정 오류였으며 반복 시험에서
+제거했습니다. 반복 시험의 사진 10장 모두 등록 깊이와 라이다가 저장됐지만
+금지구역 침범은 여전히 재현됐습니다. 현재 결과로 좁은 통로의 무정체 통과나
+AMCL을 포함한 전체 순찰의 안전한 완료를 보장할 수 없습니다.
+이 시험은 합성 지도이므로 과거 실기 정지 원인을 단독으로 확정하지도 않습니다.
+
+[전체 측정값](../docs/validation/keepout_inflation/corridor_patrol.json)과
+[실제/추정 경로 비교](../docs/validation/keepout_inflation/corridor_patrol.png)에
+성공과 실패를 함께 남겼습니다. 새 회귀 시험은 `MALBUT_CORRIDOR_SIM_TEST=1`,
+전체 순찰 실패 재현은 `MALBUT_PATROL_SIM_TEST=1`로 pytest에서 선택할 수 있습니다.

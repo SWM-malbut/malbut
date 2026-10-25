@@ -154,7 +154,7 @@
   },
   "limits": [
     "This does not prove the sole historical cause of the physical patrol stop.",
-    "AMCL and the end-to-end Patrol action are outside this fixture.",
+    "This original round-trip fixture excludes AMCL and Patrol; see corridor_patrol.json for the extended tests and their failures.",
     "Both baseline and fixed full NavigateToPose runs completed; baseline required progress-error recovery."
   ],
   "earlier_component_diagnostic": {

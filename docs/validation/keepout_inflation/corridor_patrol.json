@@ -1,0 +1,861 @@
+{
+  "date": "2026-10-26",
+  "configuration": "PR #338 keepout inflation; no additional robot parameter change",
+  "method": "Gazebo Fortress physics, actual Nav2 BT, lidar; two rooms connected by a 2 m long passage. Wall/zone widths are nominal geometry before costmap rasterization.",
+  "footprint_check": "Configured 0.277 x 0.212 m rectangle plus 0.01 m padding, intersected at odometry samples; not a 3D contact-sensor guarantee.",
+  "runs": {
+    "malbut-corridor-physical-020": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.2,
+      "barriers": "physical",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": false,
+      "expect_blocked": true,
+      "expected_block_confirmed": true,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [],
+      "warning_counts": {},
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 6
+        }
+      ],
+      "costs": {
+        "corridor_center": 253,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.0
+      },
+      "odom_samples": 391,
+      "simulated_duration_s": 10.100999999999999
+    },
+    "malbut-corridor-keepout-020": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.2,
+      "barriers": "keepout",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": false,
+      "expect_blocked": true,
+      "expected_block_confirmed": true,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [],
+      "warning_counts": {
+        "GridBased: failed to create plan with tolerance 0.50.": 1
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 6
+        }
+      ],
+      "costs": {
+        "corridor_center": 253,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.0
+      },
+      "odom_samples": 319,
+      "simulated_duration_s": 11.076
+    },
+    "malbut-corridor-baseline-physical-040": {
+      "scenario": "corridor",
+      "baseline": true,
+      "width_m": 0.4,
+      "barriers": "physical",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        },
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        }
+      ],
+      "warning_counts": {
+        "No valid trajectories out of 440! ": 11,
+        "[follow_path] [ActionServer] Aborting handle.": 2,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 3,
+        "Control loop missed its desired rate of 10.0000Hz": 1,
+        "Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 1.0638 Hz": 1
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            3.0339523161211575,
+            0.0006345714900447308
+          ],
+          "distance_m": 0.11604941884654024
+        },
+        {
+          "name": "return",
+          "target": [
+            0.0,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            0.08868963849483173,
+            -0.07940940750265613
+          ],
+          "distance_m": 0.11904497459475909
+        }
+      ],
+      "costs": {
+        "corridor_center": 182,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.20000000298023224
+      },
+      "odom_samples": 3229,
+      "simulated_duration_s": 71.2
+    },
+    "malbut-corridor-physical-040": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.4,
+      "barriers": "physical",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": false,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "controller_server",
+          "message": "Controller patience exceeded"
+        },
+        {
+          "name": "bt_navigator",
+          "message": "Goal failed"
+        }
+      ],
+      "warning_counts": {
+        "[follow_path] [ActionServer] Aborting handle.": 14,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 13,
+        "Control loop missed its desired rate of 10.0000Hz": 4,
+        "No valid trajectories out of 440! ": 58,
+        "Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 1.0650 Hz": 1,
+        "Collision Ahead - Exiting Spin": 3,
+        "spin failed": 3,
+        "[spin] [ActionServer] Aborting handle.": 3,
+        "Collision Ahead - Exiting DriveOnHeading": 2,
+        "backup failed": 2,
+        "[backup] [ActionServer] Aborting handle.": 2,
+        "Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 1.0526 Hz": 1,
+        "Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 5.8824 Hz": 1,
+        "[navigate_to_pose] [ActionServer] Aborting handle.": 1
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            3.0337139803496784,
+            0.0019763697869273514
+          ],
+          "distance_m": 0.11630281339524695
+        },
+        {
+          "name": "return",
+          "target": [
+            0.0,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 6,
+          "final_xy": [
+            2.423767125965545,
+            -0.046295294667448916
+          ],
+          "distance_m": 2.424209218532844
+        }
+      ],
+      "costs": {
+        "corridor_center": 204,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.15000000223517418
+      },
+      "odom_samples": 3570,
+      "simulated_duration_s": 75.86
+    },
+    "malbut-corridor-mixed-040": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.4,
+      "barriers": "mixed",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        }
+      ],
+      "warning_counts": {
+        "[follow_path] [ActionServer] Aborting handle.": 1,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 1,
+        "Control loop missed its desired rate of 10.0000Hz": 2
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            3.032599099620724,
+            -0.005086412787173816
+          ],
+          "distance_m": 0.11751103354539184
+        },
+        {
+          "name": "return",
+          "target": [
+            0.0,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            0.08839634431362604,
+            0.07983317555760729
+          ],
+          "distance_m": 0.11911024140528334
+        }
+      ],
+      "costs": {
+        "corridor_center": 178,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.15000000223517418
+      },
+      "odom_samples": 2525,
+      "simulated_duration_s": 54.480000000000004
+    },
+    "malbut-corridor-physical-050": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.5,
+      "barriers": "physical",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        }
+      ],
+      "warning_counts": {
+        "[follow_path] [ActionServer] Aborting handle.": 1,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 1
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            3.033037601672577,
+            0.0004834756910075523
+          ],
+          "distance_m": 0.11696339757055013
+        },
+        {
+          "name": "return",
+          "target": [
+            0.0,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            0.07807843337513704,
+            0.08882771537143698
+          ],
+          "distance_m": 0.11826497696454659
+        }
+      ],
+      "costs": {
+        "corridor_center": 160,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.20000000298023224
+      },
+      "odom_samples": 2622,
+      "simulated_duration_s": 57.36
+    },
+    "malbut-corridor-mixed-050": {
+      "scenario": "corridor",
+      "baseline": false,
+      "width_m": 0.5,
+      "barriers": "mixed",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        }
+      ],
+      "warning_counts": {
+        "[follow_path] [ActionServer] Aborting handle.": 1,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 1,
+        "Control loop missed its desired rate of 10.0000Hz": 1
+      },
+      "legs": [
+        {
+          "name": "far_room",
+          "target": [
+            3.15,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            3.0316708811402564,
+            0.007788870525223655
+          ],
+          "distance_m": 0.1185851882579861
+        },
+        {
+          "name": "return",
+          "target": [
+            0.0,
+            0.0
+          ],
+          "planning_status": 4,
+          "navigation_status": 4,
+          "final_xy": [
+            0.08974149373944892,
+            -0.07310819773845027
+          ],
+          "distance_m": 0.11575121716488296
+        }
+      ],
+      "costs": {
+        "corridor_center": 178,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.20000000298023224
+      },
+      "odom_samples": 2535,
+      "simulated_duration_s": 53.662
+    },
+    "malbut-patrol-mixed-060-r2": {
+      "scenario": "patrol",
+      "baseline": false,
+      "width_m": 0.6,
+      "barriers": "mixed",
+      "localization": "AMCL from Gazebo lidar; ground truth from Gazebo odometry",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 513,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [],
+      "warning_counts": {
+        "No valid trajectories out of 440! ": 4
+      },
+      "legs": [],
+      "costs": {
+        "corridor_center": 100,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.3500000052154064
+      },
+      "odom_samples": 11056,
+      "simulated_duration_s": 229.28,
+      "patrol_result": {
+        "status": 4,
+        "success": true,
+        "message": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+        "coverage_ratio": 1.0,
+        "viewpoints_visited": 2,
+        "ground_truth_return_distance_m": 0.3194880232023388,
+        "final_status": {
+          "state": "completed",
+          "detail": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+          "coverage_ratio": 1.0,
+          "viewpoints_visited": 2,
+          "unvisited_rooms": [],
+          "inaccessible_rooms": [],
+          "room_count": 2,
+          "reobservation": {
+            "rounds": 0,
+            "views": 0,
+            "state": "analysis_timeout"
+          },
+          "return_to_start": {
+            "state": "arrived",
+            "distance_m": 0.13942997071136046,
+            "start_pose": [
+              9.810775840075536e-09,
+              -3.264202567911014e-14,
+              -1.1630458452494035e-14
+            ]
+          },
+          "route": {
+            "revision": 3,
+            "reason": "return_after_observations",
+            "estimated_distance_m": 3.400000050663948,
+            "distance_model": "static_clearance_grid_4_connected",
+            "remaining": []
+          },
+          "coverage": {
+            "target_area_m2": 11.240000334978106,
+            "observed_area_m2": 11.240000334978106,
+            "remaining_area_m2": 0.0,
+            "known_free_area_m2": 11.240000334978106,
+            "excluded_free_area_m2": 0.0,
+            "known_free_coverage_ratio": 1.0,
+            "range_m": 3.0,
+            "target_ratio": 0.9,
+            "require_room_entry": true,
+            "rooms": {
+              "west": {
+                "target_area_m2": 4.005000119358302,
+                "observed_area_m2": 4.005000119358302,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              },
+              "east": {
+                "target_area_m2": 3.9200001168251046,
+                "observed_area_m2": 3.9200001168251046,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              }
+            }
+          },
+          "evidence": null,
+          "photos": {
+            "patrol_id": "c19532daf9d549abb36e7c6145d5e534",
+            "queued": 10,
+            "saved": 10,
+            "failed": 0,
+            "last_error": "",
+            "batch_ready": true
+          }
+        }
+      },
+      "camera_evidence": {
+        "captures": 10,
+        "depth_status_counts": {
+          "registration_frame_mismatch": 10
+        },
+        "lidar_status_counts": {
+          "available": 10
+        },
+        "rooms": [
+          "east",
+          "west"
+        ]
+      },
+      "amcl_to_ground_truth_m": {
+        "max": 0.30633272199572403,
+        "median": 0.09611487900149668,
+        "note": "Interpolated at callback receive times, not exact scan stamps"
+      },
+      "independent_validation_passed": false
+    },
+    "malbut-patrol-mixed-060-r3": {
+      "scenario": "patrol",
+      "baseline": false,
+      "width_m": 0.6,
+      "barriers": "mixed",
+      "localization": "AMCL from Gazebo lidar; ground truth from Gazebo odometry",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 443,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": null,
+      "errors": [],
+      "warning_counts": {},
+      "legs": [],
+      "costs": {
+        "corridor_center": 100,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.4000000059604645
+      },
+      "odom_samples": 12441,
+      "simulated_duration_s": 252.48000000000002,
+      "patrol_result": {
+        "status": 4,
+        "success": true,
+        "message": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+        "coverage_ratio": 1.0,
+        "viewpoints_visited": 2,
+        "ground_truth_return_distance_m": 0.26586680045994804,
+        "final_status": {
+          "state": "completed",
+          "detail": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+          "coverage_ratio": 1.0,
+          "viewpoints_visited": 2,
+          "unvisited_rooms": [],
+          "inaccessible_rooms": [],
+          "room_count": 2,
+          "reobservation": {
+            "rounds": 0,
+            "views": 0,
+            "state": "analysis_timeout"
+          },
+          "return_to_start": {
+            "state": "arrived",
+            "distance_m": 0.11805622108808708,
+            "start_pose": [
+              0.0,
+              5.293955920339377e-23,
+              3.1763806203973366e-22
+            ]
+          },
+          "route": {
+            "revision": 3,
+            "reason": "return_after_observations",
+            "estimated_distance_m": 3.35000004991889,
+            "distance_model": "static_clearance_grid_4_connected",
+            "remaining": []
+          },
+          "coverage": {
+            "target_area_m2": 11.240000334978106,
+            "observed_area_m2": 11.240000334978106,
+            "remaining_area_m2": 0.0,
+            "known_free_area_m2": 11.240000334978106,
+            "excluded_free_area_m2": 0.0,
+            "known_free_coverage_ratio": 1.0,
+            "range_m": 3.0,
+            "target_ratio": 0.9,
+            "require_room_entry": true,
+            "rooms": {
+              "west": {
+                "target_area_m2": 4.005000119358302,
+                "observed_area_m2": 4.005000119358302,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              },
+              "east": {
+                "target_area_m2": 3.9200001168251046,
+                "observed_area_m2": 3.9200001168251046,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              }
+            }
+          },
+          "evidence": null,
+          "photos": {
+            "patrol_id": "a7e3ac3959404f6693f5a31743866a13",
+            "queued": 10,
+            "saved": 10,
+            "failed": 0,
+            "last_error": "",
+            "batch_ready": true
+          }
+        }
+      },
+      "camera_evidence": {
+        "captures": 10,
+        "depth_status_counts": {
+          "available": 10
+        },
+        "lidar_status_counts": {
+          "available": 10
+        },
+        "rooms": [
+          "east",
+          "west"
+        ]
+      },
+      "amcl_to_ground_truth_m": {
+        "max": 0.2927008751381851,
+        "median": 0.09222638911826718,
+        "note": "Interpolated at callback receive times, not exact scan stamps"
+      },
+      "independent_validation_passed": false
+    },
+    "malbut-patrol-ground-truth-060": {
+      "scenario": "patrol",
+      "baseline": false,
+      "width_m": 0.6,
+      "barriers": "mixed",
+      "localization": "Gazebo odometry with identity map-to-odom; AMCL excluded",
+      "success": true,
+      "expect_blocked": false,
+      "expected_block_confirmed": null,
+      "footprint_intersections": {
+        "restricted_zone": 0,
+        "physical_geometry": 0
+      },
+      "verification_failure": null,
+      "wall_duration_s": 248.62018041600822,
+      "errors": [
+        {
+          "name": "controller_server",
+          "message": "Failed to make progress"
+        }
+      ],
+      "warning_counts": {
+        "[follow_path] [ActionServer] Aborting handle.": 1,
+        "KeepoutFilter: New filter mask arrived from /keepout_filter_mask topic. Updating old filter mask.": 1
+      },
+      "legs": [],
+      "costs": {
+        "corridor_center": 100,
+        "free_space": 0,
+        "nonlethal_gap_m": 0.3500000052154064
+      },
+      "odom_samples": 11578,
+      "simulated_duration_s": 235.82,
+      "patrol_result": {
+        "status": 4,
+        "success": true,
+        "message": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+        "coverage_ratio": 1.0,
+        "viewpoints_visited": 2,
+        "ground_truth_return_distance_m": 0.11674585702877154,
+        "final_status": {
+          "state": "completed",
+          "detail": "Requested coverage and reachable room visits completed; reobservation: analysis_timeout; return: arrived",
+          "coverage_ratio": 1.0,
+          "viewpoints_visited": 2,
+          "unvisited_rooms": [],
+          "inaccessible_rooms": [],
+          "room_count": 2,
+          "reobservation": {
+            "rounds": 0,
+            "views": 0,
+            "state": "analysis_timeout"
+          },
+          "return_to_start": {
+            "state": "arrived",
+            "distance_m": 0.11673054938655268,
+            "start_pose": [
+              -1.0849745745424581e-05,
+              4.234824444968963e-07,
+              5.874650293276269e-07
+            ]
+          },
+          "route": {
+            "revision": 3,
+            "reason": "return_after_observations",
+            "estimated_distance_m": 3.450000051409006,
+            "distance_model": "static_clearance_grid_4_connected",
+            "remaining": []
+          },
+          "coverage": {
+            "target_area_m2": 11.240000334978106,
+            "observed_area_m2": 11.240000334978106,
+            "remaining_area_m2": 0.0,
+            "known_free_area_m2": 11.240000334978106,
+            "excluded_free_area_m2": 0.0,
+            "known_free_coverage_ratio": 1.0,
+            "range_m": 3.0,
+            "target_ratio": 0.9,
+            "require_room_entry": true,
+            "rooms": {
+              "west": {
+                "target_area_m2": 4.005000119358302,
+                "observed_area_m2": 4.005000119358302,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              },
+              "east": {
+                "target_area_m2": 3.9200001168251046,
+                "observed_area_m2": 3.9200001168251046,
+                "coverage_ratio": 1.0,
+                "physically_entered": true
+              }
+            }
+          },
+          "evidence": null,
+          "photos": {
+            "patrol_id": "c790b4f3fa324d9f9f95513047008d04",
+            "queued": 10,
+            "saved": 10,
+            "failed": 0,
+            "last_error": "",
+            "batch_ready": true
+          }
+        }
+      },
+      "camera_evidence": {
+        "captures": 10,
+        "depth_status_counts": {
+          "available": 10
+        },
+        "lidar_status_counts": {
+          "available": 10
+        },
+        "rooms": [
+          "east",
+          "west"
+        ]
+      },
+      "independent_validation_passed": true
+    }
+  },
+  "limits": [
+    "Synthetic rooms are not the stopped robot household map.",
+    "A single successful crossing is not a guaranteed minimum usable width.",
+    "Patrol coverage is geometric camera observation coverage, not external AI inspection completion.",
+    "External image analysis was not connected; default 120 s analysis_timeout then return was exercised.",
+    "The first AMCL patrol had a test-harness depth frame override; removed for the repeat run. Both retain their measured outcomes.",
+    "No new changes were applied to the physical robot during these tests."
+  ],
+  "uncommitted_parameter_experiment": {
+    "change": "progress_checker.required_movement_radius: 0.5 -> 0.1 m",
+    "physical_corridor_width_m": 0.4,
+    "round_trip_completed": true,
+    "errors": [],
+    "footprint_intersections": {
+      "restricted_zone": 0,
+      "physical_geometry": 0
+    },
+    "decision": "Not adopted: one exploratory run, and it does not resolve AMCL boundary violations."
+  },
+  "stationary_scan_alignment": {
+    "run": "malbut-patrol-mixed-060-r3",
+    "points": 500,
+    "ground_truth_endpoint_distance_to_physical_wall_m": {
+      "median": 0.008429398408766886,
+      "p90": 0.020268764120415027
+    },
+    "amcl_endpoint_distance_to_physical_wall_m": {
+      "median": 0.04666624506261477,
+      "p90": 0.1003226556500942
+    },
+    "note": "One timestamp-matched scan, transformed by odom-to-laser and map-to-laser TF; this is not a claim about the historical physical robot stop."
+  },
+  "validation_policy": "Corridor: completed round trip, zero footprint intersections and no ROS errors. Patrol: completed action, both rooms, RGB-D evidence, zero footprint intersections and actual return error < 0.25 m; recovered Nav2 errors remain explicitly recorded."
+}

@@ -21,7 +21,12 @@ import numpy as np
 import yaml
 
 
-def make_fixture(folder, gazebo_share):
+def rectangle(x0, y0, x1, y1):
+    """Return a closed polygon for a rectangular hazard or room."""
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
+
+
+def make_fixture(folder, gazebo_share, args):
     """Give the simulator and the map server identical physical walls."""
     from malbut_bringup.zones import build_mask
 
@@ -29,6 +34,22 @@ def make_fixture(folder, gazebo_share):
     boxes = [(-2., -2., -1.9, 2.5), (2.9, -2., 3., 2.5),
              (-2., -2., 3., -1.9), (-2., 2.4, 3., 2.5),
              (1.7, .9, 2., 1.6), (.3, 1.7, .6, 2.)]
+    rings = [rectangle(.95, -.75, 1.9, .75)]
+    if args.scenario != 'original':
+        origin, shape = (-1., -1.5), (60, 100)
+        boxes = [(-1., -1.5, -.9, 1.5), (3.9, -1.5, 4., 1.5),
+                 (-1., -1.5, 4., -1.4), (-1., 1.4, 4., 1.5)]
+        barriers = [(.5, args.width/2, 2.5, 1.4),
+                    (.5, -1.4, 2.5, -args.width/2)]
+        physical = {'physical': 2, 'mixed': 1, 'keepout': 0}[args.barriers]
+        boxes += barriers[:physical]
+        rings = [rectangle(*box) for box in barriers[physical:]]
+        rooms = [{'type': 'Feature', 'properties': {'role': 'room', 'name': name},
+                  'geometry': {'type': 'Polygon', 'coordinates': [rectangle(*bounds)]}}
+                 for name, bounds in [('west', (-.9, -1.4, .5, 1.4)),
+                                      ('east', (2.5, -1.4, 3.9, 1.4))]]
+        (folder / 'rooms.geojson').write_text(json.dumps({
+            'type': 'FeatureCollection', 'features': rooms}))
     tree = ET.parse(gazebo_share / 'worlds/empty.sdf')
     world = tree.getroot().find('world')
     image = np.full(shape, 254, dtype=np.uint8)
@@ -45,19 +66,19 @@ def make_fixture(folder, gazebo_share):
         row0, row1 = [round((y-origin[1])/resolution) for y in (y0, y1)]
         # The last box is deliberately absent from the static map: only the
         # simulator's lidar can add it to Nav2's obstacle layer.
-        if index != len(boxes)-1:
+        if args.scenario != 'original' or index != len(boxes)-1:
             image[shape[0]-row1:shape[0]-row0, col0:col1] = 0
     tree.write(folder / 'world.sdf')
     cv2.imwrite(str(folder / 'map.pgm'), image)
     geometry = {'image': 'map.pgm', 'resolution': resolution, 'origin': [*origin, 0.],
                 'negate': 0, 'occupied_thresh': .65, 'free_thresh': .196}
     (folder / 'map.yaml').write_text(yaml.safe_dump(geometry))
-    ring = [[.95, -.75], [1.9, -.75], [1.9, .75], [.95, .75], [.95, -.75]]
     features = [{'type': 'Feature', 'properties': {
         'role': 'semantic_zone', 'behavior': 'restricted'},
-        'geometry': {'type': 'Polygon', 'coordinates': [ring]}}]
+        'geometry': {'type': 'Polygon', 'coordinates': [ring]}} for ring in rings]
     mask, _ = build_mask(folder / 'map.yaml', features)
-    return image, mask, geometry, ring, boxes
+    cv2.imwrite(str(folder / 'mask.pgm'), mask)
+    return image, mask, geometry, rings, boxes
 
 
 def run(args):
@@ -69,7 +90,7 @@ def run(args):
     os.environ.pop('CYCLONEDDS_URI', None)
     from ament_index_python.packages import get_package_share_directory
     import rclpy
-    from geometry_msgs.msg import TransformStamped, Twist
+    from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
     from lifecycle_msgs.srv import ChangeState, GetState
     from nav2_msgs.action import ComputePathToPose, NavigateToPose
     from nav2_msgs.msg import CostmapFilterInfo
@@ -80,14 +101,16 @@ def run(args):
     from rclpy.parameter import Parameter
     from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
     from sensor_msgs.msg import LaserScan
+    from std_msgs.msg import String
     from tf2_ros import StaticTransformBroadcaster
 
     folder = args.output.resolve()
     folder.mkdir(parents=True, exist_ok=False)
     root = Path(__file__).resolve().parents[2]
     share = Path(get_package_share_directory('malbut_gazebo'))
-    pixels, mask, geometry, ring, boxes = make_fixture(folder, share)
-    params = yaml.safe_load((root / 'malbut_bringup/config/nav2_params.yaml').read_text())
+    pixels, mask, geometry, rings, boxes = make_fixture(folder, share, args)
+    config = args.params or root / 'malbut_bringup/config/nav2_params.yaml'
+    params = yaml.safe_load(config.read_text())
     for scope in ('local_costmap', 'global_costmap'):
         costmap = params[scope][scope]['ros__parameters']
         costmap['use_sim_time'] = True
@@ -105,12 +128,26 @@ def run(args):
         root / 'malbut_bringup/config/navigate_to_pose.xml')
     params['bt_navigator']['ros__parameters']['default_nav_through_poses_bt_xml'] = str(
         root / 'malbut_bringup/config/navigate_through_poses.xml')
+    use_amcl = args.scenario == 'patrol' and not args.ground_truth
+    if use_amcl:
+        params['amcl']['ros__parameters'].update(
+            use_sim_time=True, scan_topic='/scan', set_initial_pose=True,
+            initial_pose={'x': 0., 'y': 0., 'z': 0., 'yaw': 0.}, bond_heartbeat_period=0.)
     (folder / 'nav2.yaml').write_text(yaml.safe_dump(params))
     processes, streams = [], []
+    started = time.monotonic()
     result = {'baseline': args.baseline, 'domain': args.domain, 'legs': [], 'errors': [],
-              'warnings': [], 'pose_samples': [], 'commands': [], 'zone': ring,
+              'validation_passed': None if args.baseline else False,
+              'warnings': [], 'pose_samples': [], 'commands': [], 'zones': rings,
+              'scenario': args.scenario, 'width_m': args.width, 'barriers': args.barriers,
+              'physical_boxes': boxes, 'expect_blocked': args.expect_blocked,
               'localization': 'Gazebo odometry with identity map-to-odom; AMCL excluded',
-              'config': str(root / 'malbut_bringup/config/nav2_params.yaml')}
+              'config': str(config)}
+    if args.scenario == 'patrol':
+        if use_amcl:
+            result['localization'] = 'AMCL from Gazebo lidar; ground truth from Gazebo odometry'
+        result['patrol_status'] = []
+        result['amcl_samples'] = []
 
     def start(label, command):
         stream = (folder / f'{label}.log').open('w')
@@ -145,17 +182,35 @@ def run(args):
     def velocity(message):
         result['commands'].append([message.linear.x, message.linear.y, message.angular.z])
 
+    def patrol_status(message):
+        status = json.loads(message.data)
+        latest['patrol_status'] = status
+        result['patrol_status'].append(status)
+
+    def localization(message):
+        p = message.pose.pose
+        latest['amcl'] = message
+        result['amcl_samples'].append([node.get_clock().now().nanoseconds / 1e9,
+                                      p.position.x, p.position.y,
+                                      2*math.atan2(p.orientation.z, p.orientation.w)])
+
     subs = [node.create_subscription(Odometry, '/odom', odometry, qos_profile_sensor_data),
             node.create_subscription(LaserScan, '/scan', laser, qos_profile_sensor_data),
             node.create_subscription(Log, '/rosout', log, 100),
             node.create_subscription(Twist, '/cmd_vel', velocity, 100)]
     publishers = []
     stop_pub = node.create_publisher(Twist, '/cmd_vel', 10)
-    tf = StaticTransformBroadcaster(node)
-    transform = TransformStamped()
-    transform.header.frame_id, transform.child_frame_id = 'map', 'odom'
-    transform.transform.rotation.w = 1.
-    tf.sendTransform(transform)
+    if args.scenario == 'patrol':
+        subs.append(node.create_subscription(String, '/patrol/status', patrol_status, latched))
+    if use_amcl:
+        subs.append(node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose',
+                                             localization, latched))
+    else:
+        tf = StaticTransformBroadcaster(node)
+        transform = TransformStamped()
+        transform.header.frame_id, transform.child_frame_id = 'map', 'odom'
+        transform.transform.rotation.w = 1.
+        tf.sendTransform(transform)
     active_handle = None
 
     def spin_until(predicate, timeout=30.):
@@ -224,6 +279,14 @@ def run(args):
             col = int((x-m.metadata.origin.position.x)/m.metadata.resolution)
             return int(data[row, col])
 
+        if args.scenario != 'original':
+            column = int((1.5-m.metadata.origin.position.x)/m.metadata.resolution)
+            section = data[:, column]
+            return {'corridor_center': at(1.5, 0.), 'free_space': at(0., 0.),
+                    'center_column': section.tolist(),
+                    'nonlethal_gap_m': float(np.count_nonzero(section < 253)
+                                             * m.metadata.resolution)}
+
         sensor_cost = max(at(x, y) for x in np.arange(.25, .66, .025)
                           for y in np.arange(1.65, 1.81, .025))
         return {'zone_interior': at(1.3, .3), 'outside_zone_10cm': at(1.3, .85),
@@ -233,7 +296,9 @@ def run(args):
     try:
         start('gazebo', ['ros2', 'launch', 'malbut_gazebo', 'simulation.launch.py',
                          f'world:={folder / "world.sdf"}', 'gui:=false', 'headless:=true',
-                         'rviz:=false', 'depth_camera_enabled:=false', 'imu_enabled:=false',
+                         'rviz:=false',
+                         f'depth_camera_enabled:={str(args.scenario == "patrol").lower()}',
+                         'imu_enabled:=false',
                          'x:=0', 'y:=0', 'yaw:=0', 'z:=0.002'])
         spin_until(lambda: 'odom' in latest and 'scan' in latest, 60)
         assert node.get_clock().now().nanoseconds > 0
@@ -245,13 +310,15 @@ def run(args):
         publishers.append(info)
         info.publish(CostmapFilterInfo(type=0, filter_mask_topic='/keepout_filter_mask',
                                        base=0., multiplier=1.))
-        for package, executable, remaps in [
+        servers = [('nav2_amcl', 'amcl', [])] if use_amcl else []
+        servers += [
                 ('nav2_planner', 'planner_server', []),
                 ('nav2_controller', 'controller_server', ['-r', 'cmd_vel:=cmd_vel_nav']),
                 ('nav2_behaviors', 'behavior_server', []),
                 ('nav2_velocity_smoother', 'velocity_smoother',
                  ['-r', 'cmd_vel:=cmd_vel_nav', '-r', 'cmd_vel_smoothed:=cmd_vel']),
-                ('nav2_bt_navigator', 'bt_navigator', [])]:
+                ('nav2_bt_navigator', 'bt_navigator', [])]
+        for package, executable, remaps in servers:
             start(executable, ['ros2', 'run', package, executable, '--ros-args',
                                '--params-file', str(folder / 'nav2.yaml'), *remaps])
             for transition in (1, 3):
@@ -260,16 +327,74 @@ def run(args):
                 assert rpc(ChangeState, f'/{executable}/change_state', request).success
         pump(3)
         result['costs'] = read_costs()
-        assert result['costs']['zone_interior'] == 254
-        assert result['costs']['physical_wall'] == 254
-        assert result['costs']['unmapped_lidar_obstacle'] == 254
-        if not args.baseline:
-            assert result['costs']['outside_zone_10cm'] >= 253, result['costs']
+        if args.scenario == 'original':
+            assert result['costs']['zone_interior'] == 254
+            assert result['costs']['physical_wall'] == 254
+            assert result['costs']['unmapped_lidar_obstacle'] == 254
+            if not args.baseline:
+                assert result['costs']['outside_zone_10cm'] >= 253, result['costs']
+        if args.scenario == 'patrol':
+            from malbut_interfaces.action import Patrol
+
+            if use_amcl:
+                spin_until(lambda: 'amcl' in latest, 30)
+            patrol_params = {'patrol_manager': {'ros__parameters': {
+                'use_sim_time': True, 'room_map_file': str(folder / 'rooms.geojson'),
+                'camera_optical_frame': 'camera_depth_optical_frame',
+                'depth_aligned_to_rgb': True,
+                'observation_directory': str(folder / 'observations')}}}
+            (folder / 'patrol.yaml').write_text(yaml.safe_dump(patrol_params))
+            start('patrol_manager', ['ros2', 'run', 'malbut_patrol', 'patrol_manager',
+                                     '--ros-args', '--params-file', str(folder / 'patrol.yaml')])
+            patrol = ActionClient(node, Patrol, '/patrol')
+            assert patrol.wait_for_server(timeout_sec=30)
+            pump(5)
+            active_handle = wait(patrol.send_goal_async(Patrol.Goal(thoroughness=1)))
+            assert active_handle.accepted, 'Patrol prerequisites are not ready'
+            future = active_handle.get_result_async()
+            deadline, next_report = time.monotonic()+args.timeout, time.monotonic()
+            while not future.done():
+                rclpy.spin_once(node, timeout_sec=.03)
+                if time.monotonic() > deadline:
+                    raise TimeoutError('Full patrol exceeded the wall-clock timeout')
+                if time.monotonic() >= next_report:
+                    state = latest.get('patrol_status', {})
+                    print(json.dumps({key: state.get(key) for key in (
+                        'state', 'coverage_ratio', 'viewpoints_visited',
+                        'unvisited_rooms', 'return_to_start', 'detail')}), flush=True)
+                    next_report = time.monotonic()+15
+            completed = future.result()
+            active_handle = None
+            pump(.5)
+            p = latest['odom'].pose.pose.position
+            result['patrol_result'] = {
+                'status': completed.status, 'success': completed.result.success,
+                'message': completed.result.message,
+                'coverage_ratio': completed.result.coverage_ratio,
+                'viewpoints_visited': completed.result.viewpoints_visited,
+                'ground_truth_return_distance_m': math.hypot(p.x, p.y),
+                'final_status': latest.get('patrol_status')}
+            captures = [json.loads(path.read_text())
+                        for path in (folder / 'observations/captures').glob('*.json')
+                        if not path.name.endswith('.regions.json')]
+            result['camera_evidence'] = {
+                'captures': len(captures),
+                'registered_depth': sum(c.get('spatial', {}).get('status') == 'available'
+                                        for c in captures),
+                'lidar': sum(c.get('lidar', {}).get('status') == 'available' for c in captures),
+                'rooms': sorted({room for c in captures for room in c.get('capture_rooms', [])})}
+            result['success'] = completed.status == 4 and completed.result.success
+            print(json.dumps(result['patrol_result']), flush=True)
         planner = ActionClient(node, ComputePathToPose, '/compute_path_to_pose')
         navigator = ActionClient(node, NavigateToPose, '/navigate_to_pose')
         assert planner.wait_for_server(timeout_sec=10)
         assert navigator.wait_for_server(timeout_sec=10)
-        for label, target in [('viewpoint', (1.13, 1.13)), ('return', (0., 0.))]:
+        goals = [('viewpoint', (1.13, 1.13)), ('return', (0., 0.))]
+        if args.scenario == 'corridor':
+            goals[0] = ('far_room', (3.15, 0.))
+        if args.scenario == 'patrol':
+            goals = []
+        for label, target in goals:
             goal = ComputePathToPose.Goal()
             goal.goal.header.frame_id = 'map'
             goal.goal.header.stamp = node.get_clock().now().to_msg()
@@ -289,7 +414,7 @@ def run(args):
             active_handle = wait(navigator.send_goal_async(command))
             assert active_handle.accepted
             future = active_handle.get_result_async()
-            deadline = time.monotonic() + 90
+            deadline = time.monotonic() + args.timeout
             while not future.done():
                 rclpy.spin_once(node, timeout_sec=.03)
                 if time.monotonic() > deadline or time.monotonic()-latest['scan_received'] > 2:
@@ -305,12 +430,13 @@ def run(args):
             print(json.dumps({k: v for k, v in leg.items() if k != 'path'}), flush=True)
             if leg['navigation_status'] != 4:
                 break
-        result['success'] = (len(result['legs']) == 2 and all(
-            leg.get('navigation_status') == 4 and leg['distance_m'] < .2
-            for leg in result['legs']))
+        if args.scenario != 'patrol':
+            result['success'] = (len(result['legs']) == 2 and all(
+                leg.get('navigation_status') == 4 and leg['distance_m'] < .2
+                for leg in result['legs']))
         outline = np.array([[.1485, .116], [.1485, -.116],
                             [-.1485, -.116], [-.1485, .116]])
-        hazards = [np.asarray(ring[:-1], dtype=np.float32)]
+        hazards = [np.asarray(ring[:-1], dtype=np.float32) for ring in rings]
         hazards.extend(np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
                                   dtype=np.float32) for x0, y0, x1, y1 in boxes)
         intersections = [0] * len(hazards)
@@ -321,11 +447,33 @@ def run(args):
                 if cv2.intersectConvexConvex(body, hazard)[0] > 1e-7:
                     intersections[index] += 1
         result['footprint_intersections'] = {
-            'restricted_zone': intersections[0], 'physical_geometry': sum(intersections[1:])}
-        if not args.baseline:
-            assert result['success'], 'The fixed configuration must complete both legs'
+            'restricted_zone': sum(intersections[:len(rings)]),
+            'physical_geometry': sum(intersections[len(rings):])}
+        if args.expect_blocked:
+            assert not result['success'], 'A blocked passage must not complete the round trip'
+            assert max(p[1] for p in result['pose_samples']) < .5, 'Entered a blocked passage'
             assert not any(intersections), result['footprint_intersections']
-            assert not result['errors'], result['errors']
+            result['expected_block_confirmed'] = True
+            result['validation_passed'] = True
+            return
+        if not args.baseline:
+            assert result['success'], 'The fixed configuration must complete the mission'
+            assert not any(intersections), result['footprint_intersections']
+            if args.scenario != 'patrol':
+                assert not result['errors'], result['errors']
+            else:
+                status = result['patrol_result']['final_status']
+                assert not status['inaccessible_rooms'], status
+                assert not status['unvisited_rooms'], status
+                assert status['room_count'] == 2, status
+                assert status['photos']['saved'] > 0, status
+                assert result['camera_evidence']['registered_depth'] > 0
+                assert result['camera_evidence']['rooms'] == ['east', 'west']
+                assert result['patrol_result']['ground_truth_return_distance_m'] < .25
+            result['validation_passed'] = True
+    except Exception as error:
+        result['verification_failure'] = f'{type(error).__name__}: {error}'
+        raise
     finally:
         if active_handle is not None:
             try:
@@ -335,16 +483,26 @@ def run(args):
                 result['cancel_error'] = str(error)
         stop_pub.publish(Twist())
         for process in reversed(processes):
-            if process.poll() is None:
+            # A launch error can exit the parent while Gazebo still belongs to
+            # its session. Stop the owned group even when the parent has exited.
+            try:
                 os.killpg(process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
         for process in reversed(processes):
             try:
                 process.wait(timeout=8)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=5)
+        for process in reversed(processes):
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         for stream in streams:
             stream.close()
+        result['wall_duration_s'] = time.monotonic()-started
         (folder / 'results.json').write_text(json.dumps(result, indent=2))
         del subs
         node.destroy_node()
@@ -356,7 +514,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--params', type=Path, help='Optional candidate robot Nav2 parameters')
     parser.add_argument('--domain', type=int, default=74, choices=range(70, 101))
+    parser.add_argument('--scenario', choices=('original', 'corridor', 'patrol'),
+                        default='original')
+    parser.add_argument('--width', type=float, default=.6)
+    parser.add_argument('--barriers', choices=('physical', 'mixed', 'keepout'), default='mixed')
+    parser.add_argument('--expect-blocked', action='store_true')
+    parser.add_argument('--timeout', type=float, default=90.)
+    parser.add_argument('--ground-truth', action='store_true',
+                        help='Isolate patrol navigation from AMCL with identity map-to-odom')
     run(parser.parse_args())
 
 
