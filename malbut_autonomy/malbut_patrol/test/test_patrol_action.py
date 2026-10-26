@@ -361,7 +361,7 @@ def test_processing_cycles_keep_server_alive_and_idle_buffers_empty(patrol_runti
         for _ in range(30):
             assert _result(processing.call_async(SetBool.Request(data=False))).success
             time.sleep(.06)
-            assert manager.image is None and manager.costmap is None
+            assert manager.image is None and manager.costmap is not None
             assert not manager.rgb_images and not manager.depth_images
             assert not manager.lidar_scans
             assert client.server_is_ready()
@@ -817,10 +817,11 @@ def test_system_manager_uses_registered_patrol_and_cancels_nav2(patrol_runtime):
         system.destroy_node()
 
 
-def test_costmap_patch_updates_candidate_safety_without_corrupting_grid():
+@pytest.mark.parametrize('enabled', [False, True])
+def test_costmap_patch_updates_candidate_safety_without_corrupting_grid(enabled):
     """Apply valid occupancy patches and ignore malformed extents atomically."""
     manager = object.__new__(PatrolManager)
-    manager._processing_enabled = True
+    manager._processing_enabled = enabled
     manager.lock = RLock()
     manager.settings = {'maximum_goal_cost': 80}
     manager.costmap_received = 0.0

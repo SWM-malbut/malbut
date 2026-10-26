@@ -291,12 +291,13 @@ class PatrolManager(Node):
             # Keep ROS entities alive for the owning executor's lifetime. A
             # worker may already have selected a subscription when this RPC
             # runs; destroying it here raises InvalidHandle in executor.spin().
-            # Callbacks discard idle inputs, and every enable starts empty.
-            self.image = self.costmap = None
+            # Discard idle camera/scan input. Keep the single current costmap:
+            # incremental publishers need its full grid to apply later patches.
+            self.image = None
             self.rgb_images.clear()
             self.depth_images.clear()
             self.lidar_scans.clear()
-            self.image_received = self.costmap_received = 0.0
+            self.image_received = 0.0
             self.last_image_stamp = None
 
     def _subscribe_scan(self):
@@ -348,16 +349,12 @@ class PatrolManager(Node):
 
     def _receive_costmap(self, message):
         with self.lock:
-            if not self._processing_enabled:
-                return
             self.costmap = message
             self.costmap_received = time.monotonic()
 
     def _receive_costmap_update(self, update):
         # Nav2 can publish patches instead of a new full grid every cycle.
         with self.lock:
-            if not self._processing_enabled:
-                return
             grid = self.costmap
             if (grid is None or grid.header.frame_id != update.header.frame_id
                     or update.x < 0 or update.y < 0
