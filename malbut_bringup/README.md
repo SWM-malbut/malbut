@@ -321,24 +321,30 @@ launch 인자에 OSNet 모델이 있다고 해서 실기기에서 외형 재식�
   `z_hit/z_rand=0.95/0.05`, 갱신 간격 5cm/0.1rad를 사용합니다.
 - 차체·패딩, 속도 제한 0.2m/s·0.5rad/s, Omni 이동 모델과 odom 잡음은 유지합니다.
 
+`CheckedRotationShimController`는 Humble 기본 shim이 종료 각도 앞에서 생략하던
+회전 충돌 검사를 보완합니다. 양방향 회전의 현재 위치부터 종료 각도·마지막 제어 주기까지
+검사하고, 충돌 시 DWB의 충돌 검사된 명령으로 전환합니다. 차단 시험은 첫 계획의
+`no valid path` 거부와 오류·이동·침범 부재를 모두 요구하며, 경로가 생기면 주행 전에 실패합니다.
+
 ### 최종 결과
 
-2026-10-26, `09ae359`의 설정·검증 코드로 실행한 결과입니다.
+2026-10-26, 회전 충돌 검사·차단 판정 보완 후 최종 빌드로 재검증한 결과입니다.
 
 | 시험 | 결과 |
 | --- | --- |
 | 기본 금지구역 왕복 | 완료, 오류·경계 침범 0회, 라이다 전용 장애물 lethal 비용 유지 |
 | 20cm 실제 벽 / 양쪽 금지구역 | 두 경우 모두 경로 거부, 진입·차체 침범 없음 |
 | 40/50cm 실제 벽 / 혼합 통로 | 4조건 모두 왕복 완료, 오류·경계 침범 0회 |
-| 40cm 실제 벽 / 혼합 + AMCL | 모두 왕복, 최대 위치 오차 7.37 / 5.63cm, 오류·침범 0회 |
-| 지도에 없는 라이다 장애물 + AMCL | 회피·왕복, 최대 위치 오차 6.27cm, 오류·침범 0회 |
-| 60cm 혼합 통로 전체 순찰, 2회 | 두 방 관측 100%, 각 RGB-D·라이다 10세트, 오류·경계 침범 0회 |
-| 전체 순찰 AMCL 최대 위치 오차 | 7.01 / 7.05cm (기준 <10cm) |
-| 전체 순찰 실제 복귀 오차 | 12.7 / 13.8cm (기준 <25cm) |
+| 40cm 실제 벽 / 혼합 + AMCL | 모두 왕복, 최대 위치 오차 7.41 / 5.21cm, 오류·침범 0회 |
+| 지도에 없는 라이다 장애물 + AMCL | 회피·왕복, 최대 위치 오차 5.91cm, 오류·침범 0회 |
+| 60cm 혼합 통로 전체 순찰, 단독 실행 | 두 방 관측 100%, RGB-D·라이다 10세트, 오류·경계 침범 0회 |
+| 전체 순찰 AMCL 최대 위치 오차 | 7.09cm (기준 <10cm) |
+| 전체 순찰 실제 복귀 오차 | 13.1cm (기준 <25cm) |
 
-설정·Zone·스타일·시각 보간·Gazebo 회귀: **35 passed, 1 skipped**.
-건너뛴 전체 순찰은 별도 실행으로 2회 통과했고, 40cm AMCL 통로도 2조건 별도 통과했습니다.
-주행 중 검증 도구 중단 시험에서 남은 전용 프로세스는 0개였습니다.
+Bringup 전체 Python 테스트: **767 passed, 9 skipped**. 회전 충돌·플러그인 로딩 C++ 테스트: **9 passed**.
+건너뛴 시뮬레이션은 별도 12조건 실행으로 모두 통과했고, 전체 순찰 단독 재실행도 통과했습니다.
+병렬 순찰 2회는 깊이 프레임이 각각 7/10·8/10개만 동기화되어, 표의 전체 순찰 수치는
+사진·등록 깊이·라이다 모두 10/10개 저장한 단독 실행을 기준으로 기재했습니다.
 
 `success`는 Action 완료, `validation_passed`는 오류·경계 침범·위치 오차의 독립 판정입니다.
 AMCL은 측정 시각에 보간한 Gazebo 실제 좌표와 비교하며 최대 방향 오차도 0.15rad 미만이어야 합니다.
@@ -348,24 +354,29 @@ AMCL은 측정 시각에 보간한 Gazebo 실제 좌표와 비교하며 최대 �
 
 ### 재현
 
-ROS 2 Humble, Nav2, Gazebo Fortress, ROS–Gazebo bridge와 `ros-humble-ros-gz-image`가 필요합니다.
+ROS 2 Humble, Nav2 1.1.20, Bringup 빌드 의존성, Gazebo Fortress와
+ROS–Gazebo bridge(`ros-humble-ros-gz-image` 포함)가 필요합니다.
 저장소 루트에서 실행합니다. 혼합 통로는 실제 벽과 금지구역으로 구성됩니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon --log-base /tmp/malbut-keepout-build/log build \
+colcon --log-base /tmp/malbut-navigation-check/log build \
   --base-paths malbut_description malbut_gazebo malbut_gazebo_plugins \
-    malbut_interfaces malbut_autonomy/malbut_patrol \
-  --build-base /tmp/malbut-keepout-build/build \
-  --install-base /tmp/malbut-keepout-build/install --symlink-install
-source /tmp/malbut-keepout-build/install/setup.bash
+    malbut_interfaces malbut_autonomy/malbut_patrol malbut_bringup \
+  --build-base /tmp/malbut-navigation-check/build \
+  --install-base /tmp/malbut-navigation-check/install --symlink-install
+source /tmp/malbut-navigation-check/install/setup.bash
 export PYTHONPATH="$PWD/malbut_bringup:$PYTHONPATH"
+
+# 회전 충돌과 플러그인 로딩 회귀
+ctest --test-dir /tmp/malbut-navigation-check/build/malbut_bringup \
+  -R test_checked_rotation_shim --output-on-failure
 
 # 기본 왕복, 미등록 장애물+AMCL, 20cm 차단, 40/50cm 왕복
 MALBUT_KEEPOUT_SIM_TEST=1 MALBUT_CORRIDOR_SIM_TEST=1 \
   python3 -m pytest -q malbut_bringup/test/test_nav2_config.py \
     malbut_bringup/test/test_zones.py malbut_bringup/test/test_quality.py \
-    malbut_bringup/test/test_sim_pose_error.py \
+    malbut_bringup/test/test_sim_pose_error.py malbut_bringup/test/test_sim_blocked_result.py \
     malbut_bringup/test/test_keepout_navigation_sim.py
 
 # 40cm 통로의 AMCL 왕복

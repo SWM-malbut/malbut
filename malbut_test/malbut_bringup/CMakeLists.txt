@@ -18,6 +18,14 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(slam_toolbox REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread serialization)
+find_package(nav2_rotation_shim_controller REQUIRED)
+find_package(pluginlib REQUIRED)
+
+add_library(malbut_checked_rotation_shim SHARED src/checked_rotation_shim_controller.cpp)
+target_include_directories(malbut_checked_rotation_shim PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+ament_target_dependencies(malbut_checked_rotation_shim nav2_rotation_shim_controller pluginlib)
+pluginlib_export_plugin_description_file(nav2_core rotation_shim_plugin.xml)
+install(TARGETS malbut_checked_rotation_shim LIBRARY DESTINATION lib)
 
 # Native servers/plugins are unchanged; these small entrypoints fix Humble's
 # worker lifetime on process exit, without adding another resident process.
@@ -82,6 +90,14 @@ endif()
 
 if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test")
   find_package(ament_cmake_pytest REQUIRED)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_checked_rotation_shim.cpp")
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_add_gtest(test_checked_rotation_shim test/test_checked_rotation_shim.cpp TIMEOUT 60)
+    target_link_libraries(test_checked_rotation_shim malbut_checked_rotation_shim)
+    ament_target_dependencies(test_checked_rotation_shim nav2_rotation_shim_controller pluginlib)
+    set_tests_properties(test_checked_rotation_shim PROPERTIES
+      ENVIRONMENT "ROS_LOCALHOST_ONLY=1;ROS_DOMAIN_ID=196")
+  endif()
   ament_add_pytest_test(bringup_contracts test
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     APPEND_ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}

@@ -1,0 +1,5 @@
+<library path="malbut_checked_rotation_shim">
+  <class type="malbut_bringup::CheckedRotationShimController" base_class_type="nav2_core::Controller">
+    <description>Rotation shim with collision checks through the exit angle.</description>
+  </class>
+</library>

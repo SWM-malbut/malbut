@@ -91,7 +91,7 @@ def test_person_controller_has_its_own_heading_checker_without_new_speed_limits(
     controller = config['controller_server']['ros__parameters']
     assert controller['controller_plugins'] == ['FollowPath', 'FollowPerson']
     path = controller['FollowPath']
-    assert path['plugin'] == 'nav2_rotation_shim_controller::RotationShimController'
+    assert path['plugin'] == 'malbut_bringup::CheckedRotationShimController'
     assert path['primary_controller'] == 'dwb_core::DWBLocalPlanner'
     assert 0 < path['angular_disengage_threshold'] < path['angular_dist_threshold']
     assert path['rotate_to_heading_angular_vel'] <= path['max_vel_theta']

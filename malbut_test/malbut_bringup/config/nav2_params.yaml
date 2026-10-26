@@ -185,8 +185,8 @@ controller_server:
       yaw_goal_tolerance: 0.35
     FollowPath:
       # Align with the path before translating through a tight entrance. The
-      # shim checks the same padded footprint and obeys the driver's limits.
-      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      # checked shim covers the exit angle and final command interval too.
+      plugin: "malbut_bringup::CheckedRotationShimController"
       primary_controller: "dwb_core::DWBLocalPlanner"
       angular_dist_threshold: 0.2
       angular_disengage_threshold: 0.05
