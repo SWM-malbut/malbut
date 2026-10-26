@@ -14,6 +14,7 @@ def generate_launch_description():
     defaults = {
         'use_sim_time': 'false',
         'start_enabled': 'true',
+        'recovery_enabled': 'true',
         'room_map_file': '',
         'map_topic': '/map',
         'costmap_topic': '/global_costmap/costmap',
@@ -55,6 +56,8 @@ def generate_launch_description():
         parameters[name] = ParameterValue(LaunchConfiguration(name), value_type=kind)
     parameters['use_sim_time'] = ParameterValue(
         LaunchConfiguration('use_sim_time'), value_type=bool)
+    parameters['recovery_enabled'] = ParameterValue(
+        LaunchConfiguration('recovery_enabled'), value_type=bool)
     parameters['start_enabled'] = ParameterValue(
         LaunchConfiguration('start_enabled'), value_type=bool)
     parameters['room_map_file'] = ParameterValue(

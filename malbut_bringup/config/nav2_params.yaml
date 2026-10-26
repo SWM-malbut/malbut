@@ -152,8 +152,8 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker", "person_follow_goal_checker"]
-    controller_plugins: ["FollowPath", "FollowPerson"]
+    goal_checker_plugins: ["general_goal_checker", "person_follow_goal_checker", "recovery_goal_checker"]
+    controller_plugins: ["FollowPath", "FollowPerson", "PatrolRecovery"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       # A 0.5 m displacement requirement falsely aborts low-speed approaches
@@ -183,6 +183,29 @@ controller_server:
       xy_goal_tolerance: 0.08
       # Only person-following paths require facing their person-directed endpoint.
       yaw_goal_tolerance: 0.35
+    recovery_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: True
+      xy_goal_tolerance: 0.025
+      yaw_goal_tolerance: 6.28
+    # Dedicated slow manoeuvres; each cusp settles before changing direction.
+    PatrolRecovery:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.08
+      lookahead_dist: 0.15
+      use_velocity_scaled_lookahead_dist: false
+      min_approach_linear_velocity: 0.02
+      approach_velocity_scaling_dist: 0.20
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.4
+      regulated_linear_scaling_min_speed: 0.02
+      use_cost_regulated_linear_velocity_scaling: false
+      use_rotate_to_heading: false
+      allow_reversing: true
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 2.0
+      max_robot_pose_search_dist: 0.25
+      transform_tolerance: 0.1
     FollowPath:
       # Align with the path before translating through a tight entrance. The
       # checked shim covers the exit angle and final command interval too.
@@ -466,7 +489,7 @@ planner_server:
   ros__parameters:
     expected_planner_frequency: 20.0
     use_sim_time: False
-    planner_plugins: ["GridBased", "FollowPersonAStar"]
+    planner_plugins: ["GridBased", "FollowPersonAStar", "PatrolRecovery"]
     GridBased:
       # NavFn could find a legal potential yet fail to extract the path next
       # to an inflated corner. Grid A* avoids that gradient-extraction step.
@@ -479,6 +502,24 @@ planner_server:
       # Preserve the searched clearance path; DWB follows it directly.
       smoother:
         max_iterations: 0
+    # SE2 planning preserves body heading and permits multiple forward/reverse arcs.
+    PatrolRecovery:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      tolerance: 0.05
+      allow_unknown: false
+      downsample_costmap: false
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72
+      minimum_turning_radius: 0.4
+      lookup_table_size: 3.0
+      reverse_penalty: 1.2
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      max_planning_time: 1.0
+      max_iterations: 100000
+      analytic_expansion_max_length: 2.0
+      smooth_path: false
     FollowPersonAStar:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5

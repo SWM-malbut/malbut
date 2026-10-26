@@ -10,11 +10,13 @@ import threading
 import time
 
 from action_msgs.msg import GoalStatus
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import Patrol
 from map_msgs.msg import OccupancyGridUpdate
-from nav2_msgs.action import NavigateToPose, Spin
+from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Path as NavPath
 import numpy as np
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -37,6 +39,7 @@ from malbut_patrol.photo_recorder import DEFAULT_DIRECTORY, PhotoRecorder
 from malbut_patrol.inspection import InspectionCalibration, InspectionEvidence
 from malbut_patrol.reobserve import plan_reobservations, read_results, unresolved_targets
 from malbut_patrol.route import ReturnRoutePlanner
+from malbut_patrol.recovery import BreadcrumbTrail, angle_difference, path_segments
 from malbut_patrol.maneuver import ManeuverSpace
 from malbut_patrol.spatial_capture import stamp_seconds
 
@@ -147,6 +150,10 @@ class PatrolManager(Node):
             'base_frame': 'base_footprint',
             'nav2_action_name': 'navigate_to_pose',
             'spin_action_name': 'spin',
+            'recovery_enabled': True,
+            'navigation_behavior_tree': str(Path(get_package_share_directory(
+                'malbut_patrol')) / 'config/patrol_navigation.xml'),
+            'odom_frame': 'odom',
             'robot_clearance_m': 0.26,
             'robot_length_m': 0.277,
             'robot_width_m': 0.212,
@@ -206,6 +213,10 @@ class PatrolManager(Node):
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.return_pose = None
+        self.trail = BreadcrumbTrail()
+        self.recovery_status = {'attempts': 0, 'state': 'not_started'}
+        self.recovery_scan_received = 0.0
+        self._recovering = False
         self.return_status = {'state': 'not_started', 'distance_m': None}
         self.route_status = {'revision': 0, 'remaining': []}
         self.route_planner = None
@@ -273,6 +284,10 @@ class PatrolManager(Node):
         self.spin_client = ActionClient(self, Spin,
                                         self.settings['spin_action_name'],
                                         callback_group=self.group)
+        self.recovery_planner = ActionClient(
+            self, ComputePathToPose, 'compute_path_to_pose', callback_group=self.group)
+        self.recovery_controller = ActionClient(
+            self, FollowPath, 'follow_path', callback_group=self.group)
         self.status = self.create_publisher(String, 'patrol/status', latched)
         self.server = ActionServer(
             self, Patrol, 'patrol', execute_callback=self._execute,
@@ -295,13 +310,16 @@ class PatrolManager(Node):
             # incremental publishers need its full grid to apply later patches.
             self.image = None
             self.rgb_images.clear()
+            self.trail.clear()
+            self.recovery_scan_received = 0.0
             self.depth_images.clear()
             self.lidar_scans.clear()
             self.image_received = 0.0
             self.last_image_stamp = None
 
     def _subscribe_scan(self):
-        if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
+        if (not self.settings['recovery_enabled']
+                and (self.photo_recorder is None or not self.settings['depth_aligned_to_rgb'])):
             return None
         return self.create_subscription(
             LaserScan, self.settings['scan_topic'], self._receive_scan,
@@ -392,6 +410,12 @@ class PatrolManager(Node):
 
     def _receive_scan(self, message):
         with self.lock:
+            stamp = stamp_seconds(message.header.stamp)
+            age = self.get_clock().now().nanoseconds/1e9 - stamp
+            if (self._processing_enabled and 0 <= age <= .5
+                    and sum(math.isfinite(r) and message.range_min < r < message.range_max
+                            for r in message.ranges) >= 20):
+                self.recovery_scan_received = time.monotonic()
             if self._processing_enabled and self.photo_recorder is not None:
                 self._retain_frame(self.lidar_scans, message)
 
@@ -713,6 +737,7 @@ class PatrolManager(Node):
         if now - self.last_pump >= 1.0 / self.settings['observation_hz']:
             self.last_pump = now
             self._observe()
+            self._sample_trail()
         if getattr(self, 'inspection', None) is not None:
             self._poll_inspection()
         if now - self.last_observation > self.settings['sensor_timeout_s']:
@@ -768,7 +793,7 @@ class PatrolManager(Node):
                 if stalled:
                     self.get_logger().warning(
                         f'Robot did not move for {now - moved_at:.0f} s; '
-                        'trying the next viewpoint')
+                        'canceling navigation before bounded recovery')
             if stalled or elapsed > timeout:
                 if not self._settle_child():
                     raise PatrolInterrupted('Nav2 did not confirm cancellation')
@@ -801,8 +826,181 @@ class PatrolManager(Node):
             self.child.wake.clear()
         return self.child.settled
 
+    def _sample_trail(self):
+        if not self.settings['recovery_enabled']:
+            return
+        try:
+            base = self.tf.lookup_transform(
+                self.map_message.header.frame_id, self.settings['base_frame'], Time())
+            age = (self.get_clock().now().nanoseconds/1e9
+                   - stamp_seconds(base.header.stamp))
+            if not -.2 <= age <= .5:
+                raise ValueError('Recovery localization TF is stale')
+            frame = self.tf.lookup_transform(
+                self.map_message.header.frame_id, self.settings['odom_frame'], Time()).transform
+            anchor = frame.translation.x, frame.translation.y, _yaw(frame.rotation)
+            transform = base.transform
+            pose = transform.translation.x, transform.translation.y, _yaw(transform.rotation)
+            now = time.monotonic()
+            if self._recovering:
+                if now > self._recovery_deadline:
+                    raise ValueError('Recovery time budget exceeded')
+                if not self.trail.consistent(anchor):
+                    raise ValueError('Localization changed during recovery')
+                if now-self.recovery_scan_received > .75 or now-self.costmap_received > 2.:
+                    raise ValueError('Recovery obstacle data is stale')
+            else:
+                self.trail.record(pose, anchor, now)
+        except (TransformException, ValueError) as error:
+            self.trail.clear()
+            if self._recovering:
+                raise PatrolInterrupted(str(error)) from error
+
+    def _recovery_stop(self, handle):
+        """Let the smoother brake and require a stable, freshly measured pose."""
+        deadline = time.monotonic()+3.
+        reference, stable = self._robot_pose(), time.monotonic()
+        while time.monotonic() < deadline:
+            self._pump(handle)
+            pose = self._robot_pose()
+            if (math.dist(pose[:2], reference[:2]) > .01
+                    or abs(angle_difference(pose[2], reference[2])) > .03):
+                reference, stable = pose, time.monotonic()
+            if time.monotonic()-stable >= .4:
+                return
+            self.stop_event.wait(.05)
+        raise PatrolInterrupted('Robot did not settle before recovery')
+
+    def _history_path(self, trail):
+        """
+        Retain a travelled path when coarse SE2 search cannot leave its start.
+
+        Reject newly blocked or unknown centre cells before motion. The local
+        controller still checks the complete padded footprint and projected
+        command on every cycle, including hazards beside this centre line.
+        """
+        with self.lock:
+            grid = _grid(self.costmap)
+        path = NavPath()
+        path.header.frame_id = self.map_message.header.frame_id
+        path.header.stamp = self.get_clock().now().to_msg()
+        for before, after in zip(trail, trail[1:]):
+            steps = max(1, math.ceil(math.dist(before[:2], after[:2]) / .02))
+            for index in range(steps+1):
+                ratio = index/steps
+                x, y = [a+(b-a)*ratio for a, b in zip(before[:2], after[:2])]
+                row, col = grid.world_to_cell(x, y)
+                if not grid.contains(row, col) or not 0 <= grid.cells[row, col] < 99:
+                    return None
+        for x, y, yaw in trail:
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x, pose.pose.position.y = x, y
+            pose.pose.orientation.z = math.sin(yaw/2)
+            pose.pose.orientation.w = math.cos(yaw/2)
+            path.poses.append(pose)
+        return path
+
+    def _recover(self, handle):
+        """Retreat toward recent breadcrumbs, with bounded forward/reverse shunts."""
+        if (not self.settings['recovery_enabled'] or self.recovery_status['attempts'] >= 2
+                or not self.recovery_planner.server_is_ready()
+                or not self.recovery_controller.server_is_ready()):
+            return False
+        # Never overlap the old NavigateToPose/BT recovery and FollowPath.
+        if not self._settle_child():
+            raise PatrolInterrupted('Navigation stop is unconfirmed')
+        self._sample_trail()
+        trail = self.trail.retreat(self._robot_pose(), time.monotonic())
+        if not trail or time.monotonic()-self.recovery_scan_received > .75:
+            self.recovery_status['state'] = 'no_fresh_trail'
+            return False
+        self.recovery_status['attempts'] += 1
+        self.recovery_status['state'] = 'planning'
+        self._recovering = True
+        self._recovery_deadline = time.monotonic()+90.
+        try:
+            self.phase = 'RECOVERY_PLANNING'
+            self._recovery_stop(handle)
+            # Try at most three previously visited endpoints, farthest first.
+            indices = list(dict.fromkeys((len(trail)-1, len(trail)*2//3, len(trail)//2)))
+            for end in indices:
+                target = trail[end]
+                if math.dist(target[:2], trail[0][:2]) < .30:
+                    continue
+                goal = ComputePathToPose.Goal()
+                goal.planner_id = 'PatrolRecovery'
+                goal.goal.header.frame_id = self.map_message.header.frame_id
+                goal.goal.header.stamp = self.get_clock().now().to_msg()
+                goal.goal.pose.position.x, goal.goal.pose.position.y = target[:2]
+                goal.goal.pose.orientation.z = math.sin(target[2]/2)
+                goal.goal.pose.orientation.w = math.cos(target[2]/2)
+                if self._run_child(self.recovery_planner, goal, handle, 4.):
+                    path = self.child.result.result.path
+                    self.recovery_status['path_source'] = 'hybrid'
+                else:
+                    path = self._history_path(trail[:end+1])
+                    self.recovery_status['path_source'] = 'travel_history'
+                    if path is None:
+                        continue
+                if path.header.frame_id != self.map_message.header.frame_id:
+                    continue
+                poses = [(p.pose.position.x, p.pose.position.y, _yaw(p.pose.orientation))
+                         for p in path.poses]
+                try:
+                    segments = path_segments(poses, trail[:end+1])
+                except ValueError as error:
+                    self.recovery_status['detail'] = str(error)
+                    self.get_logger().warning(f'Recovery path rejected: {error}')
+                    continue
+                self.recovery_status.update(state='moving', segments=len(segments),
+                                            direction_changes=len(segments)-1)
+                for direction, points in segments:
+                    self._recovery_stop(handle)
+                    self.phase = 'RECOVERY_REVERSE' if direction < 0 else 'RECOVERY_FORWARD'
+                    request = FollowPath.Goal()
+                    request.controller_id = 'PatrolRecovery'
+                    request.goal_checker_id = 'recovery_goal_checker'
+                    request.path.header = path.header
+                    request.path.poses = [path.poses[i] for i in points]
+                    if not self._run_child(self.recovery_controller, request, handle,
+                                           45., stall=True):
+                        self.recovery_status['state'] = 'blocked'
+                        return False
+                self._recovery_stop(handle)
+                if math.dist(self._robot_xy(), target[:2]) > .10:
+                    self.recovery_status['state'] = 'outside_tolerance'
+                    return False
+                self.recovery_status['state'] = 'recovered'
+                self.trail.clear()
+                return True
+            self.recovery_status['state'] = 'no_safe_path'
+            return False
+        except PatrolInterrupted as error:
+            self.recovery_status.update(state='interrupted', detail=str(error))
+            raise
+        finally:
+            self._recovering = False
+
+    def _navigate(self, request, handle):
+        """Retry the original goal once only after a measured recovery."""
+        phase = self.phase
+        request.behavior_tree = (self.settings['navigation_behavior_tree']
+                                 if self.settings['recovery_enabled'] else '')
+        if self._run_child(self.navigation, request, handle,
+                           self.settings['navigation_timeout_s'], stall=True):
+            return True
+        if not self._recover(handle):
+            return False
+        self.phase = phase
+        request.pose.header.stamp = self.get_clock().now().to_msg()
+        return self._run_child(self.navigation, request, handle,
+                               self.settings['navigation_timeout_s'], stall=True)
+
     def _execute(self, handle):
         self.visited = 0
+        self.trail.clear()
+        self.recovery_status = {'attempts': 0, 'state': 'not_started'}
         self.planner = None
         self.phase = 'PLANNING'
         self.last_image_stamp = None
@@ -871,6 +1069,8 @@ class PatrolManager(Node):
                     break
                 route = self._plan_remaining(handle, 'coverage_update')
                 if not route.viewpoints:
+                    if self._recover(handle):
+                        continue
                     detail = 'No usable untried viewpoint remains; partial coverage returned'
                     break
                 viewpoint = route.viewpoints[0]
@@ -891,8 +1091,7 @@ class PatrolManager(Node):
                 request.pose.pose.orientation.z = math.sin(viewpoint.yaw * 0.5)
                 request.pose.pose.orientation.w = math.cos(viewpoint.yaw * 0.5)
                 self.phase = 'NAVIGATING'
-                if not self._run_child(self.navigation, request, handle,
-                                       self.settings['navigation_timeout_s'], stall=True):
+                if not self._navigate(request, handle):
                     if self.inspection is not None:
                         self._await_inspection(handle)
                     continue
@@ -1005,8 +1204,7 @@ class PatrolManager(Node):
             request.pose.pose.position.x, request.pose.pose.position.y = self.return_pose[:2]
             request.pose.pose.orientation.z = math.sin(self.return_pose[2]/2)
             request.pose.pose.orientation.w = math.cos(self.return_pose[2]/2)
-            if not self._run_child(self.navigation, request, handle,
-                                   self.settings['navigation_timeout_s'], stall=True):
+            if not self._navigate(request, handle):
                 self.return_status['state'] = 'navigation_failed'
                 return False
             distance = math.dist(self._robot_xy(), self.return_pose[:2])
@@ -1147,8 +1345,7 @@ class PatrolManager(Node):
                 request.pose.pose.position.x, request.pose.pose.position.y = view.x, view.y
                 request.pose.pose.orientation.z = math.sin(view.yaw/2)
                 request.pose.pose.orientation.w = math.cos(view.yaw/2)
-                if not self._run_child(self.navigation, request, handle,
-                                       self.settings['navigation_timeout_s'], stall=True):
+                if not self._navigate(request, handle):
                     continue
                 # Wait for a post-arrival image; moving images must not consume the quota.
                 settle_until = time.monotonic()+.5
@@ -1186,6 +1383,7 @@ class PatrolManager(Node):
                 # 0: no rooms for this map, so the web says it patrolled without rooms.
                 'room_count': len(self.planner.room_names) if self.planner else 0,
                 'reobservation': self.reobserve_status,
+                'recovery': self.recovery_status,
                 'return_to_start': dict(self.return_status, start_pose=self.return_pose),
                 'route': self.route_status,
                 'coverage': self.planner.summary() if self.planner else None,

@@ -79,7 +79,8 @@ def missing_packages(names=None):
     """Return the composed Nav2 packages that are not installed."""
     if names is None:
         names = {package for package, _plugin in COMPONENTS.values()}
-        names |= {'rclcpp_components', 'nav2_lifecycle_manager'}
+        names |= {'rclcpp_components', 'nav2_lifecycle_manager',
+                  'nav2_regulated_pure_pursuit_controller', 'nav2_smac_planner'}
     absent = []
     for name in sorted(names):
         try:
