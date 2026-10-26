@@ -218,11 +218,13 @@ class PatrolManager(Node):
         self.maneuver_space = None
         self.observation_cells = None
         self.image = None
-        self.rgb_images = deque(maxlen=8)
+        # At most 20 Hz, retaining the default three-second sensor window even
+        # when TF delivery falls behind a high-rate camera on the robot.
+        self.rgb_images = deque(maxlen=64)
         self.image_received = 0.0
         self.camera_info = None
-        self.depth_images = deque(maxlen=8)
-        self.lidar_scans = deque(maxlen=8)
+        self.depth_images = deque(maxlen=64)
+        self.lidar_scans = deque(maxlen=64)
         self.planner = None
         self.phase = 'IDLE'
         self.visited = 0
@@ -406,7 +408,7 @@ class PatrolManager(Node):
                 if not self._processing_enabled:
                     return
                 self.image = message
-                self.rgb_images.append(message)
+                self._retain_frame(self.rgb_images, message)
                 self.image_received = time.monotonic()
 
     def _receive_info(self, message):
@@ -416,12 +418,22 @@ class PatrolManager(Node):
     def _receive_depth(self, message):
         with self.lock:
             if self._processing_enabled and self.photo_recorder is not None:
-                self.depth_images.append(message)
+                self._retain_frame(self.depth_images, message)
 
     def _receive_scan(self, message):
         with self.lock:
             if self._processing_enabled and self.photo_recorder is not None:
-                self.lidar_scans.append(message)
+                self._retain_frame(self.lidar_scans, message)
+
+    def _retain_frame(self, frames, message):
+        """Keep original, time-spaced samples within a bounded sensor window."""
+        stamp = stamp_seconds(message.header.stamp)
+        if frames and stamp - stamp_seconds(frames[-1].header.stamp) < .05:
+            return
+        frames.append(message)
+        cutoff = stamp - self.settings['sensor_timeout_s']
+        while frames and stamp_seconds(frames[0].header.stamp) < cutoff:
+            frames.popleft()
 
     def _lidar_bundle(self, scan):
         if scan is None:

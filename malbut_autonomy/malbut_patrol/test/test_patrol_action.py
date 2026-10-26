@@ -653,15 +653,17 @@ def test_nav2_success_without_new_rgb_does_not_credit_coverage(patrol_runtime):
             or outcome.result.message == 'RGB camera is stale')
 
 
-@pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': .6}], indirect=True)
-def test_delayed_camera_tf_uses_buffered_frame_without_starving(patrol_runtime, monkeypatch):
+@pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': 1.4}], indirect=True)
+@pytest.mark.parametrize('delay_s', [.15, .65, .9])
+def test_delayed_camera_tf_uses_buffered_frame_without_starving(
+        patrol_runtime, monkeypatch, delay_s):
     """Continuous fresh RGB must not discard every frame before its TF arrives."""
     manager, navigation, _sensors, client = patrol_runtime
     lookup = manager.tf.lookup_transform
 
     def delayed(target, source, when, *args, **kwargs):
         if (source == 'patrol_test_optical' and when.nanoseconds
-                > manager.get_clock().now().nanoseconds-150_000_000):
+                > manager.get_clock().now().nanoseconds-int(delay_s*1e9)):
             raise ExtrapolationException('Camera frame precedes its TF arrival')
         return lookup(target, source, when, *args, **kwargs)
 
@@ -671,7 +673,7 @@ def test_delayed_camera_tf_uses_buffered_frame_without_starving(patrol_runtime, 
     assert navigation.request_received.wait(TIMEOUT_S)
     _wait_until(lambda: manager.last_image_stamp is not None)
     stamp = manager.last_image_stamp
-    time.sleep(.8)  # Longer than the unchanged camera watchdog.
+    time.sleep(1.6)  # Longer than the unchanged camera watchdog.
     assert manager.busy
     assert manager.last_image_stamp > stamp
     assert manager.planner.coverage_ratio > 0
