@@ -10,6 +10,8 @@ limits are raised during this Action and restored with the resulting AMCL pose
 and covariance afterwards. No velocity is sent.
 """
 
+from collections import deque
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -40,7 +42,7 @@ from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .pose_store import map_identity, read_initial_pose, valid_pose, write_pose
-from .scan_match import distance_field, match_ratio
+from .scan_match import alignment_is_unique, assess_scan, distance_field
 
 
 LOCALIZATION_STATE_TOPIC = '/malbut/localization/state'
@@ -135,6 +137,14 @@ def accepts(estimate, requested):
             and angle <= max(MIN_ACCEPT_ANGLE_RAD, 3 * math.sqrt(covariance[35])))
 
 
+def search_seed(pose):
+    """Let AMCL correct modest saved-pose errors before discarding its location."""
+    covariance = list(pose['covariance'])
+    for index, variance in ((0, .15**2), (7, .15**2), (35, .25**2)):
+        covariance[index] = max(covariance[index], variance)
+    return {**pose, 'covariance': covariance}
+
+
 class Relocalization(Node):
     """Serve /relocalize and keep the last AMCL pose for each saved map."""
 
@@ -142,11 +152,13 @@ class Relocalization(Node):
         super().__init__('relocalization', **kwargs)
         defaults = {
             'pose_file': str(Path.home() / '.ros/malbut/localization/last_pose.yaml'),
-            'save_period_s': 5.0, 'timeout_s': 10.0,
+            # One turn alone takes at least 12.6 s at the robot's 0.5 rad/s limit.
+            'save_period_s': 5.0, 'timeout_s': 30.0,
             'scan_topic': '/scan_raw', 'map_topic': '/map', 'base_frame': 'base_footprint',
+            'odom_frame': 'odom',
             # A scan endpoint within this distance of a mapped obstacle is a hit.
             'match_distance_m': 0.10,
-            # Share of hits needed to trust a pose; a moved robot scores far lower.
+            # Required overlap, with bounded map-difference checks in scan_match.
             'match_ratio_min': 0.95, 'max_scan_range_m': 8.0,
             'min_particles': 2000, 'max_particles': 8000,
         }
@@ -167,6 +179,8 @@ class Relocalization(Node):
         self.map_file = None
         self.identity = None
         self.saving = False
+        self.save_inhibited = False
+        self._own_pose_stamps = deque(maxlen=16)
         self.expected_map = None
         self.map_message = None
         self.field = None
@@ -257,6 +271,7 @@ class Relocalization(Node):
             self.estimate = None
             self.received = self.saved_received = 0.0
             self.saving = False
+            self.save_inhibited = False
 
     def _map(self, message):
         # Kept as received; the distance field is built only for the selected map.
@@ -291,8 +306,14 @@ class Relocalization(Node):
         if message.header.frame_id == 'map':
             # Estimates computed before any correction must not be saved.
             with self.lock:
+                stamp = Time.from_msg(message.header.stamp).nanoseconds
+                if stamp in self._own_pose_stamps:
+                    return  # A delayed echo of our correction is not operator input.
                 self.latest = None
                 self.initial_stamp = self.get_clock().now().nanoseconds
+                if not self.busy:
+                    # An explicit operator correction may replace a failed search.
+                    self.save_inhibited = False
 
     def _receive(self, message):
         if message.header.frame_id != 'map':
@@ -351,14 +372,24 @@ class Relocalization(Node):
 
     def _execute(self, handle):
         result = Relocalize.Result()
+        with self.lock:
+            # Failed/canceled searches must not overwrite the last saved pose.
+            self.save_inhibited = True
         try:
             self._start_observing()
             found, message, estimate, ratio, reason = self._relocalize(handle)
+            if found:
+                found, estimate, score = self._confirm_sequence(handle, estimate)
+                ratio = score.ratio
+                message += f'; final {score.summary}'
+                reason = '' if found else 'low_match'
             result.success, result.message, result.match_ratio = found, message, ratio
             result.failure_reason = reason
             if estimate is not None:
                 result.pose = estimate[2]
             if found:
+                with self.lock:
+                    self.save_inhibited = False
                 handle.succeed()
             else:
                 self.get_logger().warning(f'Relocalization failed: {message}')
@@ -394,12 +425,16 @@ class Relocalization(Node):
         seed = before[1] if before is not None else None
         if request.method == goal.AUTO:
             seed = read_initial_pose(self.path, map_file, identity) or seed
+            if seed is not None:
+                seed = search_seed(seed)
         elif request.method == goal.GIVEN_POSE:
             seed = pose_record(request.initial_pose)
             if seed is None:
                 raise RelocalizationError('initial_pose must be a finite pose in the map frame')
         restored_pose = seed
+        restored_estimate = None
         seeded = None
+        located = None
         try:
             # Set both limits together. Even a lost response needs restoration:
             # the server may already have reset its particle filter.
@@ -412,8 +447,8 @@ class Relocalization(Node):
                 current = self.estimate
             if current is not None:
                 restored_pose = current[1]
+                restored_estimate = current
                 located = (*located[:2], current, *located[3:])
-            return located
         finally:
             # Cancellation during a running search also keeps the last live
             # estimate, but a reset before seeding must not replace the seed.
@@ -422,12 +457,83 @@ class Relocalization(Node):
                     current = self.estimate
                 if current is not None:
                     restored_pose = current[1]
+                    restored_estimate = current
             cleanup = time.monotonic() + RESTORE_TIMEOUT_S
             self._set_particle_limits(original, None, cleanup)
             if restored_pose is not None:
+                if restored_estimate is not None:
+                    # Canceling Spin stops commands, but odometry can still advance
+                    # while the smoother brakes and AMCL resets its particle filter.
+                    x, y, yaw = self._pose_at(restored_estimate, Time(), cleanup)
+                    restored_pose = {**restored_pose, 'x': x, 'y': y, 'yaw': yaw}
                 # Humble resets its filter when limits change. Preserve AMCL's
                 # own pose AND uncertainty, never manufacture a fitted pose.
-                self._apply(None, restored_pose, cleanup)
+                restored = self._apply(None, restored_pose, cleanup)
+                if located is not None:
+                    located = (*located[:2], restored, *located[3:])
+        # The restored filter needs fresh updates before it can be trusted.
+        # _execute confirms its final geometry and stability before reporting success.
+        return located
+
+    def _confirm_sequence(self, handle, estimate):
+        """Require three fresh, geometrically valid AMCL updates after restoration."""
+        deadline = time.monotonic() + RESTORE_TIMEOUT_S
+        confirmed = 0
+        score = self._score(handle, estimate, deadline)
+        while time.monotonic() + 0.25 < deadline:
+            current = self._updated_estimate(handle, estimate, deadline)
+            score = self._score(handle, current, deadline)
+            if time.monotonic() >= deadline:
+                raise RelocalizationError('final AMCL check timed out', 'timeout')
+            predicted = self._pose_at(
+                estimate, Time.from_msg(current[2].header.stamp), deadline, handle)
+            pose = current[1]
+            drift = math.hypot(pose['x']-predicted[0], pose['y']-predicted[1])
+            turn = abs(math.atan2(math.sin(pose['yaw']-predicted[2]),
+                                  math.cos(pose['yaw']-predicted[2])))
+            if drift > 0.05 or turn > 0.05:
+                score = replace(score, accepted=False, reason='unstable_pose')
+            estimate = current
+            confirmed = confirmed + 1 if score.accepted else 0
+            if confirmed == 3:
+                break
+        if confirmed < 3:
+            return False, estimate, score
+        message, laser, field = self._observe(handle, estimate, deadline)
+        pose = self._pose_at(estimate, Time.from_msg(message.header.stamp), deadline, handle)
+
+        def check():
+            self._check(handle)
+            if time.monotonic() >= deadline:
+                raise RelocalizationError('global ambiguity check timed out', 'timeout')
+
+        unique = alignment_is_unique(field, message, laser, pose,
+                                     max_range_m=self.settings['max_scan_range_m'], check=check)
+        if not unique:
+            return False, estimate, replace(score, accepted=False, reason='ambiguous_global_pose')
+        return True, estimate, score
+
+    def _updated_estimate(self, handle, previous, deadline):
+        self._check(handle)
+        time.sleep(0.15)
+        self._call(self.nomotion_update, 'update', deadline, handle)
+        requested = time.monotonic()
+        while True:
+            self._check(handle)
+            with self.lock:
+                current = self.estimate
+            if (current is not None and current[0] > previous[0]
+                    and Time.from_msg(current[2].header.stamp)
+                    > Time.from_msg(previous[2].header.stamp)):
+                return current
+            if time.monotonic() >= deadline:
+                raise RelocalizationError('no fresh AMCL estimate', 'timeout')
+            if time.monotonic() - requested >= 0.3:
+                # The service only sets AMCL's next-scan flag; its pose uses
+                # best-effort DDS and can be dropped. Request another fresh scan.
+                self._call(self.nomotion_update, 'update', deadline, handle)
+                requested = time.monotonic()
+            time.sleep(0.02)
 
     def _particle_limits(self, handle, deadline):
         reply = self._rpc(self._particle_reader, GetParameters.Request(
@@ -470,12 +576,13 @@ class Relocalization(Node):
                 raise RelocalizationError('initial_pose must be a finite pose in the map frame')
             self._feedback(handle, 'APPLYING')
             estimate = seeded or self._apply(handle, pose, deadline)
-            ratio = self._score(handle, estimate, deadline)
+            score = self._score(handle, estimate, deadline)
+            ratio = score.ratio
             # Applying a pose does not establish that it matches the environment.
             timed_out = time.monotonic() >= deadline
-            found = not timed_out and ratio >= minimum
+            found = not timed_out and score.accepted
             reason = '' if found else 'timeout' if timed_out else 'low_match'
-            return (found, f'pose set; {ratio:.0%} of the scan matches the map',
+            return (found, f'pose set; {score.summary}',
                     estimate, ratio, reason)
         reason = 'global search requested'
         if request.method == goal.AUTO:
@@ -485,16 +592,24 @@ class Relocalization(Node):
             reason = 'no saved pose for this map'
             if saved is not None:
                 self._feedback(handle, 'CHECKING_SAVED_POSE')
-                estimate = seeded or self._apply(handle, saved, deadline)
-                ratio = self._score(handle, estimate, deadline)
+                estimate = seeded or self._apply(handle, search_seed(saved), deadline)
+                score = self._score(handle, estimate, deadline)
+                # A stale heading can be recoverable around the saved position.
+                # Give AMCL fresh scans before scattering particles over the map.
+                for _ in range(4):
+                    if score.accepted or time.monotonic() >= deadline:
+                        break
+                    estimate = self._updated_estimate(handle, estimate, deadline)
+                    score = self._score(handle, estimate, deadline)
+                ratio = score.ratio
                 self._feedback(handle, 'CHECKING_SAVED_POSE', ratio)
                 if time.monotonic() >= deadline:
                     return (False, 'saved pose check time limit reached',
                             estimate, ratio, 'timeout')
-                if ratio >= minimum:
-                    return (True, f'saved pose confirmed; {ratio:.0%} of the scan matches the map',
+                if score.accepted:
+                    return (True, f'saved pose confirmed; {score.summary}',
                             estimate, ratio, '')
-                reason = f'saved pose matched only {ratio:.0%} of the scan'
+                reason = f'saved pose not confirmed ({score.summary})'
             self.get_logger().info(f'Relocalization: {reason}; searching the whole map')
         estimate, ratio, found = self._search(handle, deadline, minimum)
         if found:
@@ -533,7 +648,12 @@ class Relocalization(Node):
     def _apply(self, handle, pose, deadline):
         """Send one initial pose and return AMCL's first estimate from it."""
         sent = time.monotonic()
-        self.publisher.publish(pose_message(pose, self.get_clock().now().to_msg()))
+        stamp = self.get_clock().now()
+        with self.lock:
+            self.latest = None
+            self.initial_stamp = stamp.nanoseconds
+            self._own_pose_stamps.append(stamp.nanoseconds)
+        self.publisher.publish(pose_message(pose, stamp.to_msg()))
         while True:
             self._check(handle)
             with self.lock:
@@ -547,16 +667,43 @@ class Relocalization(Node):
             time.sleep(0.05)
 
     def _score(self, handle, estimate, deadline):
-        """Match a scan taken after the estimate against the map at that pose."""
+        """Match the scan using the estimate advanced by odometry to its timestamp."""
+        if Time.from_msg(estimate[2].header.stamp).nanoseconds <= 0:
+            raise RelocalizationError('AMCL estimate has no timestamp')
         message, laser, field = self._observe(handle, estimate, deadline)
-        pose = estimate[1]
-        return self._ratio(field, message, laser, (pose['x'], pose['y'], pose['yaw']))
+        pose = self._pose_at(estimate, Time.from_msg(message.header.stamp), deadline, handle)
+        return assess_scan(
+            field, message, laser, pose, hit_distance_m=self.settings['match_distance_m'],
+            max_range_m=self.settings['max_scan_range_m'],
+            minimum_ratio=self.settings['match_ratio_min'])
 
-    def _ratio(self, field, scan, laser, pose):
-        ratio, beams = match_ratio(
-            field, scan, laser, pose, hit_distance_m=self.settings['match_distance_m'],
-            max_range_m=self.settings['max_scan_range_m'])
-        return ratio if beams else 0.0
+    def _pose_at(self, estimate, target_time, deadline, handle=None):
+        """Advance one AMCL hypothesis through odom; zero time selects latest TF."""
+        pose = estimate[1]
+        x, y, yaw = pose['x'], pose['y'], pose['yaw']
+        pose_time = Time.from_msg(estimate[2].header.stamp)
+        if target_time.nanoseconds != pose_time.nanoseconds:
+            # base(at pose time) <- base(at scan time), through continuous odom.
+            # Using map->base here could silently score a different AMCL hypothesis.
+            while True:
+                self._check(handle)
+                try:
+                    delta = self.tf.lookup_transform_full(
+                        self.settings['base_frame'], pose_time,
+                        self.settings['base_frame'], target_time, self.settings['odom_frame'])
+                    break
+                except TransformException as error:
+                    if time.monotonic() >= deadline:
+                        raise RelocalizationError(
+                            f'no odometry transform at scan time: {error}', 'timeout') from error
+                    time.sleep(0.02)
+            translation, q = delta.transform.translation, delta.transform.rotation
+            c, s = math.cos(yaw), math.sin(yaw)
+            x += c * translation.x - s * translation.y
+            y += s * translation.x + c * translation.y
+            yaw += math.atan2(2 * (q.w * q.z + q.x * q.y),
+                              1 - 2 * (q.y * q.y + q.z * q.z))
+        return x, y, yaw
 
     def _observe(self, handle, estimate, deadline):
         """Return a scan taken after the estimate, the laser mount and the map field."""
@@ -565,7 +712,11 @@ class Relocalization(Node):
             with self.lock:
                 scan = self.scan
             field = self._selected_field()
-            if scan is not None and scan[0] >= estimate[0] and field is not None:
+            if (scan is not None and scan[0] >= estimate[0]
+                    and time.monotonic() - scan[0] <= SCAN_MAX_AGE_S and field is not None
+                    and Time.from_msg(scan[1].header.stamp).nanoseconds > 0
+                    and Time.from_msg(scan[1].header.stamp)
+                    >= Time.from_msg(estimate[2].header.stamp)):
                 break
             if time.monotonic() >= deadline:
                 raise RelocalizationError('no LiDAR scan after the pose correction', 'timeout')
@@ -635,20 +786,21 @@ class Relocalization(Node):
         else:
             self.get_logger().warning('Spin is unavailable; searching without rotating')
         estimate, ratio, scored_at, update_at = None, 0.0, None, 0.0
-        found = False
+        found = confirmed = False
         try:
             while time.monotonic() < deadline:
                 self._check(handle)
                 with self.lock:
                     current, scan = self.estimate, self.scan
                 # Do not start waiting for another scan at the search deadline.
-                # Keep the last completed measurement when the ten seconds end.
+                # Keep the last completed measurement when the deadline expires.
                 if (current is not None and current[0] >= started and current[0] != scored_at
                         and scan is not None and scan[0] >= current[0]):
-                    ratio = self._score(handle, current, deadline)
+                    score = self._score(handle, current, deadline)
+                    ratio, confirmed = score.ratio, score.accepted
                     estimate, scored_at = current, current[0]
                     self._feedback(handle, 'SEARCHING', ratio)
-                if (estimate is not None and ratio >= minimum
+                if (estimate is not None and confirmed
                         and time.monotonic() < deadline):
                     found = True
                     break
@@ -670,8 +822,9 @@ class Relocalization(Node):
         if current is not None and current[0] >= started:
             # A score measured during rotation cannot validate a different final pose.
             if found and current is not estimate:
-                ratio = self._score(handle, current, deadline)
-                found = ratio >= minimum and time.monotonic() < deadline
+                score = self._score(handle, current, deadline)
+                ratio = score.ratio
+                found = score.accepted and time.monotonic() < deadline
             estimate = current
         return estimate, ratio, found
 
@@ -718,7 +871,8 @@ class Relocalization(Node):
         """Write only a new, recent estimate while AMCL localizes on a saved map."""
         with self.lock:
             identity, latest, received = self.identity, self.latest, self.received
-        if (identity is None or self.busy or not self.saving or not self.amcl_active
+        if (identity is None or self.busy or self.save_inhibited
+                or not self.saving or not self.amcl_active
                 or latest is None
                 or received == self.saved_received
                 or time.monotonic() - received > 2 * self.period):

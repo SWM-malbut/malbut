@@ -75,6 +75,7 @@ def room(tmp_path):
 
     def scan(x, y, yaw, beams=360):
         message = LaserScan()
+        message.header.stamp.sec = 100
         message.header.frame_id = 'laser'
         message.angle_min = -math.pi
         message.angle_increment = 2 * math.pi / beams
