@@ -81,5 +81,6 @@ def generate_launch_description():
         *[DeclareLaunchArgument(name, default_value=value)
           for name, value in defaults.items()],
         Node(package='malbut_patrol', executable='patrol_manager',
-             name='patrol_manager', output='screen', parameters=[parameters]),
+             name='patrol_manager', output='screen', parameters=[parameters],
+             respawn=True, respawn_delay=5.0),
     ])

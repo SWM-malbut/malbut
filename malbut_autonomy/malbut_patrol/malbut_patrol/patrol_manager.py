@@ -288,43 +288,16 @@ class PatrolManager(Node):
             if self._processing_enabled == enabled:
                 return
             self._processing_enabled = enabled
-            if enabled:
-                self.tf.clear()
-                self.tf_listener = TransformListener(self.tf, self)
-            elif self.tf_listener is not None:
-                self.tf_listener.unregister()
-                self.tf_listener = None
-                self.tf.clear()
+            # Keep ROS entities alive for the owning executor's lifetime. A
+            # worker may already have selected a subscription when this RPC
+            # runs; destroying it here raises InvalidHandle in executor.spin().
+            # Callbacks discard idle inputs, and every enable starts empty.
             self.image = self.costmap = None
             self.rgb_images.clear()
             self.depth_images.clear()
             self.lidar_scans.clear()
             self.image_received = self.costmap_received = 0.0
             self.last_image_stamp = None
-            if enabled:
-                latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-                self._costmap_subscription = self.create_subscription(
-                    OccupancyGrid, self.settings['costmap_topic'], self._receive_costmap,
-                    latched, callback_group=self.group)
-                self._updates_subscription = self.create_subscription(
-                    OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
-                    self._receive_costmap_update, 10, callback_group=self.group)
-                self._image_subscription = self.create_subscription(
-                    Image, self.settings['camera_image_topic'], self._receive_image,
-                    qos_profile_sensor_data, callback_group=self.group)
-                self._depth_subscription = self._subscribe_depth()
-                self._scan_subscription = self._subscribe_scan()
-            else:
-                for subscription in (
-                        self._costmap_subscription, self._updates_subscription,
-                        self._image_subscription, self._depth_subscription,
-                        self._scan_subscription):
-                    if subscription is not None:
-                        self.destroy_subscription(subscription)
-                self._costmap_subscription = self._updates_subscription = None
-                self._image_subscription = None
-                self._depth_subscription = None
-                self._scan_subscription = None
 
     def _subscribe_scan(self):
         if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:

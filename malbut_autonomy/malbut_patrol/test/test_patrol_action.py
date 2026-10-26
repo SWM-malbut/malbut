@@ -21,6 +21,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
+from std_srvs.srv import SetBool
 from tf2_ros import ExtrapolationException, StaticTransformBroadcaster
 
 from malbut_interfaces.action import Patrol
@@ -335,6 +336,48 @@ def test_reject_invalid_and_duplicate_goals(patrol_runtime):
     assert not manager.busy
 
 
+def test_processing_cycles_keep_server_alive_and_idle_buffers_empty(patrol_runtime, monkeypatch):
+    """Streaming sensor callbacks must survive repeated runtime sleep/wake RPCs."""
+    manager, navigation, sensors, client = patrol_runtime
+    processing = sensors.create_client(SetBool, '/patrol_manager/set_processing')
+    assert processing.wait_for_service(timeout_sec=TIMEOUT_S)
+    selected, release = Event(), Event()
+    subscription = manager._image_subscription
+    take = manager.executor._take_subscription
+
+    def paused_take(entity):
+        if entity is subscription and not selected.is_set():
+            selected.set()
+            assert release.wait(TIMEOUT_S)
+        return take(entity)
+
+    # Reproduce the robot's interleaving: an executor worker selected the RGB
+    # subscription before the processing service requests its destruction.
+    monkeypatch.setattr(manager.executor, '_take_subscription', paused_take)
+    try:
+        assert selected.wait(TIMEOUT_S)
+        assert _result(processing.call_async(SetBool.Request(data=False))).success
+        release.set()
+        for _ in range(30):
+            assert _result(processing.call_async(SetBool.Request(data=False))).success
+            time.sleep(.06)
+            assert manager.image is None and manager.costmap is None
+            assert not manager.rgb_images and not manager.depth_images
+            assert not manager.lidar_scans
+            assert client.server_is_ready()
+            assert _result(processing.call_async(SetBool.Request(data=True))).success
+            assert not manager._ready()
+        assert not navigation.requests and not navigation.spin_requests
+        handle = _result(client.send_goal_async(Patrol.Goal()))
+        assert handle.accepted
+        assert navigation.request_received.wait(TIMEOUT_S)
+        assert _result(handle.cancel_goal_async()).goals_canceling
+        assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+    finally:
+        release.set()
+        sensors.destroy_client(processing)
+
+
 def test_arrival_rechecks_turning_space_before_sending_spin(patrol_runtime):
     """A new obstacle beside a free centre prevents a turn and invalidates the spot."""
     manager, navigation, sensors, _client = patrol_runtime
@@ -490,12 +533,12 @@ def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, mo
      'depth_delay_frames': frames} for frames in (0, 3)
 ], indirect=True)
 def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runtime):
-    """Release depth traffic while idle and preserve a synchronized pair on restart."""
+    """Discard idle depth input and preserve a synchronized pair after wake."""
     manager, navigation, sensors, client = patrol_runtime
     _wait_until(lambda: bool(manager.depth_images) and bool(manager.lidar_scans))
     manager._change_processing(False)
-    assert manager._depth_subscription is None and not manager.depth_images
-    assert manager._scan_subscription is None and not manager.lidar_scans
+    assert not manager.depth_images
+    assert not manager.lidar_scans
     manager._change_processing(True)
     _wait_until(lambda: not manager._ready() and bool(manager.depth_images)
                 and bool(manager.lidar_scans))
