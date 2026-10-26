@@ -40,12 +40,14 @@ def graph(room, request):
     amcl.declare_parameter('min_particles', 500)
     amcl.declare_parameter('max_particles', 3000)
     calls = []
+    current_pose = [TRUE_POSE]
     found_pose = getattr(request, 'param', TRUE_POSE)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
     estimates = amcl.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
 
     def publish(x, y, yaw):
+        current_pose[0] = (x, y, yaw)
         message = pose_message({'x': x, 'y': y, 'yaw': yaw, 'covariance': [0.01] * 36},
                                amcl.get_clock().now().to_msg())
         estimates.publish(message)
@@ -68,9 +70,14 @@ def graph(room, request):
     amcl.create_service(GetState, '/amcl/get_state', lambda _, response: (
         setattr(response.current_state, 'id', State.PRIMARY_STATE_ACTIVE), response)[1])
     amcl.create_service(Empty, '/reinitialize_global_localization', service('global'))
+
     # After the spin, AMCL converges on the robot's actual pose.
-    amcl.create_service(Empty, '/request_nomotion_update',
-                        service('nomotion', lambda: publish(*found_pose)))
+    def update_pose():
+        nearby = math.hypot(current_pose[0][0]-found_pose[0],
+                            current_pose[0][1]-found_pose[1]) < .5
+        publish(*(found_pose if 'global' in calls or nearby else current_pose[0]))
+
+    amcl.create_service(Empty, '/request_nomotion_update', service('nomotion', update_pose))
     map_publisher = amcl.create_publisher(OccupancyGrid, '/map', latched)
     scans = amcl.create_publisher(LaserScan, '/scan_raw', 10)
 
@@ -84,7 +91,10 @@ def graph(room, request):
     laser.header.frame_id, laser.child_frame_id = 'base_footprint', 'laser'
     laser.transform.rotation.w = 1.0
     static = StaticTransformBroadcaster(amcl)
-    static.sendTransform(laser)
+    odom = TransformStamped()
+    odom.header.frame_id, odom.child_frame_id = 'odom', 'base_footprint'
+    odom.transform.rotation.w = 1.0
+    static.sendTransform([laser, odom])
     ActionServer(amcl, Spin, '/spin', lambda handle: (
         calls.append('spin'), handle.succeed(), Spin.Result())[2])
     manager = rclpy.create_node('relocalization_test_manager', context=context)
@@ -136,7 +146,7 @@ def test_saved_pose_is_confirmed_by_the_scan(graph, room):
     result = _run(executor, client)
     assert result.success, result.message
     assert 'saved pose confirmed' in result.message and result.match_ratio > 0.9
-    assert calls == ['initialpose', 'initialpose']
+    assert calls == ['initialpose', 'initialpose'] + ['nomotion'] * 3
 
 
 def test_moved_robot_is_found_by_rotating_global_search(graph, room):

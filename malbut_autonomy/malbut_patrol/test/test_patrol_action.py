@@ -21,6 +21,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
+from std_srvs.srv import SetBool
 from tf2_ros import ExtrapolationException, StaticTransformBroadcaster
 
 from malbut_interfaces.action import Patrol
@@ -335,6 +336,48 @@ def test_reject_invalid_and_duplicate_goals(patrol_runtime):
     assert not manager.busy
 
 
+def test_processing_cycles_keep_server_alive_and_idle_buffers_empty(patrol_runtime, monkeypatch):
+    """Streaming sensor callbacks must survive repeated runtime sleep/wake RPCs."""
+    manager, navigation, sensors, client = patrol_runtime
+    processing = sensors.create_client(SetBool, '/patrol_manager/set_processing')
+    assert processing.wait_for_service(timeout_sec=TIMEOUT_S)
+    selected, release = Event(), Event()
+    subscription = manager._image_subscription
+    take = manager.executor._take_subscription
+
+    def paused_take(entity):
+        if entity is subscription and not selected.is_set():
+            selected.set()
+            assert release.wait(TIMEOUT_S)
+        return take(entity)
+
+    # Reproduce the robot's interleaving: an executor worker selected the RGB
+    # subscription before the processing service requests its destruction.
+    monkeypatch.setattr(manager.executor, '_take_subscription', paused_take)
+    try:
+        assert selected.wait(TIMEOUT_S)
+        assert _result(processing.call_async(SetBool.Request(data=False))).success
+        release.set()
+        for _ in range(30):
+            assert _result(processing.call_async(SetBool.Request(data=False))).success
+            time.sleep(.06)
+            assert manager.image is None and manager.costmap is not None
+            assert not manager.rgb_images and not manager.depth_images
+            assert not manager.lidar_scans
+            assert client.server_is_ready()
+            assert _result(processing.call_async(SetBool.Request(data=True))).success
+            assert not manager._ready()
+        assert not navigation.requests and not navigation.spin_requests
+        handle = _result(client.send_goal_async(Patrol.Goal()))
+        assert handle.accepted
+        assert navigation.request_received.wait(TIMEOUT_S)
+        assert _result(handle.cancel_goal_async()).goals_canceling
+        assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+    finally:
+        release.set()
+        sensors.destroy_client(processing)
+
+
 def test_arrival_rechecks_turning_space_before_sending_spin(patrol_runtime):
     """A new obstacle beside a free centre prevents a turn and invalidates the spot."""
     manager, navigation, sensors, _client = patrol_runtime
@@ -490,12 +533,12 @@ def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, mo
      'depth_delay_frames': frames} for frames in (0, 3)
 ], indirect=True)
 def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runtime):
-    """Release depth traffic while idle and preserve a synchronized pair on restart."""
+    """Discard idle depth input and preserve a synchronized pair after wake."""
     manager, navigation, sensors, client = patrol_runtime
     _wait_until(lambda: bool(manager.depth_images) and bool(manager.lidar_scans))
     manager._change_processing(False)
-    assert manager._depth_subscription is None and not manager.depth_images
-    assert manager._scan_subscription is None and not manager.lidar_scans
+    assert not manager.depth_images
+    assert not manager.lidar_scans
     manager._change_processing(True)
     _wait_until(lambda: not manager._ready() and bool(manager.depth_images)
                 and bool(manager.lidar_scans))
@@ -653,15 +696,17 @@ def test_nav2_success_without_new_rgb_does_not_credit_coverage(patrol_runtime):
             or outcome.result.message == 'RGB camera is stale')
 
 
-@pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': .6}], indirect=True)
-def test_delayed_camera_tf_uses_buffered_frame_without_starving(patrol_runtime, monkeypatch):
+@pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': 1.4}], indirect=True)
+@pytest.mark.parametrize('delay_s', [.15, .65, .9])
+def test_delayed_camera_tf_uses_buffered_frame_without_starving(
+        patrol_runtime, monkeypatch, delay_s):
     """Continuous fresh RGB must not discard every frame before its TF arrives."""
     manager, navigation, _sensors, client = patrol_runtime
     lookup = manager.tf.lookup_transform
 
     def delayed(target, source, when, *args, **kwargs):
         if (source == 'patrol_test_optical' and when.nanoseconds
-                > manager.get_clock().now().nanoseconds-150_000_000):
+                > manager.get_clock().now().nanoseconds-int(delay_s*1e9)):
             raise ExtrapolationException('Camera frame precedes its TF arrival')
         return lookup(target, source, when, *args, **kwargs)
 
@@ -671,7 +716,7 @@ def test_delayed_camera_tf_uses_buffered_frame_without_starving(patrol_runtime, 
     assert navigation.request_received.wait(TIMEOUT_S)
     _wait_until(lambda: manager.last_image_stamp is not None)
     stamp = manager.last_image_stamp
-    time.sleep(.8)  # Longer than the unchanged camera watchdog.
+    time.sleep(1.6)  # Longer than the unchanged camera watchdog.
     assert manager.busy
     assert manager.last_image_stamp > stamp
     assert manager.planner.coverage_ratio > 0
@@ -772,10 +817,11 @@ def test_system_manager_uses_registered_patrol_and_cancels_nav2(patrol_runtime):
         system.destroy_node()
 
 
-def test_costmap_patch_updates_candidate_safety_without_corrupting_grid():
+@pytest.mark.parametrize('enabled', [False, True])
+def test_costmap_patch_updates_candidate_safety_without_corrupting_grid(enabled):
     """Apply valid occupancy patches and ignore malformed extents atomically."""
     manager = object.__new__(PatrolManager)
-    manager._processing_enabled = True
+    manager._processing_enabled = enabled
     manager.lock = RLock()
     manager.settings = {'maximum_goal_cost': 80}
     manager.costmap_received = 0.0

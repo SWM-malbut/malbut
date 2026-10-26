@@ -1,5 +1,6 @@
 """Check relocalization decisions without AMCL, Nav2 or a moving robot."""
 
+from collections import deque
 from concurrent.futures import Future
 import json
 import math
@@ -20,6 +21,7 @@ from rclpy.time import Time
 from rcl_interfaces.msg import ParameterType, ParameterValue
 from std_msgs.msg import String
 from malbut_relocalization import relocalization_node
+from malbut_relocalization.scan_match import ScanAssessment
 
 TRUE_POSE = (0.8, 0.4, 0.3)
 WRONG_POSE = (-0.9, -0.5, 2.0)
@@ -58,13 +60,16 @@ class _Amcl:
 
     def __init__(self, node, found=TRUE_POSE):
         self.node, self.found = node, found
+        self.scan_pose = TRUE_POSE
         self.calls = []
 
     def estimate(self, x, y, yaw):
-        message = pose_message(_pose(x, y, yaw), Time(seconds=100).to_msg())
+        message = pose_message(_pose(x, y, yaw), Time(seconds=self.node.clock.now).to_msg())
         self.node.estimate = (self.node.clock.now + 1e-3, pose_record(message), message)
         # A scan follows every estimate.
-        self.node.scan = (self.node.clock.now + 2e-3, self.node.room.scan(*TRUE_POSE))
+        scan = self.node.room.scan(*self.scan_pose)
+        scan.header.stamp = message.header.stamp
+        self.node.scan = (self.node.clock.now + 2e-3, scan)
 
     def initial_pose(self, message):
         self.calls.append('initialpose')
@@ -75,7 +80,13 @@ class _Amcl:
         def call_async(_request):
             self.calls.append(name)
             if name == 'nomotion' and self.found is not None:
-                self.estimate(*self.found)
+                pose = self.node.estimate[1] if self.node.estimate is not None else None
+                nearby = pose is not None and math.hypot(
+                    pose['x']-self.found[0], pose['y']-self.found[1]) < .5
+                if 'global' in self.calls or nearby:
+                    self.estimate(*self.found)
+                elif pose is not None:
+                    self.estimate(pose['x'], pose['y'], pose['yaw'])
             return _done(SimpleNamespace())
         return SimpleNamespace(wait_for_service=lambda timeout_sec: True, call_async=call_async)
 
@@ -96,7 +107,8 @@ class _Spin:
 def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node = object.__new__(Relocalization)
     node._context = None
-    node.settings = {'base_frame': 'base_footprint', 'match_distance_m': 0.10,
+    node.settings = {'base_frame': 'base_footprint', 'odom_frame': 'odom',
+                     'match_distance_m': 0.10,
                      'match_ratio_min': 0.95, 'max_scan_range_m': 8.0,
                      'min_particles': 2000, 'max_particles': 8000}
     node.path = room.map_file.parent / 'last_pose.yaml'
@@ -104,6 +116,8 @@ def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node.lock = threading.Lock()
     node.map_file = node.identity = node.expected_map = None
     node.saving = False
+    node.save_inhibited = False
+    node._own_pose_stamps = deque(maxlen=16)
     node.map_message = node.field = node.scan = None
     node.latest = None
     node.received = node.saved_received = 0.0
@@ -155,7 +169,8 @@ def _node(monkeypatch, room, found=TRUE_POSE, spin=None):
     node.spin = spin or _Spin()
     transform = TransformStamped()
     transform.transform.rotation.w = 1.0
-    node.tf = SimpleNamespace(lookup_transform=lambda *_: transform)
+    node.tf = SimpleNamespace(lookup_transform=lambda *_: transform,
+                              lookup_transform_full=lambda *_: transform)
     node.scan = (node.clock.now, room.scan(*TRUE_POSE))
     return node
 
@@ -193,7 +208,8 @@ def test_matching_saved_pose_is_kept_without_searching(monkeypatch, room):
     handle.succeed.assert_called_once()
     assert result.success and 'saved pose confirmed' in result.message
     assert result.match_ratio > 0.9
-    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose'] + ['nomotion'] * 3
+    assert not node.spin.goals
     assert node.parameter_calls == [(2000, 8000), (500, 3000)]
     assert not node.busy
 
@@ -205,9 +221,10 @@ def test_moved_robot_is_found_by_global_search(monkeypatch, room):
     _save(node, room, *WRONG_POSE)
     result = node._execute(_handle())
     assert result.success and 'found by global search' in result.message
-    assert 'saved pose matched only' in result.message
+    assert 'saved pose not confirmed' in result.message
     calls = node.amcl.calls
-    assert calls[0] == 'initialpose' and calls.index('global') < calls.index('nomotion')
+    assert calls[:5] == ['initialpose'] + ['nomotion'] * 4
+    assert 'nomotion' in calls[calls.index('global')+1:]
     assert [goal.target_yaw for goal in node.spin.goals] == [pytest.approx(2 * math.pi)]
     assert result.pose.pose.pose.position.x == pytest.approx(TRUE_POSE[0])
 
@@ -218,9 +235,9 @@ def test_a_nearly_right_saved_pose_is_not_fitted_by_custom_code(monkeypatch, roo
     _ready(node, room)
     _save(node, room, TRUE_POSE[0] + 0.12, TRUE_POSE[1] - 0.1, TRUE_POSE[2] + 0.07)
     result = node._execute(_handle())
-    assert result.success and 'found by global search' in result.message
+    assert result.success and 'saved pose confirmed' in result.message
     assert result.match_ratio > 0.95
-    assert node.amcl.calls[0] == 'initialpose' and node.spin.goals
+    assert node.amcl.calls[0] == 'initialpose' and not node.spin.goals
     position = result.pose.pose.pose.position
     assert math.hypot(position.x - TRUE_POSE[0], position.y - TRUE_POSE[1]) < 0.02
     covariance = node.publisher.publish.call_args.args[0].pose.covariance
@@ -254,7 +271,8 @@ def test_map_without_saved_pose_is_searched(monkeypatch, room):
     _ready(node, room)
     result = node._execute(_handle())
     assert result.success and result.message.startswith('no saved pose for this map')
-    assert node.amcl.calls[0] == 'global' and node.amcl.calls[-1] == 'initialpose'
+    assert node.amcl.calls[0] == 'global'
+    assert node.amcl.calls[-4:] == ['initialpose'] + ['nomotion'] * 3
 
 
 def test_global_search_skips_the_saved_pose(monkeypatch, room):
@@ -291,7 +309,8 @@ def test_given_pose_on_unknown_map_is_applied_but_not_confirmed(monkeypatch, roo
     result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
     assert not result.success and result.match_ratio == 0.
     assert result.failure_reason == 'low_match'
-    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose']
+    assert not node.spin.goals
 
 
 def test_search_that_never_matches_stops_at_ten_seconds(monkeypatch, room):
@@ -356,7 +375,8 @@ def test_given_pose_is_applied_and_its_match_is_reported(monkeypatch, room):
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     result = node._execute(_handle(Relocalize.Goal.GIVEN_POSE, given))
     assert result.success and result.match_ratio > 0.9
-    assert node.amcl.calls == ['initialpose', 'initialpose'] and not node.spin.goals
+    assert node.amcl.calls == ['initialpose', 'initialpose'] + ['nomotion'] * 3
+    assert not node.spin.goals
 
 
 @pytest.mark.parametrize('prepare, reason', [
@@ -459,6 +479,89 @@ def test_only_fresh_amcl_estimates_after_corrections_are_saved(monkeypatch, room
     assert node.latest is None
 
 
+@pytest.mark.parametrize('start', [TRUE_POSE, WRONG_POSE])
+def test_scan_score_advances_the_same_amcl_hypothesis_with_odometry(monkeypatch, room, start):
+    """A later scan uses actual motion, without substituting another map hypothesis."""
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    prior = _pose(start[0] - .1, start[1] - .08, start[2] - .2)
+    message = pose_message(prior, Time(seconds=100).to_msg())
+    estimate = (100., prior, message)
+    scan = room.scan(*TRUE_POSE)
+    scan.header.stamp = Time(seconds=100.4).to_msg()
+    node.scan = (100.4, scan)
+    delta = TransformStamped()
+    c, s = math.cos(prior['yaw']), math.sin(prior['yaw'])
+    delta.transform.translation.x = c * .1 + s * .08
+    delta.transform.translation.y = -s * .1 + c * .08
+    delta.transform.rotation.z = math.sin(.2 / 2)
+    delta.transform.rotation.w = math.cos(.2 / 2)
+    node.tf.lookup_transform_full = Mock(return_value=delta)
+    ratio = node._score(_handle(), estimate, 101.)
+    assert ratio.accepted == (start == TRUE_POSE)
+    node.tf.lookup_transform_full.assert_called_once_with(
+        'base_footprint', Time.from_msg(message.header.stamp),
+        'base_footprint', Time.from_msg(scan.header.stamp), 'odom')
+
+
+@pytest.mark.parametrize('stamp', [0., 99.9])
+def test_old_or_unstamped_scan_received_late_cannot_validate_a_new_pose(
+        monkeypatch, room, stamp):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    pose = _pose(*TRUE_POSE)
+    estimate = (100., pose, pose_message(pose, Time(seconds=100).to_msg()))
+    scan = room.scan(*TRUE_POSE)
+    scan.header.stamp = Time(seconds=stamp).to_msg()
+    node.scan = (100.01, scan)
+    with pytest.raises(relocalization_node.RelocalizationError, match='no LiDAR scan'):
+        node._score(_handle(), estimate, 100.2)
+
+
+def test_missing_odometry_cannot_fall_back_to_an_unsynchronized_score(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    pose = _pose(*TRUE_POSE)
+    estimate = (100., pose, pose_message(pose, Time(seconds=100).to_msg()))
+    scan = room.scan(*TRUE_POSE)
+    scan.header.stamp = Time(seconds=100.1).to_msg()
+    node.scan = (100.1, scan)
+    node.tf.lookup_transform_full = Mock(
+        side_effect=relocalization_node.TransformException('missing odometry'))
+    node._ratio = Mock()
+    with pytest.raises(relocalization_node.RelocalizationError, match='odometry transform'):
+        node._score(_handle(), estimate, 100.2)
+    node._ratio.assert_not_called()
+
+
+def test_failed_search_cannot_replace_saved_pose_until_a_confirmed_correction(monkeypatch, room):
+    node = _node(monkeypatch, room, found=WRONG_POSE)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+    original = node.path.read_bytes()
+    assert not node._execute(_handle(Relocalize.Goal.GLOBAL_SEARCH)).success
+    node._initialpose(node.publisher.publish.call_args.args[0])
+    assert node.save_inhibited, 'Late self-published initialpose must not reenable saving'
+    node._receive(pose_message(_pose(*WRONG_POSE), Time(seconds=100).to_msg()))
+    node.save_latest()
+    assert node.path.read_bytes() == original
+    assert node.save_inhibited
+    node.amcl.found = TRUE_POSE
+    assert node._execute(_handle()).success
+    assert not node.save_inhibited
+
+
+def test_operator_initial_pose_reenables_saving_after_failed_search(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    node.save_inhibited = True
+    corrected = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
+    node._initialpose(corrected)
+    node._receive(corrected)
+    node.save_latest()
+    assert not node.save_inhibited and node.path.exists()
+
+
 def test_lost_state_reply_is_retried_and_absent_amcl_is_inactive(monkeypatch, room):
     """A lost GetState reply or a restarted AMCL cannot leave a stale ACTIVE state."""
     node = _node(monkeypatch, room)
@@ -521,7 +624,8 @@ def test_restore_uses_original_limits_and_amcls_actual_covariance(monkeypatch, r
 
     def keep_uncertainty(message):
         original(message)
-        node.estimate[1]['covariance'] = list(message.pose.covariance)
+        node.estimate[1]['covariance'] = list(saved['covariance'])
+        node.estimate[2].pose.covariance = list(saved['covariance'])
 
     node.publisher.publish.side_effect = keep_uncertainty
     assert node._execute(_handle()).success
@@ -529,6 +633,82 @@ def test_restore_uses_original_limits_and_amcls_actual_covariance(monkeypatch, r
     assert node.particle_limits == (750, 3500)
     assert list(node.publisher.publish.call_args.args[0].pose.covariance) == saved['covariance']
     assert node.estimate[1]['x'] == pytest.approx(TRUE_POSE[0])
+
+
+def test_restore_keeps_motion_after_the_last_amcl_estimate(monkeypatch, room):
+    """Braking after Spin must not reintroduce the earlier heading during reset."""
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+    delta = TransformStamped()
+    delta.transform.rotation.z = math.sin(.2 / 2)
+    delta.transform.rotation.w = math.cos(.2 / 2)
+    identity = TransformStamped()
+    identity.transform.rotation.w = 1.0
+    node.tf.lookup_transform_full = lambda _base, _stamp, _source, target, _fixed: (
+        delta if target.nanoseconds == 0 else identity)
+    original = node.amcl.initial_pose
+
+    def publish(message):
+        original(message)
+        if len(node.amcl.calls) == 2:
+            node.amcl.found = node.amcl.scan_pose = (TRUE_POSE[0], TRUE_POSE[1], TRUE_POSE[2] + .2)
+            node.scan = (node.clock.now + .002,
+                         room.scan(TRUE_POSE[0], TRUE_POSE[1], TRUE_POSE[2] + .2))
+
+    node.publisher.publish.side_effect = publish
+    result = node._execute(_handle())
+    assert result.success
+    assert pose_record(result.pose)['yaw'] == pytest.approx(TRUE_POSE[2] + .2)
+    assert pose_record(node.publisher.publish.call_args.args[0])['yaw'] == pytest.approx(
+        TRUE_POSE[2] + .2)
+
+
+def test_a_good_search_cannot_authorize_a_bad_pose_after_restoring_particles(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+    original = node.amcl.initial_pose
+
+    def publish(message):
+        original(message)
+        if len(node.amcl.calls) == 2:
+            node.amcl.found = (TRUE_POSE[0] + .3, TRUE_POSE[1] + .3, TRUE_POSE[2] + .5)
+            node.amcl.estimate(*node.amcl.found)
+
+    node.publisher.publish.side_effect = publish
+    result = node._execute(_handle())
+    assert not result.success and result.failure_reason == 'low_match'
+    assert node.save_inhibited
+
+
+def test_a_single_good_estimate_is_not_enough_without_fresh_confirmation(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    _save(node, room, *TRUE_POSE)
+    node.nomotion_update.call_async = lambda _: _done(SimpleNamespace())
+    result = node._execute(_handle())
+    assert not result.success and result.failure_reason == 'timeout'
+    assert node.save_inhibited
+
+
+def test_confirmation_rejects_pose_jumps_despite_individually_good_scores(monkeypatch, room):
+    node = _node(monkeypatch, room)
+    _ready(node, room)
+    node.amcl.estimate(*TRUE_POSE)
+    estimate = node.estimate
+    node._score = lambda *_: ScanAssessment(.99, True, 'consistent')
+    calls = [0]
+
+    def jump(_):
+        calls[0] += 1
+        node.amcl.estimate(TRUE_POSE[0] + (.1 if calls[0] % 2 else 0.),
+                           TRUE_POSE[1], TRUE_POSE[2])
+        return _done(SimpleNamespace())
+
+    node.nomotion_update.call_async = jump
+    found, _, score = node._confirm_sequence(_handle(), estimate)
+    assert not found and score.reason == 'unstable_pose'
 
 
 def test_parameter_failure_does_not_leave_boosted_limits(monkeypatch, room):
@@ -619,6 +799,7 @@ def test_result_and_restore_keep_the_last_pose_after_spin_stops(
 
     def stop():
         node.amcl.estimate(*final_pose)
+        node.amcl.found = final_pose
         stopped.set_result(SimpleNamespace())
         return _done(SimpleNamespace())
 
@@ -725,7 +906,7 @@ def test_unconfirmed_spin_keeps_action_and_particles_until_actual_terminal(
 def test_given_pose_requires_the_configured_match_threshold(monkeypatch, room, ratio, success):
     node = _node(monkeypatch, room)
     _ready(node, room)
-    node._score = lambda *_: ratio
+    node._score = lambda *_: ScanAssessment(ratio, ratio >= .95, 'test')
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     handle = _handle(Relocalize.Goal.GIVEN_POSE, given)
     result = node._execute(handle)
@@ -746,7 +927,7 @@ def test_a_high_score_computed_after_the_deadline_is_not_success(monkeypatch, ro
 
     def slow_score(*_):
         node.clock.now += node.timeout
-        return 1.0
+        return ScanAssessment(1.0, True, 'test')
     node._score = slow_score
     given = pose_message(_pose(*TRUE_POSE), Time(seconds=100).to_msg())
     handle = _handle(method, given)

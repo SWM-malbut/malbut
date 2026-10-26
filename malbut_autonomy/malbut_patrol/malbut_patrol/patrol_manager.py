@@ -218,11 +218,13 @@ class PatrolManager(Node):
         self.maneuver_space = None
         self.observation_cells = None
         self.image = None
-        self.rgb_images = deque(maxlen=8)
+        # At most 20 Hz, retaining the default three-second sensor window even
+        # when TF delivery falls behind a high-rate camera on the robot.
+        self.rgb_images = deque(maxlen=64)
         self.image_received = 0.0
         self.camera_info = None
-        self.depth_images = deque(maxlen=8)
-        self.lidar_scans = deque(maxlen=8)
+        self.depth_images = deque(maxlen=64)
+        self.lidar_scans = deque(maxlen=64)
         self.planner = None
         self.phase = 'IDLE'
         self.visited = 0
@@ -286,43 +288,17 @@ class PatrolManager(Node):
             if self._processing_enabled == enabled:
                 return
             self._processing_enabled = enabled
-            if enabled:
-                self.tf.clear()
-                self.tf_listener = TransformListener(self.tf, self)
-            elif self.tf_listener is not None:
-                self.tf_listener.unregister()
-                self.tf_listener = None
-                self.tf.clear()
-            self.image = self.costmap = None
+            # Keep ROS entities alive for the owning executor's lifetime. A
+            # worker may already have selected a subscription when this RPC
+            # runs; destroying it here raises InvalidHandle in executor.spin().
+            # Discard idle camera/scan input. Keep the single current costmap:
+            # incremental publishers need its full grid to apply later patches.
+            self.image = None
             self.rgb_images.clear()
             self.depth_images.clear()
             self.lidar_scans.clear()
-            self.image_received = self.costmap_received = 0.0
+            self.image_received = 0.0
             self.last_image_stamp = None
-            if enabled:
-                latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-                self._costmap_subscription = self.create_subscription(
-                    OccupancyGrid, self.settings['costmap_topic'], self._receive_costmap,
-                    latched, callback_group=self.group)
-                self._updates_subscription = self.create_subscription(
-                    OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
-                    self._receive_costmap_update, 10, callback_group=self.group)
-                self._image_subscription = self.create_subscription(
-                    Image, self.settings['camera_image_topic'], self._receive_image,
-                    qos_profile_sensor_data, callback_group=self.group)
-                self._depth_subscription = self._subscribe_depth()
-                self._scan_subscription = self._subscribe_scan()
-            else:
-                for subscription in (
-                        self._costmap_subscription, self._updates_subscription,
-                        self._image_subscription, self._depth_subscription,
-                        self._scan_subscription):
-                    if subscription is not None:
-                        self.destroy_subscription(subscription)
-                self._costmap_subscription = self._updates_subscription = None
-                self._image_subscription = None
-                self._depth_subscription = None
-                self._scan_subscription = None
 
     def _subscribe_scan(self):
         if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
@@ -373,16 +349,12 @@ class PatrolManager(Node):
 
     def _receive_costmap(self, message):
         with self.lock:
-            if not self._processing_enabled:
-                return
             self.costmap = message
             self.costmap_received = time.monotonic()
 
     def _receive_costmap_update(self, update):
         # Nav2 can publish patches instead of a new full grid every cycle.
         with self.lock:
-            if not self._processing_enabled:
-                return
             grid = self.costmap
             if (grid is None or grid.header.frame_id != update.header.frame_id
                     or update.x < 0 or update.y < 0
@@ -406,7 +378,7 @@ class PatrolManager(Node):
                 if not self._processing_enabled:
                     return
                 self.image = message
-                self.rgb_images.append(message)
+                self._retain_frame(self.rgb_images, message)
                 self.image_received = time.monotonic()
 
     def _receive_info(self, message):
@@ -416,12 +388,22 @@ class PatrolManager(Node):
     def _receive_depth(self, message):
         with self.lock:
             if self._processing_enabled and self.photo_recorder is not None:
-                self.depth_images.append(message)
+                self._retain_frame(self.depth_images, message)
 
     def _receive_scan(self, message):
         with self.lock:
             if self._processing_enabled and self.photo_recorder is not None:
-                self.lidar_scans.append(message)
+                self._retain_frame(self.lidar_scans, message)
+
+    def _retain_frame(self, frames, message):
+        """Keep original, time-spaced samples within a bounded sensor window."""
+        stamp = stamp_seconds(message.header.stamp)
+        if frames and stamp - stamp_seconds(frames[-1].header.stamp) < .05:
+            return
+        frames.append(message)
+        cutoff = stamp - self.settings['sensor_timeout_s']
+        while frames and stamp_seconds(frames[0].header.stamp) < cutoff:
+            frames.popleft()
 
     def _lidar_bundle(self, scan):
         if scan is None:
