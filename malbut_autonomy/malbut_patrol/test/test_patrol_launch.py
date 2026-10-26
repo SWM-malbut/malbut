@@ -14,11 +14,14 @@ from rclpy.executors import SingleThreadedExecutor
 from std_srvs.srv import SetBool
 
 
-def test_crashed_idle_patrol_respawns_and_serves_processing(tmp_path):
+def test_crashed_idle_patrol_respawns_and_serves_processing(tmp_path, monkeypatch):
     """An actual child exit must recover the service without replaying a patrol."""
     launch = Path(__file__).resolve().parents[1] / 'launch/patrol.launch.py'
     output = tmp_path / 'launch.log'
-    environment = dict(os.environ, ROS_DOMAIN_ID='192', ROS_LOCALHOST_ONLY='1')
+    # Match discovery transport in the probe and child, even when the host
+    # test runner allows non-local ROS traffic (the CI default).
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    environment = dict(os.environ, ROS_DOMAIN_ID='192')
     context = Context()
     rclpy.init(context=context, domain_id=192)
     probe = rclpy.create_node('patrol_respawn_probe', context=context)
