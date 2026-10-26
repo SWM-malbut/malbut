@@ -46,6 +46,22 @@ def rectangle(x0, y0, x1, y1):
     return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
 
 
+def validate_blocked_result(result):
+    """Accept only a no-path rejection, never an unrelated navigation failure."""
+    assert not result['success']
+    assert len(result['legs']) == 1, 'Expected one rejected planning request'
+    leg = result['legs'][0]
+    assert leg['planning_status'] == 6, 'Planner must abort the blocked request'
+    assert leg['planning_failure'] == 'no_valid_path', 'Unknown planning failure'
+    assert not leg['path'], 'Blocked request returned a path'
+    assert 'navigation_status' not in leg, 'Blocked request must not start navigation'
+    assert not result['errors'], result['errors']
+    assert not any(any(abs(v) > 1e-6 for v in cmd) for cmd in result['commands']), \
+        'Blocked request emitted a motion command'
+    assert max(p[1] for p in result['pose_samples']) < .5, 'Entered a blocked passage'
+    assert not any(result['footprint_intersections'].values()), result['footprint_intersections']
+
+
 def make_fixture(folder, gazebo_share, args):
     """Give the simulator and the map server identical physical walls."""
     from malbut_bringup.zones import build_mask
@@ -438,14 +454,21 @@ def run(args):
             goal.goal.pose.position.x, goal.goal.pose.position.y = target
             goal.goal.pose.orientation.w = 1.
             goal.planner_id = 'GridBased'
+            planner_log = folder / 'planner_server.log'
+            log_offset = planner_log.stat().st_size
             handle = wait(planner.send_goal_async(goal))
             assert handle.accepted
             plan = wait(handle.get_result_async())
             leg = {'name': label, 'target': target, 'planning_status': plan.status,
+                   # Humble's action result has no error code. Read only this
+                   # request's process log, since rosout can drop the warning.
+                   'planning_failure': 'no_valid_path' if
+                   'GridBased: failed to create plan, no valid path found.' in
+                   planner_log.read_bytes()[log_offset:].decode(errors='replace') else None,
                    'path': [[p.pose.position.x, p.pose.position.y]
                             for p in plan.result.path.poses]}
             result['legs'].append(leg)
-            if plan.status != 4:
+            if args.expect_blocked or plan.status != 4:
                 break
             command = NavigateToPose.Goal(pose=goal.goal)
             active_handle = wait(navigator.send_goal_async(command))
@@ -490,9 +513,8 @@ def run(args):
             'restricted_zone': sum(intersections[:len(rings)]),
             'physical_geometry': sum(intersections[len(rings):])}
         if args.expect_blocked:
-            assert not result['success'], 'A blocked passage must not complete the round trip'
-            assert max(p[1] for p in result['pose_samples']) < .5, 'Entered a blocked passage'
-            assert not any(intersections), result['footprint_intersections']
+            pump(.2)  # Drain late rosout errors before accepting a rejection.
+            validate_blocked_result(result)
             result['expected_block_confirmed'] = True
             result['validation_passed'] = True
             return

@@ -33,6 +33,7 @@
   <build_depend>tf2_sensor_msgs</build_depend>
   <!-- Every Nav2 server that nav2_stack.py composes, incl. the Collision Monitor. -->
   <exec_depend>navigation2</exec_depend>
+  <depend>nav2_rotation_shim_controller</depend>
   <depend>rclcpp_components</depend>
   <exec_depend>rmw_fastrtps_cpp</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -55,6 +56,7 @@
   <exec_depend>malbut_fall_approach</exec_depend>
   <exec_depend>homecam_media_agent</exec_depend>
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <exec_depend>malbut_agent_server</exec_depend>
   <exec_depend>malbut_stt</exec_depend>
   <exec_depend>malbut_tts</exec_depend>
