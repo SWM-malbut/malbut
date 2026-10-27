@@ -45,6 +45,32 @@
 Nav2가 실제 경로·충돌 회피·회전을 담당합니다. 이 패키지는 속도 명령을
 직접 발행하거나 Nav2 컨트롤러 설정을 바꾸지 않습니다.
 
+## 막힌 경로에서 되돌아가기
+
+이동 실패·정체 또는 관측 후보 소진 시, 최근 실제 이동 기록에서 최대 1.5m
+거리의 이전 위치를 골라 복구를 시도합니다. `PatrolRecovery` Hybrid A*의
+Reeds–Shepp 경로는 차체 방향을 유지한 후진과 전진·후진을 섞은 곡선 이동을
+허용합니다. 순찰 전용 BT는 일반 Spin/BackUp 복구 대신 실패를 순찰 관리자에
+돌려주며, 기존 이동 Action 종료와 정지를 확인한 후 복구를 시작합니다.
+
+- 최근 60초, 최대 256개 위치를 보관합니다. 위치 정보가 1초 이상 끊기거나
+  map→odom이 기준보다 12cm/0.15rad 이상 바뀌면 기록을 폐기합니다.
+- 순찰당 최대 2회, 회당 최대 3개 이전 위치를 검토합니다. 경로는 기록 주변
+  35cm 안, 총 3m 이하, 방향 전환 4회 이하이며 전체 복구 시간은 90초입니다.
+- 전용 RPP 컨트롤러는 최대 0.08m/s로 움직이고 방향 전환 사이에 정지를
+  확인합니다. 실제 장애물 지도와 차체 footprint 충돌 검사를 계속 사용합니다.
+- Hybrid 탐색이 실패하면 실제 이동 기록을 후보로 사용합니다. 현재 지도에서
+  막혔거나 알 수 없는 중심 경로를 먼저 거부하고, 주행 중 전체 차체와 진행 방향의
+  충돌은 RPP가 검사합니다. 예전에 통과했어도 새 장애물을 무시하지 않습니다.
+- 복구 중 위치 추정 변화, 오래된 TF·라이다·비용 지도, 취소 또는 충돌 위험은
+  복구를 중단합니다. 실패한 구간 뒤의 전진·후진을 이어서 실행하지 않습니다.
+- 복구 후 원래 목표를 한 번 다시 시도합니다. 닫힌 문이 열렸다고 간주하거나
+  순찰 전체 경로를 무제한 후진으로 바꾸지는 않습니다.
+
+`/patrol/status`의 `recovery`에 시도 횟수, 상태, 경로 출처와 방향 전환 횟수를
+표시합니다. `recovery_enabled:=false`로 기존 Nav2 기본 BT를 사용할 수 있습니다.
+기본 bringup의 `PatrolRecovery` planner/controller 설정이 필요합니다.
+
 ## 꼼꼼함 기본값
 
 | Goal | 관측 인정 거리 | 목표 관측률 | 후보 간격 |
@@ -124,6 +150,8 @@ ROS parameter로 환경과 운용값을 지정합니다.
 | `base_frame` | `base_footprint` |
 | `room_map_file` | 빈 값, 선택적 방 라벨 GeoJSON |
 | `nav2_action_name`, `spin_action_name` | `navigate_to_pose`, `spin` |
+| `recovery_enabled`, `odom_frame` | `true`, `odom`: 최근 이동 기록을 이용한 제한 복구 |
+| `navigation_behavior_tree` | 설치된 `config/patrol_navigation.xml`, 순찰 이동 전용 BT |
 | `robot_clearance_m` | 0.26m, 후보 위치의 차체 외접 반경·여유 |
 | `observation_ranges_m` | `[4.0, 3.0, 2.0]` |
 | `coverage_targets` | `[0.80, 0.90, 0.95]` |

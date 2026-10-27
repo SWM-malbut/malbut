@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from malbut_patrol.route import PatrolRoute, ReturnRoutePlanner
+from malbut_patrol.recovery import BreadcrumbTrail
 from malbut_patrol.maneuver import ManeuverSpace
 
 
@@ -58,6 +59,7 @@ def patrol(request, monkeypatch):
     manager.lock = RLock()
     manager.busy = True
     manager.child = None
+    manager.trail = BreadcrumbTrail()
     manager.stop_event = Event()
     manager.map_changed = False
     manager.last_pump = 0.0
@@ -68,9 +70,9 @@ def patrol(request, monkeypatch):
     manager.tf.lookup_transform.return_value = SimpleNamespace(transform=SimpleNamespace(
         translation=SimpleNamespace(x=.55, y=.55), rotation=SimpleNamespace()))
     manager.settings = {
-        'room_map_file': '', 'robot_clearance_m': 0.0,
+        'room_map_file': '', 'robot_clearance_m': 0.0, 'recovery_enabled': False,
         'observation_hz': 5.0, 'sensor_timeout_s': 10.0,
-        'navigation_timeout_s': 10.0,
+        'navigation_timeout_s': 10.0, 'navigation_behavior_tree': '/test/patrol.xml',
         'cancel_completion_timeout_s': 1.0,
         'base_frame': 'base_footprint', 'return_tolerance_m': .25,
         'robot_length_m': .277, 'robot_width_m': .212, 'footprint_padding_m': .01,
