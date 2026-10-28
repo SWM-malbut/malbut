@@ -56,9 +56,10 @@ def create_communication_node(
     situation_factory=None,
     enable_manager_commands=False,
     prerecorded_audio=False,
+    confirmation_answers=None,
 ):
     """Compose communication on one owning thread with a single executor."""
-    from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
+    from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript, SpeechPlaybackStatus
     from malbut_interfaces.srv import ClassifySpeechAddressee
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
@@ -86,6 +87,10 @@ def create_communication_node(
             self._speech_ready = False
             self._input_utterance_id = None
             self._seen_input_ids = deque(maxlen=128)
+            from malbut_agent_server.speech_delivery import SpeechDelivery
+            self._speech_delivery = SpeechDelivery()
+            self._interrupted_input_ids = deque(maxlen=128)
+            self._startup_greeting = None
             self._addressee_waiters = {}
             self._addressee_callbacks = 0
             self.weather_query = None
@@ -148,6 +153,8 @@ def create_communication_node(
                 self.weather_query = ManagerWeatherQuery(
                     self.missions, timeout_s=weather_query_timeout_s,
                 )
+                from malbut_agent_server.camera_view import configure_ros_camera
+                camera_view = configure_ros_camera(self, settings)
 
                 def runtime_factory():
                     runtime = (
@@ -156,12 +163,17 @@ def create_communication_node(
                     )
                     runtime.weather_executor = self.weather_query.execute
                     runtime.weather_location_executor = self.weather_query.set_location
+                    from malbut_agent_server.information_queries import (
+                        RobotGuide, configure_information_queries,
+                    )
+                    configure_information_queries(runtime, guide=RobotGuide(), camera=camera_view)
                     if self.speech_missions is not None:
                         configure_speech_missions(runtime)
                     return runtime
 
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
+                    logger=self.get_logger(),
                     **({'missions': self.speech_missions}
                        if self.speech_missions is not None else {}),
                 )
@@ -171,10 +183,19 @@ def create_communication_node(
                     on_begin=self._begin_situation,
                     on_end=self._end_situation,
                     prerecorded_audio=prerecorded_audio,
+                    confirmation_answers=confirmation_answers,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
+                if os.environ.get('MALBUT_SPEECH_GREETING', '').lower() in ('1', 'true'):
+                    from malbut_agent_server.speech_greeting import StartupGreeting
+                    self._startup_greeting = StartupGreeting(self, self.say,
+                        lambda: (not self._closing and not self._seen_input_ids
+                                 and not self.dialogue.has_pending
+                                 and not self._in_fall_window
+                                 and not self.situation.active),
+                        ready=lambda: self.dialogue.ready and self._speech_ready)
             except Exception:
                 self.destroy_node()
                 raise
@@ -218,6 +239,8 @@ def create_communication_node(
             # A running worker thread alone does not mean its DB/session is ready.
             if self._speech_ready or not self.dialogue.ready:
                 return
+            self.create_subscription(SpeechPlaybackStatus, '/malbut/speech/playback_status',
+                lambda m: self._speech_delivery.observe(m.playback_id, m.state), self._speech_qos)
             self.create_subscription(
                 SpeechTranscript, TRANSCRIPT_TOPIC,
                 self._receive_speech, self._speech_qos,
@@ -249,9 +272,11 @@ def create_communication_node(
                 if audio_id:
                     text = CATALOG[audio_id]
             options = {'audio_id': audio_id} if audio_id else {}
+            playback_id = str(uuid4())
+            self._speech_delivery.requested(playback_id, interim=interim)
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type, interim=interim,
-                playback_id=str(uuid4()), request_id=request_id, **options,
+                playback_id=playback_id, request_id=request_id, **options,
             ))
             return True
 
@@ -266,9 +291,13 @@ def create_communication_node(
                            or not self.dialogue.has_capacity()
                            or self.situation is not None and self.situation.active)
             if message.state == SpeechInputStatus.STARTED:
+                if self._startup_greeting is not None:
+                    self._startup_greeting.cancel()
                 if uid in self._seen_input_ids:
                     return
                 self._seen_input_ids.append(uid)
+                if self._speech_delivery.input_started():
+                    self._interrupted_input_ids.append(uid)
                 self._input_utterance_id = None if unavailable else uid
             elif (message.state == SpeechInputStatus.FAILED
                   and uid == self._input_utterance_id):
@@ -335,6 +364,9 @@ def create_communication_node(
                 return
             if outcome == 'received' and not self.dialogue.submit(
                 utterance_id, text,
+                **({'previous_reply_interrupted': True} if (
+                    utterance_id in self._interrupted_input_ids
+                    or self._speech_delivery.interrupted) else {}),
             ):
                 self.get_logger().error('speech_dialogue submission failed')
                 self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
@@ -467,16 +499,21 @@ def create_communication_node(
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
                     continue
-                published = self.dialogue.publish_reply(
-                    response, lambda text: self.say(
-                        text, interim=response.get('kind') in {'progress', 'acknowledgement'},
-                        # Prerecorded TTS coalesces waiting/start notices for the
-                        # same utterance and preserves a start before a fast result.
-                        # Keep legacy synthesized receipts on their old correlation.
-                        request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
-                                    if (response.get('kind') == 'acknowledgement'
-                                        and not prerecorded_audio)
-                                    else response.get('utterance_id', ''))))
+                with self._announcer.direct_reply(
+                    getattr(response, '_mission_request_id', None),
+                ) as acknowledge:
+                    published = self.dialogue.publish_reply(
+                        response, lambda text: self.say(
+                            text, interim=response.get('kind') in {'progress', 'acknowledgement'},
+                            # Prerecorded TTS coalesces waiting/start notices for the
+                            # same utterance and preserves a start before a fast result.
+                            # Keep legacy synthesized receipts on their old correlation.
+                            request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
+                                        if (response.get('kind') == 'acknowledgement'
+                                            and not prerecorded_audio)
+                                        else response.get('utterance_id', ''))))
+                    if published is not None:
+                        acknowledge(published['text'])
                 if published is not None:
                     if (response.get('kind') not in {'progress', 'acknowledgement'}
                             and response.get('utterance_id') == self._awaiting_reply):
@@ -517,6 +554,8 @@ def create_communication_node(
 
         def destroy_node(self):
             """Release communication from the owning thread outside callbacks."""
+            if getattr(self, '_startup_greeting', None) is not None:
+                self._startup_greeting.cancel()
             self.begin_shutdown()
             if getattr(self, '_key_health', None) is not None:
                 self._key_health.close()
@@ -769,6 +808,8 @@ def run_with_fall_rules(args, ros_args, settings):
     rules = rules_executor = rules_thread = None
     node = executor = None
     initialized = False
+    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+    confirmation_answers = ConfirmationAnswers()
 
     def report(text):
         owner = rules if rules is not None else node
@@ -799,7 +840,8 @@ def run_with_fall_rules(args, ros_args, settings):
         try:
             rules = FallRulesNode(
                 runtime_id=args.fall_runtime_id, bridge_runtime_id=args.fall_bridge_runtime_id,
-                vlm_runtime_id=args.fall_vlm_runtime_id)
+                vlm_runtime_id=args.fall_vlm_runtime_id,
+                confirmation_answers=confirmation_answers)
             rules_executor = MultiThreadedExecutor(num_threads=2)
             rules_executor.add_node(rules)
         except Exception as error:
@@ -826,6 +868,7 @@ def run_with_fall_rules(args, ros_args, settings):
                     dialogue_settings=settings,
                     enable_manager_commands=args.enable_manager_commands,
                     prerecorded_audio=args.prerecorded_audio,
+                    confirmation_answers=confirmation_answers,
                 )
                 executor = SingleThreadedExecutor()
                 executor.add_node(node)

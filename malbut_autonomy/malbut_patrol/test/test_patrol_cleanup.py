@@ -64,6 +64,8 @@ def patrol(request, monkeypatch):
         'observation_hz': 5.0, 'sensor_timeout_s': 10.0,
         'navigation_timeout_s': 10.0,
         'cancel_completion_timeout_s': 1.0,
+        'inspection_calibration_file': '', 'coverage_source': 'frames',
+        'require_room_entry': False,
     }
     manager.profiles = {1: coverage.CoverageProfile(3.0, 0.9, 0.8)}
     manager._ready = Mock(return_value='')
@@ -78,8 +80,8 @@ def patrol(request, monkeypatch):
     manager.get_logger = Mock()
     manager.status = Mock()
 
-    def make_planner(*args):
-        planner = coverage.CoveragePlanner(*args)
+    def make_planner(*args, **kwargs):
+        planner = coverage.CoveragePlanner(*args, **kwargs)
         # A legitimate partial patrol; no Nav2 goal is needed to exercise
         # feedback, room metadata, terminal result and processing cleanup.
         planner.select = Mock(return_value=None)
@@ -128,8 +130,8 @@ def test_deployed_patrol_reaches_navigation_instead_of_failing_on_room_metadata(
     namespace = manager._execute.__func__.__globals__
     original = namespace['CoveragePlanner']
 
-    def make_one_viewpoint(*args):
-        planner = original(*args)
+    def make_one_viewpoint(*args, **kwargs):
+        planner = original(*args, **kwargs)
         viewpoint = type(planner).select(planner, manager._robot_xy(), manager._allowed)
         assert viewpoint is not None
         planner.select.side_effect = [viewpoint, None]

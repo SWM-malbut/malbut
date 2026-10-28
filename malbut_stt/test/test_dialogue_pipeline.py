@@ -26,7 +26,7 @@ def wait_for(predicate):
 def harness():
     state = SimpleNamespace(
         now=0.0, transcripts=[], controls=[], candidates=[], reports=[],
-        wake_calls=[], command_calls=[], failure_chimes=[], closed=[],
+        wake_calls=[], command_calls=[], failure_chimes=[], closed=[], wake_text='제이크야',
         allow_asr=Event(), entered_asr=Event(),
     )
     state.allow_asr.set()
@@ -63,7 +63,7 @@ def harness():
     def wake(pcm, rate):
         assert state.recorder.active
         state.wake_calls.append((pcm, rate))
-        return '제이크야'
+        return state.wake_text
 
     def transcribe(pcm, rate):
         assert state.recorder.active
@@ -116,6 +116,100 @@ def wake_up(harness, pipeline):
 
 def finish_command(pipeline):
     pipeline.feed(VOICE + QUIET * 100)
+
+
+@pytest.mark.parametrize('text', ['야 제이크', '야, 제이크야!', '저기 제이크야'])
+def test_flexible_call_alone_keeps_chime_and_separate_command_wait(harness, text):
+    harness.wake_text = text
+    chimes = []
+    pipeline = harness.create(on_wake=lambda: chimes.append('wake'))
+    wake_up(harness, pipeline)
+    assert chimes == ['wake'] and harness.transcripts == []
+    assert pipeline._command_start_deadline == 5.3
+    harness.now = .31
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert harness.transcripts[0][1] == '문장 1'
+
+
+@pytest.mark.parametrize('aec', [False, True])
+@pytest.mark.parametrize('text', [
+    '야 제이크 거실로 가.', '제이크야, 거실로 가.', '저기 제이크 거실로 가.',
+])
+def test_attached_command_publishes_once_then_uses_normal_reply_and_followup(harness, aec, text):
+    harness.wake_text = text
+    chimes, admitted, statuses = [], [], []
+
+    def endpoint_chime():
+        chimes.append('endpoint')
+        pipeline.feed(VOICE * 4 + QUIET * 20)  # Speaker echo must be discarded.
+        pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+
+    pipeline = harness.create(
+        aec=aec, on_wake=lambda: chimes.append('wake'), on_endpoint=endpoint_chime,
+        validate_wake_command=admitted.append,
+        publish_input_status=lambda *args: statuses.append(args))
+    generation = pipeline._generation
+    pipeline.feed(VOICE * 30 + QUIET * 20)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid, command = harness.transcripts[0]
+    assert command == '거실로 가.'
+    assert statuses == [('', uid, 'started')]
+    assert admitted == [harness.wake_calls[0][0]]
+    assert chimes == ['endpoint'] and pipeline.audio.empty()
+    assert harness.command_calls == []
+    assert pipeline._reply_request_id == uid and pipeline._command_start_deadline is None
+    pipeline._accept_result('wake', generation, None, text, None)
+    assert len(harness.transcripts) == 1 and chimes == ['endpoint']
+    pipeline.on_playback_status('reply', 'playing', request_id=uid)
+    harness.now = 1.0
+    pipeline.feed(VOICE * 30 + QUIET * 20)
+    assert len(harness.wake_calls) == 1 and harness.command_calls == []
+    pipeline.on_playback_status('reply', 'finished', request_id=uid)
+    assert pipeline._followup_deadline == 11.0
+    harness.now = 1.31
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+    assert harness.transcripts[1][0] != uid
+    assert harness.transcripts[1][1] == '문장 1'
+    assert len(harness.wake_calls) == 1
+
+
+@pytest.mark.parametrize('failure', ['SileroNonSpeech', 'SileroGateError'])
+def test_attached_command_cannot_bypass_audio_admission(harness, failure):
+    from malbut_stt import silero_gate
+
+    def reject(pcm):
+        raise getattr(silero_gate, failure)('rejected')
+
+    harness.wake_text = '야 제이크 거실로 가'
+    pipeline = harness.create(validate_wake_command=reject)
+    pipeline.feed(VOICE * 30 + QUIET * 20)
+    pump(pipeline, lambda: 'transcription_failed:' + failure in harness.reports)
+    assert not pipeline.session.active and harness.transcripts == []
+    assert 'wake_detected' not in harness.reports
+    # A call without a request retains the existing wake-only admission policy.
+    harness.wake_text = '야 제이크'
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+
+
+def test_attached_command_uses_short_speech_guard_when_enabled(harness):
+    harness.wake_text = '야 제이크 거실로 이동한 다음에 오늘 날씨도 알려줘'
+    pipeline = harness.create(short_speech_guard=True)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: 'transcription_failed:InsufficientSpeechEvidence' in harness.reports)
+    assert not pipeline.session.active and harness.transcripts == []
+
+
+def test_cancelled_attached_command_inference_cannot_publish_into_new_session(harness):
+    harness.wake_text = '야 제이크 거실로 가'
+    pipeline = harness.create()
+    pipeline.feed(VOICE * 30 + QUIET * 20)
+    wait_for(lambda: not pipeline.results.empty())
+    assert pipeline.start_session('replacement')
+    pipeline.poll()
+    assert harness.transcripts == [] and pipeline.session.session_id == 'replacement'
 
 
 def interrupt(harness, pipeline):
@@ -837,8 +931,10 @@ def test_failed_command_sound_guard_does_not_wait_for_agent_playback(harness, te
     assert harness.failure_chimes == ['failure']
 
 
-@pytest.mark.parametrize('text,error', [('', None), (None, 'ValueError')])
-def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
+@pytest.mark.parametrize('text,error', [
+    (None, 'SileroNonSpeech'), (None, 'InsufficientSpeechEvidence'), ('', None), ('  ', None),
+])
+def test_confirmation_rejects_only_the_non_speech_or_empty_utterance(harness, text, error):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     assert pipeline.start_session('confirmation')
@@ -847,10 +943,42 @@ def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
     pipeline._accept_result('command', pipeline._generation, uid, text, error)
     assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'failed')]
     assert pipeline.session_is_active('confirmation')
+    assert pipeline.session.utterance_id is None
+    assert harness.transcripts == [] and harness.failure_chimes == []
+
+
+@pytest.mark.parametrize('text,error', [
+    (None, 'ValueError'), (None, 'SileroGateError'), (None, 'TimeoutError'), (None, None),
+])
+def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('confirmation')
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    pipeline._accept_result('command', pipeline._generation, uid, text, error)
+    assert statuses == [('confirmation', uid, 'started'), ('confirmation', '', 'failed')]
+    assert pipeline.session_is_active('confirmation')
     assert pipeline._reply_request_id is None
     assert harness.failure_chimes == []
     assert pipeline.stop_session('confirmation')
     assert not pipeline.session.active
+
+
+@pytest.mark.parametrize('reason', [
+    'utterance_discarded:too_long', 'utterance_discarded:buffer_overflow',
+    'transcription_queue_full', 'audio_queue_overflow',
+])
+def test_confirmation_input_abort_reports_session_failure(harness, reason):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('confirmation')
+    pipeline.feed(VOICE)
+    assert pipeline.session.utterance_id
+    pipeline._terminate(reason)
+    assert statuses[-1] == ('confirmation', '', 'failed')
+    assert not pipeline.session_is_active('confirmation')
+    assert harness.transcripts == []
 
 
 def test_wake_without_command_times_out_after_chime_guard(harness):

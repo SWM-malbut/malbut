@@ -66,6 +66,7 @@ const MAX_ZONE_POINTS = 64;
 const MAP_FILE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.ya?ml$/;
 
 export type RobotOperation = "start" | "finish" | "cancel" |
+  "map_edit_open" | "map_edit_save" | "map_edit_restore" | "map_edit_apply" |
   "runtime_start" | "runtime_stop" | "mission_start" | "mission_cancel" |
   "map_delete" | "manual_move" | "zones_save" |
   "robot_ping" | "robot_diagnostics" | "debug_mission_start" |
@@ -82,6 +83,20 @@ export function parseRobotCommand(value: unknown): {
   const operation = value.operation;
   const payload = value.payload === undefined ? {} : value.payload;
   if (!isObject(payload)) return null;
+  if (["map_edit_open", "map_edit_save", "map_edit_restore", "map_edit_apply"].includes(String(operation))) {
+    const allowed = operation === "map_edit_open" ? ["map"]
+      : operation === "map_edit_save" ? ["map", "expectedRevision", "polygons"]
+        : operation === "map_edit_apply" ? ["map", "expectedRevision", "revision"] : ["map", "expectedRevision"];
+    if (Object.keys(payload).length !== allowed.length || Object.keys(payload).some((key) => !allowed.includes(key)) ||
+        typeof payload.map !== "string" || !MAP_FILE.test(payload.map)) return null;
+    if (operation !== "map_edit_open" && !safeRevision(payload.expectedRevision)) return null;
+    if (operation === "map_edit_apply" && !safeRevision(payload.revision)) return null;
+    if (operation === "map_edit_save" && (!Array.isArray(payload.polygons) || payload.polygons.length < 1 ||
+        payload.polygons.length > 64 || !payload.polygons.every((ring) => Array.isArray(ring) &&
+          ring.length >= 3 && ring.length <= 64 && ring.every((point) => Array.isArray(point) && point.length === 2 &&
+            point.every((axis) => typeof axis === "number" && Number.isFinite(axis) && Math.abs(axis) <= 100000))))) return null;
+    return { operation: operation as RobotOperation, payload };
+  }
   if (["runtime_stop", "mission_cancel", "robot_ping", "robot_diagnostics"].includes(String(operation))) {
     return Object.keys(payload).length === 0
       ? { operation: operation as RobotOperation, payload }

@@ -1,3 +1,7 @@
+> 현재 운영 캡처는 Silero 단독입니다. WebRTC는 아래의 과거 방식 비교·관찰 도구에만
+> 남아 있으며 `requirements-vad-evaluation.txt` 또는 `requirements-shadow-vad.txt`로
+> 별도 설치합니다. 실제 캡처 판정과 설치 방법은 상위 README를 기준으로 합니다.
+
 # Silero admission, VAD observation and offline comparison
 
 ## Block non-speech before Whisper with an installed model
@@ -5,7 +9,7 @@
 The admission gate checks the actual PCM window immediately before command
 Whisper model calls: incremental previews, endpoint checks, final decoding and
 incremental recovery. Wake recognition bypasses this gate and retains its
-existing WebRTC/Whisper path, including when it shares the command model's
+Silero capture/Whisper path, including when it shares the command model's
 underlying Whisper instance. It uses the pinned Silero model below,
 CPU execution with one inference thread, probability >=0.5 and at least 80ms of
 consecutive positive input. At the 32ms frame grid this normally needs three
@@ -35,7 +39,7 @@ installed model requires the runtime dependency; loading failures stop startup
 instead of silently bypassing admission.
 
 The gate does not remove individual frames, join separated speech, change
-WebRTC capture/endpoint rules, extend the chime tail, or filter particular words.
+capture/endpoint rules, extend the chime tail, or filter particular words.
 Accepted input is sent to Whisper unchanged. Each model input resets Silero's
 state, so earlier speech cannot admit a later silent cropped input. Once the
 consecutive-speech condition is met, analysis stops; the logged peak covers
@@ -68,11 +72,10 @@ mocked short-reply tests as measured human speech recall.
 
 Optional shadow observation uses the existing microphone's 512-sample PCM
 chunks, before speaker/busy gates. A separate bounded worker runs Silero
-v6.2.3 at 16kHz/32ms and an independent WebRTC mode matching the node's
-`vad_mode` at 20ms. Production WebRTC and Whisper behavior remain unchanged:
+v6.2.3 at 16kHz/32ms and an independent historical WebRTC mode 2 at 20ms. Production Silero and Whisper behavior remain unchanged:
 no result is blocked, no endpoint is changed, and no extra microphone opens.
 The shadow WebRTC has continuous raw-input state, so its decisions can differ
-from production WebRTC after gating; production decisions remain `vad_frame`.
+from production Silero after gating; production decisions remain `vad_frame`.
 
 Install `requirements-shadow-vad.txt` into the Python environment running the
 STT node, and provision the official ONNX file specified below. The worker

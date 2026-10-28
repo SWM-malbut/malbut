@@ -9,7 +9,7 @@ import signal
 import subprocess
 import sys
 import textwrap
-from threading import get_ident
+from threading import Barrier, Event, Thread, get_ident
 import time
 
 import pytest
@@ -63,6 +63,54 @@ def test_mock_follow_cancel_replay_and_cleanup_are_isolated():
     graph.close()
 
 
+def test_close_finishes_queued_background_work_before_destroying_nodes(monkeypatch):
+    graph = VoiceLabGraph(lambda event: None, 195)
+    release, destroying = Event(), Event()
+    releaser = None
+    observed = []
+    try:
+        graph.start()
+        pool = graph._background._executor
+        occupied = Barrier(pool._max_workers + 1)
+
+        def occupy_worker():
+            occupied.wait(timeout=5)
+            release.wait(timeout=5)
+
+        for _ in range(pool._max_workers):
+            pool.submit(occupy_worker)
+        occupied.wait(timeout=5)
+        # Like a ready timer callback, this work has been submitted but has
+        # not entered rclpy's work tracker when shutdown begins.
+        pending = pool.submit(lambda: graph.manager.get_clock().now())
+        destroy = graph.manager.destroy_node
+
+        def observe_destroy():
+            observed.append(pending.done())
+            destroying.set()
+            return destroy()
+
+        monkeypatch.setattr(graph.manager, 'destroy_node', observe_destroy)
+
+        def free_workers():
+            # Old teardown destroys nodes first; correct teardown waits here
+            # until workers are released and the queued callback has finished.
+            destroying.wait(timeout=0.1)
+            release.set()
+
+        releaser = Thread(target=free_workers)
+        releaser.start()
+        graph.close()
+        assert observed == [True], 'a node was destroyed with queued work still pending'
+        assert pending.result(timeout=1) is not None
+        assert not graph._thread.is_alive()
+    finally:
+        release.set()
+        if releaser is not None:
+            releaser.join(timeout=5)
+        graph.close()
+
+
 def test_navigation_map_mismatch_reject_abort_and_default_success():
     graph = VoiceLabGraph(lambda event: None, 195)
     try:
@@ -96,6 +144,35 @@ def test_manager_absent_does_not_reach_actuators():
         assert graph.goals == []
         assert graph.status()['manager_enabled'] is False
     finally:
+        graph.close()
+
+
+def test_external_fall_status_cannot_interrupt_the_laboratory():
+    from rclpy.node import Node
+    from std_msgs.msg import String
+
+    graph = VoiceLabGraph(lambda event: None, 197)
+    external = None
+    try:
+        graph.start()
+        external = Node('external_fall_fixture', use_global_arguments=False)
+        status = external.create_publisher(String, '/malbut/falls/check/status', 10)
+        local = graph.agent.create_publisher(String, '/malbut/falls/check/status', 10)
+        until(graph, lambda: local.get_subscription_count() > 0)
+        assert local.topic_name == graph.namespace + '/falls/check/status'
+        assert status.topic_name == '/malbut/falls/check/status'
+        message = String(data=json.dumps({'active': True, 'phase': 'approach'}))
+        status.publish(message)
+        uid = graph.send('순찰해줘')
+        assert graph.wait_reply(uid)['text'] == '네, 순찰을 시작하겠습니다.'
+        until(graph, lambda: len(graph.goals) == 1)
+        assert not graph.agent._fall_check.active()
+        # A status deliberately published inside this lab still has an effect.
+        local.publish(message)
+        until(graph, graph.agent._fall_check.active)
+    finally:
+        if external is not None:
+            external.destroy_node()
         graph.close()
 
 
@@ -213,6 +290,9 @@ def test_sigint_with_active_follow_exits_process_and_cleans_ros():
         output, error = process.communicate(timeout=10.0)
         assert process.returncode == 0, error
         assert 'CLOSED' in output
+        assert 'exception was never retrieved' not in error
+        assert 'InvalidHandle' not in error
+        assert 'destruction was requested' not in error
     finally:
         if process.poll() is None:
             process.kill()

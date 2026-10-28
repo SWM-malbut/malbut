@@ -21,6 +21,7 @@ from pathlib import Path
 import tempfile
 
 import yaml
+from .map_edit import locked_map
 
 
 ZONE_FORMAT = 'malbut-semantic-zones-v1'
@@ -119,6 +120,7 @@ def read_zones(map_yaml):
     return features
 
 
+@locked_map
 def write_zones(map_yaml, features):
     """Atomically replace this map's Zones after validating every Feature."""
     if not isinstance(features, list) or len(features) > MAX_ZONES:
@@ -152,6 +154,7 @@ def valid_zone_id(value):
             and value[0].isalnum() and set(value) <= _ZONE_ID_CHARS)
 
 
+@locked_map
 def apply_zone_collection(map_yaml, payload, map_id, map_revision):
     """Replace the Zones with the web map editor's Feature Collection for this map."""
     if not isinstance(payload, dict) or payload.get('type') != 'FeatureCollection':

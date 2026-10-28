@@ -170,6 +170,8 @@ class RuntimeControl(Node):
                 partial(self._prepare, capability), callback_group=self.group)
         self.create_service(LoadMap, LOAD_MAP_SERVICE, self._load_map,
                             callback_group=self.control_group)
+        self.create_service(LoadMap, '/malbut/localization/apply_map_edit', self._apply_map_edit,
+                            callback_group=self.control_group)
         self.create_service(Trigger, START_MAPPING_SERVICE, self._start_mapping,
                             callback_group=self.control_group)
         self.create_service(Trigger, READY_MAPPING_SERVICE, self._ready_mapping,
@@ -273,7 +275,11 @@ class RuntimeControl(Node):
             self._report_usage(f'Nav2 lifecycle rejected command {command}')
             raise RuntimeError(f'Nav2 lifecycle rejected command {command}')
 
-    def _map_provider(self, path, pose=None):
+    def _map_provider(self, path, pose=None, *, require_pose=False, edit_transaction=False):
+        if not edit_transaction and (Path(path).parent / '.map-edits' / Path(path).name / 'applying.json').exists():
+            from .map_edit import map_lock, recover
+            with map_lock(path):
+                recover(path)
         self._map_initialized = False
         self._synced_demand = None
         self._publish_map(False, 'preparing map provider')
@@ -323,6 +329,8 @@ class RuntimeControl(Node):
                 try:
                     result = self._wait(finished, 'pose restore', 90.0).result
                     if not result.success:
+                        if require_pose:
+                            raise RuntimeError(f'pose restore failed: {result.message}')
                         self.get_logger().warning(result.message)
                 except RuntimeError:
                     handle.cancel_goal_async()
@@ -332,11 +340,17 @@ class RuntimeControl(Node):
                     except RuntimeError:
                         self._uncertain = True
                         raise
+                    if require_pose:
+                        raise
+            elif require_pose:
+                raise RuntimeError('pose restore was rejected')
+        elif require_pose:
+            raise RuntimeError('pose restore is unavailable')
         self._map_initialized = True
         # Pose restore can temporarily wake motion without a mission owner.
         self._synced_demand = None
         self._publish_map(True, 'map provider ready')
-        if path != self.default_map:
+        if path != self.default_map and not edit_transaction:
             try:
                 remember_map(self.map_selection_file, path)
             except OSError as error:
@@ -651,6 +665,49 @@ class RuntimeControl(Node):
                 if changing_provider:
                     self._publish_map(False, str(error))
                     self._report_usage(str(error))
+        return response
+
+    def _apply_map_edit(self, request, response):
+        """Apply files and reload Nav2 while mission preparation is serialized."""
+        from .map_edit import apply_ticket
+        response.result = LoadMap.Response.RESULT_UNDEFINED_FAILURE
+        with self._lock:
+            previous = self.map_path
+            changed = False
+            try:
+                if not self._initialized or self._uncertain or self._mapping:
+                    raise RuntimeError('runtime preparation is not confirmed')
+                if self._capabilities_now() & set(PROFILES):
+                    raise RuntimeError('finish motion/mapping before applying a map edit')
+
+                def activate(path):
+                    nonlocal changed
+                    changed = True
+                    self._reset_localization()
+                    self._map_provider(path, require_pose=True, edit_transaction=True)
+                    self._sync()
+
+                selected = apply_ticket(request.map_url, activate)
+                if changed:
+                    try:
+                        remember_map(self.map_selection_file, str(selected))
+                    except OSError as error:
+                        self.get_logger().warning(f'Could not remember selected map: {error}')
+                response.result = LoadMap.Response.RESULT_SUCCESS
+            except Exception as error:
+                self.get_logger().error(f'Map edit failed: {error}')
+                if changed:
+                    try:
+                        if self._uncertain:
+                            raise RuntimeError('previous runtime operation is unconfirmed')
+                        self._reset_localization()
+                        self._map_provider(previous, require_pose=True)
+                        self._sync()
+                    except Exception as rollback:
+                        self._uncertain = True
+                        self._map_initialized = False
+                        self._publish_map(False, f'map edit recovery failed: {rollback}')
+                        self._report_usage(str(rollback))
         return response
 
     def _reset_localization(self):

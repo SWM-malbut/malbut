@@ -43,6 +43,7 @@ ROBOT_INTERFACE = 'malbut_manager_v1'
 # rooms_save and zones_apply come from the web map editor, navigation_* from the web
 # map screen's destination sending (SWM25-237).
 NAVIGATION_OPERATIONS = ('navigation_preview', 'navigation_start', 'navigation_cancel')
+MAP_EDIT_OPERATIONS = ('map_edit_open', 'map_edit_save', 'map_edit_restore', 'map_edit_apply')
 LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'rooms_save', 'zones_apply',
                     'robot_ping', 'robot_diagnostics', *NAVIGATION_OPERATIONS)
 # A map upload carries the preview PNG, the User Map and the Zones in one body.
@@ -461,6 +462,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
         'pose': pose,
         'localization': {'state': 'ok' if pose else 'unavailable', 'tfAgeS': None},
         'nav2': {'robot_interface': ROBOT_INTERFACE, 'runtime_mode': mode or 'stopped',
+                 'map_edit': 'v1',
                  'manager': 'ready' if servers.get('manager') else 'unavailable'},
         'target': {
             'runtime': runtime, 'requests': requests,
@@ -590,9 +592,48 @@ class CloudSync:
         self.last_warning_at = 0.0
         self.capabilities = None
         self.navigator = Navigator()
+        self.edit_jobs = {}
+        self.edit_uploads = {}
         self.thread = threading.Thread(target=self.run, name='robot-cloud-sync', daemon=True)
 
     def _complete_pending(self):
+        for command_id, (map_name, value, deadline) in list(self.edit_uploads.items()):
+            try:
+                preview = self._upload_edit(map_name)
+                result = {'ok': True, 'result': {**value, 'revision': preview['revision'],
+                          'appliedRevision': preview['appliedRevision']}}
+            except CloudError:
+                if time.monotonic() < deadline:
+                    continue
+                result = {'ok': False, 'result': {'error':
+                    '로봇의 처리 결과를 웹에 동기화하지 못했습니다. 지도를 다시 불러와 확인해 주세요.'}}
+            except (ValueError, RuntimeError, OSError) as error:
+                result = {'ok': False, 'result': {'error': str(error)[:512]}}
+            self.pending[command_id] = self.seen[command_id] = result
+            del self.edit_uploads[command_id]
+        for command_id, (future, map_name, deadline) in list(self.edit_jobs.items()):
+            if not future.done() and time.monotonic() < deadline:
+                continue
+            try:
+                if not future.done():
+                    self.bridge.apply_map_edit.remove_pending_request(future)
+                    raise RuntimeError('지도 적용 결과를 확인하지 못했습니다. 로봇 상태와 적용 지도를 다시 확인해 주세요.')
+                response = future.result()
+                if response.result != 0:
+                    raise RuntimeError('수정본을 적용하지 못했습니다. 로봇 상태를 확인해 주세요.')
+                preview = self._upload_edit(map_name)
+                result = {'ok': True, 'result': {'map': map_name, 'revision': preview['revision'],
+                          'appliedRevision': preview['appliedRevision']}}
+            except CloudError:
+                if time.monotonic() < deadline:
+                    continue
+                result = {'ok': False, 'result': {'error':
+                    '지도는 적용됐지만 웹에서 수정본을 확인하지 못했습니다. 다시 불러와 주세요.'}}
+            except (ValueError, RuntimeError, OSError) as error:
+                result = {'ok': False, 'result': {'error': str(error)[:512]}}
+            self.pending[command_id] = self.seen[command_id] = result
+            del self.edit_jobs[command_id]
+            self.last_map_at = self.maps_at = 0.0
         for command_id, result in list(self.pending.items()):
             if self.stop_event.is_set():
                 return
@@ -615,9 +656,16 @@ class CloudSync:
         if command_id in self.seen:
             self.pending[command_id] = self.seen[command_id]
             return
+        if command_id in self.edit_jobs or command_id in self.edit_uploads:
+            return
         operation, payload = command.get('operation'), command.get('payload', {})
         try:
-            if operation in LOCAL_OPERATIONS:
+            if operation in MAP_EDIT_OPERATIONS:
+                value = self._edit(operation, payload, command_id)
+                if value is None:
+                    return
+                result = {'ok': True, 'result': value}
+            elif operation in LOCAL_OPERATIONS:
                 result = {'ok': True, 'result': self._local(operation, payload)}
             elif self._patrol_escape(operation, payload):
                 result = {'ok': True, 'result': {
@@ -642,6 +690,41 @@ class CloudSync:
             self.fast_until = time.monotonic() + MANUAL_FAST_WINDOW_S
         while len(self.seen) > 256:
             self.seen.popitem(last=False)
+
+    def _upload_edit(self, map_name):
+        from .map_edit import MapEdits
+        preview = MapEdits(self.bridge.catalog.resolve(map_name)).preview()
+        self.client.request('/api/device/v1/robot/saved-maps', 'PUT', preview)
+        return preview
+
+    def _edit(self, operation, payload, command_id):
+        from .map_edit import MapEdits, map_lock
+        if not isinstance(payload, dict) or not isinstance(payload.get('map'), str):
+            raise ValueError('저장 지도를 선택해 주세요.')
+        path = self.bridge.catalog.resolve(payload['map'])
+        with map_lock(path):
+            edits = MapEdits(path)
+            if operation == 'map_edit_open':
+                edits.reset_external()
+                result = {'map': path.name}
+            elif operation == 'map_edit_apply':
+                client = self.bridge.apply_map_edit
+                if not client.service_is_ready():
+                    raise ValueError('주행 시스템이 준비되지 않았습니다.')
+                ticket = edits.ticket(payload.get('expectedRevision'), payload.get('revision'), command_id)
+                request = self.bridge.load_map_request()
+                request.map_url = str(ticket)
+                self.edit_jobs[command_id] = (client.call_async(request), path.name, time.monotonic() + 240.0)
+                return None
+            else:
+                result = edits.save(payload.get('expectedRevision'), payload.get('polygons'),
+                                    command_id, restore=operation == 'map_edit_restore')
+            try:
+                preview = self._upload_edit(path.name)
+            except CloudError:
+                self.edit_uploads[command_id] = (path.name, result, time.monotonic() + 45.0)
+                return None
+            return {**result, 'revision': preview['revision'], 'appliedRevision': preview['appliedRevision']}
 
     def _local(self, operation, payload):
         if not isinstance(payload, dict):
@@ -777,7 +860,7 @@ class CloudSync:
         if self.stop_event.is_set():
             return
         now = time.monotonic()
-        if now - self.maps_at >= 5.0:
+        if not self.edit_jobs and now - self.maps_at >= 5.0:
             self.maps = self.bridge.catalog.list_maps()
             self.maps_at = now
         snapshot = self.bridge.data.snapshot()
@@ -810,7 +893,7 @@ class CloudSync:
                 self.bridge.publish_closed_falls(closed)
         if self.stop_event.is_set():
             return
-        if info.get('active') and info.get('available') and now - self.last_map_at >= 5.0:
+        if not self.edit_jobs and info.get('active') and info.get('available') and now - self.last_map_at >= 5.0:
             try:
                 pair = self.bridge.data.map_cache.png()
                 if pair is not None:

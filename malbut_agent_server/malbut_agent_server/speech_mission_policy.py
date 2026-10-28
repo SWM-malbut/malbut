@@ -14,12 +14,13 @@ from malbut_agent_server.gateway import (
 from malbut_agent_server.safety import SafetyResult
 from malbut_agent_server.schemas import SpeechAgentRequest, ValidationError
 from malbut_agent_server.speech_navigation import matches_navigation_location
+from malbut_agent_server.speech_mapping import mapping_name_binding
 from malbut_agent_server.tools import (
     SPEECH_MISSION_TOOLS, TOOL_SPECS, validate_tool_arguments,
 )
 
 
-POLICY_REVISION = 'speech-manager-structured-v4'
+POLICY_REVISION = 'speech-manager-structured-v6'
 
 
 class SpeechMissionPolicy:
@@ -40,6 +41,12 @@ class SpeechMissionPolicy:
 
     def evaluate(self, request, decision, state_trusted=False):
         """Validate proposal bounds and name matching without inventing readiness."""
+        literal = mapping_name_binding(request)
+        if (literal is not None and decision.type == 'tool_call'
+                and (decision.tool_name != 'request_mapping'
+                     or decision.arguments != {'map_name': literal})):
+            return SafetyResult(False, 'mapping_name_mismatch',
+                                '지도 이름을 그대로 확인하지 못했어요. 이름을 다시 알려주세요.')
         if decision.type != 'tool_call' or decision.tool_name not in SPEECH_MISSION_TOOLS:
             return self._base.evaluate(request, decision, state_trusted=state_trusted)
         if (decision.tool_name not in self.enabled_tools
@@ -48,6 +55,10 @@ class SpeechMissionPolicy:
         try:
             validate_tool_arguments(decision.tool_name, decision.arguments)
         except (ValidationError, TypeError):
+            if decision.tool_name == 'request_mapping':
+                return SafetyResult(False, 'invalid_arguments',
+                                    '지도 이름은 한글·영문·숫자로 시작하는 64자 이내의 이름으로 '
+                                    '알려주세요. 공백·하이픈·밑줄은 쓸 수 있지만 경로와 확장자는 쓸 수 없어요.')
             return SafetyResult(False, 'invalid_arguments', '실행 요청의 인자가 올바르지 않아요.')
         if (type(decision.expires_in_ms) is not int or decision.expires_in_ms <= 0
                 or decision.expires_in_ms > self._base.maximum_action_ttl_ms):

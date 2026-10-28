@@ -1,0 +1,8 @@
+{
+  "piper_threads_before": 6,
+  "piper_threads_after": 3,
+  "scope": "current interaction release only; old baseline config preserved",
+  "aec_ready_verification": "Verified service log after restart: Piper3threads, aec_ready, malbut_speech_capture_ready; service active",
+  "reference_delay_s": 0.4570064984948549,
+  "verified_at": "2026-10-28T05:09:25.507594+00:00"
+}

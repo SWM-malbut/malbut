@@ -9,13 +9,14 @@ from .fall_settings_link import FallSettingsLink
 class FallRulesNode(Node):
     """Relay permissions and request urgent confirmation through ExecuteMission."""
 
-    def __init__(self, *, runtime_id, bridge_runtime_id, vlm_runtime_id):
+    def __init__(self, *, runtime_id, bridge_runtime_id, vlm_runtime_id, confirmation_answers=None):
         super().__init__('malbut_fall_rules')
         # manager_runtime_id remains the settings wire field for compatibility;
         # it identifies these fall rules, not the generic system manager.
         self.settings = FallSettingsLink(
             self, manager_id=runtime_id, bridge_id=bridge_runtime_id, vlm_id=vlm_runtime_id)
-        self.confirmation = FallConfirmationLink(self, runtime_id=vlm_runtime_id)
+        self.confirmation = FallConfirmationLink(
+            self, runtime_id=vlm_runtime_id, confirmation_answers=confirmation_answers)
 
     def close(self):
         """Stop permission heartbeats and cancel our managed confirmation."""

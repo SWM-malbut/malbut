@@ -206,7 +206,7 @@ def test_help_request_does_not_wait_for_cloud_or_duplicate_notification():
     asyncio.run(scenario())
 
 
-def test_only_agent_can_report_no_response_and_notifies_while_cloud_pending():
+def test_only_agent_can_record_no_response_without_notifying_while_cloud_pending():
     async def scenario():
         monitor, clock, provider = make()
         enable(monitor)
@@ -224,9 +224,7 @@ def test_only_agent_can_report_no_response_and_notifies_while_cloud_pending():
         answer(monitor, iid, VoiceAnswer.NO_RESPONSE, qid=qid)
         assert monitor.incident(iid).answer is VoiceAnswer.NO_RESPONSE
         notices = [e for e in monitor.drain_events() if e.kind == 'notification_requested']
-        assert len(notices) == 1
-        assert notices[0].notification_level is NotificationLevel.CHECK
-        assert notices[0].reason == 'person_no_response'
+        assert notices == []
         provider.release.set()
         await task
         assert monitor.incident(iid).state is IncidentState.RECHECK_REQUIRED
@@ -656,7 +654,7 @@ def test_notification_escalates_without_duplicate_or_later_downgrade():
         answer(monitor, iid, VoiceAnswer.OKAY)
         levels = [e.notification_level for e in monitor.drain_events()
                   if e.kind == 'notification_requested']
-        assert levels == [NotificationLevel.INFO, NotificationLevel.CHECK, NotificationLevel.URGENT]
+        assert levels == [NotificationLevel.INFO, NotificationLevel.URGENT]
         assert monitor.incident(iid).notification_level is NotificationLevel.URGENT
         assert monitor.incident(iid).fall_seen
     asyncio.run(scenario())

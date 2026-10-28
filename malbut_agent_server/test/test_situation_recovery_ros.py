@@ -1,6 +1,7 @@
 """Recover replayed VLM handoffs after losing the fall coordinator client."""
 
 import json
+import time
 
 import pytest
 
@@ -43,11 +44,12 @@ def replay(rig, request_id, *, summary='거실 바닥에 누워 있는 사람이
 
 
 @pytest.mark.parametrize('restart_after_result', [False, True])
+@pytest.mark.parametrize('answer', ['okay', 'silent', 'help', 'failure'])
 def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
-    rig, mission_manager, restart_after_result,
+    rig, mission_manager, restart_after_result, answer,
 ):
     from malbut_agent_server.fall_rules.fall_confirmation_link import FallConfirmationLink
-    from malbut_agent_server.fall_runtime import apply_decision, event_metadata
+    from malbut_agent_server.fall_runtime import apply_decision, event_metadata, parse_agent_reply
     from test_fall_confirmation_result import assessed
 
     monitor, _, _, iid = assessed()
@@ -60,18 +62,40 @@ def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
     rig.voice.create_subscription(
         String, '/malbut/falls/runtime/decision', lambda msg: received.append(msg.data), 10,
     )
+    rig.voice.create_subscription(
+        String, '/malbut/falls/runtime/agent_reply', lambda msg: received.append(msg.data), 10,
+    )
+
+    def complete_question():
+        if answer == 'silent':
+            session = rig.agent.situation._session
+            rig.inputs.publish(SpeechInputStatus(
+                session_id=rig.session_id, utterance_id='noise', state='started'))
+            rig.spin_until(lambda: session.phase == 'hearing')
+            rig.inputs.publish(SpeechInputStatus(
+                session_id=rig.session_id, utterance_id='noise', state='failed'))
+            rig.spin_until(lambda: session.phase == 'listening')
+            session._deadline = time.monotonic() - 1
+        elif answer == 'failure':
+            rig.inputs.publish(SpeechInputStatus(
+                session_id=rig.session_id, utterance_id='', state='failed'))
+        else:
+            rig.answer('도와줘' if answer == 'help' else '그냥 누워 있는 거야')
+
     manager = Node('confirmation_manager_before_restart')
-    link = FallConfirmationLink(manager, runtime_id='recovery-vlm')
+    link = FallConfirmationLink(manager, runtime_id='recovery-vlm',
+                                confirmation_answers=rig.agent.situation.answers)
     rig.executor.add_node(manager)
     try:
         rig.spin_until(lambda: events.get_subscription_count() > 0
                        and link.client.server_is_ready() and rig.agent.dialogue.ready
-                       and link.decisions.get_subscription_count() > 0)
+                       and link.decisions.get_subscription_count() > 0
+                       and link.replies.get_subscription_count() > 0)
         events.publish(payload)
         rig.spin_until(lambda: rig.agent.situation._session is not None
                        and rig.agent.situation._session.phase == 'listening')
         if restart_after_result:
-            rig.answer('그냥 누워 있는 거야')
+            complete_question()
             rig.spin_until(lambda: bool(received) and not rig.agent.situation.active)
             # Simulate losing the final topic publication before the VLM
             # applies it. The original question therefore remains pending.
@@ -83,25 +107,37 @@ def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
         link.client.destroy()
         manager.destroy_node()
         manager = Node('confirmation_manager_after_restart')
-        link = FallConfirmationLink(manager, runtime_id='recovery-vlm')
+        link = FallConfirmationLink(manager, runtime_id='recovery-vlm',
+                                    confirmation_answers=rig.agent.situation.answers)
         rig.executor.add_node(manager)
         rig.spin_until(lambda: link.client.server_is_ready()
                        and manager.count_publishers('/malbut/falls/runtime/events') > 0
-                       and link.decisions.get_subscription_count() > 0)
+                       and link.decisions.get_subscription_count() > 0
+                       and link.replies.get_subscription_count() > 0)
         events.publish(payload)
         rig.spin_until(lambda: bool(link.coordinator.requests) or bool(received))
         if not restart_after_result:
-            rig.answer('그냥 누워 있는 거야')
+            complete_question()
         rig.spin_until(lambda: bool(received), timeout=5)
         command = json.loads(received[-1])
-        assert command['action'] == 'confirmation_result'
-        assert command['situation_assessment'] == 'resolved'
-        assert command['help_needed'] is False
-        assert apply_decision(monitor, received[-1])
-        assert monitor.incident(iid).situation_assessment == 'resolved'
+        if answer == 'silent':
+            assert command['answer'] == 'no_response' and command['question_played'] is True
+            assert monitor.agent_reply(parse_agent_reply(received[-1]))
+            assert monitor.incident(iid).answer.value == 'no_response'
+            notices = [e for e in monitor.drain_events() if e.kind == 'notification_requested']
+            assert notices == []
+        else:
+            assert apply_decision(monitor, received[-1])
+            if answer == 'failure':
+                assert command['action'] == 'confirmation_failed'
+                assert monitor.incident(iid).answer.value == 'failed'
+            else:
+                assert command['action'] == 'confirmation_result'
+                assert monitor.incident(iid).answer.value == (
+                    'help_request' if answer == 'help' else 'okay')
         assert not monitor.pending_questions()
         rig.spin_until(lambda: not rig.agent.situation.active)
-        assert len(rig.spoken) == 2  # One question and one closing sentence.
+        assert len(rig.spoken) == (1 if answer in ('silent', 'failure') else 2)
     finally:
         link.destroy()
         rig.executor.remove_node(manager)

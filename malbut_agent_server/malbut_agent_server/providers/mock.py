@@ -23,7 +23,9 @@ from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
     ProviderResult,
 )
-from malbut_agent_server.providers.mock_speech_intent import matches_speech_fixture
+from malbut_agent_server.providers.mock_speech_intent import (
+    mapping_fixture_arguments, matches_speech_fixture,
+)
 from malbut_agent_server.tools import ToolSpec
 
 
@@ -330,6 +332,8 @@ class MockProvider(AgentProvider):
                 'request_navigation': '목적지 이동 요청',
                 'request_follow_person': '보이는 사람 따라가기 요청',
                 'request_patrol': '순찰 요청',
+                'request_mapping': '지도 만들기 요청',
+                'request_relocalization': '현재 위치 보정 요청',
                 'cancel_voice_mission': '음성으로 요청한 동작 취소',
                 'navigate': '이동',
                 'detect_pet': '반려동물 감지',
@@ -470,7 +474,12 @@ class MockProvider(AgentProvider):
             ('request_follow_person', {}),
             *(('request_patrol', {'thoroughness': level})
               for level in ('normal', 'light', 'thorough')),
+            *(('request_relocalization', {'method': method})
+              for method in ('auto', 'global_search')),
         ]
+        mapping = mapping_fixture_arguments(request.utterance)
+        if mapping is not None:
+            candidates.append(('request_mapping', mapping))
         # The offline provider has a small fixed vocabulary. It never resolves
         # coordinates, invents a target, or reuses a destination from history.
         candidates.extend(

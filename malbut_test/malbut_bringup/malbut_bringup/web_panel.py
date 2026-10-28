@@ -489,6 +489,7 @@ class RosBridge:
             for name in RUNTIME_ACTIONS
         }
         self.load_map = self.node.create_client(LoadMap, LOAD_MAP_SERVICE)
+        self.apply_map_edit = self.node.create_client(LoadMap, '/malbut/localization/apply_map_edit')
         self.load_map_request = LoadMap.Request
         self.start_mapping = self.node.create_client(Trigger, START_MAPPING_SERVICE)
         self.start_mapping_request = Trigger.Request

@@ -1,0 +1,33 @@
+{
+  "access": "ADB over existing microphone USB interface, separate host port 5042, isolated extracted Ubuntu tools",
+  "modification": "Bounded raw diagnostic and PGA30/15/5 trials completed; original config, circle engine, PGA30, existing origin PCM, and normal service restored after each. No retained beam/firmware/gain change.",
+  "confirmed": {
+    "firmware": "Linux 4.9.191 Allwinner sun50iw10; asound.conf identifies R818",
+    "engine": "mic6_circle, libvtn_mic6_circle.so, circle6:v1.0.2 engine:se_circle.1004",
+    "capture": "8 channels S16_LE 16kHz, 512 sample period, 1024 sample buffer",
+    "usb_output": "1 channel S16_LE 16kHz, period 2048, buffer 32768",
+    "processing": "cae_enable=1; ivw_enable=1; user_cfg beam=-3, vtn.ini beam=1",
+    "mic_pga": "all 8 channels 30 dB; digital values160",
+    "path": "embedded demo owns input hardware and feeds UAC1Gadget; host gets processed mono",
+    "raw_capture": "common/debug=1 enables origin.pcm append; new capture contains 8 S16_LE channels at16k, first6 active, final2 near -88dBFS during short trial; channel reference mapping not yet physically verified",
+    "offline_reprocess": "All six fixed beams processed the complete91.328s paired recording. API on two candidate windows in each beam did not recover expected sentence. Full-window raw channel0 API also returned no text; not all six full-window channels were transcribed.",
+    "adc_clipping": "At80% robot speaker,6 raw microphones reached fullscale:1.7–4.3% clipped samples in active playback, raw active RMS approx-3dBFS. Independent repeat gain30 confirms saturation. PGA15 nearly eliminates hard clipping but peaks stillnear fullscale.",
+    "diagnostic_flag_control": "With atomic config updates and same loudspeaker sentence, processed USB audio present atdebug0 anddebug1; RMS-32.93 vs-33.87dBFS. No gross output mute from debug flag in this control; exact transparency notproven.",
+    "config_watch_race": "Direct adb push to watched config can briefly load defaults mic6/log5 from empty file. Atomic stage+mv repaired; verified live log mic6_circle/log0.",
+    "last_two_channels": "Remainnear-88dBFS even during loud playback. Likely reference channels carry no useful reference, but electrical mapping/wiring has not been verified.",
+    "gain_control": "Same speaker80%: maximum full-recording clipped fraction across6microphones: PGA30=1.4823%,PGA15=0.00291%,PGA5=0%. PGA5 maximum peak=-1.298dBFS. PGA5 USB RMS=-46.78dBFS. These are loudspeaker tests, not evidence of improved human recognition.",
+    "test_source_caveat": "Piper CLI control source bypassed app normalization; source itself transcribed imperfectly. Do not attribute all control transcript errors to microphone or assert production TTS accuracy from this source."
+  },
+  "unknown": [
+    "meaning and precedence of beam=-3 versus beam=1",
+    "whether analog AEC reference is physically connected and valid",
+    "whether frontend suppresses human double-talk",
+    "fraction of observed reference lag attributable to this frontend",
+    "Whether human trial timing exactly overlapped 90s window; one full utterance confirmed, raw ASR didnotrecover it"
+  ],
+  "next": "Cued quiet A/B at PGA30 and5 prepared, awaiting user readiness. Assess actual human preservation before changing production gain.",
+  "sources": [
+    "https://docs.hiwonder.com/projects/JetAutoPi/en/latest/docs/9.voice_control.html",
+    "https://aiui-doc.xf-yun.com/project-1/doc-108/"
+  ]
+}

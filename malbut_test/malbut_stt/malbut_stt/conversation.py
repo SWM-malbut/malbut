@@ -51,8 +51,8 @@ class ConversationSession:
             return True
         return False
 
-    def user_speech_started(self):
-        """Reserve one ID and pause the current answer at most once."""
+    def user_speech_started(self, *, stop_playback=False):
+        """Reserve one ID and pause or stop the current answer at most once."""
         self.tick()
         if not self.active:
             return None
@@ -63,7 +63,7 @@ class ConversationSession:
         self._resume_pending = False
         self._interrupted_playback = None
         if self.playback_state in ('playing', 'paused') and self._control != 'stop':
-            if self.session_id:
+            if self.session_id or stop_playback:
                 self._control = 'stop'
                 self.publish_control(self.playback_id, 'stop')
                 return self.utterance_id

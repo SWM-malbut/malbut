@@ -33,6 +33,15 @@ def decide(text, available=SPEECH_MISSION_TOOLS, *, exposed=None):
     ('가볍게 순찰해줘', 'request_patrol', {'thoroughness': 'light'}),
     ('집안을 꼼꼼히 순찰해', 'request_patrol', {'thoroughness': 'thorough'}),
     ('start a thorough patrol', 'request_patrol', {'thoroughness': 'thorough'}),
+    ('새집 지도를 만들어 줘', 'request_mapping', {'map_name': '새집'}),
+    ('우리 집이라는 이름으로 지도를 만들어 주세요', 'request_mapping', {'map_name': '우리 집'}),
+    ('Home_2 지도를 만들어 줘', 'request_mapping', {'map_name': 'Home_2'}),
+    ('위치 다시 찾아줘', 'request_relocalization', {'method': 'auto'}),
+    ('현재 위치 다시 찾아주세요', 'request_relocalization', {'method': 'auto'}),
+    ('위치 보정해 줘', 'request_relocalization', {'method': 'auto'}),
+    ('지도 전체에서 위치 다시 찾아줘', 'request_relocalization', {'method': 'global_search'}),
+    ('지도 만들기 취소해', 'cancel_voice_mission', {}),
+    ('위치 보정 중지해', 'cancel_voice_mission', {}),
     ('멈춰', 'cancel_voice_mission', {}),
     ('따라오지 마', 'cancel_voice_mission', {}),
     ('순찰을 취소해', 'cancel_voice_mission', {}),
@@ -63,6 +72,11 @@ def test_offline_voice_commands_select_strict_manager_payloads(text, tool, argum
     '거실로 갈 수 있어?', '거실로 이동 가능해?', '거실로 안 가볼까?',
     '거실로 가지 말까?', '거실로 가볼까 말까?', '“거실로 가볼까?”',
     '거실로 가볼까라고 말해줘', '내일 거실로 가볼까?',
+    '지도를 만들어 줘', '새집 지도를 만들지 마', '지도 만들 수 있어?',
+    '"새집 지도를 만들어 줘"라고 말해', '내일 새집 지도를 만들어 줘',
+    '위치 보정하지 마', '위치 다시 찾을 수 있어?', '내 위치가 어디야?',
+    '"위치 다시 찾아줘"라고 말해', '위치 보정하고 순찰해',
+    '../home 지도를 만들어 줘', 'home.yaml 지도를 만들어 줘',
 ])
 def test_non_commands_never_select_manager_tool(text):
     assert decide(text).tool_name not in SPEECH_MISSION_TOOLS
@@ -72,8 +86,9 @@ def test_non_commands_never_select_manager_tool(text):
     ((), SPEECH_MISSION_TOOLS), (SPEECH_MISSION_TOOLS, ()),
     (('get_weather',), ('get_weather',)),
 ])
-def test_hidden_tools_cannot_be_selected(available, exposed):
-    assert decide('따라와', available, exposed=exposed).tool_name is None
+@pytest.mark.parametrize('text', ['따라와', '새집 지도를 만들어 줘', '위치 다시 찾아줘'])
+def test_hidden_tools_cannot_be_selected(available, exposed, text):
+    assert decide(text, available, exposed=exposed).tool_name is None
 
 
 def test_legacy_navigation_and_weather_keep_their_original_tools():

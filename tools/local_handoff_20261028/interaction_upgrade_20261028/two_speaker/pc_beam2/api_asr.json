@@ -1,0 +1,30 @@
+[
+  {
+    "file": "gain30_raw0.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 0.8914502779953182,
+    "process_cpu_s": 0.013435064999999996
+  },
+  {
+    "file": "gain30_usb.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형주들은 개인 투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 1.1128500620252453,
+    "process_cpu_s": 0.018498590999999995
+  },
+  {
+    "file": "gain5_raw0.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 0.9534729180159047,
+    "process_cpu_s": 0.011510222999999986
+  },
+  {
+    "file": "gain5_usb.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 0.8996771710226312,
+    "process_cpu_s": 0.006998503999999989
+  }
+]

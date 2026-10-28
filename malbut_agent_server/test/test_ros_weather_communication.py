@@ -115,7 +115,7 @@ class _WeatherProvider:
             'tools': [tool.name for tool in tools],
         })
         if weather_context is None:
-            assert {tool.name for tool in tools} == {'get_weather', 'set_weather_location'}
+            assert {tool.name for tool in tools} == {'get_weather', 'set_weather_location', 'search_robot_docs'}
             if request.utterance.startswith('여기는 '):
                 decision = AgentDecision(
                     type='tool_call', message='', tool_name='set_weather_location',

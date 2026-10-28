@@ -5,15 +5,18 @@ def create_synthesizer(model_path=None, *, backend='openai', speaker='Sohee',
                        language='Korean', cuda_dtype='float32',
                        cuda_sentence_mode=True, sentence_max_chars=80,
                        api_model='gpt-4o-mini-tts', api_voice='nova',
-                       api_timeout_seconds=10.0):
+                       api_timeout_seconds=10.0, piper_threads=6):
     """Create the selected backend, defaulting to OpenAI audio streaming."""
+    if backend == 'piper':
+        from malbut_tts.piper_synthesis import PiperSynthesizer
+        return PiperSynthesizer(model_path, threads=piper_threads)
     if backend == 'openai':
         from malbut_tts.api_synthesis import OpenAISynthesizer
         return OpenAISynthesizer(
             model=api_model, voice=api_voice, timeout_seconds=api_timeout_seconds,
         )
     if backend != 'qwen-cuda':
-        raise ValueError('TTS backend must be qwen-cuda or openai')
+        raise ValueError('TTS backend must be piper, qwen-cuda or openai')
     if type(cuda_sentence_mode) is not bool:
         raise ValueError('cuda_sentence_mode must be a boolean')
     if type(sentence_max_chars) is not int or not 16 <= sentence_max_chars <= 512:

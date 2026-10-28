@@ -1,0 +1,7 @@
+{
+  "source": "/home/shin/ros2_ws/stt_observation_20261013/vad_stress_10188/sources/126_003_0149.wav",
+  "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다",
+  "normalization_gain": 5.065218216740102,
+  "rms_dbfs": -19.000000000000004,
+  "peak": 0.728681600149928
+}

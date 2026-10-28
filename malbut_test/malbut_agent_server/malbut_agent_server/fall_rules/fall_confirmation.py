@@ -499,6 +499,19 @@ class FallConfirmationCoordinator:
         self._forget(request.request_id)
         return True
 
+    def no_response(self, request):
+        """A played question timed out: use the existing Agent reply format."""
+        if self.requests.get(request.request_id) != request or self.closed:
+            return False
+        reply = request.decision('agent_reply')
+        reply.update(subject_key=request.subject_key, answer='no_response', question_played=True)
+        self.commands.append(reply)
+        del self.requests[request.request_id]
+        self.stages.pop(request.request_id, None)
+        self._remember(request.request_id, reply)
+        self._forget(request.request_id)
+        return True
+
     def fail(self, request, reason='question_error'):
         """Not asked: the runtime alerts the guardian at once (urgent)."""
         if self.requests.get(request.request_id) != request or self.closed:

@@ -195,6 +195,50 @@ def _saved_map(directory, name):
         'occupied_thresh: 0.65\nfree_thresh: 0.25\n')
 
 
+def test_map_edits_upload_saved_files_without_switching_navigation(tmp_path):
+    sync, bridge, client = _sync()
+    bridge.catalog = SavedMapCatalog(tmp_path)
+    _saved_map(tmp_path, 'home')
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'map_edit_open', 'payload': {'map': 'home.yaml'}})
+    assert sync.pending[COMMAND_ID]['ok']
+    preview = next(call.args[2] for call in client.request.call_args_list
+                   if call.args[0] == '/api/device/v1/robot/saved-maps')
+    original = (tmp_path / 'home.pgm').read_bytes()
+    sync.dispatch({'id': OTHER_ID, 'operation': 'map_edit_save', 'payload': {
+        'map': 'home.yaml', 'expectedRevision': preview['revision'],
+        'polygons': [[[0,0],[.1,0],[.1,.1],[0,.1]]]}})
+    assert sync.pending[OTHER_ID]['ok']
+    assert (tmp_path / 'home.pgm').read_bytes() == original
+    bridge.submit.assert_not_called()
+
+
+def test_map_edit_apply_waits_for_runtime_result_and_keeps_state_uploads_alive(tmp_path):
+    from concurrent.futures import Future
+    from malbut_bringup.map_edit import MapEdits
+    sync, bridge, client = _sync()
+    bridge.catalog = SavedMapCatalog(tmp_path)
+    _saved_map(tmp_path, 'home')
+    edits = MapEdits(tmp_path / 'home.yaml')
+    result = edits.save(edits.preview()['revision'], [[[0,0],[.1,0],[.1,.1]]], COMMAND_ID)
+    future = Future()
+    bridge.apply_map_edit = Mock()
+    bridge.apply_map_edit.call_async.return_value = future
+    bridge.load_map_request = SimpleNamespace
+    operation = {'id': OTHER_ID, 'operation': 'map_edit_apply', 'payload': {
+        'map': 'home.yaml', 'expectedRevision': result['revision'], 'revision': result['revision']}}
+    sync.dispatch(operation)
+    sync.dispatch(operation)
+    bridge.apply_map_edit.call_async.assert_called_once()
+    assert OTHER_ID not in sync.pending
+    sync.tick()
+    assert any(call.args[0] == '/api/device/v1/robot/state' for call in client.request.call_args_list)
+    assert not any('/complete' in call.args[0] for call in client.request.call_args_list)
+    future.set_result(SimpleNamespace(result=1))
+    sync._complete_pending()
+    assert not sync.edit_jobs
+    assert not sync.seen[OTHER_ID]['ok']
+
+
 def test_map_deletion_answers_directly_and_keeps_the_map_in_use(tmp_path):
     """Deleting a map is a file request; the saved map being driven on stays."""
     sync, bridge, _client = _sync()

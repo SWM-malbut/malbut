@@ -233,12 +233,13 @@ def test_same_worker_reuses_context_with_original_input_and_safe_ids():
         first, second = factory.handled
         assert first.utterance == original
         assert first.user_id == second.user_id == 'configured-speaker'
-        assert first.available_tools == second.available_tools == ()
+        assert first.available_tools == second.available_tools == ('search_robot_docs',)
         digest = hashlib.sha256(first_id.encode('utf-8')).hexdigest()
         assert first.request_id == 'speech-request-' + digest
         assert first.turn_id == 'speech-turn-' + digest
         assert first.request_id != first.turn_id
-        assert all(call[2] == [] for call in factory.provider.calls)
+        assert all([tool.name for tool in call[2]] == ['search_robot_docs']
+                   for call in factory.provider.calls)
         stored = factory.runtime.conversation_store.snapshot(
             'configured-speaker', replies[0]['conversation_id'],
         )

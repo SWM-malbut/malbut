@@ -28,6 +28,7 @@ def speech(monkeypatch, tmp_path):
         'speech_launch', ROOT / 'malbut_bringup/launch/speech.launch.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module.Path, 'home', lambda: tmp_path)
     monkeypatch.setattr(module, 'get_package_share_directory',
                         lambda package: str(ROOT / package))
     for name in ('ggml.bin', 'libmalbut_whisper.so'):
@@ -43,7 +44,7 @@ def speech(monkeypatch, tmp_path):
 def _context(module, **overrides):
     context = LaunchContext()
     context.launch_configurations.update({
-        **module.assets,
+        **getattr(module, 'assets', {}),
         **overrides,
     })
     for action in module.generate_launch_description().entities:
@@ -92,6 +93,70 @@ def test_under_bringup_the_agent_module_starts_the_agent(speech):
     actions = speech._setup(context)
     assert [item.node_executable for item in actions if isinstance(item, Node)] == [
         'tts_node', 'weather', 'stt', 'key_sync']
+
+
+def test_robot_tts_config_overrides_only_tts(speech, tmp_path, monkeypatch):
+    monkeypatch.setattr(speech.Path, 'home', lambda: tmp_path)
+    config = tmp_path / '.config/malbut/tts.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('/**:\n  ros__parameters:\n    backend: piper\n')
+    context = _context(speech)
+    actions = speech._setup(context)
+    nodes = [item for item in actions if isinstance(item, Node)]
+    tts = next(item for item in nodes if item.node_executable == 'tts_node')
+    assert evaluate_parameters(context, tts._Node__parameters)[-1] == config
+    for node in nodes:
+        if node is not tts:
+            assert config not in evaluate_parameters(context, node._Node__parameters)
+
+
+def test_explicit_missing_tts_config_fails_before_starting(speech, tmp_path):
+    context = _context(speech, tts_config=str(tmp_path / 'missing.yaml'))
+    with pytest.raises(RuntimeError, match='TTS configuration does not exist'):
+        speech._setup(context)
+
+
+def test_local_stt_config_applies_only_to_stt_and_overrides_defaults(speech, tmp_path):
+    config = tmp_path / '.config/malbut/stt.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('malbut_stt:\n  ros__parameters:\n    turn_detection: hybrid\n')
+    context = _context(speech)
+    nodes = [node for node in speech._setup(context) if isinstance(node, Node)]
+    for node in nodes:
+        parameters = evaluate_parameters(context, node._Node__parameters)
+        if node.node_executable == 'stt':
+            assert parameters[-1] == config
+        else:
+            assert config not in parameters
+
+
+@pytest.mark.parametrize('module_name', ['speech', 'agent'])
+def test_local_camera_config_reaches_agent_in_both_launch_paths(speech, tmp_path, module_name):
+    config = tmp_path / '.config/malbut/agent.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('malbut_agent_communication:\n  ros__parameters:\n'
+                      '    camera_view_enabled: true\n')
+    if module_name == 'speech':
+        module, context = speech, _context(speech)
+    else:
+        spec = importlib.util.spec_from_file_location(
+            'agent_launch', ROOT / 'malbut_bringup/launch/agent.launch.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        context = _context(module, agent_speech='true', agent_fall_rules='false',
+            speech_python_executable=sys.executable, speech_agent_provider='mock',
+            speech_agent_user_id='fixture', speech_agent_conversation_db=':memory:',
+            speech_prerecorded_audio='false', speech_manager_commands='false')
+    nodes = [node for node in module._setup(context) if isinstance(node, Node)]
+    assert any(node.node_executable == 'agent_communication' for node in nodes)
+    for node in nodes:
+        assert (config in evaluate_parameters(context, node._Node__parameters)) == (
+            node.node_executable == 'agent_communication')
+
+
+def test_explicit_missing_stt_config_fails_before_starting(speech, tmp_path):
+    with pytest.raises(RuntimeError, match='STT configuration does not exist'):
+        speech._setup(_context(speech, stt_config=str(tmp_path/'missing.yaml')))
 
 
 def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
@@ -153,6 +218,29 @@ def test_manager_command_opt_in_does_not_gate_launch(speech, enabled):
     command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
     assert ('--enable-manager-commands' in command) is (enabled == 'true')
     assert '--navigation-targets' not in command
+
+
+@pytest.mark.parametrize('modular,start_manager,manager_commands,direct', [
+    (False, 'false', 'false', True),
+    (True, 'false', 'false', False),
+    (False, 'true', 'false', False),
+    (False, 'false', 'true', False),
+])
+def test_only_standalone_speech_connects_public_audio_directly(
+        speech, modular, start_manager, manager_commands, direct):
+    context = _context(speech, start_manager=start_manager, manager_commands=manager_commands)
+    context.extend_locals({'malbut_modular_bringup': modular})
+    tts = next(item for item in speech._setup(context)
+               if isinstance(item, Node) and item.node_executable == 'tts_node')
+    remappings = [(perform_substitutions(context, source),
+                   perform_substitutions(context, destination))
+                  for source, destination in tts._Node__remappings]
+    expected = [
+        ('/malbut/tts/request', '/malbut/speech/response'),
+        ('/malbut/tts/playback_status', '/malbut/speech/playback_status'),
+        ('/malbut/tts/playback_control', '/malbut/speech/playback_control'),
+    ]
+    assert remappings == (expected if direct else [])
 
 
 @pytest.mark.parametrize('name', [

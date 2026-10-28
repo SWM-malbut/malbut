@@ -5,7 +5,7 @@ string STOP_ALL=stop_all
 # 제어할 TTS 재생의 고유 ID
 # STOP_ALL은 ID 없이 현재 재생과 대기열 전체를 중단한다.
 string playback_id
-# 위 상수 중 하나
+# 위 상수 중 하나 또는 duck/unduck (재생 위치를 유지하며 음량 감쇠/복원)
 # STOP은 아직 수신하지 않은 유효 ID에 대해서도 예약 취소를 접수한다.
 string command
 ---

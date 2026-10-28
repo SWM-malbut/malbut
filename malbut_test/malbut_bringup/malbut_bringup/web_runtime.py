@@ -65,6 +65,10 @@ class SavedMapCatalog:
             raise ValueError('Map ID must be a YAML filename from the map list')
         try:
             path = self._file(self.directory / map_id)
+            if (self.directory / '.map-edits' / path.name / 'applying.json').exists():
+                from .map_edit import map_lock, recover
+                with map_lock(path):
+                    recover(path)
             with path.open(encoding='utf-8') as stream:
                 metadata = yaml.safe_load(stream)
             if not isinstance(metadata, dict):
@@ -102,6 +106,13 @@ class SavedMapCatalog:
 
     def delete(self, map_id):
         """Remove a saved map and its pose, Zones, User Map and display alignment."""
+        from .map_edit import map_lock, recover
+        path = self.resolve(map_id)
+        with map_lock(path):
+            recover(path)
+            return self._delete_unlocked(map_id)
+
+    def _delete_unlocked(self, map_id):
         path = self.resolve(map_id)
         image = self._image(path)
         shared = any(other != path and self._image(other) == image
@@ -119,6 +130,9 @@ class SavedMapCatalog:
             except FileNotFoundError:
                 continue
             removed.append(item.name)
+        import shutil
+        if not shared:
+            shutil.rmtree(self.directory / '.map-edits' / path.name, ignore_errors=True)
         return removed
 
     def list_maps(self):

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 import math
 import time
 
+from malbut_agent_server.mission_audio_cases import NOTICE_TEXTS
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -28,6 +30,15 @@ SCENARIOS = (
     Scenario('patrol-light', '가벼운 순찰', '가벼운 순찰이 thoroughness=0으로 전달됩니다.'),
     Scenario('patrol-normal', '기본 순찰', '기본 순찰이 thoroughness=1로 전달됩니다.'),
     Scenario('patrol-thorough', '꼼꼼한 순찰', '꼼꼼한 순찰이 thoroughness=2로 전달됩니다.'),
+    Scenario('mapping', '자동 지도 작성', '말한 지도 이름이 AutoSlam Goal로 전달됩니다.'),
+    Scenario('relocalize-auto', '현재 위치 다시 찾기', '일반 위치 보정은 AUTO=0으로 전달됩니다.'),
+    Scenario('relocalize-global', '지도 전체에서 위치 찾기', '명시적인 전역 탐색은 GLOBAL_SEARCH=2로 전달됩니다.'),
+    Scenario('cancel-mapping', '지도 작성 취소', '진행 중인 지도 작성을 음성으로 취소합니다.'),
+    Scenario('cancel-relocalize', '위치 보정 취소', '진행 중인 위치 보정을 음성으로 취소합니다.'),
+    Scenario('abort-mapping', '지도 작성 실패', '지도 작성 실패를 Manager 결과로 전달합니다.'),
+    Scenario('abort-relocalize', '위치 보정 실패', '위치 보정 실패를 Manager 결과로 전달합니다.'),
+    Scenario('reject-mapping', '지도 작성 Goal 거절', '지도 작성 Goal 거절을 성공으로 알리지 않습니다.'),
+    Scenario('reject-relocalize', '위치 보정 Goal 거절', '위치 보정 Goal 거절을 성공으로 알리지 않습니다.'),
     Scenario('cancel-navigation', '이동 취소', '진행 중인 목적지 이동을 음성으로 취소합니다.'),
     Scenario('cancel-patrol', '순찰 취소', '진행 중인 순찰을 음성으로 취소합니다.'),
     Scenario('cancel-delayed', '취소 접수와 종료 분리', '늦은 취소 완료를 접수와 구분하고 실제 종료를 기다립니다.'),
@@ -37,7 +48,7 @@ SCENARIOS = (
     Scenario('reject-navigation', '이동 Goal 거절', '하위 이동 Action의 Goal 거절을 성공으로 알리지 않습니다.'),
     Scenario('reject-follow', '추적 Goal 거절', '하위 추적 Action의 Goal 거절을 성공으로 알리지 않습니다.'),
     Scenario('reject-patrol', '순찰 Goal 거절', '하위 순찰 Action의 Goal 거절을 성공으로 알리지 않습니다.'),
-    Scenario('preempt-base', 'BASE 작업 선점', '따라가기 종료 후 새 순찰 Goal이 전달되는지 확인합니다.'),
+    Scenario('preempt-base', 'BASE 작업 선점', 'LOW 순찰 종료 후 NORMAL 지도 작성 Goal이 전달되는지 확인합니다.'),
     Scenario('unknown-place', '등록되지 않은 목적지', '미등록 베란다 요청이 Goal을 만들지 않습니다.'),
     Scenario('map-not-selected', '저장 지도 미선택', '매핑 상태에서 목적지 이동을 보내지 않습니다.'),
     Scenario('map-mismatch', '목적지와 지도 불일치', '목적지 설정과 다른 저장 지도에서는 이동하지 않습니다.'),
@@ -61,11 +72,13 @@ COVERAGE_NOTE = (
     '별도 /regression 회귀 테스트 범위입니다.'
 )
 
-_MOTION = frozenset({'navigate_to_pose', 'follow_person', 'patrol'})
+_MOTION = frozenset({'navigate_to_pose', 'follow_person', 'patrol', 'autoslam', 'relocalize'})
 _COMMANDS = {
     'navigate_to_pose': '거실로 가',
     'follow_person': '나 따라와',
     'patrol': '순찰해 줘',
+    'autoslam': '새집 지도를 만들어 줘',
+    'relocalize': '위치 다시 찾아줘',
 }
 _TIMEOUT = 8.0
 
@@ -141,15 +154,23 @@ def _payload(checks, goal, capability, level=1):
         _check(checks, args == {
             'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 1.0,
         }, '화자 ID를 만들지 않고 보이는 사람·기본 거리로 추적 요청함')
+    elif capability == 'autoslam':
+        _check(checks, args == {'map_name': '새집'}, '발화의 지도 이름을 AutoSlam에 전달함')
+    elif capability == 'relocalize':
+        _check(checks, args.get('method') == level, f'위치 보정 방식 {level}을 전달함')
+        pose = args.get('initial_pose', {})
+        _check(checks, not pose.get('header', {}).get('frame_id'),
+               'AUTO/전역 탐색에서 초기 위치를 지어내지 않음')
     else:
         _check(checks, args == {'thoroughness': level}, f'순찰 꼼꼼함 {level}을 전달함')
 
 
-def _motion(graph, checks, capability, *, outcome='success', text=None, level=1):
+def _motion(graph, checks, capability, *, outcome='success', text=None, level=None):
     graph.set_behavior(capability, outcome=outcome)
     _send(graph, text or _COMMANDS[capability])
     goal = _goal(graph, capability)
-    _payload(checks, goal, capability, level)
+    _payload(checks, goal, capability,
+             (0 if capability == 'relocalize' else 1) if level is None else level)
     if outcome == 'hold':
         _check(checks, goal.get('accepted') is True, '하위 지속 Action이 Goal을 접수함')
         _wait(graph, lambda: bool(_events(graph, capability, state='RUNNING')),
@@ -173,7 +194,8 @@ def _cancel(graph, checks, capability, *, delayed=False, timeline=()):
     _wait(graph, lambda: bool(_events(graph, capability, state='RUNNING')),
           f'{capability} 실행 중')
     _, reply = _send(graph, '취소해 줘')
-    _check(checks, '종료 여부' in reply['text'], '취소 요청 답변은 종료 확인 전임을 알림')
+    _check(checks, reply['text'] == NOTICE_TEXTS['cancel.requested'],
+           '취소 요청 답변은 완료가 아닌 요청 접수를 알림')
     terminal = _terminal(graph, capability, 'canceled')
     request_id = terminal.get('request_id')
     _check(checks, any(event.get('request_id') == request_id
@@ -208,28 +230,29 @@ def _no_motion(graph, checks, texts):
         _, reply = _send(graph, text)
         _check(checks, reply.get('kind') != 'error', f'요청을 비실행 응답으로 처리함: {text}')
     _observe(graph)
-    _check(checks, not graph.goals, '하위 이동·추적·순찰 Goal이 없음')
+    _check(checks, not graph.goals, '하위 동작 Goal이 없음')
     _check(checks, not any(event.get('capability_id') in _MOTION for event in graph.events),
-           'Manager에도 이동·추적·순찰 실행 요청을 보내지 않음')
+           'Manager에도 동작 실행 요청을 보내지 않음')
 
 
 def _preempt(graph, checks, timeline):
-    graph.set_behavior('follow_person', outcome='hold', cancel_delay_s=0.2)
-    graph.set_behavior('patrol', outcome='success')
-    _send(graph, '따라와')
-    _wait(graph, lambda: bool(_events(graph, 'follow_person', state='RUNNING')), '추적 시작')
+    graph.set_behavior('patrol', outcome='hold', cancel_delay_s=0.2)
+    graph.set_behavior('autoslam', outcome='success')
     _send(graph, '순찰해 줘')
-    previous = _terminal(graph, 'follow_person', 'failed')
-    _terminal(graph, 'patrol', 'succeeded')
+    _goal(graph, 'patrol')
+    _wait(graph, lambda: bool(_events(graph, 'patrol', state='RUNNING')), '순찰 시작')
+    _send(graph, _COMMANDS['autoslam'])
+    previous = _terminal(graph, 'patrol', 'failed')
+    _terminal(graph, 'autoslam', 'succeeded')
     _check(checks, 'preempted' in previous.get('reason', ''),
            'Manager가 서버 주도 교체를 사용자 취소와 구분하여 보고함')
-    _check(checks, [goal['capability_id'] for goal in graph.goals] == ['follow_person', 'patrol'],
-           '같은 BASE를 쓰는 추적 다음에 순찰이 전달됨')
+    _check(checks, [goal['capability_id'] for goal in graph.goals] == ['patrol', 'autoslam'],
+           '같은 BASE를 쓰는 LOW 순찰 다음에 NORMAL 지도 작성이 전달됨')
     markers = [event for event in timeline
                if event.get('kind') == 'actuator_terminal'
-               and event.get('capability_id') == 'follow_person'
+               and event.get('capability_id') == 'patrol'
                and event.get('status') == 'canceled']
-    _check(checks, bool(markers), '하위 추적 Action의 취소 종료를 관찰함')
+    _check(checks, bool(markers), '하위 순찰 Action의 취소 종료를 관찰함')
     _check(checks, graph.goals[1]['received_at'] >= markers[-1]['observed_at'],
            '기존 하위 Action이 종료된 후 새 BASE Goal이 도착함')
 
@@ -262,6 +285,13 @@ def _execute(scenario_id, graph, checks, timeline):
         return _motion(graph, checks, 'navigate_to_pose', text='거실로 가볼까?')
     if scenario_id == 'follow':
         return _motion(graph, checks, 'follow_person', outcome='hold')
+    if scenario_id == 'mapping':
+        return _motion(graph, checks, 'autoslam')
+    if scenario_id in {'relocalize-auto', 'relocalize-global'}:
+        return _motion(graph, checks, 'relocalize',
+                       level=2 if scenario_id == 'relocalize-global' else 0,
+                       text=('지도 전체에서 위치 다시 찾아줘'
+                             if scenario_id == 'relocalize-global' else None))
     if scenario_id.startswith('patrol-'):
         level, text = {
             'patrol-light': (0, '가볍게 순찰해 줘'),
@@ -269,17 +299,19 @@ def _execute(scenario_id, graph, checks, timeline):
             'patrol-thorough': (2, '꼼꼼히 순찰해 줘'),
         }[scenario_id]
         return _motion(graph, checks, 'patrol', level=level, text=text)
-    if scenario_id in {'cancel-follow', 'cancel-navigation', 'cancel-patrol', 'cancel-delayed'}:
+    if scenario_id in {'cancel-follow', 'cancel-navigation', 'cancel-patrol', 'cancel-delayed',
+                       'cancel-mapping', 'cancel-relocalize'}:
         capability = {
             'cancel-follow': 'follow_person', 'cancel-delayed': 'follow_person',
             'cancel-navigation': 'navigate_to_pose', 'cancel-patrol': 'patrol',
+            'cancel-mapping': 'autoslam', 'cancel-relocalize': 'relocalize',
         }[scenario_id]
         return _cancel(graph, checks, capability, delayed=scenario_id == 'cancel-delayed',
                        timeline=timeline)
     if scenario_id.startswith(('abort-', 'reject-')):
         outcome, name = scenario_id.split('-', 1)
         capability = {'navigation': 'navigate_to_pose', 'follow': 'follow_person',
-                      'patrol': 'patrol'}[name]
+                      'patrol': 'patrol', 'mapping': 'autoslam', 'relocalize': 'relocalize'}[name]
         return _motion(graph, checks, capability, outcome=outcome)
     if scenario_id == 'preempt-base':
         return _preempt(graph, checks, timeline)
@@ -319,7 +351,8 @@ def _execute(scenario_id, graph, checks, timeline):
         return
     if scenario_id == 'cancel-empty':
         _, reply = _send(graph, '취소해 줘')
-        _check(checks, '동작이 없어요' in reply['text'], '취소할 음성 작업이 없음을 사실대로 안내함')
+        _check(checks, reply['text'] == NOTICE_TEXTS['cancel.none'],
+               '취소할 음성 작업이 없음을 사실대로 안내함')
         _check(checks, not graph.goals and not graph.events, '작업 없는 취소가 Manager 실행을 만들지 않음')
         return
     if scenario_id == 'manager-unavailable':

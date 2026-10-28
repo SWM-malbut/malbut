@@ -1,7 +1,8 @@
 """Installed Silero admission immediately before each actual Whisper model call.
 
 Only the command transcriber's model is wrapped; wake recognition keeps its
-original model. Each command input is checked independently, including cropped
+original model. A request attached to a wake phrase is checked before publication.
+Each command input is checked independently, including cropped
 suffixes and recovery decodes. The observer queue is never consulted and
 accepted audio is passed on unchanged.
 """
@@ -72,6 +73,26 @@ class SileroGate:
     def wrap_model(self, model, diagnostics=None):
         return _GatedModel(model, self, diagnostics)
 
+    def require_speech(self, pcm, diagnostics=None, *, cancelled=lambda: False):
+        """Validate PCM even when reusing an already decoded wake-and-request clip."""
+        def event(name, **fields):
+            if diagnostics is not None:
+                diagnostics.event(name, **fields)
+
+        try:
+            decision = self.check(pcm, cancelled=cancelled)
+        except SileroGateCancelled:
+            event('silero_gate_cancelled', reason='cancelled_before_whisper')
+            raise
+        except Exception as error:
+            event('silero_gate_error', error=type(error).__name__, allowed=False)
+            raise SileroGateError('silero_gate_unavailable') from error
+        event('silero_gate', **decision)
+        if cancelled():
+            raise SileroGateCancelled('silero_gate_cancelled')
+        if not decision['allowed']:
+            raise SileroNonSpeech('silero_non_speech')
+
 
 class _GatedModel:
     def __init__(self, model, gate, diagnostics):
@@ -101,18 +122,10 @@ class _GatedModel:
             pcm = np.rint(np.clip(samples * 32768, -32768, 32767)).astype('<i2')
             if not np.array_equal(samples, pcm.astype(np.float32) / 32768):
                 raise ValueError('Silero gate input must be lossless PCM16')
-            decision = self._gate.check(pcm.tobytes(), cancelled=cancelled)
-        except SileroGateCancelled:
-            self._event('silero_gate_cancelled', reason='cancelled_before_whisper')
-            raise
         except Exception as error:
             self._event('silero_gate_error', error=type(error).__name__, allowed=False)
             raise SileroGateError('silero_gate_unavailable') from error
-        self._event('silero_gate', **decision)
-        if cancelled():
-            raise SileroGateCancelled('silero_gate_cancelled')
-        if not decision['allowed']:
-            raise SileroNonSpeech('silero_non_speech')
+        self._gate.require_speech(pcm.tobytes(), self._diagnostics, cancelled=cancelled)
         return self._model.transcribe(audio, **options)
 
     def cancel(self):

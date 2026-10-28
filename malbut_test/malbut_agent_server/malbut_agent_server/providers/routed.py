@@ -37,7 +37,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
     ValidationError,
 )
-from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.tools import INFORMATION_QUERY_TOOLS, PATROL_QUERY_TOOLS, ToolSpec
 
 
 DEFAULT_ROUTING_POLICY_REVISION = 'malbut-front-provider-routing-v1'
@@ -140,6 +140,7 @@ class RoutedAgentProvider(AgentProvider):
             general_request = self._without_robot_tools(request)
             general_tools = [tool for tool in tools if tool.name in {
                 'get_weather', 'set_weather_location',
+                *PATROL_QUERY_TOOLS, *INFORMATION_QUERY_TOOLS,
             }]
             result = self._delegate(
                 self.general_provider,
@@ -267,7 +268,7 @@ class RoutedAgentProvider(AgentProvider):
         value = request.to_dict()
         value['available_tools'] = [
             name for name in request.available_tools
-            if name in {'get_weather', 'set_weather_location'}
+            if name in {'get_weather', 'set_weather_location', *PATROL_QUERY_TOOLS, *INFORMATION_QUERY_TOOLS}
         ]
         return type(request).from_dict(value)
 

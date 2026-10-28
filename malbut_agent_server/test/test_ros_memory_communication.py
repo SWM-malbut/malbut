@@ -52,7 +52,7 @@ class _MemoryProvider:
         self, request, memories, conversation_turns, tools,
         conversation_summary=None, *, memory_context=None,
     ):
-        assert all(tool.name in {'get_weather', 'set_weather_location'} for tool in tools), (
+        assert all(tool.name in {'get_weather', 'set_weather_location', 'search_robot_docs'} for tool in tools), (
             'Memory dialogue must not expose robot actuation tools'
         )
         self.calls.append({

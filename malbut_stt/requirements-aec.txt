@@ -1,0 +1,4 @@
+# Optional isolated Linux/Python 3.10 runtime; legacy STT does not import these.
+numpy>=1.24,<2
+pywebrtc-audio==0.2.0
+tflite-runtime==2.14.0

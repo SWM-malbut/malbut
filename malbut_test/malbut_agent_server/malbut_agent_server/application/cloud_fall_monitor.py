@@ -1650,8 +1650,6 @@ class CloudFallMonitor:
             incident.state = IncidentState.HELP_REQUIRED
             self._notify(incident, NotificationLevel.URGENT, 'help_requested')
         else:
-            if answer is VoiceAnswer.NO_RESPONSE:
-                self._notify(incident, NotificationLevel.CHECK, 'person_no_response')
             if answer is VoiceAnswer.FAILED:
                 self._emit('agent_check_failed', incident, reason='agent_failed')
         self._emit('voice_result', incident, reason=answer.value)

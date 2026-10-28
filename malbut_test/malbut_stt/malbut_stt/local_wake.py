@@ -50,9 +50,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             return 0
 
         from pvrecorder import PvRecorder
-        import webrtcvad
+        from malbut_stt.silero_stream import SileroStreamVad
 
-        vad = webrtcvad.Vad(2)
+        vad = SileroStreamVad()
         settings = CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0)
         print('Enter를 누르면 로컬 호출어 감지를 시작합니다. 종료: Ctrl+C',
               file=sys.stderr, flush=True)

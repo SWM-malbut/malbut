@@ -1,0 +1,11 @@
+*.wav
+*.mp3
+*.pcm
+*.f32
+*.f64
+*.npz
+*.onnx
+*.bin
+*.tar.gz
+venv/
+.venv/

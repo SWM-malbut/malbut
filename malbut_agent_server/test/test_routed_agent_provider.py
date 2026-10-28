@@ -278,6 +278,25 @@ def test_speech_keeps_short_routing_and_bypasses_short_projection_when_long(leng
     assert result is selected.results[0]
 
 
+def test_general_conversation_preserves_patrol_retrieval_without_motion_tools():
+    """Object recall is a read operation even when the front router selects chat."""
+    name = 'search_patrol_observations'
+    general = RecordingProvider(AgentDecision(
+        'tool_call', '조회', tool_name=name,
+        arguments={'query': '리모컨', 'since': None, 'until': None, 'limit': 3}))
+    provider, general, planner, fallback = _routed(
+        ScriptedFrontRouter(FrontRouteMatch(route=FrontRoute.GENERAL_CONVERSATION)),
+        general=general)
+    value = _request(utterance='리모컨 어디서 봤어?').to_dict()
+    value['available_tools'] = ['navigate', name]
+    result = provider.complete(AgentRequest.from_dict(value), [], [],
+                               [TOOL_SPECS['navigate'], TOOL_SPECS[name]])
+    assert result.decision.tool_name == name
+    assert general.requests[0].available_tools == (name,)
+    assert general.tool_lists[0] == [TOOL_SPECS[name]]
+    assert planner.calls == fallback.calls == 0
+
+
 @pytest.mark.parametrize(
     'router',
     (

@@ -1,0 +1,103 @@
+2026-10-28 로컬 코드 인계 스냅샷
+
+브랜치: wip/local-code-handoff-20261028
+저장소: https://github.com/SWM-malbut/malbut.git
+기준 커밋: 3d76630 (feat/SWM25-241-manager-tts의 당시 로컬 HEAD)
+
+범위
+- 당시 저장소 안의 모든 수정·추가 코드, 테스트, 문서를 보존한다.
+  음성 외에 지도 편집, 순찰, 낙상, 웹 작업 및 malbut_test 복사본도 포함한다.
+- 이 디렉터리에는 저장소 밖에 있던 Reachy 비교, AEC, 상호작용 개선의
+  실험 스크립트와 일부 작은 결과 요약을 복사했다. manifest.json은 원본
+  위치와 파일별 SHA-256을 기록한다.
+- 이것은 진행 중 작업의 백업이다. 모든 기능이 검증·완료된 릴리스가 아니다.
+- 키, env 실파일, SSH 인증 자료, 실제 대화 DB, 녹음, 모델, 가상환경,
+  빌드 산출물과 대용량 실험 자료는 이 인계 디렉터리에 넣지 않았다.
+
+다른 컴퓨터에서 받기
+  git clone --branch wip/local-code-handoff-20261028 https://github.com/SWM-malbut/malbut.git
+
+기존 클론에서는
+  git fetch origin wip/local-code-handoff-20261028
+  git switch --track origin/wip/local-code-handoff-20261028
+동명의 로컬 브랜치가 이미 있다면 기존 브랜치를 사용한다.
+
+현재 음성 구현과 적용 상태
+- 기본 턴 감지는 기존 Silero 방식이다. Smart Turn과 추가 Reachy 시작 필터는
+  기본 동작에서 제외했다. 실험용 구현 파일이 남아 있는 것과 활성화는 다르다.
+- TTS 도중에도 AEC 입력과 말 끊기 감지 경로를 유지하는 코드가 있다.
+  Reachy 방식 말 끊기, 재생 참조 정렬, 사전 오디오 버퍼, interruption ASR이
+  들어가 있지만 실제 겹침 음성 인식은 아직 안정적으로 성공하지 못했다.
+- 로봇의 현재 interaction 릴리스: AEC pulse_reference, barge_in_mode reachy,
+  pre-roll 2초, interruption_asr local. 기본 인식은 로컬 Whisper small이다.
+- 대화 복구 루프가 변화 없는 DB 전체 이력을 반복 읽던 CPU 문제를 개선했다.
+  같은 437턴 DB와 같은 대기 측정 조건에서 전체 6코어 기준 CPU 사용률은
+  약 11.93%에서 7.65%로 줄었다. 말하는 동안의 CPU 비교 결과는 아니다.
+- 응답을 짧게 하고 실제 내용을 바로 말하도록 프롬프트를 조정했다.
+  카메라 질의, 확인 답변 등의 이전 추가 코드도 이 스냅샷에 포함된다.
+- 로봇의 interaction 릴리스에만 Piper 스레드를 6개에서 3개로 바꿨다.
+  시드 고정 15문장 비교에서 합성 CPU 시간은 15.8% 감소했고, 평균 첫 청크
+  지연은 약 78ms 늘었다. 설정은 로봇 릴리스의 tts.yaml에 있으며 저장소의
+  모든 기본 설정을 3개로 바꾼 것은 아니다.
+- provisional ducking과 native linear AEC 후보는 정식 적용하지 않았다.
+
+최신 실험 결과: 말 끊기 미해결
+- 사용자가 반복해서 직접 말해야 하는 부담을 줄이기 위해 PC 스피커에서
+  한국어 사람 녹음을 재생하고, 로봇 스피커에서는 Piper를 재생하는 물리적
+  두 스피커 시험으로 전환했다. 소프트웨어로 마이크에 주입한 시험이 아니다.
+- 사용한 문장: "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다".
+- 마이크 보드의 기존 beam=-3에서 PC 방향의 목소리가 USB 출력에서 매우
+  약해졌다. 같은 방향에서 beam=2, PGA gain=5로 조용할 때 시험하니 한 번은
+  전체 문장이 정확히 전사됐다. 이는 특정 방향·녹음 재생 조건의 결과다.
+  이전 1~2m 실제 사람 발화 실패가 해결됐다는 뜻은 아니다.
+- e2e_baseline (beam=-3, gain=30): 겹침 발화에서 중단·전사 없음.
+  첫 대조 시험은 재생 시작 전에 stopped가 나와 유효한 대조에서 제외했다.
+- e2e_beam2_gain5: AEC 준비 완료. 로봇만 말하는 대조 시험은 자기 음성으로
+  끊기지 않았으나, PC에서 말이 겹치는 시험도 중단·전사가 없었다.
+  console.txt에 마지막 이벤트가 보존되어 있다. 이 시험의 상세 result.json,
+  녹음·CPU 자료는 아직 로봇에서 로컬로 가져오지 않은 상태였다.
+- 각 시험 후 beam=-3, PGA gain=30으로 복원하고 정상 서비스를 재시작하도록
+  스크립트가 구성되어 있으며 마지막 실행은 exit 0이었다. 마지막 시험 후
+  정상 서비스/AEC 상태를 별도 확인하는 작업은 아직 하지 않았다.
+
+이어서 할 일
+1. 로봇 서비스와 마이크 설정이 복원되어 있는지 읽기 전용으로 확인한다.
+2. /tmp/malbut_interaction_20261028/two_speaker/e2e_beam2_gain5/에서
+   result.json, settings.json, capture_pair.f32, capture_stamps.f64,
+   capture_training.npz 등을 별도로 가져온다. /tmp는 재부팅으로 사라질 수 있다.
+3. 겹침 중 사용자 음성이 보드 USB 출력에서 사라지는지, PC 쪽 AEC/마스크/VAD가
+   남아 있는 사용자 음성을 제거하는지 구분한다. robot-only 대조와 같이 분석한다.
+4. 개선 후 같은 조건의 기준/후보 비교를 다시 한다. 첫 baseline의 대조 시험과
+   CPU 계측은 불충분하므로 그 수치로 최종 성능 우위를 주장하지 않는다.
+
+장비/경로
+- 기존 PC 작업 공간: /home/shin/ros2_ws
+- 로봇: ubuntu@192.168.0.86 (인증은 별도 설정; 비밀번호는 저장하지 않았다)
+- 정상 서비스: malbut-speech-interaction.service
+- 현재 릴리스: /home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028
+- 공통 환경: /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/environment.sh
+- 로그: sudo -n journalctl _SYSTEMD_USER_UNIT=malbut-speech-interaction.service --no-pager -o cat
+- 정상 재시작 예시(서비스가 꺼진 상태에서만):
+  systemd-run --user --unit=malbut-speech-interaction.service --collect --property=Restart=no --property=TimeoutStopSec=10 --setenv=MALBUT_SPEECH_GREETING=0 /home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028/start.sh
+- 로봇 원본 저장소 /home/ubuntu/malbut의 작업 내용은 이 브랜치로 덮어쓰지 않았다.
+- 로봇 키 파일: /home/ubuntu/.config/malbut/openai.env (내용 미포함)
+- 기존 PC 키 파일: /home/shin/.config/malbut/agent.env (내용 미포함)
+
+실험 스크립트 사용 시
+- 보관된 스크립트는 기존 장비 경로를 그대로 유지한 원본이다. 다른 컴퓨터에서
+  바로 실행 가능한 설치 프로그램이 아니다. /home/shin, SSH ControlPath,
+  PulseAudio 소켓, 출력 장치, 모델·라이브러리 경로를 먼저 맞춰야 한다.
+- 구 PC SSH ControlPath /tmp/malbut-dialogue-20261028-ssh는 새 컴퓨터에 없다.
+- 구 PC PulseAudio: PULSE_SERVER=unix:/run/user/1000/pulse/native,
+  sink=alsa_output.pci-0000_00_1f.3.analog-stereo.
+- 재생 녹음 human_normalized.wav와 원본 녹음은 Git에 포함하지 않았다.
+- e2e_start.sh는 로봇 /tmp/.../two_speaker/e2e-code의 진단용 worker 복사본과
+  기존 릴리스/의존성을 사용한다. 이 작업 공간 밖의 배포물 전체는 미포함이다.
+- 실험은 manager_commands=false, start_manager=false로 수행했다.
+- 보드 user_cfg.ini 변경은 스테이징 후 atomic mv를 써야 한다. 직접 덮어쓰면
+  watcher가 중간 파일을 읽어 잘못된 마이크 엔진을 로드하는 문제가 관측됐다.
+- beam=2와 gain=5를 영구 기본값으로 채택하지 않았다. 자동 방향 추적도 미구현이다.
+- work_status.json과 findings.json 등 원본 요약 중 일부는 마지막 e2e 시험보다
+  오래됐다. 최신 실패 상태와 다음 작업은 이 HANDOFF.txt 및 console.txt를 따른다.
+
+이번 Git 보존 작업에서는 로봇 시험을 재개하거나 배포 설정을 바꾸지 않았다.

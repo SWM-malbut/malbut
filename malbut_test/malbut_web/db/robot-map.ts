@@ -29,6 +29,7 @@ const MANUAL_MOVE_RETENTION_MS = 120_000;
 // One audit entry per manual driving session, not one per repeated velocity.
 const MANUAL_SESSION_GAP_MS = 10_000;
 const MANAGED_OPERATIONS = new Set<RobotOperation>([
+  "map_edit_open", "map_edit_save", "map_edit_restore", "map_edit_apply",
   "runtime_start", "runtime_stop", "mission_start", "mission_cancel",
   "map_delete", "manual_move", "zones_save",
   "robot_ping", "robot_diagnostics", "debug_mission_start",
@@ -372,6 +373,9 @@ async function assertDriveCommandAllowed(input: {
     .first<Pick<StateRow, "localization_state" | "nav2_json" | "drive_mode_json" | "observed_at">>();
   const nav2 = state ? parseObject(state.nav2_json) : {};
   const managedOperation = MANAGED_OPERATIONS.has(input.operation);
+  if (input.operation.startsWith("map_edit_") && nav2.map_edit !== "v1") {
+    throw new Error("UNSUPPORTED_ROBOT_COMMAND");
+  }
   // The real robot also takes the map screen's destination sending (SWM25-237) and
   // starts or stops room patrol and person following from the 자율주행 card; it cannot pause.
   const realRobotPatrol = (input.operation === "drive_mode_start" || input.operation === "drive_mode_stop") &&
@@ -476,9 +480,10 @@ async function expireStaleRobotCommands(deviceId: string) {
        SET status = 'failed', completed_at = ?,
            result_json = '{"error":"ROBOT_COMMAND_TIMEOUT"}'
        WHERE device_id = ? AND status IN ('queued', 'claimed')
-         AND requested_at < ?`,
+         AND requested_at < CASE WHEN operation = 'map_edit_apply' AND status = 'claimed'
+           THEN ?::timestamptz ELSE ?::timestamptz END`,
     )
-    .bind(new Date().toISOString(), deviceId, cutoff)
+    .bind(new Date().toISOString(), deviceId, new Date(Date.now() - 300_000).toISOString(), cutoff)
     .run();
 }
 
@@ -533,6 +538,12 @@ export async function completeRobotCommand(input: {
     .first<CommandRow>();
   if (command && ["rooms_save", "zones_apply"].includes(command.operation)) {
     await settleSemanticDrafts(input.deviceId);
+  }
+  if (command?.operation === "map_delete" && input.ok) {
+    const payload = parseObject(command.payload_json);
+    if (typeof payload.map === "string") await getD1().prepare(
+      "DELETE FROM robot_saved_map_versions WHERE device_id = ? AND map_file = ?",
+    ).bind(input.deviceId, payload.map).run();
   }
   return command ? mapCommand(command) : null;
 }

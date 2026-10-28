@@ -1,0 +1,17 @@
+EVENT aec_ready:{"confidence": 0.32095454042366495, "lag_samples": 7420, "microphone_gain": 1.0, "recognition_audio": "aligned_microphone", "reference_delay_s": 0.40055841249894003, "reference_lead_s": 0.04, "window_confidence": [0.3067393847851523, 0.37726361804915814], "window_lags": [7430, 7420]}
+EVENT waiting_for_wake
+TRIAL control
+STATE {"at": 20.293774660000054, "pid": "02804df916894a43bed2eb1aa4941536", "rid": "conversation-opener:two-speaker-a804ba4e41ca41d1b8330b91e6914e1a", "state": "playing"}
+EVENT barge_in_ready:reachy
+STATE {"at": 39.853347622, "pid": "02804df916894a43bed2eb1aa4941536", "rid": "conversation-opener:two-speaker-a804ba4e41ca41d1b8330b91e6914e1a", "state": "finished"}
+EVENT waiting_for_followup
+EVENT session_ended:followup_timeout
+EVENT waiting_for_wake
+TRIAL overlap
+STATE {"at": 56.58346890100074, "pid": "af53f9bbec934af5b261def6e2084be4", "rid": "conversation-opener:two-speaker-49baf29175a54fd8baeaa9665fe1616a", "state": "playing"}
+EVENT barge_in_ready:reachy
+PC_PLAY {"index": 2, "at": 61.60055017600098}
+STATE {"at": 75.97305493000022, "pid": "af53f9bbec934af5b261def6e2084be4", "rid": "conversation-opener:two-speaker-49baf29175a54fd8baeaa9665fe1616a", "state": "finished"}
+EVENT waiting_for_followup
+EVENT session_ended:followup_timeout
+EVENT waiting_for_wake

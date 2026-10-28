@@ -8,6 +8,7 @@ import json
 import time
 
 from malbut_agent_server.situation_session import SituationSpeechSession
+from malbut_agent_server.confirmation_answers import ConfirmationAnswers
 
 
 ACTION_NAME = '/malbut/agent/confirm_situation'
@@ -21,6 +22,7 @@ class _ConfirmationReceipt:
     fingerprint: str
     status: str | None = None
     outcome: object = None
+    no_response: bool = False
 
 
 def _fingerprint(request):
@@ -63,7 +65,8 @@ def build_situation_factory(settings):
 
 
 class SituationActionServer:
-    def __init__(self, node, engine_factory, *, on_begin, on_end, prerecorded_audio=False):
+    def __init__(self, node, engine_factory, *, on_begin, on_end, prerecorded_audio=False,
+                 confirmation_answers=None):
         from malbut_interfaces.action import ConfirmSituation
         from malbut_interfaces.msg import (
             SpeechRequest, SpeechInputStatus, SpeechPlaybackStatus,
@@ -77,6 +80,8 @@ class SituationActionServer:
         self.engine_factory = engine_factory
         self.on_begin = on_begin
         self.on_end = on_end
+        self.answers = (ConfirmationAnswers() if confirmation_answers is None
+                        else confirmation_answers)
         self._prerecorded_audio = prerecorded_audio
         self._action_type = ConfirmSituation
         self._speech_type = SpeechRequest
@@ -162,6 +167,9 @@ class SituationActionServer:
             # Replay has a separate ROS Goal UUID and must not acquire or
             # release the live dialogue's reservation, microphone, or audio.
             self._recent.move_to_end(goal.request.request_id)
+            if receipt.status == 'succeeded':
+                self.answers.remember(goal.request.request_id, receipt.outcome,
+                                      no_response=receipt.no_response)
             future.set_result((receipt.status, receipt.outcome))
             goal.execute()
             return
@@ -175,7 +183,11 @@ class SituationActionServer:
         def report(result):
             # Keep the judgment, but let Manager admit the closing utterance
             # before ending its parent Action (and releasing mission ownership).
-            receipt.status, receipt.outcome = 'succeeded', result
+            receipt.outcome = result
+            receipt.no_response = self._session.no_response
+            self.answers.remember(goal.request.request_id, result,
+                                  no_response=receipt.no_response)
+            receipt.status = 'succeeded'
             self._pending_result = (future, result)
 
         def finish(status, result):

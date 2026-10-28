@@ -1,0 +1,154 @@
+{
+  "scope": "Five same-text synthesis-only samples on same Jetson; gpt-transcribe consistency is a proxy, not human naturalness or live intelligibility. API TTS and ASR share provider; no expected-text prompt. No production voice change.",
+  "rows": [
+    {
+      "backend": "piper",
+      "cases": [
+        {
+          "id": "command",
+          "text": "잠깐, 겨울 이야기만 한 문장으로 해줘.",
+          "wall_s": 0.48700670300240745,
+          "cpu_s": 1.4170610239999997,
+          "first_chunk_s": 0.4869263159998809,
+          "sample_rate": 22050,
+          "audio_duration_s": 2.9373242630385485,
+          "rms_dbfs": -10.965731505229995,
+          "normalized_text": "잠깐, 겨울 이야기만 한 문장으로 해줘.",
+          "transcript": "잠깐, 겨울 이야기만 한 문장으로 해줘."
+        },
+        {
+          "id": "winter",
+          "text": "겨울밤, 창밖에 내리던 눈이 작은 별빛처럼 마을을 포근히 감쌌어요.",
+          "wall_s": 0.7012148989997513,
+          "cpu_s": 2.289625152,
+          "first_chunk_s": 0.7011527850008861,
+          "sample_rate": 22050,
+          "audio_duration_s": 5.305759637188209,
+          "rms_dbfs": -13.323770570037158,
+          "normalized_text": "겨울밤, 창밖에 내리던 눈이 작은 별빛처럼 마을을 포근히 감쌌어요.",
+          "transcript": "겨울방, 창밖에 내리던 눈이 작은 별빛처럼 마을을 포근히 감쌌어요."
+        },
+        {
+          "id": "stop",
+          "text": "네, 멈출게요.",
+          "wall_s": 0.28357685999799287,
+          "cpu_s": 0.8772170560000001,
+          "first_chunk_s": 0.28352357800031314,
+          "sample_rate": 22050,
+          "audio_duration_s": 1.9969160997732427,
+          "rms_dbfs": -13.34706943126732,
+          "normalized_text": "네, 멈출게요.",
+          "transcript": "네, 멈출게요."
+        },
+        {
+          "id": "story",
+          "text": "비 오는 날 창가에 앉아 있던 고양이가 빗방울 하나를 앞발로 톡 건드렸는데, 빗방울이 별처럼 반짝였대요.",
+          "wall_s": 1.0543749559983553,
+          "cpu_s": 3.6950013119999996,
+          "first_chunk_s": 1.054305898000166,
+          "sample_rate": 22050,
+          "audio_duration_s": 8.93968253968254,
+          "rms_dbfs": -12.390682171173497,
+          "normalized_text": "비 오는 날 창가에 앉아 있던 고양이가 빗방울 하나를 앞발로 톡 건드렸는데, 빗방울이 별처럼 반짝였대요.",
+          "transcript": "비 오는 날 창가에 앉아 있던 고양이가 빗방울 하나를 앞발로 톡 건드렸는데 빗방울이 별처럼 반짝였대요."
+        },
+        {
+          "id": "followup",
+          "text": "퇴근길에 강아지 세 마리를 보셨군요. 어떤 모습이었나요?",
+          "wall_s": 0.5884269589987525,
+          "cpu_s": 1.8228401600000002,
+          "first_chunk_s": 0.3922464940005739,
+          "sample_rate": 22050,
+          "audio_duration_s": 4.051882086167801,
+          "rms_dbfs": -10.756569732052544,
+          "normalized_text": "퇴근길에 강아지 세 마리를 보셨군요. 어떤 모습이었나요?",
+          "transcript": "퇴근길에 강아지 세 마리를 보셨군요. 어떤 모습이었나요?"
+        }
+      ],
+      "exact": 4,
+      "n": 5,
+      "cer": 0.008928571428571428,
+      "mean_first_chunk_s": 0.583631014200364,
+      "first_chunk_range_s": [
+        0.28352357800031314,
+        1.054305898000166
+      ],
+      "total_cpu_s": 10.101744704,
+      "warm_mean_cpu_s": 2.17117092,
+      "warm_mean_first_chunk_s": 0.6078071887504848,
+      "max_rss_kib": 335296
+    },
+    {
+      "backend": "openai",
+      "cases": [
+        {
+          "id": "command",
+          "text": "잠깐, 겨울 이야기만 한 문장으로 해줘.",
+          "wall_s": 3.1596090460006963,
+          "cpu_s": 1.0254523519999998,
+          "first_chunk_s": 2.8463304590004554,
+          "sample_rate": 24000,
+          "audio_duration_s": 3.8,
+          "rms_dbfs": -17.456964051949377,
+          "transcript": "잠깐, 겨울 이야기만 한 문장으로 해줘."
+        },
+        {
+          "id": "winter",
+          "text": "겨울밤, 창밖에 내리던 눈이 작은 별빛처럼 마을을 포근히 감쌌어요.",
+          "wall_s": 2.8652315289982653,
+          "cpu_s": 0.17572012800000003,
+          "first_chunk_s": 2.002230359998066,
+          "sample_rate": 24000,
+          "audio_duration_s": 5.9,
+          "rms_dbfs": -19.2557264472947,
+          "transcript": "겨울밤 창밖에 내리던 눈이 작은 달빛처럼 마을을 포근히 감쌌어요."
+        },
+        {
+          "id": "stop",
+          "text": "네, 멈출게요.",
+          "wall_s": 2.3125595100027567,
+          "cpu_s": 0.13963648000000006,
+          "first_chunk_s": 2.1732958640022844,
+          "sample_rate": 24000,
+          "audio_duration_s": 1.8,
+          "rms_dbfs": -21.158876922228536,
+          "transcript": "네, 멈출게요."
+        },
+        {
+          "id": "story",
+          "text": "비 오는 날 창가에 앉아 있던 고양이가 빗방울 하나를 앞발로 톡 건드렸는데, 빗방울이 별처럼 반짝였대요.",
+          "wall_s": 2.968416480001906,
+          "cpu_s": 0.1907164800000003,
+          "first_chunk_s": 1.7676742639996519,
+          "sample_rate": 24000,
+          "audio_duration_s": 9.0,
+          "rms_dbfs": -19.363037405704166,
+          "transcript": "비 오는 날 창가에 앉아 있던 고양이가 뒷발을 하나를 앞발로 톡 건드렸는데 뒷발이 별처럼 반짝였대요."
+        },
+        {
+          "id": "followup",
+          "text": "퇴근길에 강아지 세 마리를 보셨군요. 어떤 모습이었나요?",
+          "wall_s": 1.471433265000087,
+          "cpu_s": 0.16768534399999968,
+          "first_chunk_s": 1.1251660950001678,
+          "sample_rate": 24000,
+          "audio_duration_s": 5.0,
+          "rms_dbfs": -19.9361196903983,
+          "transcript": "퇴근길에 강아지 세 마리를 보셨군요. 어떤 모습이었나요?"
+        }
+      ],
+      "exact": 3,
+      "n": 5,
+      "cer": 0.0625,
+      "mean_first_chunk_s": 1.982939408400125,
+      "first_chunk_range_s": [
+        1.1251660950001678,
+        2.8463304590004554
+      ],
+      "total_cpu_s": 1.699210784,
+      "warm_mean_cpu_s": 0.16843960800000002,
+      "warm_mean_first_chunk_s": 1.7670916457500425,
+      "max_rss_kib": 91096
+    }
+  ]
+}

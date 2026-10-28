@@ -173,6 +173,7 @@ def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
         item['executable'] is (item['name'] not in {
             'get_weather', 'set_weather_location', *SPEECH_MISSION_TOOLS,
             *HOMECAM_QUERY_TOOLS,
+            'search_patrol_observations', 'describe_camera_view', 'search_robot_docs',
         })
         for item in simulation['capabilities']
     )

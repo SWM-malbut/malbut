@@ -338,3 +338,43 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 환경을 적용한 뒤 실행한다. API 단위 시험은 가짜 SDK 응답을 사용하며
 유료 API를 호출하지 않는다. 실제 스피커와 로컬 모델 또는 API 시험은 위
 터미널 명령으로 별도로 확인하며, 자동 시험 통과를 실제 청취로 간주하지 않는다.
+# 로컬 Piper 설정 (2026-10-16)
+
+`piper` 백엔드는 KSS medium ONNX 모델과 한국어 정규화 v2.1을 로봇 CPU에서
+실행합니다. 숫자·단위·영문 약어와 발음 사전을 적용하며 TTS 서버/API를 호출하지
+않습니다. 기존 Manager 요청 경로, 재생 큐, pause/resume/stop을 사용합니다.
+중지는 진행 중인 한 문장의 ONNX 계산이 끝나는 시점에 반영됩니다.
+
+음성용 전처리에서 짝이 맞는 `**강조**`, `*강조*`, `__강조__`, `_강조_`와
+줄 시작의 별표 목록 기호를 제거합니다. 따라서 LLM 답변의 강조용 별표를 읽지
+않습니다. 대화 원문은 유지하고 괄호 안 내용·숫자·단위는 기존 발음 규칙을
+따릅니다. 단독 별표와 `2 * 3` 같은 수식은 일괄 삭제하지 않습니다.
+
+음성 런타임에 `requirements-piper.txt`를 설치하고 로컬 `.onnx`와
+`.onnx.json` 파일을 함께 배치합니다. 선택 모델은 `rhasspy/piper-voices`의
+`ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx`이며 SHA-256은
+`624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9`입니다.
+
+로봇의 `~/.config/malbut/tts.yaml`:
+
+```yaml
+/**:
+  ros__parameters:
+    backend: piper
+    model_path: /home/ubuntu/.cache/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx
+    piper_threads: 6
+    output_device: -1
+```
+
+`speech.launch.py`는 이 파일이 있으면 TTS 설정으로 읽습니다. 다른 파일은
+`tts_config:=/absolute/path/tts.yaml`로 지정합니다. 해당 파일이 없는 일반
+환경의 기본 백엔드는 기존 OpenAI이며, **Piper 실행 실패 시 API로 전환하지 않습니다**.
+직접 실행할 때는 `tts_node --ros-args --params-file /absolute/path/tts.yaml`을
+사용합니다. 저장된 알림 WAV(`audio_id`)는 기존 파일을 그대로 재생합니다.
+발음 사전은 패키지의 `config/korean_pronunciation_lexicon.json`에 있습니다.
+
+### 후보 발화의 음량 제어와 시간 기록
+
+기존 재생 제어 서비스는 `duck`/`unduck` 명령도 받습니다. `duck`은 앞으로 장치에 전달할 PCM의 진폭을 0.25배로 바꾸며, 재생 위치와 원본 큐를 보존합니다. `unduck`과 일시정지는 기본 진폭으로 복원합니다. 복원 메시지 유실에 대비해 감쇠는 300 ms 뒤 자동 해제됩니다. 확인 질문에는 감쇠를 적용하지 않으며 오래된 playback ID도 거부합니다. 이미 장치에 제출한 샘플은 바꾸지 않습니다.
+
+`speech_timing` 로그는 request ID와 playback ID로 합성 시작, 첫 생성 오디오, 장치 스트림 시작, 최종 상태를 연결합니다. `playing`은 장치 스트림 시작 회신으로, 실제 스피커 소리를 마이크로 측정한 시각은 아닙니다. 재개 시 첫 시작 시각을 덮어쓰지 않습니다.

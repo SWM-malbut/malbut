@@ -1,0 +1,120 @@
+{
+  "scope": "Same 437-turn snapshot copied independently per release; both calibrated,10 second settling and30 second idle, local Whisper, greeting disabled; entire speech cgroup CPU /6 CPUs",
+  "observations": [
+    {
+      "unit": "malbut-cpu-before.service",
+      "elapsed_s": 30.038183479999134,
+      "cpu_count": 6,
+      "cpu_percent_total": 11.932352153451314,
+      "memory_mb": 689.901568,
+      "active_state": "active",
+      "start": 1793161838.2183657,
+      "end": 1793161868.2565482,
+      "processes": [
+        {
+          "pid": "37809",
+          "cpu_percent_one_core": 0.0,
+          "cmd": "/usr/bin/python3 /opt/ros/humble/bin/ros2 launch /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/speech.launch.py python_executable:=/usr/bin/python3 stt_model_path:=/home/ubuntu/.cache/malbut_speech/models/ggml-small.bin stt_library_path:=/home/ubuntu/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so stt_config:=/home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/stt.yaml tts_config:=/home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/tts.yaml manager_commands:=false start_manager:=false agent_conversation_db:=/tmp/malbut_interaction_20261028/cpu_same_db/before.sqlite3 "
+        },
+        {
+          "pid": "37869",
+          "cpu_percent_one_core": 43.944068750992194,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_agent_server/lib/malbut_agent_server/agent_communication --provider openai --user-id speech-development-user --conversation-db /tmp/malbut_interaction_20261028/cpu_same_db/before.sqlite3 --prerecorded-audio --ros-args "
+        },
+        {
+          "pid": "37871",
+          "cpu_percent_one_core": 9.021850478423397,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_tts/lib/malbut_tts/tts_node --ros-args --params-file /tmp/launch_params_ciiyxk76 --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/tts.yaml -r /malbut/tts/request:=/malbut/speech/response -r /malbut/tts/playback_status:=/malbut/speech/playback_status -r /malbut/tts/playback_control:=/malbut/speech/playback_control "
+        },
+        {
+          "pid": "37873",
+          "cpu_percent_one_core": 0.06658192234998818,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_agent_server/lib/malbut_agent_server/weather --ros-args "
+        },
+        {
+          "pid": "37875",
+          "cpu_percent_one_core": 0.16645480587497047,
+          "cmd": "/usr/bin/python3 -m malbut_bringup.speech_process --startup-timeout-s 120.0 --wait-for-ready -- /usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/lib/malbut_stt/stt --ros-args --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/share/malbut_stt/config/jetson.yaml --params-file /tmp/launch_params_nv70z20w --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/stt.yaml "
+        },
+        {
+          "pid": "37879",
+          "cpu_percent_one_core": 12.983474858247696,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/lib/malbut_stt/stt --ros-args --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/share/malbut_stt/config/jetson.yaml --params-file /tmp/launch_params_nv70z20w --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/stt.yaml "
+        },
+        {
+          "pid": "37962",
+          "cpu_percent_one_core": 0.0,
+          "cmd": "/usr/bin/python3 -c from multiprocessing.resource_tracker import main;main(52) "
+        },
+        {
+          "pid": "37963",
+          "cpu_percent_one_core": 5.493008593874024,
+          "cmd": "/usr/bin/python3 -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=53, pipe_handle=55) --multiprocessing-fork "
+        }
+      ],
+      "phase": "before",
+      "initial_turn_count": 437,
+      "valid_idle": true,
+      "database": "/tmp/malbut_interaction_20261028/cpu_same_db/before.sqlite3"
+    },
+    {
+      "unit": "malbut-cpu-after.service",
+      "elapsed_s": 30.04011707400059,
+      "cpu_count": 6,
+      "cpu_percent_total": 7.648059407825845,
+      "memory_mb": 795.439104,
+      "active_state": "active",
+      "start": 1793161896.816539,
+      "end": 1793161926.8566558,
+      "processes": [
+        {
+          "pid": "38030",
+          "cpu_percent_one_core": 0.0,
+          "cmd": "/usr/bin/python3 /opt/ros/humble/bin/ros2 launch /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/speech.launch.py python_executable:=/usr/bin/python3 stt_model_path:=/home/ubuntu/.cache/malbut_speech/models/ggml-small.bin stt_library_path:=/home/ubuntu/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so stt_config:=/home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028/stt.yaml tts_config:=/home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/tts.yaml manager_commands:=false start_manager:=false agent_conversation_db:=/home/ubuntu/.local/state/malbut/speech-dialogue.sqlite3 agent_conversation_db:=/tmp/malbut_interaction_20261028/cpu_same_db/after.sqlite3 "
+        },
+        {
+          "pid": "38090",
+          "cpu_percent_one_core": 17.876095445206104,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_agent_server/lib/malbut_agent_server/agent_communication --provider openai --user-id speech-development-user --conversation-db /tmp/malbut_interaction_20261028/cpu_same_db/after.sqlite3 --prerecorded-audio --ros-args "
+        },
+        {
+          "pid": "38092",
+          "cpu_percent_one_core": 8.954692131769908,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_tts/lib/malbut_tts/tts_node --ros-args --params-file /tmp/launch_params_8qu1mgr4 --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/tts.yaml -r /malbut/tts/request:=/malbut/speech/response -r /malbut/tts/playback_status:=/malbut/speech/playback_status -r /malbut/tts/playback_control:=/malbut/speech/playback_control "
+        },
+        {
+          "pid": "38094",
+          "cpu_percent_one_core": 0.0,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_agent_server/lib/malbut_agent_server/weather --ros-args "
+        },
+        {
+          "pid": "38096",
+          "cpu_percent_one_core": 0.16644409166858568,
+          "cmd": "/usr/bin/python3 -m malbut_bringup.speech_process --startup-timeout-s 120.0 --wait-for-ready -- /usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/lib/malbut_stt/stt --ros-args --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/share/malbut_stt/config/jetson.yaml --params-file /tmp/launch_params_fysv_zxa --params-file /home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028/stt.yaml "
+        },
+        {
+          "pid": "38100",
+          "cpu_percent_one_core": 13.182372060151984,
+          "cmd": "/usr/bin/python3 /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/lib/malbut_stt/stt --ros-args --params-file /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/install/malbut_stt/share/malbut_stt/config/jetson.yaml --params-file /tmp/launch_params_fysv_zxa --params-file /home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028/stt.yaml "
+        },
+        {
+          "pid": "38183",
+          "cpu_percent_one_core": 0.0,
+          "cmd": "/usr/bin/python3 -c from multiprocessing.resource_tracker import main;main(52) "
+        },
+        {
+          "pid": "38184",
+          "cpu_percent_one_core": 5.69238793506563,
+          "cmd": "/usr/bin/python3 -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=53, pipe_handle=55) --multiprocessing-fork "
+        }
+      ],
+      "phase": "after",
+      "initial_turn_count": 437,
+      "valid_idle": true,
+      "database": "/tmp/malbut_interaction_20261028/cpu_same_db/after.sqlite3"
+    }
+  ],
+  "normal_service_restored": true,
+  "delta_percentage_points": -4.284292745625469,
+  "relative_change_percent": -35.90484667674077
+}

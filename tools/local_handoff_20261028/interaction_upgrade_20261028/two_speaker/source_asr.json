@@ -1,0 +1,9 @@
+[
+  {
+    "file": "human_normalized.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 1.7933371270191856,
+    "process_cpu_s": 0.007190893000000004
+  }
+]

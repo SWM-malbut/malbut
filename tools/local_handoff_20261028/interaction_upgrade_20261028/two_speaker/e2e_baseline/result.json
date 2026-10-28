@@ -1,0 +1,75 @@
+{
+  "trials": [
+    {
+      "mode": "control",
+      "pid": "1ea8e937e4094d789de9b79216c59bbe",
+      "rid": "conversation-opener:two-speaker-7cdb1ed07bb84b3c982c594e0b0534d3",
+      "published_at": 14.410074548999546,
+      "terminal_at": 14.425122725002439,
+      "terminal_state": "stopped",
+      "end_at": 30.438051704000827,
+      "transcripts": []
+    },
+    {
+      "mode": "overlap",
+      "pid": "3df32f6aeff14561990a4be6f7290c13",
+      "rid": "conversation-opener:two-speaker-878792a6104b406d9625a7029418ee36",
+      "published_at": 30.43888584200249,
+      "playing_at": 31.48463751500094,
+      "pc_requested_at": 36.50005599100041,
+      "terminal_at": 50.275033392001205,
+      "terminal_state": "finished",
+      "end_at": 66.2902524400015,
+      "transcripts": []
+    }
+  ],
+  "events": [
+    {
+      "at": 14.407353280999814,
+      "message": "aec_ready:{\"confidence\": 0.20955530299546327, \"lag_samples\": 7059, \"microphone_gain\": 1.0, \"recognition_audio\": \"aligned_microphone\", \"reference_delay_s\": 0.38257813849885136, \"reference_lead_s\": 0.04, \"window_confidence\": [0.1767118856349425, 0.2574831095712673], \"window_lags\": [7066, 7059]}"
+    },
+    {
+      "at": 14.409847565999371,
+      "message": "waiting_for_wake"
+    },
+    {
+      "at": 31.487733546000527,
+      "message": "barge_in_ready:reachy"
+    },
+    {
+      "at": 50.2809521670024,
+      "message": "waiting_for_followup"
+    },
+    {
+      "at": 60.292940769999404,
+      "message": "session_ended:followup_timeout"
+    },
+    {
+      "at": 60.29467778400067,
+      "message": "waiting_for_wake"
+    }
+  ],
+  "states": [
+    {
+      "at": 14.425105508002162,
+      "pid": "1ea8e937e4094d789de9b79216c59bbe",
+      "rid": "conversation-opener:two-speaker-7cdb1ed07bb84b3c982c594e0b0534d3",
+      "state": "stopped"
+    },
+    {
+      "at": 31.48462365800151,
+      "pid": "3df32f6aeff14561990a4be6f7290c13",
+      "rid": "conversation-opener:two-speaker-878792a6104b406d9625a7029418ee36",
+      "state": "playing"
+    },
+    {
+      "at": 50.275016720002895,
+      "pid": "3df32f6aeff14561990a4be6f7290c13",
+      "rid": "conversation-opener:two-speaker-878792a6104b406d9625a7029418ee36",
+      "state": "finished"
+    }
+  ],
+  "transcripts": [],
+  "aec_ready": true,
+  "failure": null
+}

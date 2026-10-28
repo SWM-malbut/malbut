@@ -1,0 +1,27 @@
+{
+  "setup": "Local physical notebook speaker plays public Korean human recording; robot physical speaker plays Piper TTS. Independent sources, no software audio injection.",
+  "source_reference": {
+    "source": "/home/shin/ros2_ws/stt_observation_20261013/vad_stress_10188/sources/126_003_0149.wav",
+    "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다",
+    "normalization_gain": 5.065218216740102,
+    "rms_dbfs": -19.000000000000004,
+    "peak": 0.728681600149928
+  },
+  "known_source_asr": [
+    {
+      "file": "human_normalized.wav",
+      "model": "gpt-transcribe",
+      "text": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+      "wall_s": 1.7933371270191856,
+      "process_cpu_s": 0.007190893000000004
+    }
+  ],
+  "quiet_result": {
+    "normal_beam_minus3_gain30": "USB severely attenuated, inaccurate transcription",
+    "beam2_gain30": "speech recovered, one phrase mistranscribed",
+    "beam2_gain5": "USB exact requested transcript in one known-source trial; Silero3.648s",
+    "gain_policy": "No permanent microphone change. Direction2 is specific to current source position."
+  },
+  "human_cued_note": "User confirmed both full sentences; both failed full USB transcription. This remains a separate real-human failure, not overwritten by replay success.",
+  "next": "Physical overlap end-to-end tests, control against robot-only self-stop, CPU comparison"
+}

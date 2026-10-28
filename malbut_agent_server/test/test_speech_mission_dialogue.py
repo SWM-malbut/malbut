@@ -167,3 +167,81 @@ def test_failed_speech_publication_does_not_resend_mission(dialogue):
     assert worker.publish_reply(reply, lambda text: False) is None
     assert worker.publish_reply(reply, lambda text: True)
     assert len(manager.calls) == 1
+
+
+@pytest.mark.parametrize('text,tool,arguments,capability,payload', [
+    ('집 안 탐색해서 새집이라는 이름으로 지도 저장해 줘',
+     'request_mapping', {'map_name': '새집'}, 'autoslam', {'map_name': '새집'}),
+    ('구집이 아니라 새집이라는 이름으로 지도 만들어줘',
+     'request_mapping', {'map_name': '새집'}, 'autoslam', {'map_name': '새집'}),
+    ('새집, 정확히는 우리 집이라는 이름으로 지도 만들어줘',
+     'request_mapping', {'map_name': '우리 집'}, 'autoslam', {'map_name': '우리 집'}),
+    ('가볍게가 아니라 꼼꼼하게 순찰해 줘',
+     'request_patrol', {'thoroughness': 'thorough'}, 'patrol', {'thoroughness': 2}),
+    ('자동이 아니라 전역 탐색으로 위치 찾아줘',
+     'request_relocalization', {'method': 'global_search'}, 'relocalize', {'method': 2}),
+])
+def test_memory_followup_does_not_replace_robot_save_or_correction(
+    dialogue, monkeypatch, text, tool, arguments, capability, payload,
+):
+    worker, manager, provider, _, _, runtimes = dialogue
+    monkeypatch.setattr(provider, 'complete', lambda *a, **kw: ProviderResult(
+        decision=AgentDecision(type='tool_call', tool_name=tool, arguments=arguments, message=''),
+        provider='fixed', model='fixed', latency_ms=0.0,
+    ))
+    assert worker.submit('corrected-robot-request', text)
+    reply = collect(worker)
+    assert reply['kind'] == 'answer'
+    assert worker.publish_reply(reply, lambda text: True)
+    assert [(call[0], call[1]) for call in manager.calls] == [(capability, payload)]
+    assert runtimes[0].memory_store.list_for_user('speaker') == []
+
+
+def test_map_save_name_question_survives_memory_commit(dialogue, monkeypatch):
+    worker, manager, provider, _, _, runtimes = dialogue
+    question = '새 지도를 어떤 이름으로 저장할까요?'
+    monkeypatch.setattr(provider, 'complete', lambda *a, **kw: ProviderResult(
+        decision=AgentDecision(type='clarification', message=question),
+        provider='fixed', model='fixed', latency_ms=0.0,
+    ))
+    assert worker.submit('map-without-name', '집 안 탐색해서 지도 저장해줘')
+    reply = collect(worker)
+    assert worker.publish_reply(reply, lambda text: True)['text'] == question
+    assert not manager.calls
+    assert runtimes[0].personal_memory.pending_question('speaker', reply['conversation_id']) is None
+
+
+@pytest.mark.parametrize('text', [
+    '내 이름 기억을 수정하고 순찰해 줘',
+    '내 이름을 수연으로 바꿔주고 순찰해 줘',
+])
+def test_real_memory_management_still_blocks_partial_robot_execution(dialogue, monkeypatch, text):
+    worker, manager, provider, _, _, _ = dialogue
+    monkeypatch.setattr(provider, 'complete', lambda *a, **kw: ProviderResult(
+        decision=AgentDecision(type='tool_call', tool_name='request_patrol',
+                               arguments={'thoroughness': 'normal'}, message=''),
+        provider='fixed', model='fixed', latency_ms=0.0,
+    ))
+    assert worker.submit('mixed-request', text)
+    reply = collect(worker)
+    assert '로봇 실행과 기억 관리' in worker.publish_reply(reply, lambda text: True)['text']
+    assert not manager.calls
+
+
+@pytest.mark.parametrize('name', ['/tmp/home', '../home', '새집.yaml', '집/거실', '🙂'])
+def test_invalid_map_name_gets_actionable_reply_before_preparation(dialogue, monkeypatch, name):
+    worker, manager, provider, _, _, runtimes = dialogue
+    monkeypatch.setattr(provider, 'complete', lambda *a, **kw: ProviderResult(
+        decision=AgentDecision(type='tool_call', tool_name='request_mapping',
+                               arguments={'map_name': name}, message=''),
+        provider='fixed', model='fixed', latency_ms=0.0,
+    ))
+    assert worker.submit('invalid-name', f'이 이름 그대로 지도를 만들어줘: {name}')
+    reply = collect(worker)
+    assert reply['kind'] == 'answer'
+    published = worker.publish_reply(reply, lambda text: True)
+    assert '지도 이름' in published['text']
+    assert '경로와 확장자' in published['text']
+    assert not manager.calls
+    history = runtimes[0].conversation_store.snapshot('speaker', reply['conversation_id'], limit=1)
+    assert history.turns[-1].assistant_content == published['text']

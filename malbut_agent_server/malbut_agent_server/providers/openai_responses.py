@@ -46,10 +46,12 @@ from malbut_agent_server.service_keys import key_value
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
+    SpeechAgentRequest,
     ProviderResult,
     ProviderUsage,
 )
 from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS, mapping_name_binding
 
 
 Transport = Callable[
@@ -304,6 +306,7 @@ class OpenAIResponsesProvider(AgentProvider):
         decision, memory_proposal = self._parse_output(
             response, memory_enabled=memory_enabled,
             automatic_extraction=memory_mode == 'automatic_extraction',
+            mapping_clarification='clarification_for' in payload['text']['format']['schema']['properties'],
         )
         try:
             decision.validate()
@@ -362,6 +365,7 @@ class OpenAIResponsesProvider(AgentProvider):
             'model': self.model,
             'instructions': system_instructions_for_tools(
                 tools, homecam_result='homecam_query_result_untrusted' in (memory_context or {}),
+                patrol_result='patrol_observations_untrusted' in (memory_context or {}),
             ) + '\n\n'
             + CONVERSATION_INSTRUCTIONS,
             'input': prepared_context.text,
@@ -428,6 +432,26 @@ class OpenAIResponsesProvider(AgentProvider):
             ]
         else:
             payload.pop('tool_choice')
+        if (isinstance(request, SpeechAgentRequest)
+                and any(tool.name == 'request_mapping' for tool in tools)
+                and memory_mode not in {'automatic_extraction', 'source_review', 'answer_only'}):
+            schema = copy.deepcopy(payload['text']['format']['schema'])
+            schema['properties']['clarification_for'] = {
+                'type': ['string', 'null'], 'enum': ['mapping_name', None],
+                'description': '지도 작성 실행에 필요한 저장 이름을 묻는 clarification에만 mapping_name. 그 외 null.',
+            }
+            schema['required'].append('clarification_for')
+            payload['text']['format']['schema'] = schema
+            payload['instructions'] += '\n\n' + MAPPING_NAME_INSTRUCTIONS
+            literal = mapping_name_binding(request)
+            if literal is not None:
+                # A complete field answer to a published name question is bound.
+                # Keep the real model call, constrained to that exact field value.
+                mapping = next(t for t in payload['tools'] if t['name'] == 'request_mapping')
+                mapping = copy.deepcopy(mapping)
+                mapping['parameters']['properties']['map_name']['enum'] = [literal]
+                payload['tools'] = [mapping]
+                payload['tool_choice'] = {'type': 'function', 'name': 'request_mapping'}
         if self._preserve_conversation(memory_mode):
             # Steer generation; character clipping can drop conditions or
             # force a syntactically valid response to end mid-sentence.
@@ -492,6 +516,7 @@ class OpenAIResponsesProvider(AgentProvider):
     def _parse_output(
         response: Dict[str, Any], *, memory_enabled: bool = False,
         automatic_extraction: bool = False,
+        mapping_clarification: bool = False,
     ) -> tuple:
         if not isinstance(response, dict):
             raise ProviderError('provider response must be an object')
@@ -626,6 +651,8 @@ class OpenAIResponsesProvider(AgentProvider):
                 reason='automatic_memory_extraction',
             ), proposal
         allowed = {'type', 'message', 'reason', 'confidence'}
+        if mapping_clarification:
+            allowed.add('clarification_for')
         if memory_enabled:
             allowed.add('memory_proposal')
         if set(parsed) != allowed:
@@ -643,6 +670,7 @@ class OpenAIResponsesProvider(AgentProvider):
             message=parsed.get('message'),
             reason=parsed.get('reason'),
             confidence=parsed.get('confidence'),
+            clarification_for=parsed.get('clarification_for'),
         ), proposal
 
     @staticmethod

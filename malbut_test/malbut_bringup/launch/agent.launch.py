@@ -69,6 +69,8 @@ def _setup(context):
                       '--fall-bridge-runtime-id', ids[1], '--fall-vlm-runtime-id', ids[2]]
     return [Node(
         package='malbut_agent_server', executable='agent_communication',
+        parameters=([str(Path.home() / '.config/malbut/agent.yaml')]
+                    if (Path.home() / '.config/malbut/agent.yaml').is_file() else []),
         prefix=prefix, output='screen', arguments=arguments,
     )]
 

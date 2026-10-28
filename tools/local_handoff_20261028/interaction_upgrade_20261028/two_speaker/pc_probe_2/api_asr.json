@@ -1,0 +1,30 @@
+[
+  {
+    "file": "gain30_raw0.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빗들은 개인 투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 1.5440970149938948,
+    "process_cpu_s": 0.011737173000000004
+  },
+  {
+    "file": "gain30_usb.wav",
+    "model": "gpt-transcribe",
+    "text": "특정 조건을 만족하는 회사자의 정책적인 보호를 받고 있다.",
+    "wall_s": 1.745018596004229,
+    "process_cpu_s": 0.016798927000000005
+  },
+  {
+    "file": "gain5_raw0.wav",
+    "model": "gpt-transcribe",
+    "text": "특히 중소형 빌딩은 개인 투자자의 전폭적인 지지를 받고 있다.",
+    "wall_s": 0.9107101999688894,
+    "process_cpu_s": 0.010234504999999991
+  },
+  {
+    "file": "gain5_usb.wav",
+    "model": "gpt-transcribe",
+    "text": "",
+    "wall_s": 0.9877968989894725,
+    "process_cpu_s": 0.005623779999999995
+  }
+]

@@ -178,7 +178,7 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
     if transcriber is not None and isinstance(transcriber.model, _MeasuredModel):
         raise ValueError('the model is still owned by an unfinished replay')
     pcm, source = _read_wav(wav_path)
-    import webrtcvad
+    from malbut_stt.silero_stream import SileroStreamVad
 
     load_started = monotonic()
     reused = transcriber is not None
@@ -196,7 +196,7 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
         else:
             transcriber = LocalWhisperTranscriber(model_path, compute_type=compute_type or 'int8')
     load_s = None if reused else monotonic() - load_started
-    vad = webrtcvad.Vad(2)
+    vad = SileroStreamVad()
     calls, events, transcripts = [], [], []
     origin = monotonic()
     speech_spans, pending_spans, utterance_spans = {}, [], {}
@@ -236,6 +236,8 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
                 speech_spans[collector]['last'] = now
         return speech
 
+    is_speech.reset = vad.reset
+
     def publish(uid, text):
         now = monotonic()
         span = utterance_spans.get(uid)
@@ -250,7 +252,8 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
         pipeline = DialoguePipeline(
             recorder_factory=lambda: recorder,
             wake=LocalWakeRecognizer.from_transcriber(transcriber), transcriber=transcriber,
-            is_speech=is_speech, publish_transcript=publish,
+            is_speech=is_speech, wake_is_speech=SileroStreamVad().is_speech,
+            publish_transcript=publish,
             publish_control=lambda *_: report('unexpected_playback_control'),
             publish_interruption=lambda *_: report('unexpected_addressee_request'),
             report=report, endpoint_predecode_s=0.8,
@@ -305,7 +308,7 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
 
         Thread(target=release_after_workers, name='replay-native-cleanup', daemon=True).start()
     packages = {}
-    for package in ('faster-whisper', 'ctranslate2', 'mlx-whisper', 'mlx', 'webrtcvad-wheels'):
+    for package in ('faster-whisper', 'ctranslate2', 'mlx-whisper', 'mlx', 'onnxruntime'):
         try:
             packages[package] = version(package)
         except PackageNotFoundError:
@@ -318,7 +321,7 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None
             'frame_samples': 512, 'tail_s': 4.0, 'pacing': 'real_time',
             'max_runtime_s': max_runtime_s, 'elapsed_s': monotonic() - origin,
             'all_input_emitted': recorder.finished_at is not None,
-            'emitted_chunks': recorder.chunks, 'vad_mode': 2,
+            'emitted_chunks': recorder.chunks, 'vad_backend': 'silero',
             'endpoint_predecode_s': 0.8, 'fallback_silence_s': 2.0,
             'vad_timing_basis': ('UID-correlated owner-thread VAD processing; '
                                  'not physical speech-end truth'),

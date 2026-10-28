@@ -1,0 +1,4830 @@
+{
+  "date": "2026-10-19",
+  "timezone": "Asia/Seoul",
+  "models": [
+    "gpt-5.6-luna"
+  ],
+  "reasoning_effort": "low",
+  "method": "Actual configured LLM -> real Agent/Manager -> isolated fake Actions; text replaces STT; no physical robot",
+  "expectations": "Declared before inference; verify provider tool/arguments before local policy, actual Action payload/result, and per-turn SpeechRequest counts",
+  "scope": "SpeechRequest publication counts, not audible playback. No physical patrol, SLAM map generation, or pose-estimation accuracy measured.",
+  "phases": {
+    "semantic_pilot": {
+      "complete": true,
+      "scenarios": 15,
+      "expected_scenarios": 15,
+      "turns": 35,
+      "expected_turns": 35,
+      "statuses": {
+        "pass": 35
+      },
+      "live_responses": 35,
+      "action_goals": 10,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 5,
+          "pass_scenarios": 5,
+          "pass_turns": 10,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 5,
+          "pass_scenarios": 5,
+          "pass_turns": 15,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 5,
+          "pass_scenarios": 5,
+          "pass_turns": 10,
+          "unavailable_notices": 0
+        }
+      },
+      "unique_response_ids": 35,
+      "files": [
+        "semantic_pilot.json"
+      ],
+      "prompt_sha256": [
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009"
+      ]
+    },
+    "initial_repeat_20": {
+      "complete": true,
+      "scenarios": 120,
+      "expected_scenarios": 120,
+      "turns": 200,
+      "expected_turns": 200,
+      "statuses": {
+        "pass": 200
+      },
+      "live_responses": 200,
+      "action_goals": 40,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "map-topic-switch": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 60,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "relocalize-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        }
+      },
+      "unique_response_ids": 200,
+      "files": [
+        "repeat_0.json",
+        "repeat_1.json"
+      ],
+      "prompt_sha256": [
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009",
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009"
+      ]
+    },
+    "interrupted_diagnostic": {
+      "complete": false,
+      "scenarios": 39,
+      "expected_scenarios": 188,
+      "turns": 54,
+      "expected_turns": 234,
+      "statuses": {
+        "pass": 52,
+        "fail": 2
+      },
+      "live_responses": 54,
+      "action_goals": 23,
+      "errors": [
+        {
+          "scenario": "map-named-6",
+          "error": "TimeoutError"
+        }
+      ],
+      "failures": [
+        {
+          "phase": "interrupted_diagnostic",
+          "scenario": "map-yes-is-not-name",
+          "source_id": "map-yes-is-not-name",
+          "repeat": 1,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "응",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "네, 말씀하세요.",
+          "policy_decision": {
+            "type": "message",
+            "message": "네, 말씀하세요.",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ordinary_conversation",
+            "confidence": 1,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "네, 말씀하세요.",
+          "speech_counts": {
+            "네, 말씀하세요.": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "reply_content"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0dbb9346c9d8f445016ad52606e27087d0b866ce7979154655",
+          "latency_ms": 2177.8,
+          "usage": {
+            "input_tokens": 8650,
+            "output_tokens": 88,
+            "total_tokens": 8738
+          }
+        },
+        {
+          "phase": "interrupted_diagnostic",
+          "scenario": "map-yes-is-not-name",
+          "source_id": "map-yes-is-not-name",
+          "repeat": 1,
+          "turn": 3,
+          "preceding_inputs": [
+            "지도 만들어줘",
+            "응"
+          ],
+          "input": "우리집",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "우리집"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "“우리집”이라고 말씀하신 뜻을 잘 모르겠어요. 지도를 만들고 싶은 건가요, 아니면 다른 요청인가요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "“우리집”이라고 말씀하신 뜻을 잘 모르겠어요. 지도를 만들고 싶은 건가요, 아니면 다른 요청인가요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_intent",
+            "confidence": 0.95,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "“우리집”이라고 말씀하신 뜻을 잘 모르겠어요. 지도를 만들고 싶은 건가요, 아니면 다른 요청인가요?",
+          "speech_counts": {
+            "“우리집”이라고 말씀하신 뜻을 잘 모르겠어요. 지도를 만들고 싶은 건가요, 아니면 다른 요청인가요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_099c5ad36cc15c5a016ad5260978e087d090b92de886d0c541",
+          "latency_ms": 3662.827,
+          "usage": {
+            "input_tokens": 8723,
+            "output_tokens": 255,
+            "total_tokens": 8978
+          }
+        }
+      ],
+      "incomplete_scenarios": [
+        "map-named-6",
+        "map-pending-name-quote"
+      ],
+      "by_source": {
+        "map-exact-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-6": {
+          "scenarios": 1,
+          "pass_scenarios": 0
+        },
+        "map-named-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 1,
+          "pass_scenarios": 0,
+          "pass_turns": 1,
+          "unavailable_notices": 0,
+          "fail_turns": 2
+        },
+        "map-delegated-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-correct-pending-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-abandon-pending": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-location": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-name-alone": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 0,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        }
+      },
+      "unique_response_ids": 54,
+      "files": [
+        "full.json"
+      ],
+      "prompt_sha256": [
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009"
+      ]
+    },
+    "clarification_probe_repeat": {
+      "complete": true,
+      "scenarios": 140,
+      "expected_scenarios": 140,
+      "turns": 260,
+      "expected_turns": 260,
+      "statuses": {
+        "pass": 259,
+        "fail": 1
+      },
+      "live_responses": 260,
+      "action_goals": 60,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "clarification_probe_repeat",
+          "scenario": "map-yes-is-not-name.repeat-17",
+          "source_id": "map-yes-is-not-name",
+          "repeat": 17,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "응",
+          "expected_tool": null,
+          "expected_arguments": {},
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "네.",
+          "policy_decision": {
+            "type": "message",
+            "message": "네.",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "casual_acknowledgment",
+            "confidence": 1,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "네.",
+          "speech_counts": {
+            "네.": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "reply_content"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0e1d892678e1c9b7016ad52769669487d0ae8143246edbf0d6",
+          "latency_ms": 1909.868,
+          "usage": {
+            "input_tokens": 8693,
+            "output_tokens": 84,
+            "total_tokens": 8777
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 60,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "relocalize-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 20,
+          "pass_scenarios": 19,
+          "pass_turns": 59,
+          "unavailable_notices": 0,
+          "fail_turns": 1
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        }
+      },
+      "unique_response_ids": 260,
+      "files": [
+        "final_repeat_0.json",
+        "final_repeat_1.json"
+      ],
+      "prompt_sha256": [
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009",
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009"
+      ]
+    },
+    "clarification_probe_full": {
+      "complete": true,
+      "scenarios": 190,
+      "expected_scenarios": 190,
+      "turns": 240,
+      "expected_turns": 240,
+      "statuses": {
+        "pass": 239,
+        "fail": 1
+      },
+      "live_responses": 240,
+      "action_goals": 110,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "clarification_probe_full",
+          "scenario": "fix-holdout-quoted-suffix",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 1,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "‘작업실로’는 현재 등록된 장소가 아니에요. 거실, 주방, 현관 중 어디로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "‘작업실로’는 현재 등록된 장소가 아니에요. 거실, 주방, 현관 중 어디로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_or_unregistered_destination",
+            "confidence": 0.98,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "‘작업실로’는 현재 등록된 장소가 아니에요. 거실, 주방, 현관 중 어디로 이동할까요?",
+          "speech_counts": {
+            "‘작업실로’는 현재 등록된 장소가 아니에요. 거실, 주방, 현관 중 어디로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0e55d8a782283a31016ad5277e532c87d0b6774e12c0278440",
+          "latency_ms": 2778.814,
+          "usage": {
+            "input_tokens": 8696,
+            "output_tokens": 206,
+            "total_tokens": 8902
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-correct-pending-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-location": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-overwrite-explicit": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-thorough": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-self-correct-global": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-16": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-status-to-action": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "relocalize-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-cancel-then-new": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "patrol-map-preemption": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-save-named": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-name-precise": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-locate-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-patrol-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-map-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-location-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-quoted-instruction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-light": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-normal": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-explain-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-acknowledgement-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-exact-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-delegated-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-abandon-pending": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-name-alone": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-negative": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-resume-unsupported": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-light": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-english": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-self-correct": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-17": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-mode-followup": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "patrol-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "relocalize-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "relocalize-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "map-cancel-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-patrol-low-priority": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-save-unnamed": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-name-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "holdout-patrol-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-map-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-location-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-patrol-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 1,
+          "pass_scenarios": 0,
+          "pass_turns": 1,
+          "unavailable_notices": 0,
+          "fail_turns": 1
+        },
+        "fix-holdout-unquoted-suffix": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-thorough": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-explain-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-active-stop": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-acknowledgement-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        }
+      },
+      "unique_response_ids": 240,
+      "files": [
+        "final_full_0.json",
+        "final_full_1.json"
+      ],
+      "prompt_sha256": [
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009",
+        "a626fe4edc7e8b69fa78a22be904e95725085aff89a013d43aa47d3344e2d009"
+      ]
+    },
+    "interrupted_context_repeat": {
+      "complete": false,
+      "scenarios": 44,
+      "expected_scenarios": 140,
+      "turns": 79,
+      "expected_turns": 260,
+      "statuses": {
+        "pass": 79
+      },
+      "live_responses": 79,
+      "action_goals": 18,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [
+        "map-exact-5.repeat-7",
+        "map-yes-is-not-name.repeat-7"
+      ],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 7,
+          "pass_scenarios": 6,
+          "pass_turns": 13,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 6,
+          "pass_scenarios": 6,
+          "pass_turns": 18,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 6,
+          "pass_scenarios": 6,
+          "pass_turns": 6,
+          "unavailable_notices": 6
+        },
+        "relocalize-manager-off": {
+          "scenarios": 6,
+          "pass_scenarios": 6,
+          "pass_turns": 6,
+          "unavailable_notices": 6
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 7,
+          "pass_scenarios": 6,
+          "pass_turns": 18,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 6,
+          "pass_scenarios": 6,
+          "pass_turns": 12,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 6,
+          "pass_scenarios": 6,
+          "pass_turns": 6,
+          "unavailable_notices": 6
+        }
+      },
+      "unique_response_ids": 79,
+      "files": [
+        "accept_repeat_0.json",
+        "accept_repeat_1.json"
+      ],
+      "prompt_sha256": [
+        "f9e383a4f0d7b32db79569b81cbc808e16f7f0b91582eb52702ddf894a564e9a",
+        "f9e383a4f0d7b32db79569b81cbc808e16f7f0b91582eb52702ddf894a564e9a"
+      ]
+    },
+    "interrupted_context_full": {
+      "complete": false,
+      "scenarios": 54,
+      "expected_scenarios": 190,
+      "turns": 70,
+      "expected_turns": 240,
+      "statuses": {
+        "pass": 70
+      },
+      "live_responses": 70,
+      "action_goals": 25,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [
+        "map-noncommand-11",
+        "map-invalid-name-4"
+      ],
+      "by_source": {
+        "map-exact-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-correct-pending-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-location": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 0
+        },
+        "map-exact-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-delegated-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-abandon-pending": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-name-alone": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-negative": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-4": {
+          "scenarios": 1,
+          "pass_scenarios": 0
+        }
+      },
+      "unique_response_ids": 70,
+      "files": [
+        "accept_full_0.json",
+        "accept_full_1.json"
+      ],
+      "prompt_sha256": [
+        "f9e383a4f0d7b32db79569b81cbc808e16f7f0b91582eb52702ddf894a564e9a",
+        "f9e383a4f0d7b32db79569b81cbc808e16f7f0b91582eb52702ddf894a564e9a"
+      ]
+    },
+    "interrupted_scope_repeat": {
+      "complete": false,
+      "scenarios": 58,
+      "expected_scenarios": 160,
+      "turns": 107,
+      "expected_turns": 300,
+      "statuses": {
+        "pass": 105,
+        "fail": 2
+      },
+      "live_responses": 107,
+      "action_goals": 26,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "interrupted_scope_repeat",
+          "scenario": "fix-holdout-quoted-suffix.repeat-1",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 1,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "현재 등록된 장소는 거실, 주방, 현관입니다. “작업실”은 등록된 목적지에서 찾을 수 없어요. 이 중 어느 곳으로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "현재 등록된 장소는 거실, 주방, 현관입니다. “작업실”은 등록된 목적지에서 찾을 수 없어요. 이 중 어느 곳으로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "destination_not_registered",
+            "confidence": 0.99,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "현재 등록된 장소는 거실, 주방, 현관입니다. “작업실”은 등록된 목적지에서 찾을 수 없어요. 이 중 어느 곳으로 이동할까요?",
+          "speech_counts": {
+            "현재 등록된 장소는 거실, 주방, 현관입니다. “작업실”은 등록된 목적지에서 찾을 수 없어요. 이 중 어느 곳으로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0641a123e06d04e0016ad5280c790c87d0a7554f57fed194c7",
+          "latency_ms": 3576.491,
+          "usage": {
+            "input_tokens": 8925,
+            "output_tokens": 175,
+            "total_tokens": 9100
+          }
+        },
+        {
+          "phase": "interrupted_scope_repeat",
+          "scenario": "fix-holdout-quoted-suffix.repeat-2",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 2,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "unknown_destination",
+            "confidence": 0.98,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+          "speech_counts": {
+            "등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_08b7a7a03484fad1016ad528201b7887d09753e1fcff3bb828",
+          "latency_ms": 3129.329,
+          "usage": {
+            "input_tokens": 8920,
+            "output_tokens": 199,
+            "total_tokens": 9119
+          }
+        }
+      ],
+      "incomplete_scenarios": [
+        "map-topic-switch.repeat-8",
+        "fix-holdout-quoted-suffix.repeat-7"
+      ],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 8,
+          "pass_scenarios": 8,
+          "pass_turns": 16,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 8,
+          "pass_scenarios": 7,
+          "pass_turns": 23,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 7,
+          "pass_scenarios": 7,
+          "pass_turns": 7,
+          "unavailable_notices": 7
+        },
+        "relocalize-manager-off": {
+          "scenarios": 7,
+          "pass_scenarios": 7,
+          "pass_turns": 7,
+          "unavailable_notices": 7
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 7,
+          "pass_scenarios": 7,
+          "pass_turns": 21,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 7,
+          "pass_scenarios": 7,
+          "pass_turns": 14,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 7,
+          "pass_scenarios": 7,
+          "pass_turns": 7,
+          "unavailable_notices": 7
+        },
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 7,
+          "pass_scenarios": 4,
+          "pass_turns": 10,
+          "unavailable_notices": 0,
+          "fail_turns": 2
+        }
+      },
+      "unique_response_ids": 107,
+      "files": [
+        "verified_repeat_0.json",
+        "verified_repeat_1.json"
+      ],
+      "prompt_sha256": [
+        "9f6b96e3e5aa7ec72d8c8ac5f92ebc5d86129a450f7fa977dad83776688074f5",
+        "9f6b96e3e5aa7ec72d8c8ac5f92ebc5d86129a450f7fa977dad83776688074f5"
+      ]
+    },
+    "interrupted_scope_full": {
+      "complete": false,
+      "scenarios": 91,
+      "expected_scenarios": 190,
+      "turns": 107,
+      "expected_turns": 240,
+      "statuses": {
+        "pass": 107
+      },
+      "live_responses": 107,
+      "action_goals": 49,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [
+        "patrol-noncommand-1",
+        "patrol-noncommand-8"
+      ],
+      "by_source": {
+        "map-exact-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-correct-pending-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-location": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-overwrite-explicit": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-thorough": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 0
+        },
+        "map-exact-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-delegated-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-abandon-pending": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-name-alone": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-negative": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-resume-unsupported": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-light": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-english": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 0
+        }
+      },
+      "unique_response_ids": 107,
+      "files": [
+        "verified_full_0.json",
+        "verified_full_1.json"
+      ],
+      "prompt_sha256": [
+        "9f6b96e3e5aa7ec72d8c8ac5f92ebc5d86129a450f7fa977dad83776688074f5",
+        "9f6b96e3e5aa7ec72d8c8ac5f92ebc5d86129a450f7fa977dad83776688074f5"
+      ]
+    },
+    "context_debug": {
+      "complete": true,
+      "scenarios": 5,
+      "expected_scenarios": 5,
+      "turns": 10,
+      "expected_turns": 10,
+      "statuses": {
+        "pass": 6,
+        "fail": 4
+      },
+      "live_responses": 10,
+      "action_goals": 1,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "context_debug",
+          "scenario": "fix-holdout-quoted-suffix.repeat-1",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 1,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "‘작업실’은 현재 등록된 장소가 아니에요. 거실·주방·현관 중 어디로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "‘작업실’은 현재 등록된 장소가 아니에요. 거실·주방·현관 중 어디로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "unregistered_destination",
+            "confidence": 0.98,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "‘작업실’은 현재 등록된 장소가 아니에요. 거실·주방·현관 중 어디로 이동할까요?",
+          "speech_counts": {
+            "‘작업실’은 현재 등록된 장소가 아니에요. 거실·주방·현관 중 어디로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_03ae85c635efff88016ad52860bdac87d08982bda231999705",
+          "latency_ms": 4633.941,
+          "usage": {
+            "input_tokens": 8917,
+            "output_tokens": 328,
+            "total_tokens": 9245
+          }
+        },
+        {
+          "phase": "context_debug",
+          "scenario": "fix-holdout-quoted-suffix.repeat-2",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 2,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "등록된 장소에 ‘작업실’이 없습니다. 거실, 주방, 현관 중 어디로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "등록된 장소에 ‘작업실’이 없습니다. 거실, 주방, 현관 중 어디로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "destination_not_registered",
+            "confidence": 0.99,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "등록된 장소에 ‘작업실’이 없습니다. 거실, 주방, 현관 중 어디로 이동할까요?",
+          "speech_counts": {
+            "등록된 장소에 ‘작업실’이 없습니다. 거실, 주방, 현관 중 어디로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_097f8132f23f934e016ad52868528087d0803c16b8c2100362",
+          "latency_ms": 2546.736,
+          "usage": {
+            "input_tokens": 8922,
+            "output_tokens": 150,
+            "total_tokens": 9072
+          }
+        },
+        {
+          "phase": "context_debug",
+          "scenario": "fix-holdout-quoted-suffix.repeat-3",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 3,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "‘작업실로’가 이동할 장소를 뜻하나요? 현재 등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "‘작업실로’가 이동할 장소를 뜻하나요? 현재 등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_or_unregistered_destination",
+            "confidence": 0.97,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "‘작업실로’가 이동할 장소를 뜻하나요? 현재 등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?",
+          "speech_counts": {
+            "‘작업실로’가 이동할 장소를 뜻하나요? 현재 등록된 장소는 거실, 주방, 현관입니다. 어느 곳으로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0877a0995e046802016ad5286d7ef087d0bfdc53a74bff50d4",
+          "latency_ms": 3423.577,
+          "usage": {
+            "input_tokens": 8916,
+            "output_tokens": 204,
+            "total_tokens": 9120
+          }
+        },
+        {
+          "phase": "context_debug",
+          "scenario": "fix-holdout-quoted-suffix.repeat-4",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 4,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "‘작업실’은 현재 등록된 장소(거실·주방·현관)에 없습니다. 어느 등록된 장소로 이동할까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "‘작업실’은 현재 등록된 장소(거실·주방·현관)에 없습니다. 어느 등록된 장소로 이동할까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_or_unregistered_destination",
+            "confidence": 0.99,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "‘작업실’은 현재 등록된 장소(거실·주방·현관)에 없습니다. 어느 등록된 장소로 이동할까요?",
+          "speech_counts": {
+            "‘작업실’은 현재 등록된 장소(거실·주방·현관)에 없습니다. 어느 등록된 장소로 이동할까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0109e2c0ad0c5716016ad52873a70487d0913ecf186af19359",
+          "latency_ms": 2736.093,
+          "usage": {
+            "input_tokens": 8921,
+            "output_tokens": 183,
+            "total_tokens": 9104
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 5,
+          "pass_scenarios": 1,
+          "pass_turns": 6,
+          "unavailable_notices": 0,
+          "fail_turns": 4
+        }
+      },
+      "unique_response_ids": 10,
+      "files": [
+        "context_debug.json"
+      ],
+      "prompt_sha256": [
+        "9f6b96e3e5aa7ec72d8c8ac5f92ebc5d86129a450f7fa977dad83776688074f5"
+      ]
+    },
+    "navigation_scope_probe": {
+      "complete": true,
+      "scenarios": 30,
+      "expected_scenarios": 30,
+      "turns": 70,
+      "expected_turns": 70,
+      "statuses": {
+        "pass": 69,
+        "fail": 1
+      },
+      "live_responses": 70,
+      "action_goals": 29,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "navigation_scope_probe",
+          "scenario": "fix-holdout-quoted-suffix.repeat-10",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 10,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "“작업실로”라고 말씀하셨네요. 이동을 원하시면 등록된 장소인 거실, 주방, 현관 중 어디로 갈까요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "“작업실로”라고 말씀하셨네요. 이동을 원하시면 등록된 장소인 거실, 주방, 현관 중 어디로 갈까요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_destination",
+            "confidence": 0.9,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "“작업실로”라고 말씀하셨네요. 이동을 원하시면 등록된 장소인 거실, 주방, 현관 중 어디로 갈까요?",
+          "speech_counts": {
+            "“작업실로”라고 말씀하셨네요. 이동을 원하시면 등록된 장소인 거실, 주방, 현관 중 어디로 갈까요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0b3cc7dceb6db45d016ad52936381c87d0876494d27ec5e9ce",
+          "latency_ms": 3500.277,
+          "usage": {
+            "input_tokens": 9057,
+            "output_tokens": 284,
+            "total_tokens": 9341
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 10,
+          "pass_scenarios": 10,
+          "pass_turns": 20,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 10,
+          "pass_scenarios": 10,
+          "pass_turns": 30,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 10,
+          "pass_scenarios": 9,
+          "pass_turns": 19,
+          "unavailable_notices": 0,
+          "fail_turns": 1
+        }
+      },
+      "unique_response_ids": 70,
+      "files": [
+        "navigation_scope_probe.json"
+      ],
+      "prompt_sha256": [
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67"
+      ]
+    },
+    "navigation_boundary_probe": {
+      "complete": true,
+      "scenarios": 24,
+      "expected_scenarios": 24,
+      "turns": 45,
+      "expected_turns": 45,
+      "statuses": {
+        "pass": 45
+      },
+      "live_responses": 45,
+      "action_goals": 18,
+      "errors": [],
+      "failures": [],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 6,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 9,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 6,
+          "unavailable_notices": 0
+        },
+        "fix-nav-current-request": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-nav-topic-switch": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 6,
+          "unavailable_notices": 0
+        },
+        "fix-nav-destination-answer": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 6,
+          "unavailable_notices": 0
+        },
+        "fix-map-place-name-answer": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 6,
+          "unavailable_notices": 0
+        },
+        "fix-nav-unknown-place": {
+          "scenarios": 3,
+          "pass_scenarios": 3,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        }
+      },
+      "unique_response_ids": 45,
+      "files": [
+        "navigation_boundary_probe.json"
+      ],
+      "prompt_sha256": [
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67"
+      ]
+    },
+    "repeat_20": {
+      "complete": true,
+      "scenarios": 160,
+      "expected_scenarios": 160,
+      "turns": 300,
+      "expected_turns": 300,
+      "statuses": {
+        "pass": 298,
+        "fail": 2
+      },
+      "live_responses": 300,
+      "action_goals": 78,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "repeat_20",
+          "scenario": "fix-holdout-quoted-suffix.repeat-4",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 4,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "“작업실로”라고 하셨는데, 작업실로 이동할까요? 현재 등록된 목적지는 거실·주방·현관입니다.",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "“작업실로”라고 하셨는데, 작업실로 이동할까요? 현재 등록된 목적지는 거실·주방·현관입니다.",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_intent",
+            "confidence": 0.93,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "“작업실로”라고 하셨는데, 작업실로 이동할까요? 현재 등록된 목적지는 거실·주방·현관입니다.",
+          "speech_counts": {
+            "“작업실로”라고 하셨는데, 작업실로 이동할까요? 현재 등록된 목적지는 거실·주방·현관입니다.": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_07ef9e7e1e679d64016ad5294ea22c87d0822b3ce0a3b591b6",
+          "latency_ms": 2902.95,
+          "usage": {
+            "input_tokens": 9060,
+            "output_tokens": 199,
+            "total_tokens": 9259
+          }
+        },
+        {
+          "phase": "repeat_20",
+          "scenario": "fix-holdout-quoted-suffix.repeat-8",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 8,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "“작업실로”가 이동 목적지인지, 지도 이름인지 알 수 없습니다. 무엇을 원하시나요?",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "“작업실로”가 이동 목적지인지, 지도 이름인지 알 수 없습니다. 무엇을 원하시나요?",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_intent",
+            "confidence": 0.98,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "“작업실로”가 이동 목적지인지, 지도 이름인지 알 수 없습니다. 무엇을 원하시나요?",
+          "speech_counts": {
+            "“작업실로”가 이동 목적지인지, 지도 이름인지 알 수 없습니다. 무엇을 원하시나요?": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_035d5926369efdf9016ad5299b285087d09731ae4de3912d15",
+          "latency_ms": 3019.055,
+          "usage": {
+            "input_tokens": 9056,
+            "output_tokens": 233,
+            "total_tokens": 9289
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-5": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 60,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "relocalize-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 60,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 40,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 20,
+          "pass_scenarios": 20,
+          "pass_turns": 20,
+          "unavailable_notices": 20
+        },
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 20,
+          "pass_scenarios": 18,
+          "pass_turns": 38,
+          "unavailable_notices": 0,
+          "fail_turns": 2
+        }
+      },
+      "unique_response_ids": 300,
+      "files": [
+        "release_repeat_0.json",
+        "release_repeat_1.json"
+      ],
+      "prompt_sha256": [
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67",
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67"
+      ]
+    },
+    "full_regression": {
+      "complete": true,
+      "scenarios": 195,
+      "expected_scenarios": 195,
+      "turns": 248,
+      "expected_turns": 248,
+      "statuses": {
+        "pass": 247,
+        "fail": 1
+      },
+      "live_responses": 248,
+      "action_goals": 114,
+      "errors": [],
+      "failures": [
+        {
+          "phase": "full_regression",
+          "scenario": "fix-holdout-quoted-suffix",
+          "source_id": "fix-holdout-quoted-suffix",
+          "repeat": 1,
+          "turn": 2,
+          "preceding_inputs": [
+            "지도 만들어줘"
+          ],
+          "input": "\"작업실로\"",
+          "expected_tool": "request_mapping",
+          "expected_arguments": {
+            "map_name": "작업실로"
+          },
+          "provider_tool": null,
+          "provider_arguments": {},
+          "provider_message": "“작업실로”가 이동 요청인지, 문구를 말씀하신 것인지 잘 모르겠어요. 이동 요청이라면 현재 등록된 장소는 거실·주방·현관입니다.",
+          "policy_decision": {
+            "type": "clarification",
+            "message": "“작업실로”가 이동 요청인지, 문구를 말씀하신 것인지 잘 모르겠어요. 이동 요청이라면 현재 등록된 장소는 거실·주방·현관입니다.",
+            "tool_name": null,
+            "arguments": {},
+            "reason": "ambiguous_intent",
+            "confidence": 0.94,
+            "expires_in_ms": 5000
+          },
+          "goals": [],
+          "terminal": [],
+          "reply": "“작업실로”가 이동 요청인지, 문구를 말씀하신 것인지 잘 모르겠어요. 이동 요청이라면 현재 등록된 장소는 거실·주방·현관입니다.",
+          "speech_counts": {
+            "“작업실로”가 이동 요청인지, 문구를 말씀하신 것인지 잘 모르겠어요. 이동 요청이라면 현재 등록된 장소는 거실·주방·현관입니다.": 1
+          },
+          "status": "fail",
+          "failed_checks": [
+            "tool",
+            "provider_tool",
+            "arguments",
+            "provider_arguments",
+            "action_goal",
+            "manager_received",
+            "terminal"
+          ],
+          "model": "gpt-5.6-luna",
+          "response_id": "resp_0e33dd6959f8bb23016ad52a1bf3f487d0abeb0c76c758ce87",
+          "latency_ms": 3533.022,
+          "usage": {
+            "input_tokens": 9076,
+            "output_tokens": 282,
+            "total_tokens": 9358
+          }
+        }
+      ],
+      "incomplete_scenarios": [],
+      "by_source": {
+        "map-exact-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-yes-is-not-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-correct-pending-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-location": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-overwrite-explicit": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-thorough": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-self-correct-global": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-14": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-16": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-status-to-action": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "relocalize-cancel-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-cancel-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-abort": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-cancel-then-new": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "patrol-map-preemption": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-save-named": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-name-precise": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-locate-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-patrol-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-map-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-location-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-quoted-instruction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-light": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-normal": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-explain-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-acknowledgement-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-nav-current-request": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "fix-nav-destination-answer": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-nav-unknown-place": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-exact-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-exact-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-unnamed-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-named-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-delegated-name": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-abandon-pending": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "map-switch-to-patrol": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-name-alone": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-pending-name-negative": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-noncommand-12": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-invalid-name-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "map-resume-unsupported": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-light-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-normal-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-thorough-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-self-correct-light": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-english": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-noncommand-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-unsupported-constraint-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-4": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-6": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-8": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-auto-10": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-global_search-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-self-correct": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-5": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-7": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-9": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-11": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-13": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-15": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-noncommand-17": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "locate-mode-followup": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "autoslam-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "autoslam-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "patrol-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "patrol-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "patrol-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "relocalize-cancel-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "relocalize-reject": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "relocalize-manager-off": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 1
+        },
+        "map-cancel-quote": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "map-patrol-low-priority": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-active-position-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-light-patrol-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "repeat-position-status-3": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-save-unnamed": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-map-name-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "holdout-patrol-correction": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-map-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-location-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "holdout-future-patrol-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 1,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-quoted-suffix": {
+          "scenarios": 1,
+          "pass_scenarios": 0,
+          "pass_turns": 1,
+          "unavailable_notices": 0,
+          "fail_turns": 1
+        },
+        "fix-holdout-unquoted-suffix": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-switch-thorough": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-explain-1": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-active-stop": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-holdout-acknowledgement-2": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 3,
+          "unavailable_notices": 0
+        },
+        "fix-nav-topic-switch": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        },
+        "fix-map-place-name-answer": {
+          "scenarios": 1,
+          "pass_scenarios": 1,
+          "pass_turns": 2,
+          "unavailable_notices": 0
+        }
+      },
+      "unique_response_ids": 248,
+      "files": [
+        "release_full_0.json",
+        "release_full_1.json"
+      ],
+      "prompt_sha256": [
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67",
+        "f37b647bf19a4176840536353c164af36f08b69aa31fc2ae9dc437b630de0f67"
+      ]
+    }
+  },
+  "total_live_responses": 1825,
+  "total_turns": 1825,
+  "final_acceptance": {
+    "complete": true,
+    "scenarios": 355,
+    "turns": 548,
+    "passed": 545,
+    "failed": 3,
+    "errors": 0
+  }
+}

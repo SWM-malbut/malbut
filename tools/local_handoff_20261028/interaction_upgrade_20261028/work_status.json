@@ -1,0 +1,84 @@
+{
+  "updated_at": "2026-10-28T05:27:13.088996+00:00",
+  "goal_status": "in progress after user authorized automatic PC-speaker versus robot-speaker tests; live acoustic path verified",
+  "robot_service": "malbut-speech-interaction.service",
+  "release": "/home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028",
+  "applied": [
+    "Existing Silero and strict AEC mask",
+    "2 second pre-roll, local Whisper",
+    "One optional ready greeting and wake-free reply",
+    "Interrupted-reply metadata and conversation initiative prompting",
+    "Story recovery skips unchanged DB; both same-connection and external changes and expired leases still recovered",
+    "Refined spoken reply prompt: concise turns, actual story on topic change, no invented relationships",
+    "Current robot release Piper threads6→3; old baseline configuration preserved"
+  ],
+  "experimental_not_default": [
+    "Raw microphone to gpt-transcribe on confirmed interruptions",
+    "Provisional 1.2 second candidate ducking: no correct human transcript; not deployed",
+    "Microphone PGA5 headroom candidate: no clipped samples on known-speaker control; human quiet/overlap performance unverified"
+  ],
+  "rejected": [
+    "AEC3 linear-output native extension: worsened live injected transcript"
+  ],
+  "tests": {
+    "stt_full": "1241 passed, 4 skipped; before native experiment removal",
+    "stt_final_focused": "26 passed after removal",
+    "agent_full": "4143 passed, 36 skipped, one mock failure subsequently repaired",
+    "agent_repaired_case": "5 passed",
+    "story_recovery_full": "232 passed, 71 subtests passed",
+    "dialogue_refinement": "29 passed, 1 skipped without ROS; isolated ROS greeting 3 passed after disabling incompatible launch_testing plugin autoload"
+  },
+  "live_results": {
+    "baseline": "3 played trials, 0 detected interruptions; user confirmed speaking in all 3",
+    "candidate": "2 played trials without detection; third cancelled before playback and invalid; actual utterance labels pending",
+    "volume_50": "User confirmed saying 한번 정리해봐: one genuine stop and accurate transcript at 50%; second transcript 마 remains unlabelled. Repeating with controlled trials.",
+    "controlled_retest": "Four requested speech trials excluded from miss rates: user missed timing. One further 50% trial: user confirmed speaking full sentence during playback; no detection or API call. No stop events in control_80/control_50.",
+    "candidate_duck_50": "User confirmed speaking during playback at 1–2 m. STOP occurred, but transcript was robot-like content rather than expected human command. Failed end-to-end; candidate not deployed.",
+    "quiet_capture": "User confirmed two FULL requested sentences at 1–2 m, no robot playback. API twice omitted leading 잠깐 and final 으로 해줘; local Whisper first phrase imperfect and second hallucinated outro. Mic PCM captured before host software AEC and turn collection, so host TTS gating/AEC cannot alone explain this quiet failure.",
+    "paired_raw_human": "One full sentence confirmed at1–2m; exact timing within90s unknown. Full raw0 API blank; two candidate windows across all6offlinebeams fail expected transcript. USB nearly silent. Subsequent debug0/1 known-speaker control finds no gross debug-induced mute; this does not establish original timing or cause.",
+    "cued_gains": "Both full sentences confirmed. PGA30 raw0 API: 잠깐. 잠깐, 겨울 얘기 좀 해줘.; USB:잠깐, 잠깐. PGA5 raw0/USB blank. Both USB Silero0. Original gain restored. No improvement claimed."
+  },
+  "remaining": [
+    "Determine actual human audio loss in microphone frontend versus software AEC during double talk; new candidate ducking failed correct transcription",
+    "Validate low CPU barge-in fix on confirmed live human speech and silent controls",
+    "Keep conversational improvement limits explicit; no Reachy quality parity established"
+  ],
+  "rollback": "/home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028/control.sh rollback",
+  "data_notes": "No key material copied or logged; experiment audio and transcripts remain in local/robot trial folders. Normal profile preserves previous conversation DB; test conversations use a separate DB.",
+  "cpu_verified": {
+    "same_db_turns": 434,
+    "before_percent_total": 12.1117899568,
+    "after_percent_total": 7.6924812973,
+    "cpu_count": 6,
+    "window_s": 30,
+    "original_baseline_caveat": "6.57% used empty DB; not directly comparable"
+  },
+  "human_distance": "1–2 m",
+  "pending_human_trial": "Cued quiet trials completed; user confirmed both full sentences. User now requests autonomous physical two-speaker comparison; no human-readiness response needed.",
+  "cpu_comparable_baseline": {
+    "initial_turns_per_copy": 437,
+    "scope": "Old versus current complete services, no greeting, calibrated physical mic, same DB snapshot",
+    "before_percent_total": 11.932352153451314,
+    "after_percent_total": 7.648059407825845,
+    "cpu_count": 6,
+    "window_s": 30,
+    "memory_before_mb": 689.901568,
+    "memory_after_mb": 795.439104,
+    "valid_idle": true,
+    "source": "cpu_same_db/comparison.json"
+  },
+  "hardware_diagnostics": "Embedded8ch→mic6_circle→monoUSB. Config watcher direct-write race repaired with atomic replacement; debug0/1 control both pass loudspeaker audio. Raw saturation confirmed at80% speaker. PGA5 removes measured hard clipping, human sensitivity unverified; original30dB restored.",
+  "tts_comparison": {
+    "scope": "same Jetson, five texts, synthesis-only; no playback or production voice change",
+    "piper_asr_exact": "4/5",
+    "api_asr_exact": "3/5",
+    "piper_mean_first_chunk_s": 0.5836310142,
+    "api_mean_first_chunk_s": 1.9829394084,
+    "piper_warm_mean_cpu_s": 2.17117092,
+    "api_warm_mean_cpu_s": 0.168439608,
+    "caveat": "ASR round-trip proxy only, not human naturalness. All five Korean normalization outputs equal original inputs. API backend already existed in worktree; this task measured it.",
+    "decision": "Piper retained; current interaction release6→3threads applied; runtime confirms3threads andAECready, normal service active",
+    "thread_compare": "15matched waveforms with fixed seed: CPU29.547→24.874CPU-seconds; firstchunk mean0.548→0.626s; same lengths, PCM differences<=4LSB. Synthesis-only, not whole-service speech CPU."
+  },
+  "two_speaker": "Local physical laptop PulseAudio sink connected explicitly via unix:/run/user/1000/pulse/native. Known public Korean human clip normalized to−19dBFS, replayed at stream45000; robot raw signal correlates with source. PGA5 raw API restores expected full text, processedUSB blank. PGA30 raw largely intelligible, USB heavily attenuated and inaccurate. Testing offline beam selection before further live changes."
+}

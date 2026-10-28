@@ -1,7 +1,9 @@
 """Run one map-driven camera patrol through cancellable Nav2 actions."""
 
 import json
+from collections import deque
 import math
+import os
 from pathlib import Path
 import signal
 import threading
@@ -31,6 +33,9 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from malbut_patrol.coverage import (
     CoverageGrid, CoveragePlanner, CoverageProfile, read_room_map,
 )
+from malbut_patrol.photo_recorder import DEFAULT_DIRECTORY, PhotoRecorder
+from malbut_patrol.inspection import InspectionCalibration, PhotoCoverage
+from malbut_patrol.spatial_capture import stamp_seconds
 
 
 class PatrolInterrupted(RuntimeError):
@@ -121,6 +126,8 @@ class PatrolManager(Node):
             'camera_image_topic': '/camera/color/image_raw',
             'camera_info_topic': '/camera/color/camera_info',
             'camera_optical_frame': '',
+            'depth_image_topic': '/camera/depth/image_raw',
+            'depth_aligned_to_rgb': False,
             'room_map_file': '',
             'base_frame': 'base_footprint',
             'nav2_action_name': 'navigate_to_pose',
@@ -141,6 +148,14 @@ class PatrolManager(Node):
             'stall_distance_m': 0.10,
             'spin_time_allowance_s': 60.0,
             'maximum_goal_cost': 80,
+            'record_observations': os.environ.get('MALBUT_PATROL_OBSERVATIONS', '1') == '1',
+            'observation_directory': os.environ.get(
+                'MALBUT_PATROL_OBSERVATION_DIR', DEFAULT_DIRECTORY),
+            'inspection_calibration_file': '',
+            'coverage_source': 'auto',
+            'require_room_entry': False,
+            'max_photos': 96,
+            'analysis_wait_s': 120.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -148,7 +163,8 @@ class PatrolManager(Node):
         for name in ('observation_hz', 'sensor_timeout_s', 'costmap_timeout_s',
                      'goal_response_timeout_s', 'cancel_completion_timeout_s',
                      'navigation_timeout_s', 'spin_time_allowance_s',
-                     'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m'):
+                     'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m',
+                     'analysis_wait_s'):
             if not math.isfinite(self.settings[name]) or self.settings[name] <= 0:
                 raise ValueError(f'{name} must be positive and finite')
         for name in ('observation_ranges_m', 'coverage_targets',
@@ -157,6 +173,12 @@ class PatrolManager(Node):
                 raise ValueError(f'{name} must contain LIGHT, NORMAL, THOROUGH')
         if not 0 <= self.settings['maximum_goal_cost'] < 99:
             raise ValueError('maximum_goal_cost must be in 0..98')
+        if self.settings['coverage_source'] not in (
+                'auto', 'frames', 'saved_photos', 'analyzed_photos'):
+            raise ValueError('unsupported coverage_source')
+        if (type(self.settings['max_photos']) is not int
+                or not 1 <= self.settings['max_photos'] <= 512):
+            raise ValueError('max_photos must be in 1..512')
         self.profiles = [CoverageProfile(*values) for values in zip(
             self.settings['observation_ranges_m'],
             self.settings['coverage_targets'],
@@ -172,7 +194,11 @@ class PatrolManager(Node):
         self.image = None
         self.image_received = 0.0
         self.camera_info = None
+        self.depth_images = deque(maxlen=8)
         self.planner = None
+        self.geometric_planner = None
+        self.photo_coverage = None
+        self.last_evidence_update = 0.0
         self.phase = 'IDLE'
         self.visited = 0
         self.last_image_stamp = None
@@ -180,6 +206,10 @@ class PatrolManager(Node):
         self.last_pump = 0.0
         self.last_feedback = 0.0
         self.group = ReentrantCallbackGroup()
+        self.photo_recorder = (
+            PhotoRecorder(self.settings['observation_directory'],
+                          max_photos=self.settings['max_photos'])
+            if self.settings['record_observations'] else None)
         self.tf = Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf, self)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -198,6 +228,7 @@ class PatrolManager(Node):
         self.create_subscription(CameraInfo, self.settings['camera_info_topic'],
                                  self._receive_info, qos_profile_sensor_data,
                                  callback_group=self.group)
+        self._depth_subscription = self._subscribe_depth()
         self.navigation = ActionClient(self, NavigateToPose,
                                        self.settings['nav2_action_name'],
                                        callback_group=self.group)
@@ -227,6 +258,7 @@ class PatrolManager(Node):
                 self.tf_listener = None
                 self.tf.clear()
             self.image = self.costmap = None
+            self.depth_images.clear()
             self.image_received = self.costmap_received = 0.0
             self.last_image_stamp = None
             if enabled:
@@ -240,13 +272,23 @@ class PatrolManager(Node):
                 self._image_subscription = self.create_subscription(
                     Image, self.settings['camera_image_topic'], self._receive_image,
                     qos_profile_sensor_data, callback_group=self.group)
+                self._depth_subscription = self._subscribe_depth()
             else:
                 for subscription in (
                         self._costmap_subscription, self._updates_subscription,
-                        self._image_subscription):
-                    self.destroy_subscription(subscription)
+                        self._image_subscription, self._depth_subscription):
+                    if subscription is not None:
+                        self.destroy_subscription(subscription)
                 self._costmap_subscription = self._updates_subscription = None
                 self._image_subscription = None
+                self._depth_subscription = None
+
+    def _subscribe_depth(self):
+        if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
+            return None
+        return self.create_subscription(
+            Image, self.settings['depth_image_topic'], self._receive_depth,
+            qos_profile_sensor_data, callback_group=self.group)
 
     def _set_processing(self, request, response):
         # Goal acceptance reserves ownership under the same lock. Do not
@@ -322,6 +364,11 @@ class PatrolManager(Node):
         with self.lock:
             self.camera_info = message
 
+    def _receive_depth(self, message):
+        with self.lock:
+            if self._processing_enabled and self.photo_recorder is not None:
+                self.depth_images.append(message)
+
     def _robot_xy(self):
         transform = self.tf.lookup_transform(
             self.map_message.header.frame_id, self.settings['base_frame'], Time())
@@ -388,6 +435,9 @@ class PatrolManager(Node):
         with self.lock:
             image = self.image
             info = self.camera_info
+            depth = min(self.depth_images, key=lambda value: abs(
+                stamp_seconds(value.header.stamp) - stamp_seconds(image.header.stamp)),
+                default=None)
         stamp = (image.header.stamp.sec, image.header.stamp.nanosec)
         if stamp == self.last_image_stamp:
             return
@@ -413,9 +463,29 @@ class PatrolManager(Node):
             return
         fov = 2.0 * math.atan2(info.width, 2.0 * info.k[0])
         p = transform.transform.translation
-        self.planner.mark_observed(p.x, p.y, math.atan2(forward_y, forward_x), fov)
+        if self.photo_coverage is None:
+            self.planner.mark_observed(p.x, p.y, math.atan2(forward_y, forward_x), fov)
+        else:
+            self.geometric_planner.mark_observed(
+                p.x, p.y, math.atan2(forward_y, forward_x), fov)
         self.last_image_stamp = stamp
         self.last_observation = time.monotonic()
+
+        recorder = getattr(self, 'photo_recorder', None)
+        if recorder is not None and (
+                self.photo_coverage is None or self.planner.observation_gain(
+                    p.x, p.y, math.atan2(forward_y, forward_x), fov)
+                >= self.planner.grid.resolution ** 2):
+            try:
+                recorder.offer(
+                    image, x=float(p.x), y=float(p.y), yaw=math.atan2(forward_y, forward_x),
+                    room_names=self.planner.rooms_at(p.x, p.y), phase=self.phase, fov_rad=fov,
+                    simulated=bool(self.get_parameter('use_sim_time').value),
+                    spatial={'aligned': self.settings['depth_aligned_to_rgb'],
+                             'depth': depth, 'info': info, 'transform': transform.transform,
+                             'optical_frame': optical_frame or image.header.frame_id})
+            except Exception:
+                self.get_logger().warning('Patrol photo capture unavailable')
 
     def _pump(self, handle):
         if self.stop_event.is_set() or handle.is_cancel_requested or not rclpy.ok():
@@ -431,6 +501,9 @@ class PatrolManager(Node):
             self._observe()
         if now - self.last_observation > self.settings['sensor_timeout_s']:
             raise PatrolInterrupted('No current camera frame with matching TF')
+        if self.photo_coverage is not None and now - self.last_evidence_update >= .5:
+            self.last_evidence_update = now
+            self.photo_coverage.update(self.planner, self.photo_recorder.saved_captures())
         if now - self.last_feedback >= 1.0:
             self.last_feedback = now
             feedback = Patrol.Feedback()
@@ -439,6 +512,37 @@ class PatrolManager(Node):
             feedback.viewpoints_visited = self.visited
             handle.publish_feedback(feedback)
             self._publish_status(self.phase.lower(), '')
+
+    def _wait_for_evidence(self, handle):
+        """Keep cancellation responsive while completed photos catch up with motion."""
+        if self.photo_coverage is None:
+            return
+        self.phase = 'ANALYZING'
+        deadline = time.monotonic() + self.settings['analysis_wait_s']
+        while True:
+            self._pump(handle)
+            status = self.photo_recorder.status()
+            if (status['saved'] + status['failed'] == status['queued']
+                    and self.photo_coverage.settled_count == status['saved']):
+                if (status['queued'] >= self.settings['max_photos']
+                        and not self.planner.complete):
+                    raise PatrolInterrupted(
+                        'Photo budget exhausted; unconfirmed areas remain uncovered')
+                return
+            if time.monotonic() >= deadline:
+                raise PatrolInterrupted(
+                    'Photo analysis timed out; unconfirmed areas remain uncovered')
+            self.stop_event.wait(.05)
+
+    def _scan(self, handle):
+        """Observe a full turn, then resolve evidence before selecting another view."""
+        self.phase = 'OBSERVING'
+        request = Spin.Goal()
+        request.target_yaw = 2.0 * math.pi
+        allowance = self.settings['spin_time_allowance_s']
+        request.time_allowance = Duration(seconds=allowance).to_msg()
+        self._run_child(self.spin_client, request, handle, allowance + 5.0)
+        self._wait_for_evidence(handle)
 
     def _allowed(self, x, y):
         message = self.costmap
@@ -518,6 +622,9 @@ class PatrolManager(Node):
     def _execute(self, handle):
         self.visited = 0
         self.planner = None
+        self.geometric_planner = None
+        self.photo_coverage = None
+        self.last_evidence_update = 0.0
         self.phase = 'PLANNING'
         self.last_image_stamp = None
         self.last_feedback = 0.0
@@ -535,16 +642,55 @@ class PatrolManager(Node):
                 if reason:
                     self.get_logger().info(reason)
             info = self.camera_info
+            fov = 2.0 * math.atan2(info.width, 2.0 * info.k[0])
+            calibration = None
+            profile = self.profiles[handle.request.thoroughness]
+            calibration_file = self.settings['inspection_calibration_file']
+            if calibration_file:
+                camera_transform = self.tf.lookup_transform(
+                    self.settings['base_frame'],
+                    self.settings['camera_optical_frame'] or self.image.header.frame_id,
+                    Time.from_msg(self.image.header.stamp))
+                calibration = InspectionCalibration.load(
+                    calibration_file, simulated=bool(self.get_parameter('use_sim_time').value),
+                    width=info.width, height=info.height, fov_rad=fov,
+                    camera_height_m=camera_transform.transform.translation.z)
+                profile = CoverageProfile(calibration.range_m, profile.target_ratio,
+                                          min(profile.candidate_spacing_m, calibration.range_m/2))
+            source = self.settings['coverage_source']
+            if source == 'auto':
+                source = 'analyzed_photos' if calibration else 'frames'
+            if source != 'frames' and self.photo_recorder is None:
+                raise ValueError('Photo coverage requires record_observations=true')
             self.planner = CoveragePlanner(
-                grid, self.profiles[handle.request.thoroughness],
+                grid, profile,
                 self._robot_xy(), self.settings['robot_clearance_m'], rooms,
-                2.0 * math.atan2(info.width, 2.0 * info.k[0]))
+                fov, require_room_entry=self.settings['require_room_entry'])
+            if source != 'frames':
+                self.photo_coverage = PhotoCoverage(
+                    self.settings['observation_directory'], source, calibration)
+                self.geometric_planner = CoveragePlanner(
+                    grid, profile, self._robot_xy(), self.settings['robot_clearance_m'],
+                    rooms, fov, require_room_entry=False)
+            recorder = getattr(self, 'photo_recorder', None)
+            if recorder is not None:
+                recorder.min_translation_m = min(.6, profile.range_m/4) if calibration else .6
+                # A fixed 1.5 s interval can exceed the camera FOV during a
+                # normal Nav2 spin. Let angular overlap control evidence frames.
+                recorder.min_interval_s = .25 if self.photo_coverage else 1.5
+                recorder.angular_spacing_rad = (min(math.pi/3, fov/2)
+                                                if self.photo_coverage else math.pi/3)
+                recorder.begin(grid, self.map_message.header.frame_id, room_file, rooms)
             self.last_observation = time.monotonic()
+            if self.photo_coverage is not None:
+                # The start pose may already be a useful observation point.
+                self._pump(handle)
+                self._scan(handle)
             while True:
                 self._pump(handle)
                 if self.planner.complete:
                     success = True
-                    detail = 'Requested coverage and reachable room visits completed'
+                    detail = 'Requested coverage completed'
                     break
                 viewpoint = self.planner.select(self._robot_xy(), self._allowed)
                 if viewpoint is None:
@@ -564,12 +710,7 @@ class PatrolManager(Node):
                                        self.settings['navigation_timeout_s'], stall=True):
                     continue
                 self.visited += 1
-                self.phase = 'OBSERVING'
-                request = Spin.Goal()
-                request.target_yaw = 2.0 * math.pi
-                allowance = self.settings['spin_time_allowance_s']
-                request.time_allowance = Duration(seconds=allowance).to_msg()
-                self._run_child(self.spin_client, request, handle, allowance + 5.0)
+                self._scan(handle)
         except (PatrolInterrupted, ValueError, OSError, TransformException) as error:
             detail = str(error)
         except Exception as error:
@@ -611,6 +752,12 @@ class PatrolManager(Node):
             message.data = json.dumps({
                 'state': state, 'detail': detail,
                 'coverage_ratio': float(self.planner.coverage_ratio) if self.planner else 0.0,
+                'coverage': self.planner.coverage_summary() if self.planner else None,
+                'geometric_coverage_ratio': (
+                    float(self.geometric_planner.coverage_ratio) if self.geometric_planner else
+                    (float(self.planner.coverage_ratio) if self.planner else 0.0)),
+                'evidence': (self.photo_coverage.status() if self.photo_coverage
+                             else {'source': 'frames'}),
                 'viewpoints_visited': self.visited,
                 'unvisited_rooms': list(self.planner.unvisited_room_names)
                 if self.planner else [],
@@ -618,10 +765,18 @@ class PatrolManager(Node):
                 if self.planner else [],
                 # 0: no rooms for this map, so the web says it patrolled without rooms.
                 'room_count': len(self.planner.room_names) if self.planner else 0,
+                'photos': (self.photo_recorder.status()
+                           if getattr(self, 'photo_recorder', None) is not None else None),
             })
             self.status.publish(message)
         except Exception as error:
             self.get_logger().warning(f'Could not publish patrol status: {error}')
+
+    def destroy_node(self):
+        """Release the photo writer after the owning executor has stopped."""
+        if self.photo_recorder is not None:
+            self.photo_recorder.close()
+        return super().destroy_node()
 
 
 def main(args=None):

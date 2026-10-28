@@ -36,7 +36,7 @@ from malbut_agent_server.automatic_memory_policy import (
 )
 from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
 from malbut_agent_server.personal_memory import (
-    PersonalMemory, direct_source, local_intent, management_request,
+    PersonalMemory, direct_source, explicit_memory_management, local_intent,
     negated_management, requested_operation, reply as memory_reply,
 )
 from malbut_agent_server.providers.base import (
@@ -48,7 +48,7 @@ from malbut_agent_server.providers.base import (
 from malbut_agent_server.prompting import bounded_weather_context
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
-from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, validate_tool_arguments
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS, validate_tool_arguments
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -427,6 +427,7 @@ class OrchestrationResult:
             reason=value.get('reason', ''),
             confidence=value.get('confidence'),
             expires_in_ms=value.get('expires_in_ms', 5000),
+            clarification_for=value.get('clarification_for'),
         )
         decision.validate()
         return decision
@@ -553,6 +554,9 @@ class AgentOrchestrator:
             if self._closed:
                 return
             self._closed = True
+        patrol_worker = getattr(self, 'patrol_observation_worker', None)
+        if patrol_worker is not None:
+            patrol_worker.close()
         self.stop_background_memory()
         if self.context_compactor is not None:
             self.context_compactor.close()
@@ -900,6 +904,12 @@ class AgentOrchestrator:
             memory_arguments = {}
             if accepts_memory_context(self.provider):
                 memory_context = copy.deepcopy(memory_snapshot.context)
+                if set(PATROL_QUERY_TOOLS).intersection(model_request.available_tools):
+                    from datetime import datetime, timezone
+
+                    memory_context['patrol_query_clock'] = {
+                        'now': datetime.now(timezone.utc).isoformat(), 'timezone': 'Asia/Seoul',
+                    }
                 if self._separate_memory_extraction(request, memory_snapshot):
                     memory_context['mode'] = 'answer_only'
                 memory_arguments['memory_context'] = memory_context
@@ -941,10 +951,11 @@ class AgentOrchestrator:
             reason=provider_decision.reason,
             confidence=provider_decision.confidence,
             expires_in_ms=provider_decision.expires_in_ms,
+            clarification_for=provider_decision.clarification_for,
         )
         if raw_decision.type == 'tool_call' and (
             provider_result.memory_proposal is not None
-            or (management_request(request.utterance)
+            or (explicit_memory_management(request.utterance)
                 and raw_decision.tool_name != 'set_weather_location')
         ):
             raw_decision = memory_reply(
@@ -1032,6 +1043,21 @@ class AgentOrchestrator:
                 if raw_decision.tool_name == 'cancel_voice_mission'
                 else 'Manager에 작업 실행을 요청할게요.'
             ))
+        elif raw_decision.type == 'tool_call' and raw_decision.tool_name in (
+                'describe_camera_view', 'search_robot_docs'):
+            from malbut_agent_server.information_queries import answer_information
+            provider_result = answer_information(self, model_request, provider_result)
+            decision = provider_result.decision
+        elif raw_decision.type == 'tool_call' and raw_decision.tool_name in PATROL_QUERY_TOOLS:
+            from malbut_agent_server.patrol_query import answer_patrol
+
+            provider_result = answer_patrol(
+                self, model_request, memories, conversation_turns, conversation_summary,
+                provider_result, memory_context={
+                    'mode': 'answer_only', 'enabled': memory_snapshot.state['enabled'],
+                    'response_settings': memory_snapshot.context['response_settings'],
+                })
+            decision = provider_result.decision
         elif raw_decision.type == 'tool_call' and raw_decision.tool_name in HOMECAM_QUERY_TOOLS:
             provider_result = self._answer_homecam(
                 model_request, memories, conversation_turns, conversation_summary,

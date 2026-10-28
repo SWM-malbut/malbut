@@ -2,6 +2,7 @@ import { createRobotCommand, listRobotCommands } from "../../../../../../db/robo
 import { parseRobotCommand, readRobotCommandJson } from "../../../../../robot-contract";
 import { noStore } from "../../../../../api-response";
 import { getRequestUserId } from "../../../../../server-auth";
+import { sameOriginJsonRequest } from "../../../../../same-origin-request";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,9 @@ export async function POST(
   const parsed = parseRobotCommand(payload);
   if (!parsed) {
     return noStore({ error: "로봇 명령 형식을 확인해 주세요." }, 400);
+  }
+  if (parsed.operation.startsWith("map_edit_") && !sameOriginJsonRequest(request)) {
+    return noStore({ error: "요청 출처를 확인해 주세요." }, 403);
   }
   try {
     const command = await createRobotCommand({

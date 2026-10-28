@@ -1,0 +1,19 @@
+{
+  "trials": [
+    {
+      "mode": "control",
+      "playing": false,
+      "stopped": true,
+      "pc_triggered": false,
+      "transcripts": []
+    },
+    {
+      "mode": "overlap",
+      "playing": true,
+      "stopped": false,
+      "pc_triggered": true,
+      "transcripts": []
+    }
+  ],
+  "interpretation": "Control cancelled before playback, invalid for false-stop metric. Overlap physically played with PC trigger; no stop or transcript."
+}

@@ -1,0 +1,7 @@
+{
+  "source": "normal interaction release malbut_stt; diagnostic worker differs only by saving aligned mic/reference and calibration arrays",
+  "provisional_duck": "excluded; original normal dialogue_pipeline copied",
+  "backend": "normal local Whisper",
+  "speaker_source": "normalized public Korean human recording, separate physical computer loudspeaker",
+  "caveat": "Fixed PC/robot position. Beam2 is a direction-specific candidate, not a general automatic direction policy."
+}

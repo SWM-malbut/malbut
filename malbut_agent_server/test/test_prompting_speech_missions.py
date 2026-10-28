@@ -37,7 +37,10 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     payload = provider.build_payload(original, [], [], tools)
     instructions = payload['instructions']
     assert instructions.startswith(SYSTEM_INSTRUCTIONS + '\n\n')
-    assert instructions.endswith(CONVERSATION_INSTRUCTIONS)
+    from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS
+    ending = (CONVERSATION_INSTRUCTIONS + '\n\n' + MAPPING_NAME_INSTRUCTIONS
+              if name == 'request_mapping' else CONVERSATION_INSTRUCTIONS)
+    assert instructions.endswith(ending)
     extension = system_instructions_for_tools(tools)[len(SYSTEM_INSTRUCTIONS):]
     assert name in extension
     assert not any(other in extension for other in SPEECH_MISSION_TOOLS if other != name)
@@ -98,8 +101,10 @@ def test_semantic_token_budget_includes_conditional_instructions_before_transpor
         provider.complete(request(), [], [], tools)
     assert not sent
     assert len(counted) == 1
+    from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS
     assert counted[0]['instructions'] == (
-        system_instructions_for_tools(tools) + '\n\n' + CONVERSATION_INSTRUCTIONS)
+        system_instructions_for_tools(tools) + '\n\n' + CONVERSATION_INSTRUCTIONS
+        + '\n\n' + MAPPING_NAME_INSTRUCTIONS)
     assert counted[0]['tools'] == [tool.to_openai_dict() for tool in tools]
 
 

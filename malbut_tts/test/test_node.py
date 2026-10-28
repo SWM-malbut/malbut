@@ -220,7 +220,7 @@ def test_explicit_local_startup_failure_releases_node(fake_ros):
 
 def test_unknown_backend_is_rejected_before_loading(fake_ros):
     fake_ros.parameters.update(backend='legacy', model_path='/legacy/model')
-    with pytest.raises(ValueError, match='openai or qwen-cuda'):
+    with pytest.raises(ValueError, match='backend must be'):
         tts_node.create_tts_node()
     assert fake_ros.destruction == ['node']
 
@@ -259,7 +259,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
         path='/local/cuda-model', backend='qwen-cuda', cuda_dtype='float16',
         cuda_sentence_mode=True, sentence_max_chars=80,
         api_model='gpt-4o-mini-tts', api_voice='nova', api_timeout_seconds=10.0,
-        speaker='Sohee', language='Korean', device=3,
+        speaker='Sohee', language='Korean', device=3, piper_threads=6,
         max_pending_requests=8, pending_timeout_s=12.0,
     )
     assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC

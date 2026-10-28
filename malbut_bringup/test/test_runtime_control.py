@@ -696,3 +696,57 @@ def test_missing_pose_restore_server_is_not_silently_reported_ready(monkeypatch)
     assert node._synced_demand is None
     node._relocalize.send_goal_async.assert_not_called()
     assert all(not call.args[0] for call in node._publish_map.call_args_list)
+
+
+@pytest.mark.parametrize('capability', ['manual_drive', 'patrol', 'autoslam', 'navigate_to_pose'])
+def test_map_edit_refuses_busy_robot_without_touching_files(monkeypatch, capability):
+    from malbut_bringup import map_edit
+    node = _runtime()
+    node._capabilities = {capability}
+    apply = Mock()
+    monkeypatch.setattr(map_edit, 'apply_ticket', apply)
+    reply = node._apply_map_edit(LoadMap.Request(map_url='/tmp/edit.yaml'), LoadMap.Response())
+    assert reply.result != 0
+    apply.assert_not_called()
+    node._map_provider.assert_not_called()
+
+
+def test_map_edit_failure_reloads_previous_map_and_does_not_report_success(monkeypatch):
+    from malbut_bringup import map_edit
+    node = _runtime()
+    previous = node.map_path
+    node._map_provider.side_effect = [RuntimeError('new pose failed'), None]
+    monkeypatch.setattr(map_edit, 'apply_ticket', lambda _, activate: activate('/maps/edited.yaml'))
+    reply = node._apply_map_edit(LoadMap.Request(map_url='/tmp/edit.yaml'), LoadMap.Response())
+    assert reply.result != 0
+    assert node._map_provider.call_args.args == (previous,)
+    assert node._map_provider.call_args.kwargs == {'require_pose': True}
+    assert not node._uncertain
+
+
+def test_map_edit_failed_recovery_blocks_runtime(monkeypatch):
+    from malbut_bringup import map_edit
+    node = _runtime()
+    node._map_provider.side_effect = RuntimeError('no localization')
+    monkeypatch.setattr(map_edit, 'apply_ticket', lambda _, activate: activate('/maps/edited.yaml'))
+    reply = node._apply_map_edit(LoadMap.Request(map_url='/tmp/edit.yaml'), LoadMap.Response())
+    assert reply.result != 0
+    assert node._uncertain
+    assert not node._map_initialized
+    assert node._publish_map.call_args.args[0] is False
+
+
+def test_map_edit_requires_successful_relocalization(monkeypatch):
+    node = _runtime()
+    node._map_server = object()
+    node._call = Mock(return_value=LoadMap.Response(result=0))
+    finished = SimpleNamespace(done=lambda: True, result=lambda: SimpleNamespace(
+        result=SimpleNamespace(success=False, message='scan mismatch')))
+    handle = Mock(accepted=True)
+    handle.get_result_async.return_value = finished
+    node._relocalize = Mock()
+    node._relocalize.send_goal_async.return_value = SimpleNamespace(done=lambda: True, result=lambda: handle)
+    with pytest.raises(RuntimeError, match='pose restore failed'):
+        RuntimeControl._map_provider(node, node.map_path, require_pose=True, edit_transaction=True)
+    assert not node._map_initialized
+    assert all(not call.args[0] for call in node._publish_map.call_args_list)

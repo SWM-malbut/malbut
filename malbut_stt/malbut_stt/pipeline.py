@@ -5,12 +5,14 @@ import sys
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
-from malbut_stt.audio import CaptureResult, CaptureSettings, UtteranceCollector
-from malbut_stt.wake import is_wake_phrase
+from malbut_stt.audio import CapturePCM, CaptureResult, CaptureSettings, UtteranceCollector
+from malbut_stt.wake import parse_wake_phrase
 
 
 def pcm_bytes(samples: Any) -> bytes:
     """Encode signed recorder samples as little-endian PCM16."""
+    if isinstance(samples, CapturePCM):
+        return samples
     values = array('h', samples)
     if sys.byteorder != 'little':
         values.byteswap()
@@ -78,6 +80,7 @@ class SpeechPipeline:
     def run(self) -> None:
         """Publish valid final results once; every new capture gets a fresh ID."""
         while not self.should_stop():
+            command = None
             if self.wake is not None:
                 capture = self._listen(self.wake_settings, 'waiting_for_wake')
                 if capture is None or self.should_stop():
@@ -93,12 +96,17 @@ class SpeechPipeline:
                     capture = None
                 if self.should_stop():
                     return
-                if not is_wake_phrase(text):
+                command = parse_wake_phrase(text)
+                if command is None:
                     self.report('not_wake')
                     continue
                 self.report('wake_detected')
                 if self.should_stop():
                     return
+                if command:
+                    self.report('wake_command_detected')
+                    self._publish(command)
+                    continue
             capture = self._listen(self.settings, 'listening')
             if capture is None or self.should_stop():
                 return
@@ -121,9 +129,13 @@ class SpeechPipeline:
             if not isinstance(text, str) or not text.strip():
                 self.report('empty_transcript')
                 continue
-            utterance_id = str(uuid4())
-            self.phase = 'publishing'
-            self.publish(utterance_id, text)
-            if self.should_stop():
-                return
+            self._publish(text)
+
+    def _publish(self, text):
+        if self.should_stop():
+            return
+        utterance_id = str(uuid4())
+        self.phase = 'publishing'
+        self.publish(utterance_id, text)
+        if not self.should_stop():
             self.report('published:' + utterance_id)

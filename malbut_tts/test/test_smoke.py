@@ -38,7 +38,7 @@ def test_single_request_uses_selected_backend_and_same_runtime(
     factory.assert_called_once_with(tmp_path, backend=backend, cuda_dtype=dtype,
                                     cuda_sentence_mode=True, sentence_max_chars=80,
                                     api_model='gpt-4o-mini-tts', api_voice='nova',
-                                    api_timeout_seconds=10.0)
+                                    api_timeout_seconds=10.0, piper_threads=6)
     assert received == {'synth': factory.return_value,
                         'text': ' 원문 ', 'closed': True}
 
@@ -82,7 +82,7 @@ def test_default_api_request_needs_no_local_model_and_discloses_external_audio(
     factory.assert_called_once_with(
         None, backend='openai', cuda_dtype='float32', cuda_sentence_mode=True,
         sentence_max_chars=80, api_model=model, api_voice=voice,
-        api_timeout_seconds=timeout,
+        api_timeout_seconds=timeout, piper_threads=6,
     )
     assert received == {'synth': factory.return_value,
                         'text': ' 원문 ', 'closed': True}

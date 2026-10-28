@@ -57,6 +57,10 @@ class _Player:
         self.on_state('paused')
         return True
 
+    def set_ducked(self, value):
+        self.ducked = value
+        return True
+
     def resume(self):
         self.on_state('playing')
         return True
@@ -195,6 +199,8 @@ def test_stt_controls_and_stop_before_receipt_use_manager(speech):
     assert h.source.calls == []
     h.say('talk')
     h.until(lambda: h.has('talk', 'playing'))
+    assert h.command('talk', 'duck') and h.players[0].ducked
+    assert h.command('talk', 'unduck') and not h.players[0].ducked
     assert h.command('talk', 'pause')
     h.until(lambda: h.has('talk', 'paused'))
     assert h.command('talk', 'resume')

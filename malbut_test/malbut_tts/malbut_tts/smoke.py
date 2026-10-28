@@ -11,8 +11,9 @@ def main(argv=None):
     """Speak one text, or accept texts and playback commands interactively."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model-path', type=Path)
-    parser.add_argument('--backend', choices=('qwen-cuda', 'openai'),
+    parser.add_argument('--backend', choices=('qwen-cuda', 'openai', 'piper'),
                         default='openai')
+    parser.add_argument('--piper-threads', type=int, default=6)
     parser.add_argument('--api-model', default='gpt-4o-mini-tts')
     parser.add_argument('--api-voice', default='nova')
     parser.add_argument('--api-timeout-seconds', type=float, default=10.0)
@@ -29,10 +30,14 @@ def main(argv=None):
         import sounddevice as sd
         print(sd.query_devices())
         return 0
-    if args.backend != 'openai' and (
+    if args.backend == 'qwen-cuda' and (
         args.model_path is None or not args.model_path.is_dir()
     ):
         parser.error('--model-path must point to an existing local model')
+    if args.backend == 'piper' and (
+        args.model_path is None or not args.model_path.is_file()
+    ):
+        parser.error('--model-path must point to an existing Piper .onnx file')
     if args.text is not None and not args.text.strip():
         parser.error('--text must not be blank')
     if args.backend == 'openai':
@@ -60,6 +65,7 @@ def main(argv=None):
 
     runtime = SpeechRuntime(
         create_synthesizer(args.model_path, backend=args.backend,
+                           piper_threads=args.piper_threads,
                            cuda_dtype=args.cuda_dtype,
                            cuda_sentence_mode=args.cuda_sentence_mode,
                            sentence_max_chars=args.sentence_max_chars,

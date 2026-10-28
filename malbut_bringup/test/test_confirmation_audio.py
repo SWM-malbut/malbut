@@ -188,9 +188,12 @@ class AudioRig:
         self.stt.feed(SPEECH + QUIET * 100)
 
     def finish(self):
-        self.until(lambda: self.results and self.session.playback_id in self.players)
-        self.players[self.session.playback_id].drain.set()
-        self.until(lambda: self.session.done)
+        # No-response outcomes intentionally finish without another utterance.
+        self.until(lambda: self.session.done or (
+            self.results and self.session.playback_id in self.players))
+        if not self.session.done:
+            self.players[self.session.playback_id].drain.set()
+            self.until(lambda: self.session.done)
         assert self.finishes == [('succeeded', self.results[0])]
         assert not self.stt.session.active
 
@@ -422,8 +425,8 @@ def test_unclear_asr_reasks_in_a_new_session_before_help_decision(audio_rig, fol
         rig.drain_question()
         rig.answer('모르겠어')
     rig.finish()
-    assert rig.results == [SituationResult('unknown', True)]
-    assert len(rig.spoken) == (4 if followup == 'still_unclear' else 3)
+    assert rig.results == [SituationResult('unknown', followup != 'silence')]
+    assert len(rig.spoken) == {'silence': 2, 'still_unclear': 4, 'corrected_help': 3}[followup]
     assert not rig.wakes
 
 
@@ -498,7 +501,7 @@ def test_real_playback_finish_starts_silence_deadline(audio_rig):
     assert not rig.results
     rig.now = 22
     rig.finish()
-    assert rig.results == [SituationResult('unknown', True)]
+    assert rig.results == [SituationResult('unknown', False)]
 
 
 def test_lost_stt_session_does_not_turn_into_a_help_judgment(audio_rig):

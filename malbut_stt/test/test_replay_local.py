@@ -48,8 +48,9 @@ def runtime(tmp_path, monkeypatch):
             return iter([fake_segment(text)]), None
 
     monkeypatch.setitem(sys.modules, 'faster_whisper', SimpleNamespace(WhisperModel=Model))
-    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=lambda _: SimpleNamespace(
-        is_speech=lambda frame, rate: any(frame))))
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad', lambda: SimpleNamespace(
+        is_speech=lambda frame, rate: any(frame), reset=lambda: None))
     for forbidden in ('pvrecorder', 'rclpy', 'openai', 'pvporcupine'):
         monkeypatch.setitem(sys.modules, forbidden, None)
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)

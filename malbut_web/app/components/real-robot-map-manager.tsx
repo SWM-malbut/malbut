@@ -10,6 +10,7 @@ import type { ManualVelocity, RobotOperation } from "../robot-contract";
 import { newMapNames, twoDigits } from "../robot-map-names";
 import { useManualDrive } from "./managed-robot-tools";
 import type { RobotSnapshot } from "./robot-map-panel";
+import { RobotMapCleanup } from "./robot-map-cleanup";
 
 type SendCommand = (operation: RobotOperation, payload?: Record<string, unknown>) => Promise<boolean>;
 type SavedMap = { id: string; name: string; savedAt: string | null };
@@ -114,6 +115,7 @@ export function RealRobotMapManager({
   const [labels, setLabels] = useMapLabels(deviceId);
   const [draftName, setDraftName] = useState(() => newMapNames(new Date(), new Set()).label);
   const [editing, setEditing] = useState<{ map: string; name: string } | null>(null);
+  const [cleanup, setCleanup] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(0);
 
@@ -190,6 +192,10 @@ export function RealRobotMapManager({
     text: "그린 지도는 저장되지 않았어요. 지금은 빈 지도라, 아래 목록에서 쓰던 지도를 골라 주세요.",
   } : null;
   const sorted = [...maps].sort((left, right) => (right.savedAt ?? "").localeCompare(left.savedAt ?? ""));
+
+  if (cleanup) return <RobotMapCleanup key={`${deviceId}:${cleanup}`} deviceId={deviceId} map={cleanup}
+    name={shownName(cleanup)} online={online} canApply={running && !driveActive && !mapping && !switching}
+    onClose={() => setCleanup(null)} />;
 
   return (
     <>
@@ -270,6 +276,8 @@ export function RealRobotMapManager({
                 {used && <span className="ui-badge is-ok">사용 중</span>}
               </div>
               <div className="robot-saved-map-actions">
+                {isOwner && snapshot?.state?.nav2.map_edit === "v1" && <button type="button" className="ui-button ui-small"
+                  disabled={!online || commandActive || busy || mapping} onClick={() => setCleanup(map.id)}>지도 정리</button>}
                 {!used && <button type="button" className="ui-button ui-small" onClick={() => switchToMap(map.id)} disabled={!canChange}>이 지도 쓰기</button>}
                 <button type="button" className="ui-button ui-small" disabled={!isOwner}
                   onClick={() => setEditing({ map: map.id, name: shownName(map.id) })}>이름 바꾸기</button>

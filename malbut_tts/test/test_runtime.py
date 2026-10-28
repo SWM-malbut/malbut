@@ -53,6 +53,10 @@ class FakePlayer:
         self.on_state('paused')
         return True
 
+    def set_ducked(self, value):
+        self.ducked = value
+        return True
+
     def resume(self):
         self.on_state('playing')
         return True
@@ -112,6 +116,46 @@ def h():
         yield harness
     finally:
         harness.runtime.close()
+
+
+def test_gain_controls_are_scoped_and_never_change_playback_state(h):
+    pid = h.runtime.submit('answer', playback_id='answer')
+    player = h.active(pid)
+    assert not h.runtime.control('stale', 'duck')
+    assert h.runtime.control(pid, 'duck') and player.ducked
+    assert h.runtime.control(pid, 'unduck') and not player.ducked
+    assert h.events == [(pid, 'playing')]
+    h.runtime.control(pid, 'stop')
+    assert not h.runtime.control(pid, 'duck')
+
+
+def test_confirmation_cannot_be_ducked(h):
+    pid = h.runtime.submit('question', request_type=CONFIRMATION)
+    h.active(pid)
+    assert not h.runtime.control(pid, 'duck')
+    assert not h.runtime.control(pid, 'unduck')
+
+
+def test_timing_uses_request_id_and_records_first_playback_only():
+    import json
+    from types import SimpleNamespace
+    logs = []
+    h = Harness(logger=SimpleNamespace(info=logs.append, warning=lambda *_: None,
+                                      error=lambda *_: None))
+    try:
+        pid = h.runtime.submit('private text', request_id='turn-1')
+        h.active(pid)
+        h.runtime.control(pid, 'pause')
+        h.runtime.control(pid, 'resume')
+        h.runtime.control(pid, 'stop')
+        h.wait(pid, 'stopped')
+        events = [json.loads(value) for value in logs]
+        assert [item['stage'] for item in events] == [
+            'tts_started', 'tts_first_audio', 'playback_started', 'playback_terminal']
+        assert all(item['request_id'] == 'turn-1' for item in events)
+        assert 'private text' not in ''.join(logs)
+    finally:
+        h.runtime.close()
 
 
 def test_priority_and_fifo_preserve_current_and_all_pending_requests(h):

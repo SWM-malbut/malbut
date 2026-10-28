@@ -61,13 +61,25 @@ def _missing_memory_followup(text):
     text = re.sub(r'(기억|저장)\s*해(?:요)?\s*[?？]', '', text)
     ending = r'(?:해\s*(?:줘요?|주세요|둬|두자|줄래|주라)|하자)'
     memory_target = bool(re.search(r'기억|개인화', text))
+    # Saving a map/file is not saving a personal fact. A missing proposal must
+    # not replace the model's robot request or its question about a map name.
+    personal_target = bool(re.search(
+        r'(?:내|제|나의|저의)\s*(?:이름|호칭|별명|취향)', text,
+    ))
+    bare_save = bool(re.fullmatch(
+        r'\s*(?:(?:이름|호칭|별명|취향)[을를]?\s*)?저장\s*'
+        + ending + r'\s*[.!?。？]?\s*', text,
+    ))
     commands = (
         (r'삭제\s*' + ending + r'|지워\s*(?:줘요?|주세요)|잊어\s*줘',
          '어떤 내용을 지울지 다시 알려줄래요?', memory_target),
         (r'(?:정정|수정|변경)\s*' + ending + r'|바꿔\s*(?:줘요?|주세요)',
          '어떤 내용을 어떻게 바꿀지 다시 알려줄래요?', memory_target),
-        (r'(?:기억|저장)\s*' + ending,
+        (r'기억\s*' + ending,
          '기억해 둘 내용을 한 가지만 다시 알려줄래요?', True),
+        (r'저장\s*' + ending,
+         '기억해 둘 내용을 한 가지만 다시 알려줄래요?',
+         memory_target or personal_target or bare_save),
     )
     for pattern, message, eligible in commands:
         if eligible and re.search(
@@ -120,6 +132,18 @@ def management_request(text):
             text,
         )
     )
+
+
+def explicit_memory_management(text):
+    """Distinguish a memory conflict from ordinary robot self-correction.
+
+    management_request deliberately retrieves broadly for corrections. That
+    retrieval hint alone is not evidence of a second, memory-management task.
+    Structured memory proposals still independently block mixed robot calls.
+    """
+    return management_request(text) and bool(re.search(
+        r'기억|개인화|(?:내|제|나의|저의)\s*(?:이름|호칭|별명|취향)', text,
+    ))
 
 
 def local_intent(text):

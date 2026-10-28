@@ -23,6 +23,7 @@ import numpy as np
 import yaml
 
 from malbut_autoslam.map_view import read_map_view, write_map_view
+from .map_edit import locked_map
 
 
 FORMAT_VERSION = "malbut-user-map-v1"
@@ -667,6 +668,7 @@ def load_or_build_user_map(map_yaml: Path, map_id: str) -> dict:
     return document
 
 
+@locked_map
 def save_rooms(map_yaml: Path, map_id: str, payload: object) -> dict:
     """Replace the User Map's rooms with the web editor's rooms for this map."""
     if (not isinstance(payload, dict)

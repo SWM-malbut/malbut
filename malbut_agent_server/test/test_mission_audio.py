@@ -140,7 +140,7 @@ def test_expired_confirmation_does_not_claim_that_the_map_changed():
 
 
 @pytest.mark.parametrize('answers,audio_id', [
-    ([], 'situation.no_response'),
+    ([], None),
     (['잘 모르겠어요'] * 3, 'situation.unclear'),
     (['도와주세요'], 'situation.help_needed'),
     (['도움은 필요 없어요'], 'situation.help_not_needed'),
@@ -157,6 +157,9 @@ def test_each_situation_outcome_keeps_its_exact_recorded_closing(answers, audio_
         for answer in answers:
             turn = dialogue.answer(answer)
     assert turn.result is not None
+    if audio_id is None:
+        assert turn.text == '' and not turn.result.help_needed
+        return
     assert TEXT_IDS[turn.text] == audio_id
     assert CATALOG[audio_id] == turn.text
 

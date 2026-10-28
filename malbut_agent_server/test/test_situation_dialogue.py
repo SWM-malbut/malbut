@@ -178,7 +178,7 @@ def test_user_can_correct_an_earlier_incident_confirmation():
 
 
 @pytest.mark.parametrize('confirmed', [False, True])
-def test_no_response_requests_help_without_inventing_or_erasing_actual_event(confirmed):
+def test_no_response_does_not_request_help_or_speak_and_preserves_actual_event(confirmed):
     dialogue = start()
     if confirmed:
         dialogue.answer('넘어졌어요')
@@ -186,15 +186,15 @@ def test_no_response_requests_help_without_inventing_or_erasing_actual_event(con
     assert final.result.situation_assessment == (
         'confirmed_incident' if confirmed else 'unknown'
     )
-    assert final.result.help_needed is True
-    assert '답변을 확인하지 못했어요' in final.text
+    assert final.result.help_needed is False
+    assert final.text == ''
 
 
 def test_silence_after_one_clarification_does_not_spend_remaining_retries():
     provider = ScriptedProvider(judgment(), judgment())
     dialogue = start(provider)
     dialogue.answer('음...')
-    assert dialogue.no_response().result.help_needed is True
+    assert dialogue.no_response().result.help_needed is False
     assert len(provider.contexts) == 2
 
 

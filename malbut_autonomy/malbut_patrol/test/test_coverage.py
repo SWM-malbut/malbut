@@ -45,7 +45,10 @@ def test_grid_preserves_ros_order_and_rotated_origin():
 
 def test_camera_frames_respect_horizontal_field_of_view():
     planner = _planner(robot=(1.55, 1.55))
+    predicted = planner.observation_gain(1.55, 1.55, 0.0)
+    assert predicted > 0 and planner.coverage_ratio == 0
     added = planner.mark_observed(1.55, 1.55, 0.0)
+    assert added == predicted and planner.observation_gain(1.55, 1.55, 0.0) == 0
     observed = planner._observed.reshape(planner.grid.cells.shape)
     assert added > 0.0
     assert observed[15, 25]
@@ -53,6 +56,27 @@ def test_camera_frames_respect_horizontal_field_of_view():
     assert not observed[25, 15]
     assert planner.mark_observed(1.55, 1.55, 0.0) == 0.0
     assert planner.mark_observed(1.55, 1.55, math.pi) > 0.0
+
+
+def test_visibility_policy_can_finish_adjacent_room_without_entering_it():
+    grid = CoverageGrid(np.zeros((20, 40)), .1, 0, 0)
+    rooms = {'features': [_room('left', 0, 0, 2, 2), _room('right', 2, 0, 4, 2)]}
+    planner = CoveragePlanner(grid, CoverageProfile(5., .95, .5), (1., 1.),
+                              robot_clearance_m=0., rooms=rooms, require_room_entry=False)
+    planner.mark_observed(1., 1., 0., 2*math.pi)
+    assert 'right' in planner.unvisited_room_names
+    assert planner.complete and planner.select((1., 1.)) is None
+    assert planner.coverage_summary()['rooms']['right']['coverage_ratio'] == 1.
+
+
+def test_coverage_summary_exposes_unreachable_map_area():
+    cells = np.zeros((20, 40))
+    cells[:, 20] = 100
+    planner = _planner(cells, range_m=4., robot=(1., 1.))
+    planner.mark_observed(1., 1., 0., 2*math.pi)
+    summary = planner.coverage_summary()
+    assert summary['excluded_free_area_m2'] > 0
+    assert summary['known_free_coverage_ratio'] < planner.coverage_ratio
 
 
 @pytest.mark.parametrize('barrier', [100, -1])

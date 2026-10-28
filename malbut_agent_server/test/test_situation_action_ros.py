@@ -294,6 +294,34 @@ def test_confirmation_opens_input_only_after_non_interim_question_completion(rig
     assert [request.command for request in rig.controls] == ['stop_all']
 
 
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
+def test_non_speech_over_dds_records_no_response_without_help_or_closing_audio(rig):
+    handle = rig.start()
+    assert handle.accepted
+    rig.spin_until(lambda: rig.agent.situation._session.phase == 'listening')
+    result = handle.get_result_async()
+    session = rig.agent.situation._session
+    deadline = session._answer_deadline
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=rig.session_id, utterance_id='noise', state='started'))
+    rig.spin_until(lambda: session.phase == 'hearing')
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=rig.session_id, utterance_id='noise', state='failed'))
+    rig.spin_until(lambda: session.phase == 'listening')
+    assert session._deadline == deadline
+    session._deadline = time.monotonic() - 1
+    rig.spin_until(lambda: result.done() and not rig.agent.situation.active)
+    assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+    assert result.result().result.situation_assessment == 'unknown'
+    assert result.result().result.help_needed is False
+    assert set(result.result().result.get_fields_and_field_types()) == {
+        'situation_assessment', 'help_needed'}
+    assert rig.agent.situation.answers.resolve(session.request.request_id, dict(
+        situation_assessment='unknown', help_needed=False)) == 'no_response'
+    assert len(rig.spoken) == 1
+    assert any(request.check_only for request in rig.sessions)
+
+
 def test_lost_stt_session_is_aborted_instead_of_reported_as_user_silence(rig):
     handle = rig.start()
     assert handle.accepted

@@ -261,10 +261,16 @@ class SpeechAgentRequest(AgentRequest):
     max_utterance_chars: ClassVar[int] = MAX_SPEECH_TRANSCRIPT_LENGTH
     navigation_locations: Optional[Tuple[str, ...]] = None
     navigation_confirmation: str = ''
+    mapping_name_requested: bool = False
+    previous_reply_interrupted: bool = False
 
     def __post_init__(self) -> None:
         """Validate server-owned names independently of the public HTTP schema."""
         locations = self.navigation_locations
+        if type(self.previous_reply_interrupted) is not bool:
+            raise ValidationError('previous_reply_interrupted must be a boolean')
+        if type(self.mapping_name_requested) is not bool:
+            raise ValidationError('mapping_name_requested must be a boolean')
         if locations is not None:
             if not isinstance(locations, (list, tuple)) or len(locations) > 128:
                 raise ValidationError('navigation_locations must contain at most 128 names')
@@ -295,10 +301,14 @@ class SpeechAgentRequest(AgentRequest):
         body = dict(value)
         locations = body.pop('navigation_locations', None)
         confirmation = body.pop('navigation_confirmation', '')
+        mapping_name_requested = body.pop('mapping_name_requested', False)
+        previous_reply_interrupted = body.pop('previous_reply_interrupted', False)
         return replace(
             super().from_dict(body),
             navigation_locations=locations,
             navigation_confirmation=confirmation,
+            mapping_name_requested=mapping_name_requested,
+            previous_reply_interrupted=previous_reply_interrupted,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -308,6 +318,10 @@ class SpeechAgentRequest(AgentRequest):
             value['navigation_locations'] = list(self.navigation_locations)
         if self.navigation_confirmation:
             value['navigation_confirmation'] = self.navigation_confirmation
+        if self.mapping_name_requested:
+            value['mapping_name_requested'] = True
+        if self.previous_reply_interrupted:
+            value['previous_reply_interrupted'] = True
         return value
 
 
@@ -322,6 +336,7 @@ class AgentDecision:
     reason: str = ''
     confidence: Optional[float] = None
     expires_in_ms: int = 5000
+    clarification_for: Optional[str] = None
 
     def validate(self) -> None:
         """Validate provider output before any downstream consumer sees it."""
@@ -329,6 +344,9 @@ class AgentDecision:
             raise ValidationError('decision type must be a string')
         if self.type not in DECISION_TYPES:
             raise ValidationError(f'unknown decision type: {self.type}')
+        if (self.clarification_for is not None
+                and (self.type != 'clarification' or self.clarification_for != 'mapping_name')):
+            raise ValidationError('clarification_for is only valid for a mapping-name question')
         if not isinstance(self.message, str):
             raise ValidationError('decision message must be a string')
         if len(self.message) > MAX_UTTERANCE_LENGTH:
@@ -377,7 +395,7 @@ class AgentDecision:
     def to_dict(self) -> Dict[str, Any]:
         """Return the public decision fields."""
         self.validate()
-        return {
+        value = {
             'type': self.type,
             'message': self.message,
             'tool_name': self.tool_name,
@@ -386,6 +404,9 @@ class AgentDecision:
             'confidence': self.confidence,
             'expires_in_ms': self.expires_in_ms,
         }
+        if self.clarification_for is not None:
+            value['clarification_for'] = self.clarification_for
+        return value
 
 
 @dataclass(frozen=True)

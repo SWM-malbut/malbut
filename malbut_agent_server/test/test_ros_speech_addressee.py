@@ -96,7 +96,7 @@ def node(monkeypatch, tmp_path, request):
         suspended = False
         has_pending = False
 
-        def __init__(self, *_args):
+        def __init__(self, *_args, logger=None):
             self.requests = []
             self.results = []
 
@@ -143,6 +143,7 @@ def node(monkeypatch, tmp_path, request):
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
         SpeechRequest=SpeechRequest, SpeechTranscript=SimpleNamespace,
         SpeechInputStatus=SpeechInputStatus,
+        SpeechPlaybackStatus=SpeechInputStatus,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ClassifySpeechAddressee=SimpleNamespace(Response=Response),
@@ -208,6 +209,7 @@ def test_speech_endpoints_wait_for_worker_initialization(node):
     node.dialogue.ready = True
     node._drain_dialogue()
     assert set(node.subscriptions) == {
+        '/malbut/speech/playback_status',
         ros_communication.TRANSCRIPT_TOPIC, '/malbut/speech/input_status',
     }
     assert set(node.services) == {ros_communication.ADDRESSEE_SERVICE}

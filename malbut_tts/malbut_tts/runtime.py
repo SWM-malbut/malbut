@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 import heapq
 import logging
+import json
 import math
 from threading import Condition, Event, Thread
 from time import monotonic
@@ -46,6 +47,7 @@ class _Request:
     state: str = 'generating'
     command: Optional[str] = None
     control_error: Optional[Exception] = None
+    timing_stages: set = field(default_factory=set)
 
 
 class SpeechRuntime:
@@ -261,9 +263,16 @@ class SpeechRuntime:
                     or request.state in TERMINAL_STATES
                     or request.cancel.is_set()):
                 return False
-            if request.request_type == CONFIRMATION and command in ('pause', 'resume'):
+            if request.request_type == CONFIRMATION and command in (
+                    'pause', 'resume', 'duck', 'unduck'):
                 return False
             player = request.player
+            if command in ('duck', 'unduck'):
+                # Gain changes have no playback-state acknowledgement. The
+                # player only takes a short lock and never waits on the device.
+                setter = getattr(player, 'set_ducked', None)
+                return bool(request.state == 'playing' and request.command is None
+                            and setter is not None and setter(command == 'duck'))
             if command == 'stop':
                 request.cancel.set()
                 request.command = command
@@ -342,6 +351,10 @@ class SpeechRuntime:
             raise TimeoutError('TTS expiry worker did not stop within 10 seconds')
 
     def _report_status(self, request, state):
+        if state == 'playing':
+            self._timing(request, 'playback_started')
+        elif state in TERMINAL_STATES:
+            self._timing(request, 'playback_terminal', state=state)
         if state in TERMINAL_STATES:
             with self._condition:
                 self._remember_retired(request.playback_id, state)
@@ -402,6 +415,7 @@ class SpeechRuntime:
                 self._active = None
 
     def _play(self, request):
+        self._timing(request, 'tts_started')
         with self._condition:
             if (_receipt(request)
                     and request.request_id in self._announced_request_ids):
@@ -444,6 +458,8 @@ class SpeechRuntime:
                         break
                     if request.cancel.is_set():
                         break
+                    if not has_audio:
+                        self._timing(request, 'tts_first_audio')
                     if not has_audio and request.validate is not None:
                         request.validate()
                     player.write(audio, sample_rate)
@@ -477,3 +493,15 @@ class SpeechRuntime:
                 elif request.cancel.is_set():
                     state = 'stopped'
                 self._status(request, state)
+
+    def _timing(self, request, stage, **fields):
+        if stage in request.timing_stages or not request.request_id:
+            return
+        request.timing_stages.add(stage)
+        try:
+            self._logger.info(json.dumps(dict(event='speech_timing', version=1,
+                stage=stage, request_id=request.request_id,
+                playback_id=request.playback_id, interim=request.interim,
+                at_s=self._clock(), **fields)))
+        except Exception:
+            pass

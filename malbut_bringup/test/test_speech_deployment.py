@@ -27,20 +27,9 @@ def test_robot_speech_runtime_matches_source(package):
               if path.is_file() and path.suffix in suffixes}
     assert files == copied
     for path in files:
-        if package == 'malbut_stt' and path == Path('node.py'):
-            # The test deployment disables barge-in, even with AEC: in the
-            # capture and in the dialogue (#245 added the capture one).
-            expected = (source / path).read_bytes()
-            for original, override in (
-                    (b'vad_mode=vad_mode, input_has_aec=input_has_aec,\n',
-                     b'vad_mode=vad_mode, input_has_aec=False,\n'),
-                    (b'            input_has_aec=input_has_aec,\n',
-                     b'            input_has_aec=False,\n')):
-                assert expected.count(original) == 1
-                expected = expected.replace(original, override, 1)
-            assert expected == (deployed / path).read_bytes()
-        else:
-            assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
+        # The robot honors the same explicit AEC setting as the main node;
+        # both still default to half-duplex when no verified AEC is selected.
+        assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
 
 
 def test_robot_speech_launch_and_native_assets_match_source():
@@ -204,7 +193,7 @@ def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
             assert (root / path).is_file(), path
     for name, patterns in metadata.get('package_data', {}).items():
         for pattern in patterns:
-            assert list((root / name).glob(pattern)), pattern
+            assert list((root / name.replace('.', '/')).glob(pattern)), pattern
     entries = metadata['entry_points']['console_scripts']
     for entry in entries:
         _, target = entry.split('=', 1)
