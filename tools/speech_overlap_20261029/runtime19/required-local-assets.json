@@ -1,0 +1,26 @@
+{
+  "scope": "Required placement-specific calibration; not included or automatically downloaded.",
+  "assets": {
+    "diverse_spatial/weights.npy": {
+      "sha256": "9edceb9216cd04f4828e54ea092cd202b6d730fe6cd005f912a4719d8150eed0",
+      "size": 12464
+    },
+    "diverse_spatial/leakage.npy": {
+      "sha256": "c892f05d81b09b0c1f46bb09016482044dd3fd27fdfe8929441287de338757ec",
+      "size": 2184
+    },
+    "diverse_spatial/phase_reference.npz": {
+      "sha256": "41c74c61ac0710637309c625312922b75d3b2297ff2d8d6b3ec3d79c02a390f1",
+      "size": 79172
+    },
+    "diverse_spatial/phase_reference.json": {
+      "sha256": "f77fc35ebb0384a29655b9bbe0d2d7ea5561135646bfc385053f4ba92c0bef14",
+      "size": 834
+    }
+  },
+  "other_dependencies": [
+    "Robot aec-20261028 environment and interaction-20261028 base release",
+    "ADB executable and shared libraries",
+    "Whisper small and Piper voice; Silero and AEC libraries"
+  ]
+}

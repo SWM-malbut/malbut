@@ -1,0 +1,591 @@
+{
+  "scope": "Offline diagnostic only; exact endpoint vs processing stages, same Small. Not live acceptance.",
+  "inputs": [
+    {
+      "id": 1,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 1,
+        "signal": "endpoint"
+      },
+      "pcm_sha256": "f7a43371cb7417337bade09d08aa75382b5ff5defc72b1606ce8e382e93ab3e2",
+      "previous_text": "여행자는 우에 길을 이뤘어"
+    },
+    {
+      "id": 2,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 1,
+        "signal": "spatial"
+      },
+      "pcm_sha256": "51942fdbd413a2ea05726195253c654f6a4acfea174ad1a3ba075bca7cbb27c1",
+      "previous_text": null
+    },
+    {
+      "id": 3,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 1,
+        "signal": "aec"
+      },
+      "pcm_sha256": "6fb2e892914c9bfc5509b21e68ff5caddbaf445c256ddf6e7e36f102733c5354",
+      "previous_text": null
+    },
+    {
+      "id": 4,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 1,
+        "signal": "raw2_timing"
+      },
+      "pcm_sha256": "05dfdeec979eb535b95afba3594cd21998b6cce78c6cb36b19ecda918df20c79",
+      "previous_text": null
+    },
+    {
+      "id": 5,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 2,
+        "signal": "endpoint"
+      },
+      "pcm_sha256": "6741bcadc721ed0a34984b2b18af402805aba5ea8c3f62f2aea761b4dc7fc718",
+      "previous_text": "글밤 집에서는 어떤 밤을 팔았어?"
+    },
+    {
+      "id": 6,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 2,
+        "signal": "spatial"
+      },
+      "pcm_sha256": "0a8f5ae4dff110ea6570a9882be1acbbc96e4293a103440b8464d66f6913ebb1",
+      "previous_text": null
+    },
+    {
+      "id": 7,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 2,
+        "signal": "aec"
+      },
+      "pcm_sha256": "404e90b9d40ad83525e8729288a69f847d4247e816488e77aac471dcf2e2ed98",
+      "previous_text": null
+    },
+    {
+      "id": 8,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_followup_b1",
+        "case": 2,
+        "signal": "raw2_timing"
+      },
+      "pcm_sha256": "aa0b47d758d52dfd95ef8f0a948e2754b62a27f95cef006aff2cc8bfe8b4374e",
+      "previous_text": null
+    },
+    {
+      "id": 9,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "endpoint"
+      },
+      "pcm_sha256": "7fbbf543d37c062a8cddc7ae0e979c780331449d71c4b5365e1b227954958804",
+      "previous_text": "여행자는 왜 길을 잃었어?"
+    },
+    {
+      "id": 10,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "spatial"
+      },
+      "pcm_sha256": "1390640af6afcda1b4ba9565b9d84d61210a8869c8b21b7bb393a3b5d83af320",
+      "previous_text": null
+    },
+    {
+      "id": 11,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "aec"
+      },
+      "pcm_sha256": "40623cd8c91b31ae778f9f7a58e42883a89201d5e6609d51069793ee6f6ff542",
+      "previous_text": null
+    },
+    {
+      "id": 12,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw1"
+      },
+      "pcm_sha256": "ae7189b0d54a3a2ab783de97e3cb0cac36f5a400f8175a9191fc27211a361375",
+      "previous_text": null
+    },
+    {
+      "id": 13,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw2"
+      },
+      "pcm_sha256": "e97857d3ac06c753c04d616d7de8e927f577035ce1489fb4f3ee21d8a5c2b1f8",
+      "previous_text": null
+    },
+    {
+      "id": 14,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw3"
+      },
+      "pcm_sha256": "223cf1dac19e71b7b57d5087a00234727c35caa40f2a55a6f41d9f393fa62de3",
+      "previous_text": null
+    },
+    {
+      "id": 15,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw4"
+      },
+      "pcm_sha256": "25b247ff198596c5027a66a33c63b7d718482f9c16fb59b7ddb04a62ed15e858",
+      "previous_text": null
+    },
+    {
+      "id": 16,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw5"
+      },
+      "pcm_sha256": "98ad09d30f5b544eb7c37a63544be916da9e4f0356aea7f30c0326226535f7eb",
+      "previous_text": null
+    },
+    {
+      "id": 17,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "trial": "live_runtime19_why_diag_b1",
+        "case": 1,
+        "signal": "raw6"
+      },
+      "pcm_sha256": "b3217fe14dbccfe495e82c704934c2bbac4f0d1fe903433d59c44324699e2631",
+      "previous_text": null
+    },
+    {
+      "id": 18,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "endpoint"
+      },
+      "pcm_sha256": "02866dbd15a250f78b70f312118272b026b37c5b0a15ffa75252a13729885854",
+      "previous_text": "글반집에서는 어떤 빵을 팔았어?"
+    },
+    {
+      "id": 19,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "spatial"
+      },
+      "pcm_sha256": "1e6613be57e696ed4cd969af1e9bb790ffc42bb0823cd07b02881e0c563d8641",
+      "previous_text": null
+    },
+    {
+      "id": 20,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "aec"
+      },
+      "pcm_sha256": "1e8ed19b965257bcd53aff4450c8e6df3d55b331f7fda876661043a07878dae7",
+      "previous_text": null
+    },
+    {
+      "id": 21,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw1"
+      },
+      "pcm_sha256": "d782ecd7f495e4af05abf0ccf4786f7fd6b653f5ba3bb5a89fddfc5dacbfa781",
+      "previous_text": null
+    },
+    {
+      "id": 22,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw2"
+      },
+      "pcm_sha256": "7499cc888c25cb3b5384deae8b9d43894ebe7e2830318a1c9122510bda002f34",
+      "previous_text": null
+    },
+    {
+      "id": 23,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw3"
+      },
+      "pcm_sha256": "c90947d320392384448169ca998b42bdc5d650ce5a1ec811248088ca5d95fd31",
+      "previous_text": null
+    },
+    {
+      "id": 24,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw4"
+      },
+      "pcm_sha256": "b01ee2942e58cec1ac85e1f9912e7f96ffc9ea53c34a0043ec9a6e18ca2e9e91",
+      "previous_text": null
+    },
+    {
+      "id": 25,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw5"
+      },
+      "pcm_sha256": "c66213a9abeac489f0dea15c55940b38ad54942cde4701bbe3c4397284c6d0e2",
+      "previous_text": null
+    },
+    {
+      "id": 26,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "case": 2,
+        "signal": "raw6"
+      },
+      "pcm_sha256": "326f9b18768d5a7e6f7a650b46a23f269bb368e04c46902ea54705a559c6e64e",
+      "previous_text": null
+    },
+    {
+      "id": 27,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "provenance": {
+        "signal": "pristine_source"
+      },
+      "pcm_sha256": "f296d1b255202e205ea2a6ea933a3c44b3196d9d18021a0c3d233f464e6c864a",
+      "previous_text": null
+    },
+    {
+      "id": 28,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "provenance": {
+        "signal": "pristine_source"
+      },
+      "pcm_sha256": "22833bb38581b5de3499fdb6222643b73ffe53d3879815302a997e5c5a3660e5",
+      "previous_text": null
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "arm": "plain",
+      "text": "여행자는 우에 길을 이뤘어",
+      "pcm_sha256": "f7a43371cb7417337bade09d08aa75382b5ff5defc72b1606ce8e382e93ab3e2",
+      "wall_s": 0.6900681110055302,
+      "cpu_s": 0.12660713600000006,
+      "ru_maxrss_kib": 1128176,
+      "baseline_reproduced": true
+    },
+    {
+      "id": 2,
+      "arm": "plain",
+      "text": "여행자는 우의 길을 이뤘어",
+      "pcm_sha256": "51942fdbd413a2ea05726195253c654f6a4acfea174ad1a3ba075bca7cbb27c1",
+      "wall_s": 0.6864081300009275,
+      "cpu_s": 0.12556819200000024,
+      "ru_maxrss_kib": 1128180,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 3,
+      "arm": "plain",
+      "text": "꽁자는 우의 길을 잃었어",
+      "pcm_sha256": "6fb2e892914c9bfc5509b21e68ff5caddbaf445c256ddf6e7e36f102733c5354",
+      "wall_s": 0.6618039309978485,
+      "cpu_s": 0.11976230399999999,
+      "ru_maxrss_kib": 1128180,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 4,
+      "arm": "plain",
+      "text": "여행자는 왜 길을 잃었어?",
+      "pcm_sha256": "05dfdeec979eb535b95afba3594cd21998b6cce78c6cb36b19ecda918df20c79",
+      "wall_s": 0.6616798319955706,
+      "cpu_s": 0.12239974399999998,
+      "ru_maxrss_kib": 1128184,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 5,
+      "arm": "plain",
+      "text": "글밤 집에서는 어떤 밤을 팔았어?",
+      "pcm_sha256": "6741bcadc721ed0a34984b2b18af402805aba5ea8c3f62f2aea761b4dc7fc718",
+      "wall_s": 0.7170971870000358,
+      "cpu_s": 0.14029222399999997,
+      "ru_maxrss_kib": 1129484,
+      "baseline_reproduced": true
+    },
+    {
+      "id": 6,
+      "arm": "plain",
+      "text": "글반집에서는 어떤 빵을 팔았어?",
+      "pcm_sha256": "0a8f5ae4dff110ea6570a9882be1acbbc96e4293a103440b8464d66f6913ebb1",
+      "wall_s": 0.6885958139973809,
+      "cpu_s": 0.1256979519999999,
+      "ru_maxrss_kib": 1129488,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 7,
+      "arm": "plain",
+      "text": "그 딴 집에서는 어떤 빵을 팔았어?",
+      "pcm_sha256": "404e90b9d40ad83525e8729288a69f847d4247e816488e77aac471dcf2e2ed98",
+      "wall_s": 0.6884540820028633,
+      "cpu_s": 0.13239654400000012,
+      "ru_maxrss_kib": 1129496,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 8,
+      "arm": "plain",
+      "text": "찬물이래",
+      "pcm_sha256": "aa0b47d758d52dfd95ef8f0a948e2754b62a27f95cef006aff2cc8bfe8b4374e",
+      "wall_s": 0.5217175889993086,
+      "cpu_s": 0.0857697599999998,
+      "ru_maxrss_kib": 1129504,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 9,
+      "arm": "plain",
+      "text": "여행자는 왜 길을 잃었어?",
+      "pcm_sha256": "7fbbf543d37c062a8cddc7ae0e979c780331449d71c4b5365e1b227954958804",
+      "wall_s": 0.6586637439977494,
+      "cpu_s": 0.12300342399999975,
+      "ru_maxrss_kib": 1129508,
+      "baseline_reproduced": true
+    },
+    {
+      "id": 10,
+      "arm": "plain",
+      "text": "여행자는 우의 길을 잃었어",
+      "pcm_sha256": "1390640af6afcda1b4ba9565b9d84d61210a8869c8b21b7bb393a3b5d83af320",
+      "wall_s": 0.6595004420014448,
+      "cpu_s": 0.12287894399999999,
+      "ru_maxrss_kib": 1129512,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 11,
+      "arm": "plain",
+      "text": "여행자는 우의 길을 이뤘어",
+      "pcm_sha256": "40623cd8c91b31ae778f9f7a58e42883a89201d5e6609d51069793ee6f6ff542",
+      "wall_s": 0.6871984960016562,
+      "cpu_s": 0.13004918399999976,
+      "ru_maxrss_kib": 1129516,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 12,
+      "arm": "plain",
+      "text": "공장은 왜 길을 잃었어?",
+      "pcm_sha256": "ae7189b0d54a3a2ab783de97e3cb0cac36f5a400f8175a9191fc27211a361375",
+      "wall_s": 0.6598040039971238,
+      "cpu_s": 0.11881977600000004,
+      "ru_maxrss_kib": 1129516,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 13,
+      "arm": "plain",
+      "text": "공장은 왜 길을 잃었어?",
+      "pcm_sha256": "e97857d3ac06c753c04d616d7de8e927f577035ce1489fb4f3ee21d8a5c2b1f8",
+      "wall_s": 0.6608117159994435,
+      "cpu_s": 0.12105855999999982,
+      "ru_maxrss_kib": 1129520,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 14,
+      "arm": "plain",
+      "text": "혼자는 왜 길을 잃었어?",
+      "pcm_sha256": "223cf1dac19e71b7b57d5087a00234727c35caa40f2a55a6f41d9f393fa62de3",
+      "wall_s": 0.6314967190046445,
+      "cpu_s": 0.11011779200000005,
+      "ru_maxrss_kib": 1129524,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 15,
+      "arm": "plain",
+      "text": "혼자는 왜 길을 잃었어?",
+      "pcm_sha256": "25b247ff198596c5027a66a33c63b7d718482f9c16fb59b7ddb04a62ed15e858",
+      "wall_s": 0.6323823450002237,
+      "cpu_s": 0.1138780800000001,
+      "ru_maxrss_kib": 1129532,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 16,
+      "arm": "plain",
+      "text": "공장은 왜 길을 잃었어?",
+      "pcm_sha256": "98ad09d30f5b544eb7c37a63544be916da9e4f0356aea7f30c0326226535f7eb",
+      "wall_s": 0.6605892149964347,
+      "cpu_s": 0.12043603199999975,
+      "ru_maxrss_kib": 1129536,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 17,
+      "arm": "plain",
+      "text": "공장은 왜 길을 잃었어?",
+      "pcm_sha256": "b3217fe14dbccfe495e82c704934c2bbac4f0d1fe903433d59c44324699e2631",
+      "wall_s": 0.6590831860012258,
+      "cpu_s": 0.11490579200000006,
+      "ru_maxrss_kib": 1129536,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 18,
+      "arm": "plain",
+      "text": "글반집에서는 어떤 빵을 팔았어?",
+      "pcm_sha256": "02866dbd15a250f78b70f312118272b026b37c5b0a15ffa75252a13729885854",
+      "wall_s": 0.6892814750026446,
+      "cpu_s": 0.13367119999999932,
+      "ru_maxrss_kib": 1129536,
+      "baseline_reproduced": true
+    },
+    {
+      "id": 19,
+      "arm": "plain",
+      "text": "글빵집에서는 어떤 빵을 팔았어?",
+      "pcm_sha256": "1e6613be57e696ed4cd969af1e9bb790ffc42bb0823cd07b02881e0c563d8641",
+      "wall_s": 0.7154873559993575,
+      "cpu_s": 0.14127961600000027,
+      "ru_maxrss_kib": 1129540,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 20,
+      "arm": "plain",
+      "text": "이번 집에서는 어떤 건을 팔았어?",
+      "pcm_sha256": "1e8ed19b965257bcd53aff4450c8e6df3d55b331f7fda876661043a07878dae7",
+      "wall_s": 0.6316826149995904,
+      "cpu_s": 0.11288230400000021,
+      "ru_maxrss_kib": 1129544,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 21,
+      "arm": "plain",
+      "text": "참모니아",
+      "pcm_sha256": "d782ecd7f495e4af05abf0ccf4786f7fd6b653f5ba3bb5a89fddfc5dacbfa781",
+      "wall_s": 0.5231613840005593,
+      "cpu_s": 0.09019792000000049,
+      "ru_maxrss_kib": 1129548,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 22,
+      "arm": "plain",
+      "text": "참모니아",
+      "pcm_sha256": "7499cc888c25cb3b5384deae8b9d43894ebe7e2830318a1c9122510bda002f34",
+      "wall_s": 0.5210424399992917,
+      "cpu_s": 0.08406988800000015,
+      "ru_maxrss_kib": 1129548,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 23,
+      "arm": "plain",
+      "text": "참무늬야",
+      "pcm_sha256": "c90947d320392384448169ca998b42bdc5d650ce5a1ec811248088ca5d95fd31",
+      "wall_s": 0.5473377949965652,
+      "cpu_s": 0.09325948800000017,
+      "ru_maxrss_kib": 1129552,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 24,
+      "arm": "plain",
+      "text": "참모니아",
+      "pcm_sha256": "b01ee2942e58cec1ac85e1f9912e7f96ffc9ea53c34a0043ec9a6e18ca2e9e91",
+      "wall_s": 0.5212613270050497,
+      "cpu_s": 0.08670726400000017,
+      "ru_maxrss_kib": 1129556,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 25,
+      "arm": "plain",
+      "text": "찬물이 열려",
+      "pcm_sha256": "c66213a9abeac489f0dea15c55940b38ad54942cde4701bbe3c4397284c6d0e2",
+      "wall_s": 0.5482767050052644,
+      "cpu_s": 0.0880534079999995,
+      "ru_maxrss_kib": 1129560,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 26,
+      "arm": "plain",
+      "text": "찬물에 야야",
+      "pcm_sha256": "326f9b18768d5a7e6f7a650b46a23f269bb368e04c46902ea54705a559c6e64e",
+      "wall_s": 0.549501285997394,
+      "cpu_s": 0.08818329599999952,
+      "ru_maxrss_kib": 1129560,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 27,
+      "arm": "plain",
+      "text": "여행자는 왜 길을 잃었어?",
+      "pcm_sha256": "f296d1b255202e205ea2a6ea933a3c44b3196d9d18021a0c3d233f464e6c864a",
+      "wall_s": 0.6309908550028922,
+      "cpu_s": 0.11094022399999925,
+      "ru_maxrss_kib": 1129564,
+      "baseline_reproduced": null
+    },
+    {
+      "id": 28,
+      "arm": "plain",
+      "text": "그 빵집에서는 어떤 빵을 팔았어?",
+      "pcm_sha256": "22833bb38581b5de3499fdb6222643b73ffe53d3879815302a997e5c5a3660e5",
+      "wall_s": 0.6327376600020216,
+      "cpu_s": 0.10911276800000014,
+      "ru_maxrss_kib": 1129564,
+      "baseline_reproduced": null
+    }
+  ]
+}

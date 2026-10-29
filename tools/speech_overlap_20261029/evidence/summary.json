@@ -1,0 +1,1013 @@
+{
+  "client_date": "2026-10-29",
+  "candidate": "spatial_runtime19",
+  "candidate_manifest_sha256": "9c46b71e19436a8b46e5cb3acc2bc2d853f1ceca4a455ecb48361d360be34e1c",
+  "goal": "의도 인식 정확도80% 이상, 발화 중 끼어들기, 비음성 잡음 오반응 억제",
+  "grading": "정답과 전사·중단·최종 답변을 수동 대조. 요청의 핵심 대상/행동/조건이 반영되면 pass, 핵심 행동만 되고 조건이 바뀌면 partial. 재질문만 한 경우 정확한 의도 인식 성공으로 세지 않음. 첫 시험과 재시험, 호출어 없는 후속 지시를 분리. 소표본 사후 기술 통계이며 독립 검증집합의 보장치가 아님.",
+  "metrics": {
+    "first_overlap": {
+      "total": 11,
+      "pass": 7,
+      "partial": 1,
+      "fail": 3,
+      "full_intent_percent": 63.63636363636363,
+      "with_partial_percent": 72.72727272727273,
+      "literal_exact": 5
+    },
+    "all_valid_overlap": {
+      "total": 13,
+      "detected_stopped": 13,
+      "responses_finished": 13
+    },
+    "targeted_retests": {
+      "total": 2,
+      "passed": 2
+    },
+    "wakefree": {
+      "total": 3,
+      "instruction_passed": 3
+    },
+    "noise": {
+      "total": 8,
+      "wrong_stop": 0,
+      "duck": 0,
+      "transcript": 0
+    },
+    "robot_only_controls": {
+      "total": 7,
+      "finished": 7
+    },
+    "latency_proxy": {
+      "n": 13,
+      "mean_s": 0.8003538199224679,
+      "min_s": 0.7424473300052341,
+      "max_s": 0.9674637249991065,
+      "p95_linear_s": 0.9311104983993572,
+      "scope": "PC request to ROS stopped event, NOT acoustic onset to audible stop"
+    },
+    "voice_memory": {
+      "budget_bytes": 3000000000,
+      "observed_estimate_peak_bytes": 2297660416,
+      "budget_minus_observed_peak": 702339584,
+      "swap_peak_bytes": 0,
+      "samples": 6849
+    },
+    "preservation": {
+      "files": 509,
+      "bytes": 731106295
+    }
+  },
+  "cohorts": [
+    {
+      "trial": "live_runtime19_noise_b1",
+      "tag": "noise",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_noise_b1",
+        "samples": 1850,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2173551616,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.23001031299645547
+      },
+      "fetch": {
+        "files": 72,
+        "bytes": 190191847,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 6,
+      "control_finished": true,
+      "counts": {
+        "completed": 9,
+        "process_confirmed": 8,
+        "wrong_stops": 0,
+        "speech_starts": 0,
+        "duck_commands": 0,
+        "transcripts": 0
+      }
+    },
+    {
+      "trial": "live_runtime19_shortstop_b1",
+      "tag": "shortstop",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_shortstop_b1",
+        "samples": 833,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2237018112,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.22577173999889055
+      },
+      "fetch": {
+        "files": 74,
+        "bytes": 88166438,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 1,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 3,
+        "scheduled": 3,
+        "playback_valid": 3,
+        "exact": 2,
+        "stopped": 3,
+        "replies_finished": 3
+      }
+    },
+    {
+      "trial": "live_runtime19_followup_b1",
+      "tag": "followup",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_followup_b1",
+        "samples": 1203,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2297660416,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.22451419499702752
+      },
+      "fetch": {
+        "files": 101,
+        "bytes": 125416019,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 1,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 6,
+        "scheduled": 6,
+        "playback_valid": 6,
+        "exact": 4,
+        "stopped": 3,
+        "replies_finished": 6
+      }
+    },
+    {
+      "trial": "live_runtime19_why_diag_b1",
+      "tag": "why_diag",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_why_diag_b1",
+        "samples": 536,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2189017088,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.22434286699717632
+      },
+      "fetch": {
+        "files": 52,
+        "bytes": 61352288,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 1,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 1,
+        "scheduled": 1,
+        "playback_valid": 1,
+        "exact": 1,
+        "stopped": 1,
+        "replies_finished": 1
+      }
+    },
+    {
+      "trial": "live_runtime19_bread_diag_b1",
+      "tag": "bread_diag",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_bread_diag_b1",
+        "samples": 551,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2250321920,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.2452212580028572
+      },
+      "fetch": {
+        "files": 54,
+        "bytes": 63638776,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 1,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 1,
+        "scheduled": 1,
+        "playback_valid": 1,
+        "exact": 0,
+        "stopped": 1,
+        "replies_finished": 1
+      }
+    },
+    {
+      "trial": "live_runtime19_correction_b1",
+      "tag": "correction",
+      "complete": true,
+      "failure": null,
+      "memory": {
+        "trial": "live_runtime19_correction_b1",
+        "samples": 1112,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2290505728,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.22816473000420956
+      },
+      "fetch": {
+        "files": 80,
+        "bytes": 118799244,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 0,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 3,
+        "scheduled": 3,
+        "playback_valid": 3,
+        "exact": 1,
+        "stopped": 3,
+        "replies_finished": 3
+      }
+    },
+    {
+      "trial": "live_runtime19_topic_b1",
+      "tag": "topic",
+      "complete": false,
+      "failure": "agent_setup_story_ended_before_overlap",
+      "memory": {
+        "trial": "live_runtime19_topic_b1",
+        "samples": 764,
+        "observed_candidate": true,
+        "accounted_estimate_peak_bytes": 2257228800,
+        "failure": null,
+        "budget_bytes": 3000000000,
+        "sample_target_s": 0.2,
+        "stopped_on_budget": false,
+        "limitation": "Sampled PSS/cgroup/nvmap accounting can overlap and is not an exact whole-voice allocation peak or CPU acceptance.",
+        "voice_swap_peak_bytes": 0,
+        "max_sample_gap_s": 0.22712461100309156
+      },
+      "fetch": {
+        "files": 76,
+        "bytes": 83541683,
+        "verified": true
+      },
+      "strict_audio_start_alignment": 0,
+      "control_finished": true,
+      "counts": {
+        "planned_rounds": 3,
+        "scheduled": 2,
+        "playback_valid": 2,
+        "exact": 1,
+        "stopped": 2,
+        "replies_finished": 2
+      }
+    }
+  ],
+  "rows": [
+    {
+      "case_index": 1,
+      "phase": "overlap",
+      "stimulus": "shortstop_1",
+      "agent_context_verified": true,
+      "reference": "그만.",
+      "transcript": "끝난다.",
+      "transcripts": [
+        "끝난다."
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "네, 여기서 끝낼게요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 77.75732192899886,
+          "pid": "fb7c4f53-a39b-4e14-bf79-9e9c4e83d121",
+          "rid": "24e92522-709e-49bd-a9b5-5ab7e07fc1c7",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.8095621749962447,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_shortstop_b1",
+      "group": "shortstop",
+      "retest": false,
+      "intent": "pass",
+      "review": "전사는 끝난다로 달랐으나 중단 의도를 받아 멈춤"
+    },
+    {
+      "case_index": 2,
+      "phase": "overlap",
+      "stimulus": "shortstop_2",
+      "agent_context_verified": true,
+      "reference": "잠깐.",
+      "transcript": "잠깐",
+      "transcripts": [
+        "잠깐"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "네, 잠시 멈출게요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 110.49017921300401,
+          "pid": "180f68bf-60ce-4f7b-96d3-1c0ee12f6d2b",
+          "rid": "8c005cc6-718d-4aec-bc79-ca868c751814",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.748406836995855,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_shortstop_b1",
+      "group": "shortstop",
+      "retest": false,
+      "intent": "pass",
+      "review": "잠깐 요청에 멈춤"
+    },
+    {
+      "case_index": 3,
+      "phase": "overlap",
+      "stimulus": "shortstop_3",
+      "agent_context_verified": true,
+      "reference": "멈춰.",
+      "transcript": "멈춰",
+      "transcripts": [
+        "멈춰"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "네, 멈출게요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 141.6679437010025,
+          "pid": "0b4daa9f-3218-4aa7-98de-2b8059272b95",
+          "rid": "2bd21ba7-b81c-4fdd-820f-9024b63b2115",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7597027640003944,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_shortstop_b1",
+      "group": "shortstop",
+      "retest": false,
+      "intent": "pass",
+      "review": "멈춰 요청에 멈춤"
+    },
+    {
+      "case_index": 1,
+      "phase": "overlap",
+      "stimulus": "followup_1",
+      "agent_context_verified": true,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "transcript": "여행자는 우에 길을 이뤘어",
+      "transcripts": [
+        "여행자는 우에 길을 이뤘어"
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "이야기에서는 여행자가 어디에서 길을 잃었는지는 나오지 않았어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 80.04614450300141,
+          "pid": "2828474d-61ab-4110-90aa-d867951e6408",
+          "rid": "d2204f64-7002-4adf-8ece-475561f055a0",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7475144720010576,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "fail",
+      "review": "왜를 어디로 해석해 질문 유형 변경"
+    },
+    {
+      "case_index": 1,
+      "phase": "followup",
+      "stimulus": "wakefree_followup",
+      "agent_context_verified": true,
+      "reference": "방금 답변을 한 문장으로 줄여 줘.",
+      "transcript": "방금 답변을 한 문장으로 줄여줘.",
+      "transcripts": [
+        "방금 답변을 한 문장으로 줄여줘."
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": null,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "이야기에서는 여행자가 어디에서 길을 잃었는지는 나오지 않았어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 94.35122451400093,
+          "pid": "71129673-b85a-4a81-8680-ea22bb0c7d45",
+          "rid": "4e6a1c69-af19-4931-bbf5-218c5febadca",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": true,
+      "session_state_before": "waiting_for_followup",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": null,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "pass",
+      "review": "호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음."
+    },
+    {
+      "case_index": 2,
+      "phase": "overlap",
+      "stimulus": "followup_2",
+      "agent_context_verified": true,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "transcript": "글밤 집에서는 어떤 밤을 팔았어?",
+      "transcripts": [
+        "글밤 집에서는 어떤 밤을 팔았어?"
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "빵집에서는 따뜻한 빵을 팔았고, 어떤 밤을 팔았는지는 이야기에서 나오지 않았어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 133.52283007900405,
+          "pid": "bb335815-4cc2-47ad-805f-16098b150b8f",
+          "rid": "7be8e089-8282-4c4d-b996-0ade2118d769",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.9674637249991065,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "fail",
+      "review": "빵을 밤으로 해석해 핵심 명사 변경"
+    },
+    {
+      "case_index": 2,
+      "phase": "followup",
+      "stimulus": "wakefree_followup",
+      "agent_context_verified": true,
+      "reference": "방금 답변을 한 문장으로 줄여 줘.",
+      "transcript": "방금 답변을 한 문장으로 줄여줘.",
+      "transcripts": [
+        "방금 답변을 한 문장으로 줄여줘."
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": null,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "빵집에서는 따뜻한 빵을 팔았고, 밤에 대해서는 이야기에서 나오지 않았어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 148.4803795800035,
+          "pid": "6d16f171-5ade-4cfd-8ab3-f5cdfdaced4b",
+          "rid": "6dae809d-6393-42a9-ad01-c2a041eaad97",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": true,
+      "session_state_before": "waiting_for_followup",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": null,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "pass",
+      "review": "호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음."
+    },
+    {
+      "case_index": 3,
+      "phase": "overlap",
+      "stimulus": "followup_3",
+      "agent_context_verified": true,
+      "reference": "그다음에는 무슨 일이 있었어?",
+      "transcript": "그 다음에는 무슨 일이 있었어?",
+      "transcripts": [
+        "그 다음에는 무슨 일이 있었어?"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "해가 기울 무렵, 여행자는 다시 길을 떠날 준비를 했습니다. 주인은 빵 한 봉지를 건네며 바닷길을 따라가면 다음 마을에 닿을 수 있다고 알려 주었습니다. 여행자는 고맙게 인사하고, 따뜻한 빵 냄새가 남은 작은 빵집을 뒤로한 채 길을 나섰습니다."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 200.786072435003,
+          "pid": "5b779b4e-98b1-465d-9c44-ad5d767347a5",
+          "rid": "032bab3a-3686-4bbd-a2a6-b0605ba63926",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.8550183219995233,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "pass",
+      "review": "다음 이야기로 이어감"
+    },
+    {
+      "case_index": 3,
+      "phase": "followup",
+      "stimulus": "wakefree_followup",
+      "agent_context_verified": true,
+      "reference": "방금 답변을 한 문장으로 줄여 줘.",
+      "transcript": "방금 답변을 한 문장으로 줄여줘.",
+      "transcripts": [
+        "방금 답변을 한 문장으로 줄여줘."
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": null,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "여행자는 주인이 건넨 빵을 들고 다음 마을을 향해 길을 떠났습니다."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 215.83746050300397,
+          "pid": "b872fe03-97b6-4639-9121-0d4be2430c0c",
+          "rid": "376f73fe-ea9a-4830-a509-59cef52db3f4",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": true,
+      "session_state_before": "waiting_for_followup",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": null,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_followup_b1",
+      "group": "followup",
+      "retest": false,
+      "intent": "pass",
+      "review": "호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음."
+    },
+    {
+      "case_index": 1,
+      "phase": "overlap",
+      "stimulus": "followup_1",
+      "agent_context_verified": true,
+      "reference": "여행자는 왜 길을 잃었어?",
+      "transcript": "여행자는 왜 길을 잃었어?",
+      "transcripts": [
+        "여행자는 왜 길을 잃었어?"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "이야기에는 여행자가 왜 길을 잃었는지는 나오지 않았어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 82.26304673299455,
+          "pid": "5bc4a0e3-6f67-43af-9135-e74f3daf12c7",
+          "rid": "2f1f285f-cb2c-4cd3-8b6e-cdba10c1df8b",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7655610739966505,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_why_diag_b1",
+      "group": "why_diag",
+      "retest": true,
+      "intent": "pass",
+      "review": "별도 재시험에서 왜 질문을 정확히 전사하고 이유에 맞춰 답변"
+    },
+    {
+      "case_index": 2,
+      "phase": "overlap",
+      "stimulus": "followup_2",
+      "agent_context_verified": true,
+      "reference": "그 빵집에서는 어떤 빵을 팔았어?",
+      "transcript": "글반집에서는 어떤 빵을 팔았어?",
+      "transcripts": [
+        "글반집에서는 어떤 빵을 팔았어?"
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "글 속에서는 빵의 종류가 구체적으로 나오지 않고, 주인이 매일 아침 따뜻한 빵을 구웠다고만 했어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 85.54674094199436,
+          "pid": "9966b678-bb5b-4bbb-b644-8e86b8e8ade1",
+          "rid": "b5357107-90d9-4de1-ad98-b9fd60ca0e7e",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.788561461995414,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_bread_diag_b1",
+      "group": "bread_diag",
+      "retest": true,
+      "intent": "pass",
+      "review": "별도 재시험에서 일부 철자 오류가 있으나 빵 종류 질문으로 응답"
+    },
+    {
+      "case_index": 1,
+      "phase": "overlap",
+      "stimulus": "correction_1",
+      "agent_context_verified": true,
+      "reference": "아니, 우유 말고 따뜻한 물로 바꿔 줘.",
+      "transcript": "아니, 우유 말고 깨끗한 물로 바꿔줘.",
+      "transcripts": [
+        "아니, 우유 말고 깨끗한 물로 바꿔줘."
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "바닷가 마을에 작은 빵집이 있었습니다. 주인은 매일 아침 창문을 열고 따뜻한 빵을 구웠습니다. 어느 날 길을 잃은 여행자가 문을 두드렸습니다. 주인은 여행자에게 깨끗한 물 한 잔과 갓 구운 빵을 건넸습니다. 두 사람은 바다를 바라보며 오래 이야기를 나누었습니다."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 97.41394874800608,
+          "pid": "da61048b-0c59-46d4-8acd-dac44022bf44",
+          "rid": "d18120e4-092a-407b-b6bf-3342ca3a9dc6",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.9068750139995245,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_correction_b1",
+      "group": "correction",
+      "retest": false,
+      "intent": "partial",
+      "review": "우유를 물로 변경했지만 따뜻한을 깨끗한으로 변경"
+    },
+    {
+      "case_index": 2,
+      "phase": "overlap",
+      "stimulus": "correction_2",
+      "agent_context_verified": true,
+      "reference": "주인 말고 여행자 입장에서 다시 말해 줘.",
+      "transcript": "주인 말고 여행자 입장에서 다시 말해줘",
+      "transcripts": [
+        "주인 말고 여행자 입장에서 다시 말해줘"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "길을 잃은 나는 바닷가 마을의 작은 빵집 문을 두드렸습니다. 주인은 따뜻한 우유 한 잔과 갓 구운 빵을 건네주었습니다. 나는 고마운 마음으로 주인과 바다를 바라보며 오래 이야기를 나누었습니다."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 143.9257044920014,
+          "pid": "7d5b1a4f-8845-40a3-90a1-930b920ee8ff",
+          "rid": "744fc836-25a2-45fe-93aa-c6b224c6d6ce",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7424473300052341,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_correction_b1",
+      "group": "correction",
+      "retest": false,
+      "intent": "pass",
+      "review": "여행자 시점으로 바꿈"
+    },
+    {
+      "case_index": 3,
+      "phase": "overlap",
+      "stimulus": "correction_3",
+      "agent_context_verified": true,
+      "reference": "여행자는 한 명이 아니라 두 명이야. 그렇게 바꿔 줘.",
+      "transcript": "여행자는 1명이 아니라 2명이야. 그렇게 바꿔줘.",
+      "transcripts": [
+        "여행자는 1명이 아니라 2명이야. 그렇게 바꿔줘."
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "바닷가 마을에 작은 빵집이 있었습니다. 주인은 매일 아침 창문을 열고 따뜻한 빵을 구웠습니다. 어느 날 길을 잃은 여행자 두 명이 문을 두드렸습니다. 주인은 여행자들에게 우유 한 잔과 갓 구운 빵을 건넸습니다. 두 사람은 바다를 바라보며 오래 이야기를 나누었습니다."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 198.08946054999979,
+          "pid": "d21c0e6c-9b59-41c0-beb5-f9d3eba390ff",
+          "rid": "4191d949-e815-4288-b5f2-42714261fdb3",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7470524680029484,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_correction_b1",
+      "group": "correction",
+      "retest": false,
+      "intent": "pass",
+      "review": "한 명에서 두 명으로 바꿈; 숫자 표기 차이는 의미 오류 아님"
+    },
+    {
+      "case_index": 1,
+      "phase": "overlap",
+      "stimulus": "topic_1",
+      "agent_context_verified": true,
+      "reference": "이야기는 여기까지 하고, 고양이에 대해 알려 줘.",
+      "transcript": "이야기는 여기까지 하고 고양이의 대회 알려줘.",
+      "transcripts": [
+        "이야기는 여기까지 하고 고양이의 대회 알려줘."
+      ],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "‘고양이의 대화’를 말씀하신 걸까요, 아니면 ‘고양이 대회’에 대해 알고 싶으신 걸까요?"
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 83.92011992799962,
+          "pid": "6ae934f2-92d4-49f5-bf5e-807cb4c4144d",
+          "rid": "2b3ecf18-9af4-4f4b-8970-0cf700155e0c",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.7536013380013173,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_topic_b1",
+      "group": "topic",
+      "retest": false,
+      "intent": "fail",
+      "review": "고양이에 대해를 고양이 대회 또는 대화로 받아 재질문"
+    },
+    {
+      "case_index": 2,
+      "phase": "overlap",
+      "stimulus": "topic_2",
+      "agent_context_verified": true,
+      "reference": "다른 얘기 하자. 감자로 만들 수 있는 음식 두 가지를 말해 줘.",
+      "transcript": "다른 얘기하자 감자로 만들 수 있는 음식 두 가지를 말해줘",
+      "transcripts": [
+        "다른 얘기하자 감자로 만들 수 있는 음식 두 가지를 말해줘"
+      ],
+      "exact_ignoring_punctuation_spaces": true,
+      "robot_stopped": true,
+      "playback_valid": true,
+      "scheduled": true,
+      "responses": [
+        "감자전과 감자튀김이 있어요."
+      ],
+      "reply_finished": true,
+      "reply_states": [
+        {
+          "at": 119.87338877999719,
+          "pid": "e25e1fe4-4fdf-417e-8b0b-1065424588b0",
+          "rid": "be37bdbc-6fca-4efc-9189-5da8fc701512",
+          "state": "finished",
+          "interim": false
+        }
+      ],
+      "wakefree_followup_observed": null,
+      "session_state_before": "barge_in_ready:reachy",
+      "mechanical_issues": [],
+      "request_to_ros_stop_s": 0.8128326779988129,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_topic_b1",
+      "group": "topic",
+      "retest": false,
+      "intent": "pass",
+      "review": "감자 음식 두 가지로 화제 전환"
+    },
+    {
+      "case_index": 3,
+      "phase": "overlap",
+      "stimulus": "topic_3",
+      "agent_context_verified": true,
+      "reference": "주제를 바꿔서, 바다가 파랗게 보이는 이유를 알려 줘.",
+      "transcript": null,
+      "transcripts": [],
+      "exact_ignoring_punctuation_spaces": false,
+      "robot_stopped": true,
+      "playback_valid": false,
+      "scheduled": false,
+      "responses": [],
+      "reply_finished": false,
+      "reply_states": [],
+      "wakefree_followup_observed": null,
+      "session_state_before": null,
+      "mechanical_issues": [
+        "missing_stimulus"
+      ],
+      "request_to_ros_stop_s": null,
+      "intent_pass": null,
+      "intent_requires_text_review": true,
+      "trial": "live_runtime19_topic_b1",
+      "group": "topic",
+      "retest": false,
+      "intent": "excluded",
+      "review": "Mac 시험 음성 재생 전 외부 음성 유입을 사용자가 확인. 자기 음성 오탐 및 계획된 문장 인식 판정 불가."
+    }
+  ],
+  "restoration": {
+    "at_unix": 1793266505.3751457,
+    "normal_service": "active",
+    "test_service": "inactive",
+    "gains": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ],
+    "origin": "regular",
+    "config": [
+      "debug=0",
+      "mic_vol=30",
+      "beam=-3",
+      "version=mic6_circle"
+    ],
+    "mac_volume": "output volume:81, input volume:46, alert volume:100, output muted:false",
+    "mic6_circle_loaded_verified": true
+  },
+  "normal_release": "/home/ubuntu/.local/share/malbut/speech-releases/interaction-20261028",
+  "candidate_deployed": false,
+  "goal_complete": false,
+  "source_hashes": {
+    "reports/live_runtime19_noise_b1-summary.json": "f37c326349faecc7fcc7822d9f5b38eb9b269a2275e4778dff54738eab298330",
+    "reports/live_runtime19_noise_b1-memory-summary.json": "65f037f1faef7cad8fa9b994fa9dc9da518acf5230addd45513fbaccc93b976f",
+    "reports/live_runtime19_noise_b1-fetch.json": "1ae1fb807210c9cce8f6ca92049d0088faa0ffac4129532f9ba76e15563d6947",
+    "reports/live_runtime19_shortstop_b1-summary.json": "1e596fcef60914ab6fcb1d6b1f72b7744b70068e758cf5413c8f11492fbb78f8",
+    "reports/live_runtime19_shortstop_b1-memory-summary.json": "bb70cca3f5cb15e32f76d72704ffca4606b8ef3e6f2f11486e0f2b36aed26400",
+    "reports/live_runtime19_shortstop_b1-fetch.json": "dce8738daff1dcd3b47a32b7dd8a4359f947418bbb1fbbaa38cbd6b4290e8599",
+    "reports/live_runtime19_followup_b1-summary.json": "d69e1ba4c755305e7cec769051bd6685359ba7b2099a3b8aa462331e427855c0",
+    "reports/live_runtime19_followup_b1-memory-summary.json": "e131c969a884d52376611cc1611dcf7bdd9ce1931f8d96512c568ef058908e2a",
+    "reports/live_runtime19_followup_b1-fetch.json": "9b881c8bca2ef67e3365ef742b2207c972e35ce60c1a4b029c31a1ab55760f28",
+    "reports/live_runtime19_why_diag_b1-summary.json": "b796a2ace87ad2ac2f4ecf8ba70b9220eba5b491029a242e54c8b08bce5f2738",
+    "reports/live_runtime19_why_diag_b1-memory-summary.json": "89bdcdd191d3ad8a259a18bc1df7a2a829d1ec8478c3ba382e859aca367a7cd5",
+    "reports/live_runtime19_why_diag_b1-fetch.json": "2afcf52533a0a7a8d6788c441ce4c69bcd222698316def8c2c173517ed340c3a",
+    "reports/live_runtime19_bread_diag_b1-summary.json": "2c1ced2a05decb73f60a894a84c9514027df8173ab0c1d912229edb8c8521615",
+    "reports/live_runtime19_bread_diag_b1-memory-summary.json": "b42eb865933aad9b944853fe783a66fe75b61516f02f02d9aa880a1641201357",
+    "reports/live_runtime19_bread_diag_b1-fetch.json": "961411f0829a11891690964982065d0985ab516a4c328148c26953cd856134c9",
+    "reports/live_runtime19_correction_b1-summary.json": "54701238ab1de9d29dbb4dfd0b68ec5a704f2aecabf65b407b75d9344dd0f01d",
+    "reports/live_runtime19_correction_b1-memory-summary.json": "11c4b4e076579c803948b81077bd0c0dce213266ef2d6336eb7ea66ef20d93ff",
+    "reports/live_runtime19_correction_b1-fetch.json": "bb0f73829183167c9ebfff3a69cbb4da485902b638274c1e030b26e554b9c4e8",
+    "reports/live_runtime19_topic_b1-summary.json": "58bc4234633098b63025dd728d26e6b9eac2d134477e00040682bcfd93472c4f",
+    "reports/live_runtime19_topic_b1-memory-summary.json": "a2358320dfb9c8695baea5e912add16b50a7431a6e3f207a14c4b9e0716b8980",
+    "reports/live_runtime19_topic_b1-fetch.json": "ab1bf767931c4a2ac0d020dc5455a716dd08a2af6ca946d6a7e941d8a4a1b724",
+    "reports/runtime19-summary-restoration-audit.json": "0913dc3403751e0e13ba9ccf249a4c911c196dfa428a50e95b91580e63c88994",
+    "backup/interaction/cpu_same_db/comparison.json": "e0550b3f823feee8adb4a13c2652784415e3721d59cb7cbde324ef00a937f82e",
+    "backup/interaction/tts_quality/piper6_seeded/result.json": "07c20314acdde428666d3e0a3bf267a3558b34f074243e3cc34de84bd2ed60e8",
+    "backup/interaction/tts_quality/piper3_seeded/result.json": "fbf321c0c79f28c6d15362fc1d652c916b3f491030c2ee80ad1bc9d23c45eb13"
+  },
+  "tail128_diagnostic": {
+    "prepared_inputs": 54,
+    "remote_inference_run": false,
+    "production_change": false
+  },
+  "publication_scope": "Sanitized summary of local evidence, not raw recordings or independently reproduced acceptance."
+}
