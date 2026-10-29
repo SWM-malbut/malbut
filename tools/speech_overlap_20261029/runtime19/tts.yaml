@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    audio_directory: /home/ubuntu/.cache/malbut_speech/piper-moss-epoch40-deploy-20261019/audio
+    backend: piper
+    model_path: /home/ubuntu/.cache/malbut_speech/models/piper-moss-round02-epoch40/ko_KR-moss_calm-medium.onnx
+    output_device: -1
+    output_device_name: pulse
+    piper_threads: 3

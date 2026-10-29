@@ -1,7 +1,7 @@
 """Offline checks for the ROS adapter's worker and executor boundary."""
 
 import sys
-from threading import Thread, get_ident
+from threading import Event, Thread, get_ident
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -34,7 +34,7 @@ class FakeRuntime:
 def fake_ros(monkeypatch):
     """Provide ROS entity bookkeeping without importing optional backends."""
     entities = SimpleNamespace(
-        subscriptions=[], services=[], timers=[], publishers=[],
+        subscriptions=[], services=[], timers=[], guards=[], publishers=[],
         published=[], destruction=[], parameters={}, logs=[],
     )
 
@@ -69,7 +69,29 @@ def fake_ros(monkeypatch):
         def create_timer(self, interval, callback):
             entities.timers.append((interval, callback))
 
+        def create_guard_condition(self, callback):
+            class Guard:
+                pending = False
+                destroyed = False
+                triggers = 0
+
+                def trigger(self):
+                    assert not self.destroyed
+                    self.triggers += 1
+                    self.pending = True
+
+                def dispatch(self):
+                    if self.pending:
+                        self.pending = False
+                        callback()
+
+            guard = Guard()
+            entities.guards.append(guard)
+            return guard
+
         def destroy_node(self):
+            for guard in entities.guards:
+                guard.destroyed = True
             entities.destruction.append('node')
             return True
 
@@ -93,6 +115,23 @@ def fake_ros(monkeypatch):
         ControlSpeechPlayback=type('ControlSpeechPlayback', (), {}),
     ))
     return entities
+
+
+def test_status_publication_waits_for_events_without_an_idle_timer(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    try:
+        assert fake_ros.timers == []
+        guard = fake_ros.guards[0]
+        assert guard.triggers == 0
+        guard.dispatch()
+        assert fake_ros.published == []
+        node._runtime.on_status('playback-1', 'stopped', False, 'utterance-1')
+        assert guard.triggers == 1
+        assert fake_ros.published == []
+        guard.dispatch()
+        assert [message.state for _, message in fake_ros.published] == ['stopped']
+    finally:
+        node.destroy_node()
 
 
 def test_request_kind_and_verbatim_text_reach_runtime(fake_ros):
@@ -161,14 +200,14 @@ def test_worker_states_are_published_in_order_only_by_executor(fake_ros, interim
     worker.join(timeout=2)
     assert not worker.is_alive()
     assert fake_ros.published == []
-    fake_ros.timers[0][1]()
+    fake_ros.guards[0].dispatch()
     assert [(message.playback_id, message.state, message.interim, message.request_id)
             for _, message in fake_ros.published] == [
         ('playback-1', state, interim, 'utterance-1')
         for state in ('playing', 'paused', 'playing', 'finished')
     ]
     assert {thread_id for thread_id, _ in fake_ros.published} == {get_ident()}
-    fake_ros.timers[0][1]()
+    fake_ros.guards[0].dispatch()
     assert len(fake_ros.published) == 4
     node.destroy_node()
 
@@ -186,7 +225,7 @@ def test_control_acceptance_does_not_fabricate_a_state(fake_ros):
         SimpleNamespace(playback_id='missing', command='pause'),
         SimpleNamespace(accepted=False),
     ).accepted
-    fake_ros.timers[0][1]()
+    fake_ros.guards[0].dispatch()
     assert fake_ros.published == []
     node.destroy_node()
 
@@ -205,7 +244,7 @@ def test_destruction_closes_audio_before_ros_and_ignores_late_events(fake_ros):
     assert not node.destroy_node()
     assert fake_ros.destruction == ['runtime', 'node']
     fake_ros.subscriptions[0][2](SimpleNamespace(text='늦은 말', request_type=0, interim=False))
-    fake_ros.timers[0][1]()
+    fake_ros.guards[0].dispatch()
     assert runtime.submitted == []
     assert fake_ros.published == []
 
@@ -216,6 +255,79 @@ def test_explicit_local_startup_failure_releases_node(fake_ros):
     with pytest.raises(ValueError, match='model_path:=/absolute/model/path'):
         tts_node.create_tts_node()
     assert fake_ros.destruction == ['node']
+
+
+def test_status_from_runtime_construction_is_not_lost(fake_ros):
+    def factory(on_status):
+        on_status('early', 'accepted', False, 'request')
+        return FakeRuntime(on_status)
+
+    node = tts_node.create_tts_node(factory)
+    fake_ros.guards[0].dispatch()
+    assert [message.playback_id for _, message in fake_ros.published] == ['early']
+    node.destroy_node()
+
+
+def test_status_arriving_at_empty_drain_wakes_next_dispatch(fake_ros, monkeypatch):
+    node = tts_node.create_tts_node(FakeRuntime)
+    node._queue_status('first', 'finished', False, '')
+    original_get = node._statuses.get_nowait
+    injected = []
+
+    def get():
+        try:
+            return original_get()
+        except tts_node.Empty:
+            if not injected:
+                injected.append(True)
+                node._queue_status('next', 'playing', False, '')
+            raise
+
+    monkeypatch.setattr(node._statuses, 'get_nowait', get)
+    fake_ros.guards[0].dispatch()
+    assert [message.playback_id for _, message in fake_ros.published] == ['first']
+    fake_ros.guards[0].dispatch()
+    assert [message.playback_id for _, message in fake_ros.published] == ['first', 'next']
+    node.destroy_node()
+
+
+def test_destruction_waits_for_an_in_flight_guard_trigger(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    guard = fake_ros.guards[0]
+    entered, release, destroying = Event(), Event(), Event()
+    errors = []
+    original_trigger = guard.trigger
+
+    def trigger():
+        entered.set()
+        assert release.wait(2)
+        original_trigger()
+
+    def emit():
+        try:
+            node._queue_status('playback', 'stopped', False, '')
+        except BaseException as error:
+            errors.append(error)
+
+    def close():
+        destroying.set()
+        node.destroy_node()
+
+    guard.trigger = trigger
+    producer = Thread(target=emit)
+    destroyer = Thread(target=close)
+    producer.start()
+    assert entered.wait(2)
+    destroyer.start()
+    assert destroying.wait(2)
+    assert not guard.destroyed
+    release.set()
+    producer.join(2)
+    destroyer.join(2)
+    assert not producer.is_alive() and not destroyer.is_alive()
+    assert errors == [] and guard.destroyed
+    node._queue_status('late', 'finished', False, '')
+    assert guard.triggers == 1
 
 
 def test_unknown_backend_is_rejected_before_loading(fake_ros):

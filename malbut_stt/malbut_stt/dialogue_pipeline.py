@@ -96,6 +96,7 @@ class DialoguePipeline:
         self.barge_in_ducking = barge_in_ducking or barge_in_mode == 'reachy'
         self._barge_reply_playback_id = None
         self._ducked_playback = None
+        self._duck_renew_at = 0.0
         self._seen_openers = deque(maxlen=128)
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
@@ -804,9 +805,12 @@ class DialoguePipeline:
         if self._ducked_playback is not None and self._ducked_playback != desired:
             self.publish_control(self._ducked_playback, 'unduck')
             self._ducked_playback = None
-        if desired is not None and self._ducked_playback is None:
+        if desired is not None and (self._ducked_playback is None
+                                    or self.clock() >= self._duck_renew_at):
+            # Keep the player's 300 ms lease alive while this candidate owns it.
             self.publish_control(desired, 'duck')
             self._ducked_playback = desired
+            self._duck_renew_at = self.clock() + .15
 
     def feed(self, pcm, *, captured_at=None, busy_at_capture=False):
         """Consume captured PCM on the owner thread; the microphone remains open."""
@@ -1255,19 +1259,27 @@ class DialoguePipeline:
         if self._pending is not None and self._pending[1] != self.session.playback_id:
             self._terminate('addressee_unknown:stale_playback')
         if (self._reply_request_id is not None and request_id == self._reply_request_id
-                and not interim and state in ('finished', 'failed', 'stopped')):
+                and not interim and state in ('finished', 'failed', 'stopped')
+                and (self._barge_reply_playback_id is None
+                     or playback_id == self._barge_reply_playback_id)):
             # Failed synthesis can terminate before PLAYING; progress cannot unlock input.
             followup = (state == 'finished' and self._followup_pending
                         and not self._web_talk_blocked(self.clock()))
             keep_onset = (followup and self.barge_in_mode == 'reachy'
-                          and self.session.active
-                          and bool(self.command_stream.collector.candidate_audio))
+                          and self.input_has_aec and self.session.active
+                          and not self.session.session_id
+                          and self._barge_reply_playback_id == playback_id
+                          and self.session.playback_id == playback_id
+                          and not self._busy and self._pending is None
+                          and not self._chime_playing
+                          and self.clock() >= self._chime_gate_until)
             if keep_onset:
-                # Speech can start just before natural playback completion.
-                # Preserve its onset while transferring to the follow-up wait.
+                # A weak first word can still be in pre-roll before VAD qualifies.
+                # Preserve bounded capture when its owning reply finishes.
                 self._reply_request_id = None
                 self._barge_reply_playback_id = None
                 self._followup_pending = False
+                self._retry_notice_deadline = None
                 self.session.deadline = None
                 self._update_ducking()
             else:

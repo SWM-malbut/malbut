@@ -1,0 +1,869 @@
+{
+  "version": 1,
+  "candidate": "spatial_runtime19",
+  "source_commit": "e29331d7f5480c18b25fa213e60edddc649f455f",
+  "pr_base": "wip/local-code-handoff-20261028",
+  "original_candidate_manifest_sha256": "9c46b71e19436a8b46e5cb3acc2bc2d853f1ceca4a455ecb48361d360be34e1c",
+  "code_files": [
+    {
+      "path": "malbut_stt/__init__.py",
+      "sha256": "d2ca19f8559df71eeaec0792400b2776fbd2c091f38ff6015e6cd1ba81964b96",
+      "repository_path": "malbut_stt/malbut_stt/__init__.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/audio.py",
+      "sha256": "e6f82503a474df7fe7e2d82e5fa370057e928c001bb11aef235ec6fcd160c651",
+      "repository_path": "malbut_stt/malbut_stt/audio.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/chime.py",
+      "sha256": "897ecd6d112df06d0126ebeee36da0a950211f91dd330093a3c9c75bdd1d7400",
+      "repository_path": "malbut_stt/malbut_stt/chime.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/conversation.py",
+      "sha256": "848b1a2d1bf940a995648b1d21393245fc3628ccabc4296fdab45ec6e035246b",
+      "repository_path": "malbut_stt/malbut_stt/conversation.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/cpp_transcription.py",
+      "sha256": "e72d1f013965d6f2013f1de9ab057484d90a4f5cb31b5c876a78efabe88bb132",
+      "repository_path": "malbut_stt/malbut_stt/cpp_transcription.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/diagnostics.py",
+      "sha256": "b6cb92c4338d934ed7d2d48130ec0bf7810821fc8e56020378a2c22312062d24",
+      "repository_path": "malbut_stt/malbut_stt/diagnostics.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/dialogue_pipeline.py",
+      "sha256": "260b445871bee28ea014811ebbf57df409b580c40cd8636817ce969eaf50c25a",
+      "repository_path": "malbut_stt/malbut_stt/dialogue_pipeline.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/DTLN_LICENSE",
+      "sha256": "aa95acd8c8a7341bfcdb2823694dcbb27a2a4143e860bb52db1ff0f29c85e5a1",
+      "repository_path": "malbut_stt/malbut_stt/echo/DTLN_LICENSE",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/echo/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repository_path": "malbut_stt/malbut_stt/echo/__init__.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/echo/models.json",
+      "sha256": "5ea3700648f038eae4137398cd85482b994886d5bb102332735c8ec338a97bb7",
+      "repository_path": "malbut_stt/malbut_stt/echo/models.json",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/echo/neural.py",
+      "sha256": "91a5c35da24415ed5b76a2954b7c51ce3cea4e4eb5969610095d0ae2256a4626",
+      "repository_path": "malbut_stt/malbut_stt/echo/neural.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/echo/processor.py",
+      "sha256": "c384dcca9ff9e9dd1110d4281cfb1c45fe066870ecc54a9dd18fb8e1584907ec",
+      "repository_path": "malbut_stt/malbut_stt/echo/processor.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/pulse.py",
+      "sha256": "2b41b59d7b045e21eb8598c465f424747f6012a898510d8fdaf1fbbe36fceab9",
+      "repository_path": "malbut_stt/malbut_stt/echo/pulse.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/quiet_asr.py",
+      "sha256": "f9cb68d3f54a1b18c7a5513c0ae4fc2a04d1cb165ee38f52b6004f469f18c78d",
+      "repository_path": "malbut_stt/malbut_stt/echo/quiet_asr.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/recorder.py",
+      "sha256": "9f7d6730692b79ee11e589761e676079e1cdf55a775595090dcb7321210000d6",
+      "repository_path": "malbut_stt/malbut_stt/echo/recorder.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/spatial_echo_gate.py",
+      "sha256": "a26491c30cfad6d01b978e39a044845d2dfd67364a582fe04c51fa15eab56c7d",
+      "repository_path": "malbut_stt/malbut_stt/echo/spatial_echo_gate.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/startup_phase.py",
+      "sha256": "86e97347bfd7e1679122ba1b3b482744c3370641cca443003179644ec8de91e9",
+      "repository_path": "malbut_stt/malbut_stt/echo/startup_phase.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/startup_phase_estimator.py",
+      "sha256": "8ace4f0aa5f0192e35f7399fe2449a0bcbe87f9c5cee3ee6048f2cb6f8c533c3",
+      "repository_path": "malbut_stt/malbut_stt/echo/startup_phase_estimator.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/echo/vad.py",
+      "sha256": "74c54fb5d949d2ff0cf1813b9fca0b1e15f59017d0111af60dec8252edf3e461",
+      "repository_path": "malbut_stt/malbut_stt/echo/vad.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/echo/worker.py",
+      "sha256": "5cc823d95f2fd3799793c9d9df1fad71d0570971d69963d59b694de168a882dc",
+      "repository_path": "malbut_stt/malbut_stt/echo/worker.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/endpoint.py",
+      "sha256": "d1c68d7b27ade3d135368bcbe75c82a2fac585deac8292bb6a86c178b5975dee",
+      "repository_path": "malbut_stt/malbut_stt/endpoint.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/fall_check.py",
+      "sha256": "9b9bfa888807686c585dfbfd1b4f02ed33673cf6143625bc5cc01b97a57fae54",
+      "repository_path": "malbut_stt/malbut_stt/fall_check.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/incident.py",
+      "sha256": "a3fb4abfe7f023d1e39e31c0f190b6dfc49a5eb6e35a7b6049224b856c16bcc3",
+      "repository_path": "malbut_stt/malbut_stt/incident.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/incident_cli.py",
+      "sha256": "f7dfecfb168c346696a5b853238668e0cb980c06d72da446325ee5afa4296665",
+      "repository_path": "malbut_stt/malbut_stt/incident_cli.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/incident_trace.py",
+      "sha256": "46823febc04223cd76926da6a0274131880d194ef404d99ac57b29beb7338b16",
+      "repository_path": "malbut_stt/malbut_stt/incident_trace.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/incremental.py",
+      "sha256": "683da4a34f62fa79898dd14ad0916884fc8380956dc9a4ce22f505e78fda1c98",
+      "repository_path": "malbut_stt/malbut_stt/incremental.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/interruption_asr.py",
+      "sha256": "bcc321f9b080745916dd90d778190c61db2f68ece7ec91268347f2333c4483bd",
+      "repository_path": "malbut_stt/malbut_stt/interruption_asr.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/local_wake.py",
+      "sha256": "3d623d9848252e3633b536f003426575c3c2417ceab88995d4a8ddcd56716cfc",
+      "repository_path": "malbut_stt/malbut_stt/local_wake.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/mlx_transcription.py",
+      "sha256": "198fbc1e80d36414fe96083423b941b0881fef17384b867ea052e8e767262a01",
+      "repository_path": "malbut_stt/malbut_stt/mlx_transcription.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/node.py",
+      "sha256": "7c9c25f59d6810205f7bd95357279c26583a27daae08ffdf765fb2792b465820",
+      "repository_path": "malbut_stt/malbut_stt/node.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/pipeline.py",
+      "sha256": "15d68dd9936a5bba29cbd4deda1795f750bff26ab3f80d94baa2308c214403dc",
+      "repository_path": "malbut_stt/malbut_stt/pipeline.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/preflight.py",
+      "sha256": "6dc3896a599d933fbb8089c8d9f3476c58c27672fb418ddc2b1c5ac47ce27ebc",
+      "repository_path": "malbut_stt/malbut_stt/preflight.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/shadow_vad.py",
+      "sha256": "621a21a2fe7c083be944fa5f00cdcdd1fc6b7a4bcab27529ed7f7a2e30458a85",
+      "repository_path": "malbut_stt/malbut_stt/shadow_vad.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/silero_gate.py",
+      "sha256": "668a203283c818df62a2236d41bd6302a286caf76e8cec6c812ca10a27cd18b1",
+      "repository_path": "malbut_stt/malbut_stt/silero_gate.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/silero_stream.py",
+      "sha256": "d89e6dec15c1fa231f34cf58173137903d23974c7be4a8bb1e9a44afdb4e6b5b",
+      "repository_path": "malbut_stt/malbut_stt/silero_stream.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/silero_vad.py",
+      "sha256": "715bef07efc1375e3bafc5345bd900b5e006443d2f10877aca5f99e3a760cc5f",
+      "repository_path": "malbut_stt/malbut_stt/silero_vad.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/smoke.py",
+      "sha256": "23dabe83c16a1045ce642a300592d24d5120ca38fc93e03ac156db7277c7906a",
+      "repository_path": "malbut_stt/malbut_stt/smoke.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/streaming.py",
+      "sha256": "ec6738da1635bc6204021c8700cf63a3dbc3baa59f133f3a86070b7e7ad4ac57",
+      "repository_path": "malbut_stt/malbut_stt/streaming.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_stt/transcription.py",
+      "sha256": "341b71464f312dc234df4116dddb69b01e83f2f35457a69400b47e1a801d270f",
+      "repository_path": "malbut_stt/malbut_stt/transcription.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/turn_detection.py",
+      "sha256": "5a91e90adcc55eb2327c58d0b4ad69a4c7362168589f044df96c9d0b572bbe91",
+      "repository_path": "malbut_stt/malbut_stt/turn_detection.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_stt/wake.py",
+      "sha256": "41985442997493e78581e0936ebd43b15234c16a86c1f488896243111a0ddc3d",
+      "repository_path": "malbut_stt/malbut_stt/wake.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/__init__.py",
+      "sha256": "c41908f4e2786a0da538a74971a7fa05f2c566e556ced4f7f5e08ac7b324eb05",
+      "repository_path": "malbut_tts/malbut_tts/__init__.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/api_synthesis.py",
+      "sha256": "3073dd7bd27a0c3b94d5f56da652b3f9078887050cef9ee2fd2cda293a5f0793",
+      "repository_path": "malbut_tts/malbut_tts/api_synthesis.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/assets/notice_no_dialogue.wav",
+      "sha256": "c206b44e41c89fd80dd329453e125a831ae80ceb1db8d4ef76ed41453367274c",
+      "repository_path": "malbut_tts/malbut_tts/assets/notice_no_dialogue.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/cancel.none.wav",
+      "sha256": "c4840e849387d2e579e78543f2bc6b4c419101803041e98423977725ff367610",
+      "repository_path": "malbut_tts/malbut_tts/audio/cancel.none.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/cancel.rejected.wav",
+      "sha256": "3cd3a4de4aab515b0efec2cffe4bad2a94c439855a99cdf2c3a24b2a7cd784cd",
+      "repository_path": "malbut_tts/malbut_tts/audio/cancel.rejected.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/cancel.requested.wav",
+      "sha256": "6161d57a409e081faa8da144fed696a63b0365b8b911a6a1f6a3a8bf1dc04396",
+      "repository_path": "malbut_tts/malbut_tts/audio/cancel.requested.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/cancel.unknown.wav",
+      "sha256": "ba8741ca80d3e65c650ee00d68f4db3e2fdffdf09316e46bd7e62b64617ecf14",
+      "repository_path": "malbut_tts/malbut_tts/audio/cancel.unknown.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/catalog.json",
+      "sha256": "0ffdc963768e0bb234829d62780f4ab1b96d6e7c9b500a25385b100d7fdfad91",
+      "repository_path": "malbut_tts/malbut_tts/audio/catalog.json",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.answer_failed.wav",
+      "sha256": "e6371ee4005bf48a37e1e80a063dcf3f5ddf0d44ffe17784a0ab3a5bb90aa933",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.answer_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.busy.wav",
+      "sha256": "2cf5c48f06a46dde8047fa1d900f7cf37bbb2480d93a46ff74a0663fbf5b5b72",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.busy.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.context_limit.wav",
+      "sha256": "0227cd84761bd1303b29f3f9f473dd403b9116a381473d9c74df7b8c640721e0",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.context_limit.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.delay.wav",
+      "sha256": "ba81f96f8d8213561465c98c5e3254401bafe2cabd4b0a0ae6615376615d5728",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.delay.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.input_too_long.wav",
+      "sha256": "3d29e4a31968fadb438a87828a44a81a699419fb54f404e6c9cebec0170a0b12",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.input_too_long.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.input_unrecognized.wav",
+      "sha256": "ac347e016007fd4471dd252e1a930e9364e19d05de05ef4b764538c94e214e96",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.input_unrecognized.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.memory_changed.wav",
+      "sha256": "60215d9305de7dc38877a2a79a8516e03aace5e04f4c56e8d8933d08220c3481",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.memory_changed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.model_retry.wav",
+      "sha256": "4098e9626ed9d8fbfe5c86b5125f671e0e8a3438269d30dc65469433ff7a9b6d",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.model_retry.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.processing_failed.wav",
+      "sha256": "46558d58729f3ec85e5498e708a448198e07db1bd7e0dc498f39eb4dc6dadc0d",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.processing_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.receipt_failed.wav",
+      "sha256": "7363de2b23180dec9c8fada04f2a0632ffeb08de684edee1e7427f0370023f55",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.receipt_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.session_unavailable.wav",
+      "sha256": "ee74170e5292a4e34799f22ee29104739818967f1c24a7559226e585e34f6027",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.session_unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.startup_failed.wav",
+      "sha256": "cc03ee379bb11acd3e740c7171724314826b8e457cc0ee184f45e8d01c3b44b0",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.startup_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.unavailable.wav",
+      "sha256": "c206b44e41c89fd80dd329453e125a831ae80ceb1db8d4ef76ed41453367274c",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/conversation.weather_retry.wav",
+      "sha256": "a4796ac3e367efd03cd2432c8e293b6a7de57ca9a768b5a387a157c97af82a4d",
+      "repository_path": "malbut_tts/malbut_tts/audio/conversation.weather_retry.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/fall_check.busy.wav",
+      "sha256": "cd28747bae57ec640f06026d6c7480ff36f8dbecc08583d9f823683d48696f74",
+      "repository_path": "malbut_tts/malbut_tts/audio/fall_check.busy.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/fall_check.help.wav",
+      "sha256": "a284f139d254cae82eb482fbd12bf18ea357f92ef5f59e0e64142d52ac61a60a",
+      "repository_path": "malbut_tts/malbut_tts/audio/fall_check.help.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/fall_check.movement_blocked.wav",
+      "sha256": "1e35a79c5a97927dfdaadd560efadbf1c2ee578350b39b61dd3013adf0d7578b",
+      "repository_path": "malbut_tts/malbut_tts/audio/fall_check.movement_blocked.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/fall_check.start.wav",
+      "sha256": "c922bc92f96638d3528574e6b49a43efb10f75110749ba5c5ad14f446b44b316",
+      "repository_path": "malbut_tts/malbut_tts/audio/fall_check.start.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/fall_check.stopped.wav",
+      "sha256": "425ef502b359f64fdb59749efb5b6d0b83ae647c00e405b33e2633e85c287fcd",
+      "repository_path": "malbut_tts/malbut_tts/audio/fall_check.stopped.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.get_homecam_events.starting.wav",
+      "sha256": "ff28cf70226347a68d3492d11e12042b333e49423835425f65f299363a159258",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.get_homecam_events.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.get_homecam_falls.starting.wav",
+      "sha256": "d947bc2842b864045c00ab03e6dc6d9e0916c3367ec174bce410025a746486f7",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.get_homecam_falls.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.get_homecam_recordings.starting.wav",
+      "sha256": "cb4a106e44fb72431f87979b6a2405d4c3e91b4617bac3e83368bafa3adf1a27",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.get_homecam_recordings.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.get_homecam_status.starting.wav",
+      "sha256": "5133ebd907cd12d36ef874dfee78d47e9fbd8d1c81e4266b8984b29e208b18b4",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.get_homecam_status.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.get_weather.starting.wav",
+      "sha256": "20abf3019f607ea0a8ed312ba66fd20dce260bfb2d1f35b6b676732828287c19",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.get_weather.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_follow_person.starting.wav",
+      "sha256": "49d999eda2a9490c54112bb60efdd98bdd97886b046f544f95744b3c4c6a0c11",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_follow_person.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_manual_control.starting.wav",
+      "sha256": "2575dd147df4c2dd099d588182b52ed715fe4a366a7b8136bfbf4b0b9b26d7fc",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_manual_control.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_mapping.starting.wav",
+      "sha256": "a98f50d1aeae8738b8df56e070b19cb856fa83a0813585f21a22bbb063fb1ada",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_mapping.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_navigation.starting.wav",
+      "sha256": "29ddeeb0fc1dd151c47d656473db309a7e007b2a7cc510c95c9fbeb8b432c782",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_navigation.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_patrol.starting.wav",
+      "sha256": "e3684d653ccb93aeda419648bbb7107709a9a408979f896cecad7d91729079cc",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_patrol.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_recovery.starting.wav",
+      "sha256": "388ac5309bdaa2eb1291a97f3a86650edbabfeef245ddf21f72f06944e64b5c3",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_recovery.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.request_relocalization.starting.wav",
+      "sha256": "3608b514d425f9777a783a5525b2b07a2e5d4453d7fc47821136bcf110723e3a",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.request_relocalization.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/function.set_weather_location.starting.wav",
+      "sha256": "ea389ad79c8f3c4520abe9f39148d6e37270534075ca8aa1de083b0a471b3453",
+      "repository_path": "malbut_tts/malbut_tts/audio/function.set_weather_location.starting.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/homecam.answer_failed.wav",
+      "sha256": "3bbdb3b0d929bd668e75572a2525bd09509132138d84564077544565633f9a0f",
+      "repository_path": "malbut_tts/malbut_tts/audio/homecam.answer_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/homecam.invalid_arguments.wav",
+      "sha256": "bba368f246360159d5f9d701718398f84a13ba762fe067c2fdfec1a60c9b40d3",
+      "repository_path": "malbut_tts/malbut_tts/audio/homecam.invalid_arguments.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/homecam.permission_required.wav",
+      "sha256": "ce24d5413c0a1ca90491f85c4ad1e98ca1507ff3b817cacda6ed392e130310ca",
+      "repository_path": "malbut_tts/malbut_tts/audio/homecam.permission_required.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/homecam.unavailable.wav",
+      "sha256": "f8c814d2ec83921a538131104214d3f2ef5b3dd6da7764649a68743a8909c10b",
+      "repository_path": "malbut_tts/malbut_tts/audio/homecam.unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/manifest.json",
+      "sha256": "e1d735aab77dc849c60c5bf6488f0b1c50c751ccfe705bf47f8298a848d1ea49",
+      "repository_path": "malbut_tts/malbut_tts/audio/manifest.json",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/navigation.changed.wav",
+      "sha256": "57f765d98fedee623abc10221ed5e44e4863dd4e63606f39423d52c590048c33",
+      "repository_path": "malbut_tts/malbut_tts/audio/navigation.changed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/navigation.confirmation_changed.wav",
+      "sha256": "a14e05186615d58e8b59f8a7ef8f1a0014b7a4ed583cc797dd58b166d30a0144",
+      "repository_path": "malbut_tts/malbut_tts/audio/navigation.confirmation_changed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/navigation.confirmation_expired.wav",
+      "sha256": "75f6bc4b89022945f5144ed8d738e82b5d19d9f7cfaec13f3b78267bf6829e28",
+      "repository_path": "malbut_tts/malbut_tts/audio/navigation.confirmation_expired.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/navigation.map_required.wav",
+      "sha256": "0781db2857d12aaeb39302a4d06df93f3fa6d08f9e652a2f2515ce7dbeb1f98b",
+      "repository_path": "malbut_tts/malbut_tts/audio/navigation.map_required.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/navigation.target_missing.wav",
+      "sha256": "7797050dae8517afbe3eaa6c8642cdebff259807b8b81cb568ff0d7357b7f3ef",
+      "repository_path": "malbut_tts/malbut_tts/audio/navigation.target_missing.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.canceled.wav",
+      "sha256": "a20f7be22eba160d2cf6ab4f7b898686cc7c8a8541c67dc4f54bfd91c9d1e0f4",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.canceled.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.conversation_changed.wav",
+      "sha256": "63384d17e5aef047b16ded600f6ec1125ed7027b3602d586884debe4dd87c01c",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.conversation_changed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.expired.wav",
+      "sha256": "0b7d81a4b316d5e7436d202d6e091dd125b4b755db6252d0ea8af1080c55eef4",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.expired.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.failed.wav",
+      "sha256": "2abc4160c0c79fb59aab4fdc21cb2a68ac3061a99e7a36eb388e5092d3779dbd",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.invalid_arguments.wav",
+      "sha256": "ad4589c2c3157a31e9521da06d5f3a23df3d0798e305d1a5412a7d46e626fd98",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.invalid_arguments.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.invalid_expiry.wav",
+      "sha256": "66330c02f024ca9d92f9756777b4ef9a0e221a9c7d61a97bc97a62e1a5cec16c",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.invalid_expiry.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.request_unknown.wav",
+      "sha256": "4d6d41c78ad9fc83aae8b77cc81a451b4bac79628aa2c917b0828107ae5b189d",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.request_unknown.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.submitted.wav",
+      "sha256": "69e718a55aef261075d77b556152c85614eaa5c585985c93ccb0214d8286d86b",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.submitted.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.succeeded.wav",
+      "sha256": "7475d2223245357596cf2e2972bf8300b003b26e9d2067f692e459329e97d663",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.succeeded.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.unavailable.wav",
+      "sha256": "a1ecbc1b4aa94b3b9d39e486bf7bd9735b86ded7e292c07b6a03ae78f973f451",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.unknown.wav",
+      "sha256": "ed2a97fec652f06f99f7547eaa81351ea9155d3828d0d9ee9324bbed6f83db3f",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.unknown.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.unsupported.wav",
+      "sha256": "a65f405f92e2b1e0cc662d9c68bd314233c505e18c9de63fff5518cf33ffb998",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.unsupported.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/operation.voice_unavailable.wav",
+      "sha256": "fa99af8d10d92bd45ae4e528fbadfe2d867224f0b16f7bf0f22112247bd798a6",
+      "repository_path": "malbut_tts/malbut_tts/audio/operation.voice_unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/set_weather_location.succeeded.wav",
+      "sha256": "2a7b98b90cc6c1abab136273aa4ce2b7c8ca0a481c5483a1c9e730759601c985",
+      "repository_path": "malbut_tts/malbut_tts/audio/set_weather_location.succeeded.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.fall.confirmation.wav",
+      "sha256": "dc2071ee804fa953013a396566150f8317f9cd19492ba947b7d51f71cab1d793",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.fall.confirmation.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.help_needed.wav",
+      "sha256": "5ec5cd03401994cde42ad573f0ef90cecd5d13c0a1b9da002d6f7c331d4fad60",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.help_needed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.help_not_needed.wav",
+      "sha256": "ed005819e11a4e34e8672e1d6da36f3857bbcedb186f7f66278947d88b5a8ebe",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.help_not_needed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.no_response.wav",
+      "sha256": "0b6c30fcd13f8a2bb31c181c5c01c4e98c251a6918edaacf4afa1ae69cba0c70",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.no_response.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.resolved.wav",
+      "sha256": "71f1f1737382a754e5cb6c1e8a7bfcc00a4c9d0e0b4b9268a13384f2c6474f6d",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.resolved.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/situation.unclear.wav",
+      "sha256": "f5efbcc2c9468637ccb7c8d46e2c798925581c99b462748428a51db5dcc9f92a",
+      "repository_path": "malbut_tts/malbut_tts/audio/situation.unclear.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/weather.answer_failed.wav",
+      "sha256": "6a1e9cb11c29201429e8dcbf84837f78d26e0b4989413a5bdf0835c603e4508b",
+      "repository_path": "malbut_tts/malbut_tts/audio/weather.answer_failed.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/weather.invalid_arguments.wav",
+      "sha256": "14636af20653403a8f0b6f3102149741e6488de38156634ec9a4c689a6077ae7",
+      "repository_path": "malbut_tts/malbut_tts/audio/weather.invalid_arguments.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/weather.location_not_found.wav",
+      "sha256": "2a3d3be546291cbfc375d76497a8469a26f38464e4e8105a57c297a6c009e97a",
+      "repository_path": "malbut_tts/malbut_tts/audio/weather.location_not_found.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/weather.location_required.wav",
+      "sha256": "f860130976f2b2a299cf2d9f5bae9faa96bc76f281a65963fb61260ff854b40e",
+      "repository_path": "malbut_tts/malbut_tts/audio/weather.location_required.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio/weather.unavailable.wav",
+      "sha256": "a46b1b537ae00921cdc624d447e4bd70c40e28efcfdb02006bcffc08246fca90",
+      "repository_path": "malbut_tts/malbut_tts/audio/weather.unavailable.wav",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/audio.py",
+      "sha256": "e3657fa935e53146388580335a0f5cd44193fdbcdde464fb2164eefa441742e8",
+      "repository_path": "malbut_tts/malbut_tts/audio.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_tts/backends.py",
+      "sha256": "1aeed67edf238349f41a70d4ae13352529686f121ca3924eb93728853f743e56",
+      "repository_path": "malbut_tts/malbut_tts/backends.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/config/korean_pronunciation_lexicon.json",
+      "sha256": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
+      "repository_path": "malbut_tts/malbut_tts/config/korean_pronunciation_lexicon.json",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/cuda_synthesis.py",
+      "sha256": "6861f360de05b027e7a49b3ebee36dc99af0726fd4f278c65651175d732401af",
+      "repository_path": "malbut_tts/malbut_tts/cuda_synthesis.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/korean_normalization.py",
+      "sha256": "a44f85e48a426bdac21c0cfafa7620388d4015f711e3648f1807c7c3001614a9",
+      "repository_path": "malbut_tts/malbut_tts/korean_normalization.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/managed_key.py",
+      "sha256": "1e01581e0126b6db9674644b49deaafec76f81d0e82d16c537d5665f7b80742c",
+      "repository_path": "malbut_tts/malbut_tts/managed_key.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/node.py",
+      "sha256": "b824358ead9887182835ec3a440bd586c55f499ee8429c7ca7a462b3857c0e6a",
+      "repository_path": "malbut_tts/malbut_tts/node.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/piper_synthesis.py",
+      "sha256": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
+      "repository_path": "malbut_tts/malbut_tts/piper_synthesis.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/prepare_notices.py",
+      "sha256": "edc0aeb0bbccf35b45b6454ae143b48c89eed2d9f6542cf7b0e785e90fee2dc2",
+      "repository_path": "malbut_tts/malbut_tts/prepare_notices.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/prerecorded.py",
+      "sha256": "52eb2dddb9efb9eccfbbe234d79680c0d9ca7a7c786a2108265bc6f844bda110",
+      "repository_path": "malbut_tts/malbut_tts/prerecorded.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/receiver.py",
+      "sha256": "d07116a18a94a2aa81c7f85ff5cca08d7e0b26fdd54b377bfe87cdb26c23e8b4",
+      "repository_path": "malbut_tts/malbut_tts/receiver.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/runtime.py",
+      "sha256": "e2256c1c60fd44acbbb185d4da216f1cf82c70480e76c2e50f20eea285182f36",
+      "repository_path": "malbut_tts/malbut_tts/runtime.py",
+      "source": "overlay"
+    },
+    {
+      "path": "malbut_tts/sentence_synthesis.py",
+      "sha256": "a9c5c682dd2bab8d60b2a498e0a802218ea7f76ad79e30c1f37d3afae5fafe51",
+      "repository_path": "malbut_tts/malbut_tts/sentence_synthesis.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/sentences.py",
+      "sha256": "618e23ab3a5a8adc328b5dc5053b6b234a28fbc0f361245e8d8affb5a9cad81a",
+      "repository_path": "malbut_tts/malbut_tts/sentences.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/smoke.py",
+      "sha256": "c5de6e6a855f362e484d72089f8aa0386113ec7be0d94cc2f01add5c3f08f731",
+      "repository_path": "malbut_tts/malbut_tts/smoke.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/vendor/NOTICE.md",
+      "sha256": "d9b7a196a08443b71fd4e33de7a3027556ccd932f97961af1c810824928601d5",
+      "repository_path": "malbut_tts/malbut_tts/vendor/NOTICE.md",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/vendor/__init__.py",
+      "sha256": "657db7de0c2b2dff8a17380eaa828c25f87531da7dd83013b1e701df32505ca4",
+      "repository_path": "malbut_tts/malbut_tts/vendor/__init__.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/vendor/n2gk.py",
+      "sha256": "2f1c5c339529ae8900709ecc497126742ce1c53a5d46096ebdbdd8ff3c2dc8e1",
+      "repository_path": "malbut_tts/malbut_tts/vendor/n2gk.py",
+      "source": "repository"
+    },
+    {
+      "path": "malbut_tts/voice_style.py",
+      "sha256": "2a9f60884718fbedc67ca441bc7976540a802a4d76de85ff7d5dd3dd6ecf0d6c",
+      "repository_path": "malbut_tts/malbut_tts/voice_style.py",
+      "source": "repository"
+    }
+  ],
+  "fixture_files": [
+    {
+      "repository_path": "malbut_stt/test/test_dialogue_pipeline.py",
+      "sha256": "f7392a23ae452f2ec45e42b9f27b9789b7c4db2f517cea9a36137b2dea36b597"
+    },
+    {
+      "repository_path": "malbut_tts/test/test_audio.py",
+      "sha256": "cd45bb19b7a4c36bff3c4303da8828b0bb64c1a2e1cb58c98bac80182b1a5cb4"
+    }
+  ],
+  "source_notes": "Inherited candidate.json still named runtime14; not used as identity. Identity is verified runtime19 original manifest. Overlay bytes and runtime entrypoints are unchanged.",
+  "published_files": {
+    ".gitignore": "beea05cfe8d519f00b6185f6e3c3ec4f08fb2fd3df2ad0745775b0b1910659dd",
+    "README.md": "6b10822df51c909dd8115319dd9beda7e8702b692ae8ef75aa38b403da654ae5",
+    "RESULTS.md": "2dc688aa057a2a6ea12fd8f8a1e6d44a9bd73ff10ceadc6007a46eca3c8e0725",
+    "VALIDATION.md": "d040ca2a9193c0d0e94f134bd80c21fc48fdc6fe11e20c206e7df9c250626c90",
+    "check_checkpoint.py": "10bd8839499ec63403677bfcff04cd8787826ebd3e9529130452f68a3225b4c3",
+    "evidence/historical-cpu.json": "30c266953934d99c532f92a031e6d9153deba26ebc06d1d48b59c3c9e7d3626b",
+    "evidence/signal-stage-comparison.json": "8f128c4d0da919ffd7c9b1f2e2adc2aeee20b73d6877e28c4134e17d848f4786",
+    "evidence/small-beam5-results-v1-audit.md": "1375ef21e5fac72174a6ded47a217123b28ecc6f8156297ec7453d543315c2b9",
+    "evidence/small-ko-comparison-and-memory-20261029.md": "c349ee69a5811d91678ae5e44b72e128cb95e60e6f50280d0bcc0b3e27a5a0ba",
+    "evidence/summary.json": "3f8fd56b88d71c26d220137d26028b4588bbd359aab0bcbcd1df40a99b0210bd",
+    "evidence/transcripts.csv": "3dd93db3f2af6238e101ecb0dd9d3e44e4c198bc37a4f5bb1cef500ec33c7558",
+    "runtime19/code/malbut_stt/audio.py": "e6f82503a474df7fe7e2d82e5fa370057e928c001bb11aef235ec6fcd160c651",
+    "runtime19/code/malbut_stt/dialogue_pipeline.py": "260b445871bee28ea014811ebbf57df409b580c40cd8636817ce969eaf50c25a",
+    "runtime19/code/malbut_stt/echo/processor.py": "c384dcca9ff9e9dd1110d4281cfb1c45fe066870ecc54a9dd18fb8e1584907ec",
+    "runtime19/code/malbut_stt/echo/pulse.py": "2b41b59d7b045e21eb8598c465f424747f6012a898510d8fdaf1fbbe36fceab9",
+    "runtime19/code/malbut_stt/echo/quiet_asr.py": "f9cb68d3f54a1b18c7a5513c0ae4fc2a04d1cb165ee38f52b6004f469f18c78d",
+    "runtime19/code/malbut_stt/echo/recorder.py": "9f7d6730692b79ee11e589761e676079e1cdf55a775595090dcb7321210000d6",
+    "runtime19/code/malbut_stt/echo/spatial_echo_gate.py": "a26491c30cfad6d01b978e39a044845d2dfd67364a582fe04c51fa15eab56c7d",
+    "runtime19/code/malbut_stt/echo/startup_phase.py": "86e97347bfd7e1679122ba1b3b482744c3370641cca443003179644ec8de91e9",
+    "runtime19/code/malbut_stt/echo/startup_phase_estimator.py": "8ace4f0aa5f0192e35f7399fe2449a0bcbe87f9c5cee3ee6048f2cb6f8c533c3",
+    "runtime19/code/malbut_stt/echo/worker.py": "5cc823d95f2fd3799793c9d9df1fad71d0570971d69963d59b694de168a882dc",
+    "runtime19/code/malbut_stt/node.py": "7c9c25f59d6810205f7bd95357279c26583a27daae08ffdf765fb2792b465820",
+    "runtime19/code/malbut_stt/silero_stream.py": "d89e6dec15c1fa231f34cf58173137903d23974c7be4a8bb1e9a44afdb4e6b5b",
+    "runtime19/code/malbut_stt/streaming.py": "ec6738da1635bc6204021c8700cf63a3dbc3baa59f133f3a86070b7e7ad4ac57",
+    "runtime19/code/malbut_tts/audio.py": "e3657fa935e53146388580335a0f5cd44193fdbcdde464fb2164eefa441742e8",
+    "runtime19/code/malbut_tts/runtime.py": "e2256c1c60fd44acbbb185d4da216f1cf82c70480e76c2e50f20eea285182f36",
+    "runtime19/pulse-output-only.conf": "e00d172183898392508b71c102c00844991a12b27a7c975504d3f9942daa1b51",
+    "runtime19/raw_spatial_ring_bridge.py": "4b5afbed1debc40150ceaf2cf08961195b76a64a5bd20db7e47f9528fb9abc06",
+    "runtime19/required-local-assets.json": "3e45396f0919beb7502d64224d8b8a6a8c05cbe770c0ae6dce0a509c604d0fc7",
+    "runtime19/spatial_filter.py": "405592b3154c6cda5b4e24366725c6f667753cc3e228e730c7f4c8d86ac90206",
+    "runtime19/start.sh": "b9f98b39ce93425d5209ec08bb6d723b9dc9e4d8d996fb4639515560a0a16eb2",
+    "runtime19/stt.yaml": "4af114eae3854e7a6c7d9287cecae61443f635a04ea56e6731c8758b0c60c3c6",
+    "runtime19/supervisor.py": "038f3763faec04651377f60e359ea38265b2f3081d828a78cf3ffee1b3f93245",
+    "runtime19/tts.yaml": "91597709543ee2b71911499d461d55933fc05d2877bc63f00c50e43cab752dd8",
+    "tests/test_candidate_evidence.py": "a0e1c5c523c6c679fe06300c9698dc82954546bff4fc736a9717e15631bfcdf3",
+    "tests/test_output_startup.py": "3884237494e68493a1f4f92521ad0ad733e023bd28656c51d3f5376f07254ca3",
+    "tests/test_startup_phase_estimator.py": "16fb72adffcd9533f0fadbaa1e3c2f516d2e5b2d7812dfd9302247f9661d35a6"
+  }
+}

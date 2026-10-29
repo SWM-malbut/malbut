@@ -237,6 +237,9 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
         def create_timer(self, interval, callback):
             timers.append(callback)
 
+        def create_guard_condition(self, callback):
+            return SimpleNamespace(trigger=lambda: None)
+
         def destroy_node(self):
             return True
 

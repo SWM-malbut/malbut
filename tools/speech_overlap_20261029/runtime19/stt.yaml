@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    aec_backend: pulse_reference
+    aec_calibration_audio: /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/calibration.wav
+    aec_model_directory: /home/ubuntu/.local/share/malbut/speech-releases/aec-20261028/models
+    aec_sink: alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo
+    aec_source: alsa_input.usb-iflytek_XFM-DP-V0.0.18_1c001425758447f2650-01.mono-fallback
+    barge_in_mode: reachy
+    barge_in_pre_roll_s: 2.0
+    device_index: 0
+    interruption_asr: local
+    interruption_asr_timeout_s: 5.0
+    pre_roll_s: 1.0
+    turn_detection: legacy

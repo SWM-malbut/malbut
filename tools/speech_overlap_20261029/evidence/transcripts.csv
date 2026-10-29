@@ -1,0 +1,18 @@
+﻿trial,case_index,phase,retest,reference,transcript,responses,playback_valid,robot_stopped,intent,review
+live_runtime19_shortstop_b1,1,overlap,False,그만.,끝난다.,"네, 여기서 끝낼게요.",True,True,pass,전사는 끝난다로 달랐으나 중단 의도를 받아 멈춤
+live_runtime19_shortstop_b1,2,overlap,False,잠깐.,잠깐,"네, 잠시 멈출게요.",True,True,pass,잠깐 요청에 멈춤
+live_runtime19_shortstop_b1,3,overlap,False,멈춰.,멈춰,"네, 멈출게요.",True,True,pass,멈춰 요청에 멈춤
+live_runtime19_followup_b1,1,overlap,False,여행자는 왜 길을 잃었어?,여행자는 우에 길을 이뤘어,이야기에서는 여행자가 어디에서 길을 잃었는지는 나오지 않았어요.,True,True,fail,왜를 어디로 해석해 질문 유형 변경
+live_runtime19_followup_b1,1,followup,False,방금 답변을 한 문장으로 줄여 줘.,방금 답변을 한 문장으로 줄여줘.,이야기에서는 여행자가 어디에서 길을 잃었는지는 나오지 않았어요.,True,,pass,호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음.
+live_runtime19_followup_b1,2,overlap,False,그 빵집에서는 어떤 빵을 팔았어?,글밤 집에서는 어떤 밤을 팔았어?,"빵집에서는 따뜻한 빵을 팔았고, 어떤 밤을 팔았는지는 이야기에서 나오지 않았어요.",True,True,fail,빵을 밤으로 해석해 핵심 명사 변경
+live_runtime19_followup_b1,2,followup,False,방금 답변을 한 문장으로 줄여 줘.,방금 답변을 한 문장으로 줄여줘.,"빵집에서는 따뜻한 빵을 팔았고, 밤에 대해서는 이야기에서 나오지 않았어요.",True,,pass,호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음.
+live_runtime19_followup_b1,3,overlap,False,그다음에는 무슨 일이 있었어?,그 다음에는 무슨 일이 있었어?,"해가 기울 무렵, 여행자는 다시 길을 떠날 준비를 했습니다. 주인은 빵 한 봉지를 건네며 바닷길을 따라가면 다음 마을에 닿을 수 있다고 알려 주었습니다. 여행자는 고맙게 인사하고, 따뜻한 빵 냄새가 남은 작은 빵집을 뒤로한 채 길을 나섰습니다.",True,True,pass,다음 이야기로 이어감
+live_runtime19_followup_b1,3,followup,False,방금 답변을 한 문장으로 줄여 줘.,방금 답변을 한 문장으로 줄여줘.,여행자는 주인이 건넨 빵을 들고 다음 마을을 향해 길을 떠났습니다.,True,,pass,호출어 없는 요약 지시 수신·이행. 앞선 답변의 사실·의미 오류 회복을 뜻하지 않음.
+live_runtime19_why_diag_b1,1,overlap,True,여행자는 왜 길을 잃었어?,여행자는 왜 길을 잃었어?,이야기에는 여행자가 왜 길을 잃었는지는 나오지 않았어요.,True,True,pass,별도 재시험에서 왜 질문을 정확히 전사하고 이유에 맞춰 답변
+live_runtime19_bread_diag_b1,2,overlap,True,그 빵집에서는 어떤 빵을 팔았어?,글반집에서는 어떤 빵을 팔았어?,"글 속에서는 빵의 종류가 구체적으로 나오지 않고, 주인이 매일 아침 따뜻한 빵을 구웠다고만 했어요.",True,True,pass,별도 재시험에서 일부 철자 오류가 있으나 빵 종류 질문으로 응답
+live_runtime19_correction_b1,1,overlap,False,"아니, 우유 말고 따뜻한 물로 바꿔 줘.","아니, 우유 말고 깨끗한 물로 바꿔줘.",바닷가 마을에 작은 빵집이 있었습니다. 주인은 매일 아침 창문을 열고 따뜻한 빵을 구웠습니다. 어느 날 길을 잃은 여행자가 문을 두드렸습니다. 주인은 여행자에게 깨끗한 물 한 잔과 갓 구운 빵을 건넸습니다. 두 사람은 바다를 바라보며 오래 이야기를 나누었습니다.,True,True,partial,우유를 물로 변경했지만 따뜻한을 깨끗한으로 변경
+live_runtime19_correction_b1,2,overlap,False,주인 말고 여행자 입장에서 다시 말해 줘.,주인 말고 여행자 입장에서 다시 말해줘,길을 잃은 나는 바닷가 마을의 작은 빵집 문을 두드렸습니다. 주인은 따뜻한 우유 한 잔과 갓 구운 빵을 건네주었습니다. 나는 고마운 마음으로 주인과 바다를 바라보며 오래 이야기를 나누었습니다.,True,True,pass,여행자 시점으로 바꿈
+live_runtime19_correction_b1,3,overlap,False,여행자는 한 명이 아니라 두 명이야. 그렇게 바꿔 줘.,여행자는 1명이 아니라 2명이야. 그렇게 바꿔줘.,바닷가 마을에 작은 빵집이 있었습니다. 주인은 매일 아침 창문을 열고 따뜻한 빵을 구웠습니다. 어느 날 길을 잃은 여행자 두 명이 문을 두드렸습니다. 주인은 여행자들에게 우유 한 잔과 갓 구운 빵을 건넸습니다. 두 사람은 바다를 바라보며 오래 이야기를 나누었습니다.,True,True,pass,한 명에서 두 명으로 바꿈; 숫자 표기 차이는 의미 오류 아님
+live_runtime19_topic_b1,1,overlap,False,"이야기는 여기까지 하고, 고양이에 대해 알려 줘.",이야기는 여기까지 하고 고양이의 대회 알려줘.,"‘고양이의 대화’를 말씀하신 걸까요, 아니면 ‘고양이 대회’에 대해 알고 싶으신 걸까요?",True,True,fail,고양이에 대해를 고양이 대회 또는 대화로 받아 재질문
+live_runtime19_topic_b1,2,overlap,False,다른 얘기 하자. 감자로 만들 수 있는 음식 두 가지를 말해 줘.,다른 얘기하자 감자로 만들 수 있는 음식 두 가지를 말해줘,감자전과 감자튀김이 있어요.,True,True,pass,감자 음식 두 가지로 화제 전환
+live_runtime19_topic_b1,3,overlap,False,"주제를 바꿔서, 바다가 파랗게 보이는 이유를 알려 줘.",,,False,True,excluded,Mac 시험 음성 재생 전 외부 음성 유입을 사용자가 확인. 자기 음성 오탐 및 계획된 문장 인식 판정 불가.

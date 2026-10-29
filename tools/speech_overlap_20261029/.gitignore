@@ -1,0 +1,13 @@
+*.wav
+*.pcm
+*.f32
+*.f64
+*.s16
+*.npy
+*.npz
+*.onnx
+*.bin
+*.sqlite3
+.env*
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,26 @@
+{
+  "db_optimization": {
+    "scope": "Same 434-turn snapshot copied independently per release; both microphone paths calibrated, 10 second settle then30 seconds idle, no greeting, local Whisper. Service cgroup CPU / 6 CPUs.",
+    "normal_service_restored": true
+  },
+  "runtime11": {
+    "mode": "idle",
+    "means": {
+      "baseline": {
+        "system_percent": 14.2126185069986,
+        "essential_percent": 7.710924495916284
+      },
+      "candidate": {
+        "system_percent": 17.29772622126443,
+        "essential_percent": 11.353426631650953
+      }
+    },
+    "mean_system_delta_pp": 3.0851077142658294,
+    "mean_essential_delta_pp": 3.642502135734668,
+    "threshold_pp": 1.0,
+    "accepted": false,
+    "scope": "All6 windows valid and preserved. Raw system CPU accounting anomaly remains unresolved; no subtraction/renormalization. Process/cgroup evidence reported separately.",
+    "candidate_deployed": false
+  },
+  "scope": "Historical measurements, not runtime19 CPU acceptance."
+}

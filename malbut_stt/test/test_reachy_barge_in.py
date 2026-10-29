@@ -48,6 +48,39 @@ def test_short_candidate_recovers_without_stopping_answer(harness):
     assert p._reply_request_id == 'old-request'
 
 
+def test_slow_candidate_processing_renews_duck_until_confirmation(harness):
+    p = reply(harness)
+    # Seven captured frames remain a candidate even if owner scheduling is slow.
+    for now in [0, .08, .16, .24, .32, .40, .48]:
+        harness.now = now
+        p.feed(VOICE)
+    assert not p.command_stream.collector.started
+    assert harness.controls == [('old-playback', 'duck')] * 4
+    harness.now = .56
+    p.feed(VOICE)
+    assert p._capture_id
+    assert harness.controls[-1] == ('old-playback', 'stop')
+
+
+@pytest.mark.parametrize('end', ['quiet', 'reset', 'finished', 'failed'])
+def test_expired_candidate_cannot_renew_duck(harness, end):
+    p = reply(harness)
+    p.feed(VOICE)
+    harness.now = .16
+    p.feed(VOICE)
+    if end == 'quiet':
+        p.feed(QUIET)
+    elif end == 'reset':
+        p._reset_audio()
+    else:
+        p.on_playback_status('old-playback', end, request_id='old-request')
+    assert harness.controls[-1] == ('old-playback', 'unduck')
+    before = list(harness.controls)
+    harness.now = .5
+    p.feed(QUIET)
+    assert harness.controls == before
+
+
 @pytest.mark.parametrize('terminal', ['stopped', 'finished', 'failed'])
 def test_confirmed_speech_stops_once_and_old_terminal_cannot_drop_new_turn(harness, terminal):
     p = reply(harness)
