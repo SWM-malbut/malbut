@@ -1,0 +1,30 @@
+--- spatial_runtime37/code/malbut_stt/dialogue_pipeline.py
++++ spatial_runtime38/code/malbut_stt/dialogue_pipeline.py
+@@ -120,6 +120,7 @@
+         self._duck_clear_after = None
+         self._duck_lease_until = None
+         self._seen_openers = deque(maxlen=128)
++        self._interim_playback = None
+         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
+                 or not 0 <= chime_tail_s <= 3):
+             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
+@@ -390,7 +391,8 @@
+                     or self.wake_stream.collector.started
+                     or self.wake_stream.collector.candidate_audio
+                     or (self.session.playback_state in ('playing', 'paused')
+-                        and self.session.playback_id != playback_id)):
++                        and self.session.playback_id != playback_id
++                        and self._interim_playback != (self.session.playback_id, request_id))):
+                 self._stop_speech(playback_id)
+                 self.report('conversation_opener_declined:busy')
+                 return
+@@ -1372,6 +1374,9 @@
+             self._stop_speech(playback_id)
+         previous = (self.session.playback_id, self.session.playback_state)
+         self.session.on_playback_status(playback_id, state, interim=interim)
++        if self.session.playback_id != previous[0]:
++            # Only the adopted PLAYING owner may identify its own final reply.
++            self._interim_playback = (playback_id, request_id) if interim else None
+         if (self.barge_in_mode == 'reachy' and self.input_has_aec
+                 and self._reply_request_id is not None
+                 and request_id == self._reply_request_id and not interim

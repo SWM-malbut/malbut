@@ -1,0 +1,531 @@
+{
+  "publication_date": "2026-10-31",
+  "experiment_date": "2026-10-30",
+  "goal_complete": false,
+  "candidate_deployed": false,
+  "operating": {
+    "release": "quiet-duck-guard-20261030",
+    "only_first_duck_guard_adopted": true,
+    "first_duck_positive_frames": 5,
+    "frame_ms": 20,
+    "speech_confirmation_ms": 160,
+    "asr_pre_roll_s": 2,
+    "asr": "local Whisper small",
+    "piper_threads": 3,
+    "new_resident_models": 0,
+    "last_restoration": "normal active; test inactive; microphone cleanup no errors",
+    "current_live_recheck": "SSH timed out after final restoration; current live state not verified"
+  },
+  "cohorts": [
+    {
+      "id": "c37-human-b1",
+      "kind": "human_recording_overlap",
+      "candidate": "spatial_runtime37",
+      "rows": [
+        {
+          "valid": true,
+          "stopped": true,
+          "transcript": "특히 중소형 피팅은 개인 투자자의 전폭적인 지지를 받고 있다.",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "exact": false,
+          "first_word_preserved": true,
+          "offset_s": 13,
+          "request_to_ros_stop_s": 2.0690766259940574,
+          "cer": 0.08
+        },
+        {
+          "valid": true,
+          "stopped": true,
+          "transcript": "특히 중소형 빌딩은 개인 투자자의 전폭적인 지지를 받고 있다.",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "exact": true,
+          "first_word_preserved": true,
+          "offset_s": 1,
+          "request_to_ros_stop_s": 2.63516466699366,
+          "cer": 0.0
+        },
+        {
+          "valid": true,
+          "stopped": true,
+          "transcript": "특히 중소형 빌딩은 개인 투자자의 전폭적인 지지를 받고 있다.",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "exact": true,
+          "first_word_preserved": true,
+          "offset_s": 5,
+          "request_to_ros_stop_s": 1.5656275099900085,
+          "cer": 0.0
+        },
+        {
+          "valid": true,
+          "stopped": true,
+          "transcript": "특히 중소형 빌딩은 개인 투자자의 전폭적인 지지를 받고 있다.",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "exact": true,
+          "first_word_preserved": true,
+          "offset_s": 13,
+          "request_to_ros_stop_s": 1.5588566149963299,
+          "cer": 0.0
+        },
+        {
+          "valid": true,
+          "stopped": true,
+          "transcript": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "exact": true,
+          "first_word_preserved": true,
+          "offset_s": 1,
+          "request_to_ros_stop_s": 2.4242565040040063,
+          "cer": 0.0
+        }
+      ],
+      "counts": {
+        "attempts": 5,
+        "valid": 5,
+        "stopped": 5,
+        "transcripts": 5,
+        "exact": 4
+      }
+    },
+    {
+      "id": "guard-isolated",
+      "kind": "robot_only",
+      "candidate": "quiet-duck-guard-20261030",
+      "rows": [
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 3,
+        "valid": 3,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    },
+    {
+      "id": "guard-adopted",
+      "kind": "robot_only",
+      "candidate": "quiet-duck-guard-20261030",
+      "rows": [
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 3,
+        "valid": 3,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    },
+    {
+      "id": "guard-human",
+      "kind": "human_recording_overlap",
+      "candidate": "quiet-duck-guard-20261030",
+      "rows": [
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "expected": "특히 중소형 빌딩은 개인투자자의 전폭적인 지지를 받고 있다.",
+          "physical_playback_verified": true,
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 1,
+        "valid": 1,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    },
+    {
+      "id": "c36-control-c1",
+      "kind": "robot_only",
+      "candidate": "spatial_runtime36",
+      "rows": [
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        },
+        {
+          "valid": true,
+          "stopped": false,
+          "transcript": "",
+          "ducked": false,
+          "natural_finish": true,
+          "expected": "",
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 20,
+        "valid": 20,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    },
+    {
+      "id": "live_runtime38_paired_asr_human_a1",
+      "kind": "pre_overlap_protocol_failure",
+      "candidate": "spatial_runtime38",
+      "rows": [
+        {
+          "valid": false,
+          "stopped": true,
+          "transcript": "",
+          "expected": "",
+          "exclusion": "robot_control_stopped",
+          "human_playback_count": 0,
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 1,
+        "valid": 0,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    },
+    {
+      "id": "live_runtime38_human_timing_b1",
+      "kind": "pre_overlap_protocol_failure",
+      "candidate": "spatial_runtime38",
+      "rows": [
+        {
+          "valid": false,
+          "stopped": true,
+          "transcript": "",
+          "expected": "",
+          "exclusion": "robot_only_trial_interrupted",
+          "human_playback_count": 0,
+          "exact": false,
+          "first_word_preserved": false
+        }
+      ],
+      "counts": {
+        "attempts": 1,
+        "valid": 0,
+        "stopped": 0,
+        "transcripts": 0,
+        "exact": 0
+      }
+    }
+  ],
+  "cpu": {
+    "idle_single_pair": {
+      "candidate": "spatial_runtime35",
+      "cpu_cores": 6,
+      "seconds_per_arm": 60,
+      "baseline_percent": 7.86381409759505,
+      "candidate_percent": 9.76919806315275,
+      "delta_percentage_points": 1.9053839655577,
+      "allowed_idle_delta_pp": 1,
+      "passed": false,
+      "full_three_pair_active_test_completed": false,
+      "scope": "Selected essential voice process CPU sum; denominator is all six CPU cores",
+      "system_busy_baseline_percent": 13.63875917315143,
+      "system_busy_candidate_percent": 17.132901237852195,
+      "system_busy_delta_percentage_points": 3.4941420647007657,
+      "system_busy_scope": "Whole-system busy CPU; includes processes outside the selected voice group"
+    },
+    "bridge_native": {
+      "pairs": 3,
+      "audio_seconds_per_run": 60,
+      "original_cpu_s": [
+        1.67364512,
+        1.707921184,
+        1.701304544
+      ],
+      "proposed_cpu_s": [
+        1.220362688,
+        1.231584544,
+        1.226542528
+      ],
+      "original_mean_cpu_s": 1.6942902826666666,
+      "proposed_mean_cpu_s": 1.2261632533333333,
+      "reduction_percent": 27.6296827127251,
+      "output_hashes_same": true,
+      "whole_service_cpu_acceptance": false,
+      "operating_adopted": false
+    }
+  },
+  "memory": {
+    "c37_voice_process_sum_peak_estimate_bytes": 2359694336,
+    "quiet_guard_peak_estimate_bytes": 1956041728,
+    "observed_swap_bytes": 0,
+    "full_workload_peak_verified": false,
+    "budget_approximately_GB": 3
+  },
+  "acoustic_latency": {
+    "p95_s": null,
+    "acceptance_s": 0.8,
+    "passed": false,
+    "request_to_ros_event_is_not_acoustic_latency": true
+  },
+  "local_verification": {
+    "stt_full": {
+      "passed": 1290,
+      "skipped": 7,
+      "failed": 0,
+      "seconds": 64.89,
+      "scope": "macOS source/fake-device tests; no ROS build, model inference or physical trial",
+      "log_sha256": "817712529626a090fb03ca67c5ce2ca40c9e8b95c03722fe2d99dda89b756697"
+    }
+  },
+  "remaining": [
+    "Latest C38 robot-only interruption source is unresolved",
+    "Same-version noise and human-overlap acceptance",
+    "Short commands, corrections, topic changes and wake-free followups",
+    "Acoustic p95 latency",
+    "Three-pair whole-voice idle/active CPU and full-workload memory"
+  ]
+}

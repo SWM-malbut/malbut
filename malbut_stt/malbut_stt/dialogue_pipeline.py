@@ -98,6 +98,7 @@ class DialoguePipeline:
         self._ducked_playback = None
         self._duck_renew_at = 0.0
         self._seen_openers = deque(maxlen=128)
+        self._interim_playback = None
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
@@ -368,7 +369,8 @@ class DialoguePipeline:
                     or self.wake_stream.collector.started
                     or self.wake_stream.collector.candidate_audio
                     or (self.session.playback_state in ('playing', 'paused')
-                        and self.session.playback_id != playback_id)):
+                        and self.session.playback_id != playback_id
+                        and self._interim_playback != (self.session.playback_id, request_id))):
                 self._stop_speech(playback_id)
                 self.report('conversation_opener_declined:busy')
                 return
@@ -901,7 +903,11 @@ class DialoguePipeline:
                     break
         self._update_ducking(candidate=(
             not start_blocked and not stream.collector.started
-            and bool(stream.collector.candidate_audio)))
+            and bool(stream.collector.candidate_audio)
+            # Qualify the first Reachy duck without delaying speech confirmation.
+            and (self.barge_in_mode != 'reachy'
+                 or self._ducked_playback == self.session.playback_id
+                 or stream.collector.candidate_frames >= 5)))
 
     def _submit_endpoint(self):
         if (self._endpoint_candidate is None or self._endpoint_job is not None
@@ -1230,6 +1236,9 @@ class DialoguePipeline:
             self._stop_speech(playback_id)
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
+        if self.session.playback_id != previous[0]:
+            # Only the adopted PLAYING owner may identify its own final reply.
+            self._interim_playback = (playback_id, request_id) if interim else None
         if (self.barge_in_mode == 'reachy' and self.input_has_aec
                 and self._reply_request_id is not None
                 and request_id == self._reply_request_id and not interim

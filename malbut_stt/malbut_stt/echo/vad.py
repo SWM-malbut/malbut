@@ -23,6 +23,7 @@ class SuppressedSilenceVad:
             if previous < 8000:
                 self.vad.reset()
         else:
-            self.vad.is_speech(pcm, sample_rate)
-        # A recurrent VAD probability can linger after the echo has vanished.
+            voiced = self.vad.is_speech(pcm, sample_rate)
+            # Keep a completed signal window; reject recurrence on zero windows.
+            return voiced and getattr(self.vad, 'window_has_signal', False)
         return False

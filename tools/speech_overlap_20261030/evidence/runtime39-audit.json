@@ -1,0 +1,29 @@
+{
+  "parent_manifest_sha256": "bf43b838f9bba5c52d5d8eadd9a2a300d98453e55f16af5db1396b4424db4ce9",
+  "parent_files_verified": 233,
+  "candidate_manifest_sha256": "bd116e0a1438fe529c89ebe642e00120a53aaec476f928cff6c71efd548948dc",
+  "candidate_files": 234,
+  "changed_existing_files": [
+    "README.md",
+    "candidate.json",
+    "raw_spatial_ring_bridge.py",
+    "spatial_filter.py",
+    "validation.json"
+  ],
+  "unchanged_parent_files": 228,
+  "added_files": [
+    "tests/test_bridge_batch.py"
+  ],
+  "runtime_diff": "work/runtime39_support/runtime.diff",
+  "native_result_sha256": "78a3f3203afa4a259e59dca35409f045f34574b7fdd816c746dc29da7dac2779",
+  "native_source_pins": {
+    "original.py": "405592b3154c6cda5b4e24366725c6f667753cc3e228e730c7f4c8d86ac90206",
+    "proposed.py": "7deebeea82422ed1d5663f760b7a1814412789d0f08da8292683065521ac0a14",
+    "startup_phase.py": "acb052193329dba8fd68cb017af741b336b6d604650b138eb5bce6a4329f8052",
+    "weights.npy": "3d339c18b8ddd5600ffb08f819e65243c2f074e0a0e89b018f8ba267b024f86b"
+  },
+  "models_phase_worker_dialogue_lifecycle_unchanged": true,
+  "helpers_touched": false,
+  "staged": false,
+  "deployed": false
+}

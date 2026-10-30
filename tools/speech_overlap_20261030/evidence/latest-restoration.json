@@ -1,0 +1,22 @@
+{
+  "trial": "live_runtime38_human_timing_b1",
+  "fetch_verified": true,
+  "files": 41,
+  "bytes": 21585141,
+  "local_hash_failures": [],
+  "restoration": {
+    "time": 1793359643.894146,
+    "cleanup": [
+      {
+        "time": 1793359643.8276355,
+        "restored": true,
+        "errors": [],
+        "stale_recovery": false
+      }
+    ],
+    "normal_service": "active",
+    "test_service": "inactive",
+    "state_active_marker_absent": true
+  },
+  "current_live_recheck": "SSH timed out; no current-state claim"
+}
