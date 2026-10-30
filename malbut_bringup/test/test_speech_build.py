@@ -124,6 +124,7 @@ def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layou
     assert install == [[
         '-m', 'pip', '--isolated', 'install',
         '-r', str(robot / 'malbut_stt/requirements-whisper-cpp.txt'),
+        '-r', str(robot / 'malbut_stt/requirements-aec.txt'),
         '-r', str(robot / 'malbut_tts/requirements-piper.txt'),
         '-r', str(robot / 'malbut_agent_server/requirements-openai.txt'),
     ]]

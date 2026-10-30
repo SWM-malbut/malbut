@@ -288,12 +288,10 @@ def test_local_stt_config_applies_only_to_stt_and_overrides_defaults(speech, tmp
             assert config not in parameters
 
 
-
-
 @pytest.mark.parametrize('scope', ['/**', 'malbut_stt'])
 @pytest.mark.parametrize('under_bringup', [False, True])
 def test_pulse_routes_apply_only_to_stt_and_tts(speech, tmp_path, monkeypatch,
-                                              scope, under_bringup):
+                                                scope, under_bringup):
     config = tmp_path / '.config/malbut/stt.yaml'
     config.parent.mkdir(parents=True)
     config.write_text(f'{scope}:\n  ros__parameters:\n'
