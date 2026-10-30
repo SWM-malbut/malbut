@@ -81,6 +81,7 @@ class StoryRuntimeStore:
         self.conversations = conversation_store
         self.memory = memory_store
         self._clock = clock
+        self._recovery_versions = {}
         if memory_store._connection is not conversation_store._connection:
             memory_store.bind_connection(conversation_store._connection,
                                          conversation_store._lock)
@@ -425,9 +426,21 @@ class StoryRuntimeStore:
                          "ELSE 'queued' END,claim=NULL,lease_until=NULL,available_at=? "
                          "WHERE user_id=? AND state='running' AND lease_until<=?",
                          (MAX_ATTEMPTS, self._now(), user, self._now()))
+            # This is the persistent shared connection: total_changes covers
+            # our own writers and data_version covers other connections. Keep
+            # checking timed leases above, but do not rebuild every historical
+            # source reference once a second when the database is unchanged.
+            version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
+            if self._recovery_versions.get(user) == version:
+                return 0
             rows = conn.execute("SELECT request_id FROM conversation_turns WHERE user_id=? "
                                 "AND status='completed' ORDER BY completed_at,rowid", (user,)).fetchall()
-            return sum(self._enqueue(conn, user, row[0]) for row in rows)
+            queued = sum(self._enqueue(conn, user, row[0]) for row in rows)
+            version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
+        # Publish the checkpoint only after the transaction commits. A failed
+        # commit must not hide a completion from the next recovery attempt.
+        self._recovery_versions[user] = version
+        return queued
 
     def pending_users(self):
         with self._transaction() as conn:
