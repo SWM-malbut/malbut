@@ -4,6 +4,9 @@ from collections import deque
 from dataclasses import dataclass
 import math
 import os
+from queue import Empty, Full, Queue
+from threading import Event
+from time import monotonic
 from typing import Callable, Optional
 
 
@@ -195,6 +198,10 @@ class MicrophoneOverflow(RuntimeError):
     """Audio was lost, but the input stream can still be read."""
 
 
+class MicrophoneTimeout(RuntimeError):
+    """The input device stopped delivering frames."""
+
+
 class SoundDeviceRecorder:
     """PvRecorder-compatible microphone wrapper using PortAudio/sounddevice."""
 
@@ -209,6 +216,9 @@ class SoundDeviceRecorder:
         self._sd = sd
         self._frame_length = frame_length
         self._sample_rate = 16000
+        self._frames = Queue(maxsize=32)
+        self._cancelled = Event()
+        self._overflow = Event()
 
         # Use the same device IDs as `python -m sounddevice`.
         self._device = None if device_index == -1 else device_index
@@ -233,7 +243,20 @@ class SoundDeviceRecorder:
             channels=1,
             dtype='int16',
             blocksize=self._frame_length,
+            callback=self._capture,
         )
+
+    def _capture(self, data, frames, time_info, status):
+        # PortAudio owns its callback thread. Python readers never enter a
+        # blocking native read that can race with stop/close after USB removal.
+        if self._cancelled.is_set():
+            return
+        if status.input_overflow:
+            self._overflow.set()
+        try:
+            self._frames.put_nowait(bytes(data))
+        except Full:
+            self._overflow.set()
 
     @property
     def sample_rate(self):
@@ -249,9 +272,26 @@ class SoundDeviceRecorder:
     def read(self):
         import numpy as np
 
-        data, overflowed = self._stream.read(self._frame_length)
-        if overflowed:
-            raise MicrophoneOverflow('microphone input overflow')
+        deadline = monotonic() + 5.0
+        while not self._cancelled.is_set():
+            if self._overflow.is_set():
+                self._overflow.clear()
+                while True:
+                    try:
+                        self._frames.get_nowait()
+                    except Empty:
+                        break
+                raise MicrophoneOverflow('microphone input overflow')
+            try:
+                data = self._frames.get(timeout=0.05)
+                if self._overflow.is_set():
+                    continue
+                break
+            except Empty:
+                if monotonic() >= deadline:
+                    raise MicrophoneTimeout('microphone input timeout')
+        else:
+            raise RuntimeError('microphone capture cancelled')
 
         samples = np.frombuffer(data, dtype='<i2')
         if samples.size != self._frame_length:
@@ -259,7 +299,12 @@ class SoundDeviceRecorder:
 
         return samples.tolist()
 
+    def cancel_read(self):
+        """Release Python readers without touching the native audio stream."""
+        self._cancelled.set()
+
     def stop(self):
+        self.cancel_read()
         self._stream.stop()
 
     def delete(self):

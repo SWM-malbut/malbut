@@ -115,7 +115,8 @@ def test_explicit_missing_tts_config_fails_before_starting(speech, tmp_path):
         speech._setup(context)
 
 
-def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
+def test_audio_and_identity_settings_reach_the_correct_nodes(speech, tmp_path, monkeypatch):
+    monkeypatch.setattr(speech.Path, 'home', lambda: tmp_path)
     context = _context(
         speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',
         agent_provider='mock', agent_user_id='trial-user',
@@ -145,7 +146,8 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
     }
     assert shlex.split(perform_substitutions(context, stt.process_description.prefix)) == [
         sys.executable, '-m', 'malbut_bringup.speech_process',
-        '--startup-timeout-s', '25.0', '--wait-for-ready', '--', sys.executable]
+        '--startup-timeout-s', '25.0', '--wait-for-ready',
+        '--microphone-device', '2', '--', sys.executable]
 
 
 def test_standalone_speech_can_start_one_manager(speech):

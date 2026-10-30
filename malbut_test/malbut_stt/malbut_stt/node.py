@@ -536,6 +536,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             print(message, file=sys.stderr)
         return 1
     finally:
+        # The existing supervisor bounds native cleanup even after readiness.
+        print('malbut_speech_stopping', flush=True)
         cleanup_failed = False
         for cleanup in (close_requests, pipeline.close if pipeline is not None else None,
                         close_transcriber, getattr(diagnostics, 'close', None)):

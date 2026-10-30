@@ -146,7 +146,8 @@ def _setup(context):
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             respawn=True, respawn_delay=5.0,
-            prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
+            prefix=shlex.join([*supervised, '--wait-for-ready',
+                               '--microphone-device', str(input_device), '--', python]),
             parameters=[str(config), {
                 'stt_model_path': model, 'stt_library_path': library,
                 'device_index': input_device, 'cpp_threads': threads,

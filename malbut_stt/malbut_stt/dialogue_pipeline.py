@@ -1087,24 +1087,26 @@ class DialoguePipeline:
         self.session.terminate()
         self._pending = None
         failure = None
-        try:
-            if self.recorder is not None and self._started:
-                self.recorder.stop()
-        except Exception as error:
-            failure = error
-        finally:
-            self._started = False
+        cancel_read = getattr(self.recorder, 'cancel_read', None)
+        if callable(cancel_read):
+            cancel_read()
         if self.capture_thread is not None:
             self.capture_thread.join(timeout=2.0)
         if self.recorder is not None:
             if self.capture_thread is None or not self.capture_thread.is_alive():
                 recorder, self.recorder = self.recorder, None
                 try:
+                    if self._started:
+                        recorder.stop()
+                except Exception as error:
+                    failure = error
+                try:
                     recorder.delete()
                 except Exception as error:
                     failure = failure or error
             else:
                 self.report('capture_shutdown_pending')
+        self._started = False
         if self.asr_thread is not None:
             self.asr_thread.join(timeout=2.0)
             if self.asr_thread.is_alive():

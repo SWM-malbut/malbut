@@ -2,6 +2,7 @@
 
 import struct
 import sys
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -39,23 +40,28 @@ def sounddevice(monkeypatch):
 
     class Stream:
         def __init__(self, **options):
+            state.callback = options.pop('callback')
+            state.frame_length = options['blocksize']
             state.calls.append(('open', options))
 
         def start(self):
             state.calls.append(('start',))
-
-        def read(self, frame_length):
-            state.calls.append(('read', frame_length))
-            samples = state.samples
-            if samples is None:
-                samples = [-32768, -1, 0, 1, 32767] + [0] * (frame_length - 5)
-            return struct.pack(f'<{len(samples)}h', *samples), state.overflowed
 
         def stop(self):
             state.calls.append(('stop',))
 
         def close(self):
             state.calls.append(('close',))
+
+    def emit():
+        frame_length = state.frame_length
+        samples = state.samples
+        if samples is None:
+            samples = [-32768, -1, 0, 1, 32767] + [0] * (frame_length - 5)
+        state.callback(struct.pack(f'<{len(samples)}h', *samples), frame_length, None,
+                       SimpleNamespace(input_overflow=state.overflowed))
+
+    state.emit = emit
 
     monkeypatch.setitem(sys.modules, 'sounddevice', SimpleNamespace(
         query_devices=query_devices,
@@ -94,6 +100,7 @@ def test_shared_xfm_uses_pulse_without_changing_pcm(sounddevice, monkeypatch):
     ]
     assert recorder.selected_device == 'pulse'
     assert recorder.sample_rate == 16000
+    sounddevice.emit()
     assert len(recorder.read()) == 512
     SoundDeviceRecorder(device_index=2)
     assert sounddevice.calls[-1][1]['device'] == 2
@@ -131,11 +138,12 @@ def test_pcm16_capture_preserves_samples_and_lifecycle(sounddevice, frame_length
     assert recorder.sample_rate == 16000
     assert sounddevice.calls[1][1]['blocksize'] == frame_length
     recorder.start()
+    sounddevice.emit()
     assert recorder.read() == [-32768, -1, 0, 1, 32767] + [0] * (frame_length - 5)
     recorder.stop()
     recorder.delete()
     assert sounddevice.calls[2:] == [
-        ('start',), ('read', frame_length), ('stop',), ('close',),
+        ('start',), ('stop',), ('close',),
     ]
 
 
@@ -155,9 +163,11 @@ def test_overflow_is_reported(sounddevice):
     """An input discontinuity must not be passed off as a valid frame."""
     recorder = SoundDeviceRecorder()
     sounddevice.overflowed = True
+    sounddevice.emit()
     with pytest.raises(MicrophoneOverflow, match='microphone input overflow'):
         recorder.read()
     sounddevice.overflowed = False
+    sounddevice.emit()
     assert len(recorder.read()) == 512
 
 
@@ -165,5 +175,48 @@ def test_incomplete_frame_is_reported(sounddevice):
     """Short captures must not reach the fixed-frame dialogue pipeline."""
     recorder = SoundDeviceRecorder()
     sounddevice.samples = [0, 1]
+    sounddevice.emit()
     with pytest.raises(RuntimeError, match='microphone returned an incomplete frame'):
         recorder.read()
+
+
+def test_cancel_releases_reader_without_calling_native_stop(sounddevice):
+    recorder = SoundDeviceRecorder()
+    entered = Event()
+    errors = []
+
+    def read():
+        entered.set()
+        try:
+            recorder.read()
+        except RuntimeError as error:
+            errors.append(str(error))
+
+    worker = Thread(target=read, daemon=True)
+    worker.start()
+    assert entered.wait(1)
+    recorder.cancel_read()
+    worker.join(timeout=0.5)
+    assert not worker.is_alive()
+    assert errors == ['microphone capture cancelled']
+    assert all(call[0] not in ('stop', 'close') for call in sounddevice.calls)
+
+
+def test_missing_callbacks_time_out_instead_of_blocking_native_read(sounddevice, monkeypatch):
+    from malbut_stt.audio import MicrophoneTimeout
+    ticks = iter([0.0, 5.1])
+    monkeypatch.setattr('malbut_stt.audio.monotonic', lambda: next(ticks))
+    recorder = SoundDeviceRecorder()
+    with pytest.raises(MicrophoneTimeout):
+        recorder.read()
+
+
+def test_callback_queue_overflow_discards_stale_audio_and_recovers(sounddevice):
+    recorder = SoundDeviceRecorder()
+    for _ in range(100):
+        sounddevice.emit()
+    with pytest.raises(MicrophoneOverflow):
+        recorder.read()
+    sounddevice.samples = [7] * 512
+    sounddevice.emit()
+    assert recorder.read() == [7] * 512
