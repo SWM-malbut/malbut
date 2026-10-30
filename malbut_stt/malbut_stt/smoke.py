@@ -138,7 +138,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 transcriber = None
 
             phase = 'loading_runtime_dependencies'
-            import webrtcvad
+            from malbut_stt.silero_stream import SileroStreamVad
 
             if not options.local and not options.wake_only:
                 from openai import OpenAI
@@ -151,7 +151,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 resources.callback(client.close)
                 transcriber = OpenAITranscriber(client)
             phase = 'initializing_vad'
-            vad = webrtcvad.Vad(2)
+            vad = SileroStreamVad()
 
             def is_speech(pcm, sample_rate):
                 """Time VAD frame processing, not the physical speech-end ground truth."""
@@ -160,6 +160,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 if speech:
                     last_vad_speech_at = monotonic()
                 return speech
+
+            is_speech.reset = vad.reset
 
             def recorder_factory():
                 if options.manual:
@@ -184,6 +186,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     recorder_factory=recorder_factory,
                     wake=wake or LocalWakeRecognizer.from_transcriber(transcriber),
                     transcriber=transcriber, is_speech=vad.is_speech,
+                    wake_is_speech=SileroStreamVad().is_speech,
                     publish_transcript=publish_local,
                     on_partial=lambda uid, text: emit(
                         'partial_transcript', utterance_id=uid, text=text),

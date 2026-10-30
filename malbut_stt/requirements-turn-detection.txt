@@ -1,0 +1,4 @@
+# Optional hybrid turn detection. Models must be provisioned locally.
+onnxruntime==1.23.2
+transformers==4.57.1
+numpy>=1.26,<3

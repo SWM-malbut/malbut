@@ -1,6 +1,7 @@
 """Exercise native-style crashes, retry limits and cancellation with real children."""
 
 import os
+import json
 from pathlib import Path
 import selectors
 import signal
@@ -144,6 +145,129 @@ def test_ready_runtime_outlives_startup_deadline(child):
     assert code == 0
     assert len(attempts.read_text().splitlines()) == 1
     assert 'speech_startup_timeout' not in output
+
+
+def test_native_cleanup_hang_is_bounded_after_capture_readiness(child):
+    start, attempts = child
+    code, output = finish(start(
+        'print("malbut_speech_capture_ready", flush=True)\n'
+        'print("malbut_speech_stopping", flush=True)\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n',
+        ready=True, timeout=0.2))
+    assert code == 124
+    assert 'speech_shutdown_timeout' in output
+    assert 'speech_startup_timeout' not in output
+    assert len(attempts.read_text().splitlines()) == 1
+    assert_stopped(int(attempts.read_text().strip()))
+
+
+@pytest.fixture
+def microphone_gate(tmp_path):
+    """Real child processes, with fake hardware availability and no models."""
+    package = tmp_path / 'malbut_stt'
+    package.mkdir()
+    (package / '__init__.py').touch()
+    available = tmp_path / 'available'
+    model_started = tmp_path / 'model_started'
+    (package / 'microphone_probe.py').write_text(
+        'from pathlib import Path\nimport sys\n'
+        f'sys.exit(0 if Path({str(available)!r}).exists() else 1)\n')
+    env = {**os.environ, 'PYTHONPATH': os.pathsep.join([
+        str(tmp_path), str(ROOT / 'malbut_bringup')])}
+    env.pop('MALBUT_SHARED_MICROPHONE', None)
+
+    def start(body=''):
+        return subprocess.Popen([
+            sys.executable, '-m', 'malbut_bringup.speech_process',
+            '--startup-timeout-s', '0.5', '--wait-for-ready', '--microphone-device', '0',
+            '--', sys.executable, '-c',
+            f'from pathlib import Path; Path({str(model_started)!r}).touch(); '
+            'print("malbut_speech_capture_ready", flush=True); ' + body,
+        ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+
+    return start, available, model_started, env
+
+
+def test_missing_microphone_waits_without_model_load_then_recovers(microphone_gate):
+    start, available, model_started, _ = microphone_gate
+    process = start()
+    try:
+        wait_line(process, 'speech_waiting_for_microphone')
+        assert not model_started.exists()
+        available.touch()
+        code, output = finish(process)
+        assert code == 0 and model_started.exists()
+        assert 'speech_microphone_ready' in output
+        assert 'malbut_speech_capture_ready' in output
+        assert 'speech_startup_timeout' not in output
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            finish(process)
+
+
+def test_cancel_while_waiting_for_usb_never_starts_model(microphone_gate):
+    start, _, model_started, _ = microphone_gate
+    process = start()
+    wait_line(process, 'speech_waiting_for_microphone')
+    process.terminate()
+    code, _ = finish(process)
+    assert code == 128 + signal.SIGTERM
+    assert not model_started.exists()
+
+
+def test_refreshes_xfm_route_and_exits_if_physical_source_disappears(microphone_gate, tmp_path):
+    start, available, model_started, env = microphone_gate
+    sources = tmp_path / 'sources.json'
+    sources.write_text(json.dumps([{
+        'name': 'alsa_input.xfm.reconnected',
+        'properties': {'device.product.name': 'XFM-DP-V0.0.18'},
+    }]))
+    pactl = tmp_path / 'pactl'
+    pactl.write_text(f'#!{sys.executable}\nfrom pathlib import Path\n'
+                     f'print(Path({str(sources)!r}).read_text())\n')
+    pactl.chmod(0o755)
+    env.update(PATH=str(tmp_path) + os.pathsep + env.get('PATH', ''),
+               MALBUT_SHARED_MICROPHONE='stale.source', PULSE_SOURCE='stale.source')
+    available.touch()
+    process = start(
+        'import os, time; '
+        'assert os.environ["PULSE_SOURCE"] == "alsa_input.xfm.reconnected"; '
+        'print("route_refreshed", flush=True); time.sleep(30)')
+    try:
+        wait_line(process, 'route_refreshed')
+        assert model_started.exists()
+        sources.write_text('[]')
+        code, output = finish(process)
+        assert code == 75
+        assert 'speech_microphone_lost' in output
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            finish(process)
+
+
+def test_cancel_reaps_hung_microphone_probe(microphone_gate, tmp_path):
+    start, _, model_started, _ = microphone_gate
+    pidfile = tmp_path / 'probe_pid'
+    (tmp_path / 'malbut_stt/microphone_probe.py').write_text(
+        'import os, time\nfrom pathlib import Path\n'
+        f'Path({str(pidfile)!r}).write_text(str(os.getpid()))\ntime.sleep(30)\n')
+    process = start()
+    try:
+        deadline = time.monotonic() + 2
+        while not pidfile.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        process.terminate()
+        code, _ = finish(process)
+        assert code == 128 + signal.SIGTERM
+        assert_stopped(int(pidfile.read_text()))
+        assert not model_started.exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            finish(process)
 
 
 @pytest.mark.parametrize('line', ['', 'prefix malbut_speech_capture_ready',

@@ -439,3 +439,122 @@ def test_ten_minutes_of_speech_accumulates_all_text_from_bounded_pcm_windows():
                              for index in range(300)]
     assert window_start > 580
     assert largest_pcm <= 60 * 32000 and model.largest_window_s <= 60
+
+
+def whole_segment(end, text=' 같은 전체 문장', *, start=0.0):
+    return [SimpleNamespace(start=start, end=end, text=text)]
+
+
+def test_captured_timestamp_regression_reuses_coverage_without_promoting_it():
+    text = ' 특히 중소형 필딩은 개인투자자의 전폭적인 지지를 받고 있다.'
+    first = ' 특히 중소형 피팅은 개인투자자의 전팔을'
+    model = Model(whole_segment(25.78, first), whole_segment(6.0, text),
+                  whole_segment(7.0, text), whole_segment(5.5, text),
+                  whole_segment(5.5, text))
+    stream = IncrementalWhisperStream(model)
+    snapshots = [(3.82, 3.82), (6.30, 5.50), (7.38, 7.38), (8.24, 7.44), (9.44, 7.44)]
+    for index, (duration, speech_end) in enumerate(snapshots):
+        assert stream.transcribe(pcm(duration), 16000, speech_end_s=speech_end,
+                                 final=index == 4) == (first if index == 0 else text).strip()
+        assert stream.retained_start_s == 0 and stream._committed == []
+        if index >= 3:
+            assert stream.last_metrics['tail_gap_s'] == pytest.approx(1.94)
+            assert stream.last_metrics['reused_tail_coverage_end_s'] == 7.0
+            assert stream._previous[-1].end == 7.0
+    assert [len(audio) / 16000 for audio, _ in model.calls] == [s[0] for s in snapshots]
+    assert all(options == dict(language='ko', beam_size=1,
+                               condition_on_previous_text=False, initial_prompt=None)
+               for _, options in model.calls)
+
+
+@pytest.mark.parametrize('final', [False, True])
+def test_reused_coverage_keeps_original_point_eight_second_limit(final):
+    model = Model(*(whole_segment(end) for end in (7.0, 5.5, 5.5, 5.5)))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    for speech_end in (7.44, 7.8):
+        assert stream.transcribe(pcm(9.44), 16000, speech_end_s=speech_end,
+                                 final=final) == '같은 전체 문장'
+        assert stream.last_metrics['reused_tail_coverage_end_s'] == 7.0
+        assert stream._previous[-1].end == 7.0 and stream._committed == []
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.8001, final=final)
+
+
+def test_coverage_does_not_use_snapshot_duration_as_native_end():
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=8.0)
+
+
+def test_shorter_snapshot_cannot_borrow_later_coverage():
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(7.3), 16000, speech_end_s=7.2)
+
+
+@pytest.mark.parametrize('changed', [' 다른 전체 문장', ' 같은 전체 문장 다시',
+                                   ' 같은 전체 문장.', ' 같은  전체 문장'])
+def test_changed_or_repeated_text_cannot_borrow_coverage(changed):
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), whole_segment(5.5, changed)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44, final=True)
+
+
+@pytest.mark.parametrize('invalid', [whole_segment(99), whole_segment(7, start=-1),
+                                   whole_segment(float('nan'))])
+def test_invalid_prior_timestamp_cannot_supply_coverage(invalid):
+    stream = IncrementalWhisperStream(Model(invalid, whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44)
+
+
+def test_invalid_current_timestamp_does_not_refresh_or_reuse_coverage():
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), whole_segment(99),
+                                            whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    # Preserve the existing revisable-text policy for invalid native times.
+    assert stream.transcribe(pcm(8.24), 16000, speech_end_s=7.44) == '같은 전체 문장'
+    assert stream.last_metrics['reused_tail_coverage_end_s'] is None
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44)
+
+
+def test_empty_current_decode_never_returns_or_preserves_coverage_text():
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), [], whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    assert stream.transcribe(pcm(8.24), 16000, speech_end_s=7.44, final=True) == ''
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44, final=True)
+
+
+def test_current_decode_exception_is_not_replaced_by_coverage_text():
+    model = Model(whole_segment(7.0), RuntimeError('decode failed'), whole_segment(5.5))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(RuntimeError, match='decode failed'):
+        stream.transcribe(pcm(8.24), 16000, speech_end_s=7.44, final=True)
+    assert stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44, final=True) == '같은 전체 문장'
+    assert len(model.calls) == 3
+
+
+def test_committed_text_without_trimming_cannot_borrow_coverage():
+    stream = IncrementalWhisperStream(Model(whole_segment(7.0), whole_segment(7.0),
+                                            whole_segment(5.5)))
+    stream.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    stream.transcribe(pcm(9.0), 16000, speech_end_s=7.38)
+    assert stream._committed and stream.retained_start_s == 0
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        stream.transcribe(pcm(9.44), 16000, speech_end_s=7.44, final=True)
+
+
+def test_coverage_is_not_shared_between_utterance_streams():
+    model = Model(whole_segment(7.0), whole_segment(5.5))
+    first, second = IncrementalWhisperStream(model), IncrementalWhisperStream(model)
+    first.transcribe(pcm(7.38), 16000, speech_end_s=7.38)
+    with pytest.raises(ValueError, match='omitted recent speech'):
+        second.transcribe(pcm(9.44), 16000, speech_end_s=7.44, final=True)

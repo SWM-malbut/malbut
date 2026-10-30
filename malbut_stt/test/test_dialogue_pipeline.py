@@ -52,8 +52,10 @@ def harness():
         def stop(self):
             self.active = False
             state.closed.append('stop')
-            self.frames.put([0] * 320)
             state.allow_asr.set()
+
+        def cancel_read(self):
+            self.frames.put([0] * 320)
 
         def delete(self):
             state.closed.append('delete')
@@ -1378,6 +1380,21 @@ def test_close_suppresses_inflight_asr_and_releases_workers(harness):
     assert harness.transcripts == []
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert harness.closed == ['stop', 'delete']
+
+
+def test_close_joins_capture_before_touching_native_stream(harness):
+    pipeline = harness.create()
+    wait_for(lambda: harness.recorder.reads == 1)
+    original_stop = harness.recorder.stop
+
+    def stop():
+        assert not pipeline.capture_thread.is_alive(), 'native stop raced with read'
+        original_stop()
+
+    harness.recorder.stop = stop
+    pipeline.close()
+    assert harness.closed == ['stop', 'delete']
+    assert 'capture_shutdown_pending' not in harness.reports
 
 
 @pytest.mark.parametrize('operation', ['stop', 'delete'])

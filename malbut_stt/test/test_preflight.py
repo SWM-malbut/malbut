@@ -67,8 +67,8 @@ def runtime(monkeypatch):
             event('delete')
 
     class Vad:
-        def __init__(self, mode):
-            state.calls['vad_mode'] = mode
+        def __init__(self):
+            state.calls['vad_backend'] = 'silero'
             event('vad_init')
 
         def is_speech(self, pcm, rate):
@@ -78,7 +78,8 @@ def runtime(monkeypatch):
 
     monkeypatch.setitem(sys.modules, 'pvrecorder', None)
     monkeypatch.setattr('malbut_stt.audio.SoundDeviceRecorder', Recorder)
-    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=Vad))
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad', Vad)
     monkeypatch.setattr('malbut_stt.cpp_transcription.CppWhisperTranscriber', Transcriber)
     monkeypatch.setattr(socket.socket, 'connect', forbidden)
     monkeypatch.setattr(socket.socket, 'connect_ex', forbidden)
@@ -108,8 +109,8 @@ def test_local_model_and_microphone_check_reports_only_verified_capabilities(run
         '/models/small.bin', '/lib/bridge.so', {'use_gpu': True, 'n_threads': 4},
     )
     assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 3}
-    assert runtime.calls['vad_mode'] == 2
-    assert runtime.calls['vad_frame'] == (struct.pack('<320h', *runtime.samples[:320]), 16000)
+    assert runtime.calls['vad_backend'] == 'silero'
+    assert runtime.calls['vad_frame'] == (struct.pack('<512h', *runtime.samples), 16000)
     assert runtime.events[-3:] == ['stop', 'delete', 'model_close']
     assert result == {
         'bridge_abi': 3, 'model_type': 'small', 'requested_use_gpu': True,

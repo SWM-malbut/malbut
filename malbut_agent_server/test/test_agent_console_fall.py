@@ -59,6 +59,7 @@ class Rig:
         self.cleaned = []
         self.recorder = SimpleNamespace(
             sample_rate=16000, start=lambda: None, read=self.frames.get,
+            cancel_read=lambda: self.frames.put([0] * 320),
             stop=lambda: (self.cleaned.append('mic_stop'), self.frames.put([0] * 320)),
             delete=lambda: self.cleaned.append('mic_delete'),
         )

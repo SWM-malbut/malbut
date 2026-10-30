@@ -11,6 +11,40 @@ import pytest
 from malbut_stt.node import main
 
 
+def test_hybrid_guards_are_loaded_and_wired_to_pipeline(runtime, monkeypatch):
+    runtime.parameters['turn_detection'] = 'hybrid'
+    runtime.parameters['turn_model_directory'] = '/local/turn-models'
+    onset, smart = None, object()
+    calls=[]
+    def load(mode, directory):
+        calls.append((mode,directory))
+        return onset,smart
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards',load)
+    assert main([])==0
+    assert calls==[('hybrid','/local/turn-models')]
+    # Pipeline doubles retain the supplied constructor arguments.
+    assert runtime.pipeline_args['start_qualifier'] is onset
+    assert runtime.pipeline_args['smart_turn'] is smart
+
+
+def test_invalid_turn_mode_stops_before_models_or_capture(runtime):
+    runtime.parameters['turn_detection']='unknown'
+    assert main([])==1
+    assert not hasattr(runtime, 'pipeline_args')
+
+
+def test_reachy_start_keeps_silero_capture_and_existing_endpoint_settings(runtime, monkeypatch):
+    runtime.parameters['turn_detection'] = 'reachy_start'
+    onset = object()
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', lambda *_: (onset, None))
+    assert main([]) == 0
+    assert runtime.pipeline_args['start_qualifier'] is onset
+    assert runtime.pipeline_args['smart_turn'] is None
+    settings = runtime.pipeline_args['settings']
+    assert settings.min_speech_s == .16 and settings.silence_timeout_s == 2.
+    assert runtime.pipeline_args['endpoint_predecode_s'] == .8
+
+
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
@@ -179,9 +213,10 @@ def runtime(monkeypatch, tmp_path):
         fail('initializing_stt')
         return SimpleNamespace(model=object(), close=close_cpp)
 
-    def create_vad(mode):
-        state.calls['vad_mode'] = mode
-        return SimpleNamespace(is_speech=lambda frame, _: frame[:2] != b'\x00\x00')
+    def create_vad(path):
+        state.calls.setdefault('vad_paths', []).append(path)
+        return SimpleNamespace(is_speech=lambda frame, _: frame[:2] != b'\x00\x00',
+                               reset=lambda: None)
 
     class Pipeline:
         def __init__(self, **kwargs):
@@ -243,6 +278,10 @@ def runtime(monkeypatch, tmp_path):
             self.session.session_id = ''
             return True
 
+        @property
+        def barge_in_available(self):
+            return self.input_has_aec and self.capture_ready.is_set()
+
         def session_is_active(self, session_id):
             return bool(session_id and self.session.session_id == session_id)
 
@@ -251,7 +290,7 @@ def runtime(monkeypatch, tmp_path):
             state.calls.setdefault('web_talk_quiet', []).append(quiet)
             return state.accepted
 
-        def on_speech_request(self, playback_id):
+        def on_speech_request(self, playback_id, **metadata):
             state.calls.setdefault('speech_requests', []).append(playback_id)
 
         def close(self):
@@ -303,12 +342,13 @@ def runtime(monkeypatch, tmp_path):
         'malbut_interfaces.srv': state.services,
         'pvporcupine': None,
         'pvrecorder': None,
-        'webrtcvad': SimpleNamespace(Vad=create_vad),
+        'webrtcvad': None,
         'openai': None,
         'faster_whisper': None,
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad', create_vad)
     monkeypatch.setattr('malbut_stt.wake.LocalWakeRecognizer', create_wake)
     monkeypatch.setattr('malbut_stt.node.SoundDeviceRecorder', create_recorder)
     monkeypatch.setattr('malbut_stt.node.play_wake_chime',
@@ -490,7 +530,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert defaults['stt_decode_timeout_s'] == 30.0
     assert defaults['wake_chime_device_index'] == -1
     assert defaults['pre_roll_s'] == 0.3
-    assert defaults['min_speech_s'] == 0.08
+    assert defaults['min_speech_s'] == 0.16
     assert defaults['wake_model_path'] == defaults['stt_model_path'] == ''
     assert defaults['compute_type'] == 'int8'
     assert defaults['backend'] == 'faster_whisper'
@@ -502,7 +542,9 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert defaults['playback_control_timeout_s'] == 5.0
     assert 'api_timeout_s' not in defaults
     assert 'keyword_path' not in defaults and 'language_model_path' not in defaults
-    assert runtime.calls['vad_mode'] == 2
+    assert 'vad_mode' not in defaults
+    assert len(runtime.calls['vad_paths']) == 2
+    assert runtime.pipeline_args['is_speech'] is not runtime.pipeline_args['wake_is_speech']
     assert defaults['device_index'] == 0
     assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 0}
     assert runtime.calls['local_stt'] == Path(runtime.parameters['wake_model_path'])
@@ -512,7 +554,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
     assert runtime.pipeline_args['input_has_aec'] is False
     assert runtime.pipeline_args['settings'].silence_timeout_s == 2.0
-    assert runtime.pipeline_args['settings'].min_speech_s == 0.08
+    assert runtime.pipeline_args['settings'].min_speech_s == 0.16
     assert runtime.pipeline_args['settings'].max_utterance_s is None
     assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.8
@@ -740,7 +782,7 @@ def test_explicit_command_model_and_processed_microphone(runtime, tmp_path):
 
 
 @pytest.mark.parametrize('input_has_aec', [False, True])
-def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
+def test_robot_deployment_honors_explicit_aec_input(runtime, input_has_aec):
     import malbut_stt.node as source_node
 
     path = Path(__file__).parents[2] / 'malbut_test/malbut_stt/malbut_stt/node.py'
@@ -752,9 +794,22 @@ def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
         robot_node[name] = getattr(source_node, name)
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
-    assert runtime.pipeline_args['input_has_aec'] is False
+    assert runtime.pipeline_args['input_has_aec'] is input_has_aec
     assert runtime.calls['endpoint_chimes'] == [-1]
     assert runtime.calls['failure_chimes'] == [-1]
+
+
+def test_reachy_barge_in_is_explicit_and_requires_aec(runtime):
+    runtime.parameters.update(barge_in_mode='reachy', input_has_aec=False)
+    assert main() == 1
+    assert ('error', 'STT stopped during validating_configuration: ValueError') in runtime.logs
+
+
+def test_reachy_mode_reaches_pipeline_with_aec(runtime):
+    runtime.parameters.update(barge_in_mode='reachy', input_has_aec=True)
+    assert main() == 0
+    assert runtime.pipeline_args['barge_in_mode'] == 'reachy'
+    assert runtime.pipeline_args['input_has_aec'] is True
 
 
 def test_symlink_to_same_model_reuses_one_local_model(runtime, tmp_path):
@@ -991,7 +1046,7 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
 
 @pytest.mark.parametrize('parameter, value', [
     ('wake_model_path', ''), ('wake_model_path', '/missing/local-model'),
-    ('stt_model_path', '/missing/command-model'), ('vad_mode', 4),
+    ('stt_model_path', '/missing/command-model'),
     ('input_has_aec', 'true'), ('silence_timeout_s', -1.0),
     ('playback_control_timeout_s', 0.0), ('playback_control_timeout_s', float('nan')),
     ('playback_control_timeout_s', float('inf')), ('playback_control_timeout_s', True),

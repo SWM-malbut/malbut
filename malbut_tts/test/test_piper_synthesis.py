@@ -21,7 +21,8 @@ def prepared(voice):
     return engine
 
 
-def test_cpu_load_and_local_configuration(tmp_path, monkeypatch):
+@pytest.mark.parametrize('configured_threads,expected_threads', [(None, 3), (4, 4)])
+def test_cpu_load_and_local_configuration(tmp_path, monkeypatch, configured_threads, expected_threads):
     path = tmp_path / 'voice.onnx'
     path.write_bytes(b'model')
     path.with_suffix('.onnx.json').write_text('{}')
@@ -44,12 +45,13 @@ def test_cpu_load_and_local_configuration(tmp_path, monkeypatch):
         SynthesisConfig=object))
     for module in ('torch', 'qwen_tts', 'openai', 'malbut_tts.api_synthesis'):
         monkeypatch.setitem(sys.modules, module, None)
-    engine = create_synthesizer(path, backend='piper', piper_threads=4)
+    engine = (create_synthesizer(path) if configured_threads is None else
+              create_synthesizer(path, backend='piper', piper_threads=configured_threads))
     engine.load()
     engine.load()
     assert len(sessions) == 1
     assert sessions[0][1]['providers'] == ['CPUExecutionProvider']
-    assert sessions[0][1]['sess_options'].intra_op_num_threads == 4
+    assert sessions[0][1]['sess_options'].intra_op_num_threads == expected_threads
     assert engine.sample_rate == 22050
 
 

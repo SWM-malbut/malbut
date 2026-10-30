@@ -3,7 +3,7 @@
 import math
 from typing import Callable
 
-from malbut_stt.audio import CaptureResult, CaptureSettings, UtteranceCollector
+from malbut_stt.audio import CapturePCM, CaptureResult, CaptureSettings, UtteranceCollector
 
 
 class StreamingUtteranceCollector:
@@ -16,7 +16,8 @@ class StreamingUtteranceCollector:
     def __init__(self, is_speech: Callable[[bytes, int], bool], *,
                  settings: CaptureSettings | None = None,
                  early_endpoint_s: float | None = None,
-                 partial_interval_s: float | None = None) -> None:
+                 partial_interval_s: float | None = None,
+                 start_qualifier=None) -> None:
         self.settings = settings or CaptureSettings(silence_timeout_s=2.0)
         if early_endpoint_s is not None and (
             isinstance(early_endpoint_s, bool) or not math.isfinite(early_endpoint_s)
@@ -31,7 +32,9 @@ class StreamingUtteranceCollector:
             raise ValueError('partial interval must be positive')
         self.partial_interval_s = partial_interval_s
         self.is_speech = is_speech
+        self.start_qualifier = start_qualifier
         self.pending = bytearray()
+        self.pending_vad = bytearray()
         self._pending_start_blocked = False
         self.discarding = False
         self.quiet_frames = 0
@@ -42,13 +45,17 @@ class StreamingUtteranceCollector:
     def _new_collector(self) -> UtteranceCollector:
         self._revision += 1
         self._partial_frames = 0
-        collector = UtteranceCollector(16000, self.is_speech, self.settings)
+        if self.start_qualifier is not None:
+            self.start_qualifier.reset()
+        collector = UtteranceCollector(16000, self.is_speech, self.settings,
+                                      start_qualifier=self.start_qualifier)
         collector.revision = self._revision
         return collector
 
     def reset(self) -> None:
         """Drop buffered audio after a device discontinuity or session reset."""
         self.pending.clear()
+        self.pending_vad.clear()
         self._pending_start_blocked = False
         self.discarding = False
         self.quiet_frames = 0
@@ -85,17 +92,19 @@ class StreamingUtteranceCollector:
         if pcm:
             self._pending_start_blocked |= start_blocked
         self.pending.extend(pcm)
+        self.pending_vad.extend(getattr(pcm, 'vad_pcm', pcm))
         events = []
         frame_bytes = 640  # 20 ms of 16 kHz mono PCM16.
         consumed = 0
         while len(self.pending) - consumed >= frame_bytes:
-            frame = bytes(self.pending[consumed:consumed + frame_bytes])
+            vad_frame = bytes(self.pending_vad[consumed:consumed + frame_bytes])
+            frame = CapturePCM(self.pending[consumed:consumed + frame_bytes], vad_frame)
             consumed += frame_bytes
             frame_blocked = self._pending_start_blocked
             self._pending_start_blocked = (
                 len(self.pending) > consumed and start_blocked)
             if self.discarding:
-                if self.is_speech(frame, 16000):
+                if self.is_speech(vad_frame, 16000):
                     self.quiet_frames = 0
                 else:
                     self.quiet_frames += 1
@@ -131,4 +140,5 @@ class StreamingUtteranceCollector:
             self.collector = self._new_collector()
             self._candidate_revision = None
         del self.pending[:consumed]
+        del self.pending_vad[:consumed]
         return events

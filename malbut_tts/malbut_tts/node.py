@@ -4,6 +4,7 @@ import argparse
 import json
 from queue import Empty, Queue
 import sys
+from threading import Lock
 from typing import Optional, Sequence
 
 
@@ -30,13 +31,14 @@ def create_tts_node(runtime_factory=None):
             super().__init__('malbut_tts')
             self._runtime = None
             self._closing = False
+            self._status_lock = Lock()
             self._statuses = Queue()
             self._key_health = Queue()
             self._key_health_publisher = None
             try:
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'piper')
-                self.declare_parameter('piper_threads', 6)
+                self.declare_parameter('piper_threads', 3)
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
                 self.declare_parameter('api_voice', 'nova')
                 self.declare_parameter('api_timeout_seconds', 10.0)
@@ -46,6 +48,7 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('speaker', 'Sohee')
                 self.declare_parameter('language', 'Korean')
                 self.declare_parameter('output_device', -1)
+                self.declare_parameter('output_device_name', '')
                 self.declare_parameter('audio_directory', '')
                 self.declare_parameter('max_pending_requests', 32)
                 self.declare_parameter('pending_timeout_s', 0.0)
@@ -58,6 +61,7 @@ def create_tts_node(runtime_factory=None):
                 self._status_publisher = self.create_publisher(
                     SpeechPlaybackStatus, STATUS_TOPIC, qos,
                 )
+                self._status_guard = self.create_guard_condition(self._publish_statuses)
                 if runtime_factory is None:
                     self._runtime = self._create_runtime()
                 else:
@@ -68,7 +72,6 @@ def create_tts_node(runtime_factory=None):
                 self.create_service(
                     ControlSpeechPlayback, CONTROL_SERVICE, self._control,
                 )
-                self.create_timer(0.01, self._publish_statuses)
             except Exception:
                 self.destroy_node()
                 raise
@@ -86,6 +89,9 @@ def create_tts_node(runtime_factory=None):
             device = self.get_parameter('output_device').value
             if device < -1:
                 raise ValueError('output_device must be -1 or a device index')
+            device_name = self.get_parameter('output_device_name').value
+            if not isinstance(device_name, str) or (device_name and device != -1):
+                raise ValueError('output_device_name requires output_device=-1')
             from malbut_tts.audio import StreamingPlayer
             from malbut_tts.runtime import SpeechRuntime
             from malbut_tts.backends import create_synthesizer
@@ -122,7 +128,7 @@ def create_tts_node(runtime_factory=None):
                 synthesizer,
                 lambda on_state, cancel_event: StreamingPlayer(
                     on_state, cancel_event,
-                    device=None if device == -1 else device,
+                    device=device_name or (None if device == -1 else device),
                 ),
                 self._queue_status,
                 logger=self.get_logger(),
@@ -183,8 +189,10 @@ def create_tts_node(runtime_factory=None):
             return response
 
         def _queue_status(self, playback_id, state, interim, request_id):
-            if not self._closing:
-                self._statuses.put((playback_id, state, interim, request_id))
+            with self._status_lock:
+                if not self._closing:
+                    self._statuses.put((playback_id, state, interim, request_id))
+                    self._status_guard.trigger()
 
         def _publish_statuses(self):
             while not self._closing:
@@ -199,9 +207,10 @@ def create_tts_node(runtime_factory=None):
 
         def destroy_node(self):
             """Stop audio and synthesis before releasing the ROS entities."""
-            if self._closing:
-                return False
-            self._closing = True
+            with self._status_lock:
+                if self._closing:
+                    return False
+                self._closing = True
             try:
                 if self._runtime is not None:
                     self._runtime.close()

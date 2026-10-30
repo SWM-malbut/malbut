@@ -53,6 +53,10 @@ class FakePlayer:
         self.on_state('paused')
         return True
 
+    def set_ducked(self, value):
+        self.ducked = value
+        return True
+
     def resume(self):
         self.on_state('playing')
         return True
@@ -981,3 +985,21 @@ def test_a_failed_unheard_notice_does_not_suppress_start_and_new_turns_are_indep
         assert audio.texts == [START, START]
     finally:
         h.runtime.close()
+
+
+def test_gain_controls_are_scoped_and_never_change_playback_state(h):
+    pid = h.runtime.submit('answer', playback_id='answer')
+    player = h.active(pid)
+    assert not h.runtime.control('stale', 'duck')
+    assert h.runtime.control(pid, 'duck') and player.ducked
+    assert h.runtime.control(pid, 'unduck') and not player.ducked
+    assert h.events == [(pid, 'playing')]
+    h.runtime.control(pid, 'stop')
+    assert not h.runtime.control(pid, 'duck')
+
+
+def test_confirmation_cannot_be_ducked(h):
+    pid = h.runtime.submit('question', request_type=CONFIRMATION)
+    h.active(pid)
+    assert not h.runtime.control(pid, 'duck')
+    assert not h.runtime.control(pid, 'unduck')

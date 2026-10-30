@@ -13,11 +13,11 @@ def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
     if type(device_index) is not int or device_index < -1:
         raise ValueError('device_index must be -1 or a microphone index')
     from malbut_stt.audio import MicrophoneOverflow, SoundDeviceRecorder
-    import webrtcvad
+    from malbut_stt.silero_stream import SileroStreamVad
 
     from malbut_stt.cpp_transcription import CppWhisperTranscriber
 
-    vad = webrtcvad.Vad(2)
+    vad = SileroStreamVad()
     with CppWhisperTranscriber(
         model_path, library_path, use_gpu=True, n_threads=cpp_threads,
     ) as transcriber:
@@ -41,8 +41,8 @@ def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
                     continue
             if len(samples) != 512:
                 raise ValueError('STT microphone returned an incomplete frame')
-            # Match the node's 20 ms WebRTC VAD input; do not transcribe or log it.
-            vad.is_speech(struct.pack('<320h', *samples[:320]), 16000)
+            # Exercise a complete 32 ms Silero inference window without retaining audio.
+            vad.is_speech(struct.pack('<512h', *samples), 16000)
         finally:
             try:
                 if started:

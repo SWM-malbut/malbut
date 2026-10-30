@@ -5,12 +5,14 @@ import sys
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
-from malbut_stt.audio import CaptureResult, CaptureSettings, UtteranceCollector
+from malbut_stt.audio import CapturePCM, CaptureResult, CaptureSettings, UtteranceCollector
 from malbut_stt.wake import parse_wake_phrase
 
 
 def pcm_bytes(samples: Any) -> bytes:
     """Encode signed recorder samples as little-endian PCM16."""
+    if isinstance(samples, CapturePCM):
+        return samples
     values = array('h', samples)
     if sys.byteorder != 'little':
         values.byteswap()

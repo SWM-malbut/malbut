@@ -3,6 +3,7 @@
 from collections import deque
 import importlib
 from threading import Condition, Event, Thread, current_thread
+from time import monotonic
 
 import numpy as np
 
@@ -27,6 +28,8 @@ class StreamingPlayer:
         self._rebuffering = False
         self._pause_requested = False
         self._paused = False
+        self._gain = 1.0
+        self._gain_until = 0.0
         self._started = False
         self._drained = False
         self._drain_reason = None
@@ -113,6 +116,17 @@ class StreamingPlayer:
             if not self._complete:
                 raise RuntimeError('Audio did not finish playing.')
 
+    def set_ducked(self, ducked):
+        """Change upcoming PCM only; preserve queued samples and playback position."""
+        with self._condition:
+            if (self._done.is_set() or self._cancel.is_set()
+                    or self._closing.is_set() or self._error is not None):
+                return False
+            self._gain = 0.25 if ducked else 1.0
+            # Lost/reordered restore requests must never leave playback quiet.
+            self._gain_until = monotonic() + 0.3 if ducked else 0.0
+            return True
+
     def pause(self):
         """Accept a pause which takes effect after submitted PCM drains."""
         with self._condition:
@@ -123,6 +137,7 @@ class StreamingPlayer:
                     or self._drain_reason == 'finished'):
                 return False
             self._pause_requested = True
+            self._gain = 1.0
             self._condition.notify_all()
             return True
 
@@ -194,6 +209,9 @@ class StreamingPlayer:
                 if filled < frames and not self._input_done:
                     underflow = True
                     self._rebuffering = True
+                if monotonic() >= self._gain_until:
+                    self._gain = 1.0
+                outdata[:filled] *= self._gain
                 self._condition.notify_all()
                 if self._input_done and not self._pending:
                     self._drain_reason = 'finished'

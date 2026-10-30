@@ -180,7 +180,8 @@ class SpeechCoordinator:
     async def control(self, request, response):
         """Relay STT/Agent controls; acceptance never means playback finished."""
         with self.lock:
-            if (self.closed or request.command not in ('pause', 'resume', 'stop', 'stop_all')
+            if (self.closed or request.command not in (
+                    'pause', 'resume', 'stop', 'stop_all', 'duck', 'unduck')
                     or (request.command != 'stop_all' and (
                         not request.playback_id.strip() or len(request.playback_id) > 200))
                     or len(self.controls) >= MAX_TRACKED):

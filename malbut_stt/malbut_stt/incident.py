@@ -235,6 +235,10 @@ class IncidentRecorder(TranscriptionDiagnostics):
                 except Exception as error:
                     self._fail(error)
             return decision
+        detector = getattr(is_speech, '__self__', is_speech)
+        reset = getattr(detector, 'reset', None)
+        if callable(reset):
+            observed.reset = reset
         return observed
 
     def _begin(self, audio, options):

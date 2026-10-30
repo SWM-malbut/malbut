@@ -18,7 +18,7 @@ def test_default_piper_needs_no_api_or_cuda_and_never_falls_back(monkeypatch, tm
         monkeypatch.setitem(sys.modules, module, None)
     assert create_synthesizer() is factory.return_value
     factory.assert_called_once_with(
-        tmp_path / 'malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx', threads=6)
+        tmp_path / 'malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx', threads=3)
     factory.side_effect = FileNotFoundError('local voice missing')
     with pytest.raises(FileNotFoundError, match='local voice missing'):
         create_synthesizer()

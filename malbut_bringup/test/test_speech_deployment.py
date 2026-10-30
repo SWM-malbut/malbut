@@ -27,20 +27,7 @@ def test_robot_speech_runtime_matches_source(package):
               if path.is_file() and path.suffix in suffixes}
     assert files == copied
     for path in files:
-        if package == 'malbut_stt' and path == Path('node.py'):
-            # The test deployment disables barge-in, even with AEC: in the
-            # capture and in the dialogue (#245 added the capture one).
-            expected = (source / path).read_bytes()
-            for original, override in (
-                    (b'vad_mode=vad_mode, input_has_aec=input_has_aec,\n',
-                     b'vad_mode=vad_mode, input_has_aec=False,\n'),
-                    (b'            input_has_aec=input_has_aec,\n',
-                     b'            input_has_aec=False,\n')):
-                assert expected.count(original) == 1
-                expected = expected.replace(original, override, 1)
-            assert expected == (deployed / path).read_bytes()
-        else:
-            assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
+        assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
 
 
 def test_robot_speech_launch_and_native_assets_match_source():
@@ -80,6 +67,7 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_stt/native/CMakeLists.txt',
         'malbut_stt/native/whisper_cpp_bridge.cpp',
         'malbut_stt/requirements-whisper-cpp.txt',
+        'malbut_stt/requirements-aec.txt',
         'malbut_tts/requirements-api.txt',
         'malbut_agent_server/requirements-openai.txt',
     ):
@@ -204,7 +192,7 @@ def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
             assert (root / path).is_file(), path
     for name, patterns in metadata.get('package_data', {}).items():
         for pattern in patterns:
-            assert list((root / name).glob(pattern)), pattern
+            assert list((root / name.replace('.', '/')).glob(pattern)), pattern
     entries = metadata['entry_points']['console_scripts']
     for entry in entries:
         _, target = entry.split('=', 1)
@@ -288,3 +276,33 @@ def test_robot_speech_copy_excludes_tests_secrets_and_caches(package):
         assert path.name not in forbidden, path
         assert not (path.name.startswith('.env.') and path.name != '.env.example'), path
         assert path.suffix != '.pyc', path
+
+
+@pytest.mark.parametrize('condition', ['valid', 'missing', 'corrupt'])
+def test_robot_build_checks_pinned_silero_without_loading_models(tmp_path, monkeypatch, condition):
+    import hashlib
+    from types import ModuleType
+
+    model = tmp_path / 'silero-v6.2.3.onnx'
+    expected = hashlib.sha256(b'pinned fixture').hexdigest()
+    if condition != 'missing':
+        model.write_bytes(b'pinned fixture' if condition == 'valid' else b'bad fixture')
+    stream = ModuleType('malbut_stt.silero_stream')
+    stream.default_model_path = lambda: model
+    vad = ModuleType('malbut_stt.silero_vad')
+    vad.MODEL_SHA256 = expected
+    monkeypatch.setitem(sys.modules, stream.__name__, stream)
+    monkeypatch.setitem(sys.modules, vad.__name__, vad)
+    monkeypatch.setattr(sys, 'argv', ['-', str(SOURCE / 'malbut_stt')])
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    build = (ROBOT / 'build.sh').read_text()
+    code = build.split('"$robot_source_dir/malbut_stt" <<\'PY\'\n', 1)[1].split('\nPY\n', 1)[0]
+    before = model.read_bytes() if model.exists() else None
+    if condition == 'valid':
+        exec(compile(code, 'build.sh Silero check', 'exec'), {})
+    else:
+        with pytest.raises(SystemExit, match='Missing/unreadable Silero|Silero checksum mismatch'):
+            exec(compile(code, 'build.sh Silero check', 'exec'), {})
+    assert (model.read_bytes() if model.exists() else None) == before
+    assert '-r "$robot_source_dir/malbut_stt/requirements-aec.txt"' in build
+    assert 'numpy>=1.24,<2' in (ROBOT / 'malbut_stt/requirements-aec.txt').read_text()
