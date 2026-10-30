@@ -8,7 +8,7 @@ before publishing this checkpoint; it is not a ROS build or a new robot trial.
 |Repository STT reply-boundary, Reachy barge-in and dialogue pipeline tests|178 passed|
 |Repository TTS node and key-notice tests|49 passed|
 |Reconstructed runtime19: candidate evidence, fake output startup, phase estimator|56 passed|
-|Source reconstruction|135 hashes match:15 archived overlays+120 repository files|
+|Source reconstruction|135 hashes match:17 archived overlays+118 repository files|
 |First-trial result count|7 pass+1 partial+3 fail=11; retests/follow-ups separate|
 
 From the repository root, with `pytest` and `numpy` installed:

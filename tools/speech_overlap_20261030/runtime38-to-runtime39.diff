@@ -1,0 +1,49 @@
+--- spatial_runtime38/spatial_filter.py
++++ spatial_runtime39/spatial_filter.py
+@@ -25,3 +25,22 @@
+         self.denominator[:-128] = self.denominator[128:]
+         self.denominator[-128:] = 0
+         return output.astype(np.float32)
++
++    def process_block(self, samples):
++        if samples.shape != (512, 6):
++            raise ValueError('Expected 512 frames from six microphones')
++        combined = np.concatenate((self.history[128:], samples))
++        windows = np.lib.stride_tricks.sliding_window_view(combined, 512, axis=0)[::128].transpose(0, 2, 1)
++        spectrum = np.fft.rfft(windows * self.window[None, :, None], axis=1)
++        filtered = np.fft.irfft(np.sum(self.weights[None] * spectrum, axis=2), n=512, axis=1) * self.window[None]
++        self.history[:] = samples
++        output = np.empty(512, dtype=np.float32)
++        for index in range(4):
++            self.ola += filtered[index]
++            self.denominator += self.window ** 2
++            output[index*128:(index+1)*128] = self.ola[:128] / np.maximum(self.denominator[:128], 1e-8)
++            self.ola[:-128] = self.ola[128:]
++            self.ola[-128:] = 0
++            self.denominator[:-128] = self.denominator[128:]
++            self.denominator[-128:] = 0
++        return output
+--- spatial_runtime38/raw_spatial_ring_bridge.py
++++ spatial_runtime39/raw_spatial_ring_bridge.py
+@@ -27,13 +27,15 @@
+    while len(pending)>=8192:
+     if recording:
+      raw_history.append((time.monotonic(),pending[:8192]));raw_total+=512
+-    raw=np.frombuffer(pending[:8192],'<i2').reshape(512,8)[:,:6];pending=pending[8192:];blocks=[]
++    raw=np.frombuffer(pending[:8192],'<i2').reshape(512,8)[:,:6];pending=pending[8192:]
+     processor,raw=phase.prepare(processor,raw,frames)
+-    for offset in range(0,512,128):
+-     voice=(processor.process(raw[offset:offset+128])*32).clip(-.98,.98)
+-     blocks.append(np.column_stack((voice,timing_delay[:128].copy())).astype('<f4'))
+-     timing_delay[:-128]=timing_delay[128:];timing_delay[-128:]=raw[offset:offset+128,1]
+-    target.write(np.concatenate(blocks).tobytes());frames+=512
++    voice=(processor.process_block(raw)*32).clip(-.98,.98)
++    output=np.empty((512,2),dtype='<f4')
++    output[:,0]=voice
++    output[:384,1]=timing_delay
++    output[384:,1]=raw[:128,1]
++    timing_delay[:]=raw[128:,1]
++    target.write(output.tobytes());frames+=512
+     phase.written(frames)
+     if frames==512:(out/'bridge-ready').write_text(str(time.monotonic()))
+ finally:

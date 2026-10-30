@@ -1,0 +1,20 @@
+{
+  "source_root": "interaction_upgrade_20261028_mac",
+  "original_file_sha256": {
+    "reports/quiet-duck-progress.json": "668133a5ec700cf7bee27c393697c4c38f505bf6f190c9d7174db5ab55ae6864",
+    "reports/runtime37-progress.json": "875b9bdbadc3fe77c27806dae9d42a11013312fe078f5596bb90d661e41b5d23",
+    "work/quiet_duck_diagnostic/guarded_a1/result.json": "db55e783d05c159573213f8f976a579ef2e042bee23713563bac05c87f7bf57f",
+    "work/quiet_duck_diagnostic/adopted_a1/result.json": "849eb343ede57d72ca5986b234ace5e6808287a1ff8e0672064c6a6a683f7076",
+    "work/live_runtime36_control_incident_c1/result.json": "25621e35886d3513245c55cc5646baeda1a4267e6c2eb02badb2b3b3a0b1d91b",
+    "work/live_runtime38_paired_asr_human_a1/result.json": "f3210a1827e5f6b2a75634f599a70c83c132e601909644d5c31d1f277533837f",
+    "work/live_runtime38_human_timing_b1/result.json": "00bee92bca69c5bbf73c8e030ebb547dd7774ed6a2a92317f6d6627b295c8143",
+    "reports/cpu35-idle-diagnostic-pair.json": "dcdd20d559b894dbf81f590f55191a5059420379b41ce81d5b3c85c1c2ebb616",
+    "reports/cpu35-bridge-batch-native-summary.json": "435a9986951ba90ee74e00317e27d0d7f805e486d6a02567b5ffa845f70821ce",
+    "work/live_runtime38_human_timing_b1/restored.json": "3261533be0d804beda83663c55f68802c27b5d4680e8b878422fe7da7b510433",
+    "reports/live_runtime38_human_timing_b1-fetch.json": "25827ec5317bd369758e864782d5a4405123dee47b1dadeb0e18779704183a2e",
+    "work/runtime39_support/audit.json": "038f6a25ec55a509a3ac5940fc1117006c7a1f090cd2ebc11b9577ebfcca8ab9",
+    "work/cpu35_bridge_batch_native_results_v1/run01/result.json": "78a3f3203afa4a259e59dca35409f045f34574b7fdd816c746dc29da7dac2779"
+  },
+  "raw_audio_and_logs_published": false,
+  "source_scope": "Local archive receipts; paths relative to separately retained archive. Full original artifacts are not in Git."
+}

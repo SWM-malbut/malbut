@@ -1,0 +1,71 @@
+{
+  "id": "cpu35-bridge-four-fft-native-v1",
+  "scope": "Pure NumPy bridge compute; no ROS/audio/model/transport/service mutation; not whole voice CPU acceptance",
+  "parent_mac_probe_manifest_sha256": "2967ca868ab9fc277b78d0b5973465830ae87850b356d9da426f85dd12e2425b",
+  "parent_mac_protocol_sha256": "cd34489a35ead6a3d4ce85289de8cb907cc75b924a4f96d9ed67ffd2c52ea40c",
+  "original_C35_manifest_sha256": "ab66317486d02dea366bacf548dc8ae8b62b695b7d7509a9aefe441c63e8f069",
+  "source_fetch_receipt_sha256": "962b9161da8a64ed574746ec87d8407dcc2f1814802ffc13a9252a6611167a65",
+  "source_phase_json_sha256": "4f608e190ab0025c9d0aedb938eb6581649f22c1b4b7be39497e55523234b9f4",
+  "source_window_json_sha256": "4f49a0a404862663dda865f641a8044e62e825119f2fde6d158f5287dc6236c5",
+  "raw_window": {
+    "start_frame": 3335680,
+    "frames": 960000,
+    "maximum_seconds": 60,
+    "full_frames": 4295680
+  },
+  "delays": [
+    0,
+    0,
+    0.53,
+    0.27,
+    0.525,
+    0.265
+  ],
+  "payload_sha256": {
+    "original.py": "405592b3154c6cda5b4e24366725c6f667753cc3e228e730c7f4c8d86ac90206",
+    "proposed.py": "7deebeea82422ed1d5663f760b7a1814412789d0f08da8292683065521ac0a14",
+    "startup_phase.py": "acb052193329dba8fd68cb017af741b336b6d604650b138eb5bce6a4329f8052",
+    "weights.npy": "3d339c18b8ddd5600ffb08f819e65243c2f074e0a0e89b018f8ba267b024f86b",
+    "raw8.pcm": "54b9670154e2e7a68bc9ee4990629d60713e92d14b2d69bc096b23f499633136"
+  },
+  "native_runtime": {
+    "system": "Linux",
+    "machine": [
+      "aarch64",
+      "arm64"
+    ],
+    "numpy_major_minor": "1.24",
+    "python_optimization": false,
+    "threads": 1
+  },
+  "exactness_prerequisite": {
+    "bridge_blocks": 2323,
+    "actual_raw_frames": 960000,
+    "finite_edge_blocks": 24,
+    "invalid_shapes": 6,
+    "comparisons": "all actual bridge float32 bytes/PCM16 bytes and each512 filter/timing/phase state; edge unclipped float; all before timings",
+    "cross_host_output_identity_required": false,
+    "fresh_state_warning": "The saved mid-run60s raw lacks earlier native state. Both arms start with the same fixed phase and zero filter/previous/timing; this is implementation equivalence, not reproduction of old native output."
+  },
+  "measurement_order": [
+    "original",
+    "proposed",
+    "proposed",
+    "original",
+    "original",
+    "proposed"
+  ],
+  "child_timeout_s": 30,
+  "timed_scope": "prepare raw conversion/phase, filter, stereo pack, tobytes, written. Excludes import/load/provenance/setup/tracing; no device pacing",
+  "memory_scope": "Linux ru_maxrssKiB*1024 total fresh process peak; separate tracemalloc oneblock excluded from CPU; no claim this itself enforces memory limit",
+  "external_unit": {
+    "MemoryMax_bytes": 350000000,
+    "MemorySwapMax_bytes": 0,
+    "RuntimeMaxSec": 120,
+    "normal_voice_may_remain_active": true,
+    "no_parallel_physical_trial": true,
+    "TimeoutStopSec": 5,
+    "KillMode": "control-group"
+  },
+  "completion_gate": "All9paritycases exact then6fresh processes with correct arm/frames/provenance/last digest; complete true only after final manifest check. Timeout/failed/incomplete is not full pass."
+}

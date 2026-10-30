@@ -1,5 +1,8 @@
 # Speech overlap checkpoint — 2026-10-29
 
+이 문서의 운영 상태와 결과는 당시 기록이다. 이후 변경·운영 채택·실패 결과는
+[2026-10-30 후속 기록](../speech_overlap_20261030/README.md)을 확인한다.
+
 로봇이 말하는 중 사용자의 끼어들기를 받고, 비음성 잡음에는 반응하지 않도록
 개선한 작업의 중간 보존본이다. **의도 인식80%와 전체 배포 기준은 아직 미달/미검증이다.**
 관련 작업: [SWM25-220 — STT 성능 개선](https://sanggeunji0117.atlassian.net/browse/SWM25-220).
@@ -41,8 +44,8 @@ STT 답변 경계/음량 감소 유효기간 수정과 TTS 상태 큐의 GuardCo
 - 시험 후보: `spatial_runtime19`.
 - 원본 후보 manifest SHA-256:
   `9c46b71e19436a8b46e5cb3acc2bc2d853f1ceca4a455ecb48361d360be34e1c`.
-- `runtime19/code/`: 기준 소스와 다른15개 파일의 바이트 그대로인 overlay.
-  나머지120개 파일은 `manifest.json`의 저장소 경로와 해시로 식별한다.
+- `runtime19/code/`: 원래 15개와 이후 canonical 변경으로 분리한 2개를 포함한 17개 파일의 바이트 그대로인 overlay.
+  나머지118개 파일은 `manifest.json`의 저장소 경로와 해시로 식별한다.
 - `runtime19/`: 당시 실행·복원 supervisor, 원음 bridge, 공간 필터와 설정 소스.
   초기 후보 증거100ms, 확인160ms, 짧은 출력5% 감소, 연속 ASR 입력을 포함한다.
 - `tests/`: 현재100ms 정책, 가짜 출력 장치 시작 처리, 생성 신호의 채널 위상 추정 검사.

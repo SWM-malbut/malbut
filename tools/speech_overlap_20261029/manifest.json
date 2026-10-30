@@ -117,7 +117,7 @@
       "path": "malbut_stt/echo/vad.py",
       "sha256": "74c54fb5d949d2ff0cf1813b9fca0b1e15f59017d0111af60dec8252edf3e461",
       "repository_path": "malbut_stt/malbut_stt/echo/vad.py",
-      "source": "repository"
+      "source": "overlay"
     },
     {
       "path": "malbut_stt/echo/worker.py",
@@ -159,7 +159,7 @@
       "path": "malbut_stt/incremental.py",
       "sha256": "683da4a34f62fa79898dd14ad0916884fc8380956dc9a4ce22f505e78fda1c98",
       "repository_path": "malbut_stt/malbut_stt/incremental.py",
-      "source": "repository"
+      "source": "overlay"
     },
     {
       "path": "malbut_stt/interruption_asr.py",
@@ -829,9 +829,9 @@
   "source_notes": "Inherited candidate.json still named runtime14; not used as identity. Identity is verified runtime19 original manifest. Overlay bytes and runtime entrypoints are unchanged.",
   "published_files": {
     ".gitignore": "beea05cfe8d519f00b6185f6e3c3ec4f08fb2fd3df2ad0745775b0b1910659dd",
-    "README.md": "6b10822df51c909dd8115319dd9beda7e8702b692ae8ef75aa38b403da654ae5",
+    "README.md": "665380061b8c03acca5dbc25391073815d2c226553ae6c54e5825477f5d2beaa",
     "RESULTS.md": "2dc688aa057a2a6ea12fd8f8a1e6d44a9bd73ff10ceadc6007a46eca3c8e0725",
-    "VALIDATION.md": "d040ca2a9193c0d0e94f134bd80c21fc48fdc6fe11e20c206e7df9c250626c90",
+    "VALIDATION.md": "051341012a97b848a83015b0ead0143ec6a7d1396b373df7ee8ca1064f445d3d",
     "check_checkpoint.py": "10bd8839499ec63403677bfcff04cd8787826ebd3e9529130452f68a3225b4c3",
     "evidence/historical-cpu.json": "30c266953934d99c532f92a031e6d9153deba26ebc06d1d48b59c3c9e7d3626b",
     "evidence/signal-stage-comparison.json": "8f128c4d0da919ffd7c9b1f2e2adc2aeee20b73d6877e28c4134e17d848f4786",
@@ -864,6 +864,8 @@
     "runtime19/tts.yaml": "91597709543ee2b71911499d461d55933fc05d2877bc63f00c50e43cab752dd8",
     "tests/test_candidate_evidence.py": "a0e1c5c523c6c679fe06300c9698dc82954546bff4fc736a9717e15631bfcdf3",
     "tests/test_output_startup.py": "3884237494e68493a1f4f92521ad0ad733e023bd28656c51d3f5376f07254ca3",
-    "tests/test_startup_phase_estimator.py": "16fb72adffcd9533f0fadbaa1e3c2f516d2e5b2d7812dfd9302247f9661d35a6"
+    "tests/test_startup_phase_estimator.py": "16fb72adffcd9533f0fadbaa1e3c2f516d2e5b2d7812dfd9302247f9661d35a6",
+    "runtime19/code/malbut_stt/echo/vad.py": "74c54fb5d949d2ff0cf1813b9fca0b1e15f59017d0111af60dec8252edf3e461",
+    "runtime19/code/malbut_stt/incremental.py": "683da4a34f62fa79898dd14ad0916884fc8380956dc9a4ce22f505e78fda1c98"
   }
 }
