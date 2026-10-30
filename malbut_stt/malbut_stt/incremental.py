@@ -36,6 +36,7 @@ class IncrementalWhisperStream:
         self._committed = []
         self._previous = []
         self._offset_samples = 0
+        self._untrimmed_coverage = None
         self.last_metrics = {}
 
     @property
@@ -112,14 +113,17 @@ class IncrementalWhisperStream:
             'committed_s': self._committed[-1].end if self._committed else 0.0,
             'trimmed_s': offset, 'fallback_full': False, 'final': final,
             'tail_gap_s': None, 'fallback_reason': None,
+            'reused_tail_coverage_end_s': None,
         }
         if not any(pcm):
+            self._untrimmed_coverage = None
             return ''
         if audio_start_samples + len(pcm) // 2 <= self._offset_samples:
             raise ValueError('snapshot does not include the retained audio window')
         decoded = self._decode(pcm, self._offset_samples, audio_start_samples)
         if not decoded:
             self._previous = []
+            self._untrimmed_coverage = None
             return ''
 
         def missing_tail(result):
@@ -155,10 +159,22 @@ class IncrementalWhisperStream:
             )
             if not decoded:
                 self._previous = []
+                self._untrimmed_coverage = None
                 return ''
             uncovered_tail = missing_tail(decoded)
 
         if speech_end_s is not None and uncovered_tail:
+            proof = self._untrimmed_coverage
+            current_text = _text(decoded)
+            if (not self._offset_samples and not audio_start_samples
+                    and not self._committed and not invalid_timing and proof is not None
+                    and len(pcm) // 2 >= proof[2] and current_text == proof[0]
+                    and speech_end_s - proof[1] <= 0.8):
+                # A fresh full decode can keep its text while native times regress.
+                # Reuse only actual prior coverage, without committing, trimming,
+                # or letting repeated accepted regressions extend that coverage.
+                self.last_metrics['reused_tail_coverage_end_s'] = proof[1]
+                return current_text
             # Never let a provisional endpoint result containing only old
             # speech become a successful final transcript in the caller.
             raise ValueError('incremental transcription omitted recent speech')
@@ -196,4 +212,8 @@ class IncrementalWhisperStream:
                 self._offset_samples = round(self._committed[-2].end * 16000)
             self.last_metrics['committed_s'] = stable_end
         self.last_metrics['trimmed_s'] = self._offset_samples / 16000
+        self._untrimmed_coverage = (
+            (result, max(segment.end for segment in decoded), len(pcm) // 2)
+            if not self._offset_samples and not audio_start_samples and not self._committed
+            and all(segment.timing_valid for segment in decoded) else None)
         return result

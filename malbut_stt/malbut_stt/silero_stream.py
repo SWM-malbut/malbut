@@ -33,6 +33,7 @@ class SileroStreamVad:
         self.model.reset()
         self.pending = bytearray()
         self.probability = 0.0
+        self.window_has_signal = False
         self.quiet_samples = 0
 
     def is_speech(self, pcm, sample_rate):
@@ -46,6 +47,7 @@ class SileroStreamVad:
             if not math.isfinite(probability) or not 0 <= probability <= 1:
                 raise ValueError('Invalid Silero probability')
             self.probability = probability
+            self.window_has_signal = any(frame)
             if probability >= .5:
                 self.quiet_samples = 0
             else:

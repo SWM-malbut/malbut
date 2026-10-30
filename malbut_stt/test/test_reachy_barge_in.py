@@ -39,10 +39,25 @@ def test_only_matching_final_playback_opens_input(harness, pid, request_id, inte
     assert p._input_blocked(harness.now)
 
 
-def test_short_candidate_recovers_without_stopping_answer(harness):
+@pytest.mark.parametrize('frames', [1, 2, 3, 4])
+def test_short_candidate_cannot_duck_or_accumulate_across_quiet(harness, frames):
     p = reply(harness)
-    p.feed(VOICE * 3)
+    for _ in range(3):
+        p.feed(VOICE * frames)
+        assert not harness.controls
+        p.feed(QUIET)
+        assert not harness.controls
+    assert not p.command_stream.collector.started
+    assert p._reply_request_id == 'old-request'
+
+
+def test_five_frame_candidate_ducks_then_recovers_without_stopping(harness):
+    p = reply(harness)
+    p.feed(VOICE * 4)
+    assert not harness.controls
+    p.feed(VOICE)
     assert harness.controls == [('old-playback', 'duck')]
+    assert not p.command_stream.collector.started
     p.feed(QUIET)
     assert harness.controls == [('old-playback', 'duck'), ('old-playback', 'unduck')]
     assert p._reply_request_id == 'old-request'
@@ -55,7 +70,7 @@ def test_slow_candidate_processing_renews_duck_until_confirmation(harness):
         harness.now = now
         p.feed(VOICE)
     assert not p.command_stream.collector.started
-    assert harness.controls == [('old-playback', 'duck')] * 4
+    assert harness.controls == [('old-playback', 'duck')] * 2
     harness.now = .56
     p.feed(VOICE)
     assert p._capture_id
@@ -65,9 +80,10 @@ def test_slow_candidate_processing_renews_duck_until_confirmation(harness):
 @pytest.mark.parametrize('end', ['quiet', 'reset', 'finished', 'failed'])
 def test_expired_candidate_cannot_renew_duck(harness, end):
     p = reply(harness)
-    p.feed(VOICE)
+    p.feed(VOICE * 5)
     harness.now = .16
     p.feed(VOICE)
+    assert harness.controls == [('old-playback', 'duck')] * 2
     if end == 'quiet':
         p.feed(QUIET)
     elif end == 'reset':
@@ -84,9 +100,11 @@ def test_expired_candidate_cannot_renew_duck(harness, end):
 @pytest.mark.parametrize('terminal', ['stopped', 'finished', 'failed'])
 def test_confirmed_speech_stops_once_and_old_terminal_cannot_drop_new_turn(harness, terminal):
     p = reply(harness)
+    p.feed(QUIET * 3 + VOICE * 5)
+    assert harness.controls == [('old-playback', 'duck')]
     p.feed(VOICE * 3)
-    p.feed(VOICE * 5)
     assert harness.controls == [('old-playback', 'duck'), ('old-playback', 'stop')]
+    assert bytes(p.command_stream.collector.audio) == QUIET * 3 + VOICE * 8
     uid = p._capture_id
     assert uid and p._reply_request_id is None
     p.on_playback_status('old-playback', terminal, request_id='old-request')
@@ -94,6 +112,7 @@ def test_confirmed_speech_stops_once_and_old_terminal_cannot_drop_new_turn(harne
     p.feed(VOICE * 10 + QUIET * 100)
     pump(p, lambda: len(harness.transcripts) == 2)
     assert harness.transcripts[-1][0] == uid
+    assert harness.command_calls[-1][0].startswith(QUIET * 3 + VOICE * 18)
     assert not harness.candidates  # confirmed onset already chose to interrupt
     assert p._reply_request_id == uid
     p.on_playback_status('old-playback', 'playing', request_id='old-request')
