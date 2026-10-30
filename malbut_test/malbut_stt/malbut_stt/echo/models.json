@@ -1,0 +1,9 @@
+{
+  "upstream": "https://github.com/breizhn/DTLN-aec",
+  "revision": "9d24e128b4f409db18227b8babb343016625921f",
+  "license": "MIT",
+  "sha256": {
+    "dtln_aec_128_1.tflite": "8d241b3a732af8ca140b2e30043e56a6c3c7800c46e22c26f4eea2f70974ad1e",
+    "dtln_aec_128_2.tflite": "350bb01a1152ae3cabe09fe5e868ef2f7d8b988a9f22aae44f140195f6493126"
+  }
+}

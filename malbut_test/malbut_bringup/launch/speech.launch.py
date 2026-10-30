@@ -17,6 +17,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from malbut_bringup.launch_support import file_path, module_actions
+from malbut_bringup.speech_audio import pulse_reference_environment
 
 
 def _setup(context):
@@ -58,6 +59,9 @@ def _setup(context):
     if tts_config_arg and not tts_config.is_file():
         raise RuntimeError(f'TTS configuration does not exist: {tts_config}')
     tts_overrides = [str(tts_config)] if tts_config.is_file() else []
+    stt_config = Path.home() / '.config/malbut/stt.yaml'
+    stt_overrides = [str(stt_config)] if stt_config.is_file() else []
+    audio_env = pulse_reference_environment(stt_config) if stt_overrides else {}
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     # Under Bringup the agent module starts the Agent (with the fall rules),
@@ -130,6 +134,7 @@ def _setup(context):
         )] if own_agent else []
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
+            additional_env=audio_env or None,
             parameters=[{'backend': 'piper', 'output_device': output_device,
                          **({'audio_directory': audio_directory} if audio_directory else {})},
                         *tts_overrides],
@@ -146,6 +151,7 @@ def _setup(context):
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             respawn=True, respawn_delay=5.0,
+            additional_env=audio_env or None,
             prefix=shlex.join([*supervised, '--wait-for-ready',
                                '--microphone-device', str(input_device), '--', python]),
             parameters=[str(config), {
@@ -153,7 +159,7 @@ def _setup(context):
                 'device_index': input_device, 'cpp_threads': threads,
                 'wake_chime_device_index': output_device,
                 'input_has_aec': input_has_aec,
-            }],
+            }, *stt_overrides],
         )
         managers = [Node(
             package='malbut_system_manager', executable='system_manager', output='screen',

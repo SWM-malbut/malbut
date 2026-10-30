@@ -41,6 +41,7 @@ class _Player:
         self.drain = Event()
         self.stopped = Event()
         self.release_on_stop = True
+        self.ducked = False
 
     def write(self, audio, sample_rate):
         self.on_state('playing')
@@ -59,6 +60,10 @@ class _Player:
 
     def resume(self):
         self.on_state('playing')
+        return True
+
+    def set_ducked(self, ducked):
+        self.ducked = ducked
         return True
 
     def close(self):
@@ -195,6 +200,10 @@ def test_stt_controls_and_stop_before_receipt_use_manager(speech):
     assert h.source.calls == []
     h.say('talk')
     h.until(lambda: h.has('talk', 'playing'))
+    assert h.command('talk', 'duck')
+    h.until(lambda: h.players[0].ducked)
+    assert h.command('talk', 'unduck')
+    h.until(lambda: not h.players[0].ducked)
     assert h.command('talk', 'pause')
     h.until(lambda: h.has('talk', 'paused'))
     assert h.command('talk', 'resume')

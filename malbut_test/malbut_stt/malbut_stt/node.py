@@ -64,12 +64,39 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         chime_tail_s = parameter('chime_tail_s', 0.3)
         short_speech_guard = parameter('short_speech_guard', False)
         followup_timeout_s = parameter('followup_timeout_s', 10.0)
-        vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
+        aec_backend = parameter('aec_backend', 'none')
+        aec_source = parameter('aec_source', '')
+        aec_sink = parameter('aec_sink', '')
+        aec_models = parameter('aec_model_directory', '')
+        aec_calibration = parameter('aec_calibration_audio', '')
+        if aec_backend not in ('none', 'pulse_reference'):
+            raise ValueError('aec_backend must be none or pulse_reference')
+        if aec_backend == 'pulse_reference':
+            if not all((aec_source, aec_sink, aec_models, aec_calibration)):
+                raise ValueError('Pulse reference AEC requires explicit devices, models and calibration audio')
+            if (device_index != 0 or os.environ.get('MALBUT_SHARED_MICROPHONE') != aec_source
+                    or os.environ.get('PULSE_SOURCE') != aec_source
+                    or os.environ.get('PULSE_SINK') != aec_sink):
+                raise ValueError('AEC and fallback require the same explicit PulseAudio routes')
+            input_has_aec = True
+        barge_in_ducking = parameter('barge_in_ducking', False)
+        barge_in_mode = parameter('barge_in_mode', 'legacy')
+        interruption_asr = parameter('interruption_asr', 'local')
+        interruption_asr_timeout = parameter('interruption_asr_timeout_s', 5.0)
+        barge_in_pre_roll_s = parameter('barge_in_pre_roll_s', 2.0)
+        if interruption_asr not in ('local', 'openai'):
+            raise ValueError('interruption_asr must be local or openai')
         control_timeout = parameter('playback_control_timeout_s', 5.0)
         max_utterance_s = parameter('max_utterance_s', 0.0)
         max_buffer_s = parameter('max_buffer_s', 60.0)
         endpoint_predecode_s = parameter('endpoint_predecode_s', 0.8)
+        turn_detection = parameter('turn_detection', 'legacy')
+        turn_model_directory = parameter('turn_model_directory', str(
+            Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
+            / 'malbut_speech/models'))
+        if turn_detection not in ('legacy', 'hybrid', 'reachy_start'):
+            raise ValueError('turn_detection must be legacy or hybrid or reachy_start')
         if (type(max_utterance_s) not in (float, int)
                 or not isfinite(max_utterance_s) or max_utterance_s < 0):
             raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
@@ -96,12 +123,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             max_utterance_s=None if max_utterance_s == 0 else max_utterance_s,
             max_buffer_s=max_buffer_s,
             pre_roll_s=parameter('pre_roll_s', 0.3),
-            min_speech_s=parameter('min_speech_s', 0.08),
+            min_speech_s=parameter('min_speech_s', 0.16),
         )
-        if not isinstance(vad_mode, int) or vad_mode not in range(4):
-            raise ValueError('vad_mode must be 0 through 3')
         if type(input_has_aec) is not bool:
             raise ValueError('input_has_aec must be a boolean')
+        if barge_in_mode not in ('legacy', 'reachy'):
+            raise ValueError('barge_in_mode must be legacy or reachy')
+        if barge_in_mode == 'reachy' and not input_has_aec:
+            raise ValueError('Reachy barge-in requires an echo-cancelled input')
         if backend not in ('faster_whisper', 'whisper_cpp'):
             raise ValueError('backend must be faster_whisper or whisper_cpp')
         if backend == 'faster_whisper' and compute_type not in ('int8', 'float32'):
@@ -133,7 +162,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'loading_runtime_dependencies'
 
-        import webrtcvad
+        from malbut_stt.silero_stream import SileroStreamVad
         from malbut_stt.wake import LocalWakeRecognizer
         from malbut_stt.silero_gate import from_environment as create_silero_gate
 
@@ -141,6 +170,16 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         silero_gate = create_silero_gate(os.environ)
         if silero_gate is not None:
             node.get_logger().info('stt_silero_gate_enabled:threshold=0.5,min_speech_ms=80')
+
+        phase = 'initializing_turn_detection'
+        from malbut_stt.turn_detection import load_guards
+        start_qualifier, smart_turn = load_guards(turn_detection, turn_model_directory)
+        if turn_detection == 'hybrid':
+            node.get_logger().info(
+                'stt_turn_detection:hybrid,vad=silero,smart_turn=early_endpoint_guard')
+        elif turn_detection == 'reachy_start':
+            node.get_logger().info(
+                'stt_turn_detection:reachy_start,vad=silero,onset=160ms,smart_turn=off')
 
         if backend == 'whisper_cpp':
             from malbut_stt.cpp_transcription import CppWhisperTranscriber
@@ -171,7 +210,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             os.environ,
             metadata=dict(backend=backend, stt_model_path=str(stt_path),
                           wake_model_path=str(wake_path), device_index=device_index,
-                          vad_mode=vad_mode, input_has_aec=False,
+                          vad_backend='silero', input_has_aec=input_has_aec,
                           chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
                           followup_timeout_s=followup_timeout_s,
                           capture_settings=asdict(settings),
@@ -198,7 +237,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         from malbut_stt.shadow_vad import from_environment as observe_vad
 
         diagnostics = observe_vad(
-            os.environ, diagnostics, vad_mode=vad_mode,
+            os.environ, diagnostics, vad_mode=2,
             on_error=lambda error: node.get_logger().warning('stt_shadow_vad_stopped:' + error),
         )
         if diagnostics is not None:
@@ -212,7 +251,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             # both recognizers share one underlying Whisper instance.
             transcriber.model = silero_gate.wrap_model(transcriber.model, diagnostics)
         phase = 'initializing_vad'
-        vad = webrtcvad.Vad(vad_mode)
+        vad_path = Path(turn_model_directory).expanduser() / 'silero-v6.2.3.onnx'
+        vad = SileroStreamVad(vad_path)
+        wake_vad = SileroStreamVad(vad_path)
+        node.get_logger().info('stt_vad:silero,threshold=0.5')
         phase = 'creating_publisher'
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST, depth=10,
@@ -229,6 +271,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             ClassifySpeechAddressee, '/malbut/speech/classify_addressee',
         )
         control_commands = {
+            'duck': 'duck',
+            'unduck': 'unduck',
             'pause': ControlSpeechPlayback.Request.PAUSE,
             'resume': ControlSpeechPlayback.Request.RESUME,
             'stop': ControlSpeechPlayback.Request.STOP,
@@ -401,12 +445,33 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 node.get_logger().info(event)
 
         phase = 'creating_pipeline'
+        speech_vad = vad.is_speech
+        wake_speech_vad = wake_vad.is_speech
+        if aec_backend == 'pulse_reference':
+            from malbut_stt.echo.vad import SuppressedSilenceVad
+            speech_vad = SuppressedSilenceVad(vad).is_speech
+            wake_speech_vad = SuppressedSilenceVad(wake_vad).is_speech
+        def recorder_factory():
+            raw = lambda: SoundDeviceRecorder(frame_length=512, device_index=device_index)
+            if aec_backend == 'none':
+                return raw()
+            from malbut_stt.echo.recorder import EchoCancelledRecorder, IsolatedMicrophoneRecorder
+            return EchoCancelledRecorder(dict(source=aec_source, sink=aec_sink,
+                models=aec_models, calibration_audio=aec_calibration),
+                lambda: IsolatedMicrophoneRecorder(aec_source))
+
+        interruption_transcriber = None
+        if interruption_asr == 'openai':
+            from malbut_stt.interruption_asr import InterruptionTranscriber
+            interruption_transcriber = InterruptionTranscriber(
+                lambda: os.environ.get('OPENAI_API_KEY', ''), transcriber,
+                timeout_s=interruption_asr_timeout, report=report)
+
         pipeline = DialoguePipeline(
-            recorder_factory=lambda: SoundDeviceRecorder(
-                frame_length=512, device_index=device_index,
-            ),
+            recorder_factory=recorder_factory,
             wake=wake,
-            is_speech=vad.is_speech,
+            is_speech=speech_vad,
+            wake_is_speech=wake_speech_vad,
             transcriber=transcriber,
             publish_transcript=publish,
             publish_control=publish_control,
@@ -420,13 +485,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             on_endpoint=lambda: play_endpoint_chime(wake_chime_device_index),
             on_failure=lambda: play_failure_chime(wake_chime_device_index),
             settings=settings,
-            input_has_aec=False,
+            input_has_aec=input_has_aec,
+            barge_in_ducking=barge_in_ducking,
+            barge_in_mode=barge_in_mode,
+            interruption_transcriber=interruption_transcriber,
+            barge_in_pre_roll_s=barge_in_pre_roll_s,
             chime_tail_s=chime_tail_s,
             short_speech_guard=short_speech_guard,
             followup_timeout_s=followup_timeout_s,
             validate_wake_command=(
                 (lambda pcm: silero_gate.require_speech(pcm, diagnostics))
                 if silero_gate is not None else None),
+            start_qualifier=start_qualifier, smart_turn=smart_turn,
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),
@@ -459,7 +529,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                                   interim=getattr(message, 'interim', None),
                                   request_id=getattr(message, 'request_id', None))
             if rclpy.ok():
-                pipeline.on_speech_request(message.playback_id)
+                pipeline.on_speech_request(message.playback_id,
+                    request_id=getattr(message, 'request_id', ''),
+                    interim=getattr(message, 'interim', False))
 
         # Seeing each request with TTS lets a web talk cancel it before any sound.
         node.create_subscription(
@@ -467,7 +539,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
 
         def control_session(request, response):
-            response.barge_in_available = pipeline.input_has_aec
+            response.barge_in_available = pipeline.barge_in_available
             check_only = getattr(request, 'check_only', False)
             if check_only:
                 response.accepted = pipeline.session_is_active(request.session_id)

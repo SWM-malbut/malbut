@@ -158,9 +158,9 @@ def runtime(monkeypatch, tmp_path):
         frombuffer=frombuffer, float32='float32',
     ))
     monkeypatch.setitem(sys.modules, 'pvrecorder', SimpleNamespace(PvRecorder=Recorder))
-    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(
-        Vad=lambda mode: SimpleNamespace(is_speech=is_speech),
-    ))
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad',
+                        lambda: SimpleNamespace(is_speech=is_speech, reset=lambda: None))
     monkeypatch.setattr('builtins.input', enter)
     return state
 

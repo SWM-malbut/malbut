@@ -100,7 +100,7 @@ def test_stt_service_round_trip_and_status_topic(
             state.web_talk_quiet.append(quiet)
             return True
 
-        def on_speech_request(self, playback_id):
+        def on_speech_request(self, playback_id, **metadata):
             state.speech_requests.append(playback_id)
             self.callbacks['stop_speech'](playback_id)
 
@@ -178,8 +178,9 @@ def test_stt_service_round_trip_and_status_topic(
         from_transcriber=lambda engine: SimpleNamespace(model=engine.model)))
     monkeypatch.setitem(sys.modules, 'pvrecorder', None)
     monkeypatch.setattr(stt_node, 'SoundDeviceRecorder', lambda **_: object())
-    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(
-        Vad=lambda *_: SimpleNamespace(is_speech=lambda *_: False)))
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad',
+        lambda *_: SimpleNamespace(is_speech=lambda *_: False, reset=lambda: None))
 
     assert stt_node.main(['--ros-args', '-p', f'wake_model_path:={tmp_path}']) == 0
     assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1

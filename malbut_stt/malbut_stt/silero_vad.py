@@ -1,4 +1,4 @@
-"""Optional CPU runner for Silero v6 raw frame probabilities (no segment gate)."""
+"""Pinned CPU runner for Silero v6 raw frame probabilities (no segment gate)."""
 
 import math
 import hashlib
@@ -24,7 +24,7 @@ class SileroVad:
     """Follow v6.2.3 OnnxWrapper's 512 + 64 sample recurrent protocol at 16kHz.
 
     Upstream revision: 5cd7945676eb32225748052e2e6a0580e4686a08.
-    Imports are lazy so ordinary STT needs no ONNX runtime.
+    Imports are lazy so pure capture tests need no ONNX runtime.
     """
 
     def __init__(self, path):

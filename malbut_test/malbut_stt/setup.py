@@ -14,6 +14,8 @@ setup(
         ('share/' + package_name, [
             'package.xml', 'README.md', 'requirements.txt', 'requirements-whisper-cpp.txt',
             'requirements-shadow-vad.txt',
+            'requirements-turn-detection.txt',
+            'requirements-aec.txt',
         ]),
         ('share/' + package_name + '/config', ['config/jetson.yaml']),
         ('share/' + package_name + '/native', [
@@ -22,6 +24,7 @@ setup(
         ]),
     ],
     install_requires=['setuptools'],
+    package_data={'malbut_stt.echo': ['models.json', 'DTLN_LICENSE']},
     zip_safe=True,
     maintainer='SWM Malbut contributors',
     maintainer_email='maintainers@example.com',

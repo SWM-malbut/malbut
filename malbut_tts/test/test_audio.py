@@ -396,3 +396,31 @@ class StreamingPlayerTests(unittest.TestCase):
         self.start([1])
         with self.assertRaisesRegex(ValueError, 'sample rate changed'):
             self.player.write([2], 16000)
+
+
+def test_duck_changes_pcm_without_consuming_or_mutating_queued_audio():
+    api, devices = fake_device()
+    clock = [1.]
+    states, cancel = [], Event()
+    with patch.dict('sys.modules', {'sounddevice': api}), patch(
+            'malbut_tts.audio.monotonic', lambda: clock[0]):
+        player = StreamingPlayer(states.append, cancel)
+        original = np.ones(24000, dtype=np.float32)
+        try:
+            player.write(original, 24000)
+            wait_until(lambda: states == ['playing'])
+            device = devices[0]
+            assert player.set_ducked(True)
+            device.step()
+            assert device.output == [.25]*4
+            assert player.set_ducked(False)
+            device.step()
+            assert device.output[4:] == [1.]*4
+            assert player.set_ducked(True)
+            clock[0] += .301  # Missing restore message still expires safely.
+            device.step()
+            assert device.output[8:] == [1.]*4
+            np.testing.assert_array_equal(original, np.ones(24000))
+            assert states == ['playing']
+        finally:
+            player.close()

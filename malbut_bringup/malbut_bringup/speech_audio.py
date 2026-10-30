@@ -3,6 +3,37 @@
 import json
 import subprocess
 
+import yaml
+
+
+def pulse_reference_environment(config_file):
+    """Use the selected STT profile's explicit routes for its two audio peers."""
+    try:
+        with open(config_file, encoding='utf-8') as stream:
+            document = yaml.safe_load(stream)
+    except (OSError, yaml.YAMLError) as error:
+        raise RuntimeError(f'Cannot read STT audio configuration: {config_file}') from error
+    if not isinstance(document, dict):
+        raise RuntimeError('STT audio configuration must be a ROS parameter mapping')
+    parameters = {}
+    for scope in ('/**', 'malbut_stt'):
+        if scope not in document:
+            continue
+        node = document[scope]
+        if not isinstance(node, dict) or not isinstance(node.get('ros__parameters'), dict):
+            raise RuntimeError(f'STT audio configuration requires {scope}.ros__parameters')
+        parameters.update(node['ros__parameters'])
+    backend = parameters.get('aec_backend', 'none')
+    if backend == 'none':
+        return {}
+    if backend != 'pulse_reference':
+        raise RuntimeError('STT audio configuration aec_backend must be none or pulse_reference')
+    for key in ('aec_source', 'aec_sink'):
+        if not isinstance(parameters.get(key), str) or not parameters[key].strip():
+            raise RuntimeError(f'STT audio configuration requires a nonempty {key}')
+    return {'MALBUT_SHARED_MICROPHONE': parameters['aec_source'],
+            'PULSE_SOURCE': parameters['aec_source'], 'PULSE_SINK': parameters['aec_sink']}
+
 
 def shared_xfm_source(environment):
     """Find the physical XFM source without changing any system audio defaults."""

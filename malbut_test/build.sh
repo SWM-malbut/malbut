@@ -103,6 +103,24 @@ if sys.version_info[:2] != (3, 10):
       echo "Run: bash \"$robot_source_dir/setup.sh\"" >&2
       exit 1
     fi
+    # Silero is required for capture, including legacy turn termination. Check
+    # the same local cache and pin as STT without loading an inference session.
+    /usr/bin/python3 - "$robot_source_dir/malbut_stt" <<'PY'
+import hashlib, sys
+sys.path.insert(0, sys.argv[1])
+from malbut_stt.silero_stream import default_model_path
+from malbut_stt.silero_vad import MODEL_SHA256
+model = default_model_path()
+try:
+    actual = hashlib.sha256(model.read_bytes()).hexdigest()
+except OSError as error:
+    raise SystemExit(f"Missing/unreadable Silero model: {model}. Provision the pinned "
+                     f"silero-v6.2.3.onnx (SHA256 {MODEL_SHA256}); no automatic download. {error}")
+if actual != MODEL_SHA256:
+    raise SystemExit(f"Silero checksum mismatch: {model}. Restore the pinned "
+                     f"silero-v6.2.3.onnx (SHA256 {MODEL_SHA256}); existing file was not changed.")
+print(f"Pinned Silero model verified: {model}")
+PY
     /usr/bin/python3 -c '
 import pathlib, sys
 source, build, runtime = [pathlib.Path(path).resolve() for path in sys.argv[1:]]
@@ -139,6 +157,7 @@ if "include-system-site-packages=true" not in config.splitlines():
 ' "$speech_runtime"
     "$speech_python" -m pip --isolated install \
       -r "$robot_source_dir/malbut_stt/requirements-whisper-cpp.txt" \
+      -r "$robot_source_dir/malbut_stt/requirements-aec.txt" \
       -r "$robot_source_dir/malbut_tts/requirements-piper.txt" \
       -r "$robot_source_dir/malbut_agent_server/requirements-openai.txt"
     echo "Built CUDA speech backend: $whisper_build/bin/libmalbut_whisper.so"

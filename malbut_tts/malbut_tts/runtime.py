@@ -261,9 +261,16 @@ class SpeechRuntime:
                     or request.state in TERMINAL_STATES
                     or request.cancel.is_set()):
                 return False
-            if request.request_type == CONFIRMATION and command in ('pause', 'resume'):
+            if request.request_type == CONFIRMATION and command in (
+                    'pause', 'resume', 'duck', 'unduck'):
                 return False
             player = request.player
+            if command in ('duck', 'unduck'):
+                # Gain changes have no playback-state acknowledgement. The
+                # player only takes a short lock and never waits on the device.
+                setter = getattr(player, 'set_ducked', None)
+                return bool(request.state == 'playing' and request.command is None
+                            and setter is not None and setter(command == 'duck'))
             if command == 'stop':
                 request.cancel.set()
                 request.command = command

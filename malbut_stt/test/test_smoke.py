@@ -126,9 +126,10 @@ def runtime(monkeypatch):
         WhisperModel=create_local_model))
     monkeypatch.setattr('malbut_stt.smoke.LocalWakeRecognizer', create_wake)
     monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(OpenAI=create_client))
-    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(
-        Vad=lambda mode: SimpleNamespace(is_speech=lambda pcm, rate: pcm[:2] != b'\x00\x00'),
-    ))
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad',
+        lambda: SimpleNamespace(is_speech=lambda pcm, rate: pcm[:2] != b'\x00\x00',
+                                reset=lambda: None))
     monkeypatch.setattr('builtins.input', enter)
     monkeypatch.setenv('OPENAI_API_KEY', 'test-only-openai')
     monkeypatch.delenv('PICOVOICE_ACCESS_KEY', raising=False)

@@ -1,14 +1,15 @@
 """Keep continuous capture and local inference outside serialized dialogue events."""
 
 import math
-from collections import OrderedDict
+import json
+from collections import OrderedDict, deque
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 
-from malbut_stt.audio import CaptureSettings, MicrophoneOverflow
+from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
@@ -24,9 +25,11 @@ RETRY_NOTICE_TIMEOUT_SECONDS = 45.0
 class _SpeechPCM(bytes):
     """Keep voiced duration with an immutable non-streaming inference snapshot."""
 
-    def __new__(cls, pcm, voiced_s):
+    def __new__(cls, pcm, voiced_s, endpoint_pcm=None, transcriber=None):
         value = super().__new__(cls, pcm)
         value.voiced_s = voiced_s
+        value.endpoint_pcm = endpoint_pcm
+        value.transcriber = transcriber
         return value
 
 
@@ -55,6 +58,7 @@ class _StreamInput:
     speech_end_s: float
     audio_start_s: float = 0.0
     voiced_s: float | None = None
+    endpoint_pcm: bytes | None = None
 
 
 class DialoguePipeline:
@@ -62,7 +66,9 @@ class DialoguePipeline:
 
     One utterance may await inference or addressee classification. Additional
     utterances are explicitly discarded through their endpoint while it is busy.
-    An accepted ordinary request blocks capture until its final reply terminates.
+    An accepted ordinary request normally blocks capture until its final reply
+    terminates. Reachy mode opens capture during the matching final playback,
+    using an explicitly configured echo-cancelled microphone input.
     Successful replies open a bounded, wake-free follow-up window; failed replies
     return to wake listening. Agent-owned sessions keep their policy.
     ``input_has_aec`` asserts that the selected microphone already supplies AEC;
@@ -77,7 +83,22 @@ class DialoguePipeline:
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
                  short_speech_guard=False, followup_timeout_s=10.0,
-                 validate_wake_command=None):
+                 validate_wake_command=None, start_qualifier=None, smart_turn=None,
+                 wake_is_speech=None, barge_in_ducking=False, barge_in_mode='legacy',
+                 interruption_transcriber=None, barge_in_pre_roll_s=2.0):
+        if type(barge_in_ducking) is not bool:
+            raise ValueError('barge_in_ducking must be a boolean')
+        if barge_in_mode not in ('legacy', 'reachy'):
+            raise ValueError('barge_in_mode must be legacy or reachy')
+        if barge_in_mode == 'reachy' and input_has_aec is not True:
+            raise ValueError('Reachy barge-in requires an echo-cancelled input')
+        self.barge_in_mode = barge_in_mode
+        self.barge_in_ducking = barge_in_ducking or barge_in_mode == 'reachy'
+        self._barge_reply_playback_id = None
+        self._ducked_playback = None
+        self._duck_renew_at = 0.0
+        self._seen_openers = deque(maxlen=128)
+        self._interim_playback = None
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
@@ -90,9 +111,13 @@ class DialoguePipeline:
         self.short_speech_guard = short_speech_guard
         self.followup_timeout_s = followup_timeout_s
         self.validate_wake_command = validate_wake_command
+        self.smart_turn = smart_turn
+        self._smart_turn_result = None
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
+        self.interruption_transcriber = interruption_transcriber
+        self._capture_transcriber = None
         self.publish_transcript = publish_transcript
         self.publish_interruption = publish_interruption
         self.publish_control = publish_control
@@ -121,6 +146,12 @@ class DialoguePipeline:
             silence_timeout_s=2.0,
             max_utterance_s=None if callable(self._stream_factory) else 20.0,
         )
+        if (type(barge_in_pre_roll_s) not in (int, float)
+                or not math.isfinite(barge_in_pre_roll_s) or not 0 <= barge_in_pre_roll_s <= 3):
+            raise ValueError('barge-in pre-roll must be between zero and three seconds')
+        if barge_in_mode == 'reachy':
+            settings = replace(settings, pre_roll_s=max(settings.pre_roll_s,
+                min(barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s)))
         if endpoint_predecode_s is not None and (
             isinstance(endpoint_predecode_s, bool)
             or not math.isfinite(endpoint_predecode_s)
@@ -128,15 +159,17 @@ class DialoguePipeline:
         ):
             raise ValueError('predecode must start by 1.0 seconds before the fallback')
         observe_vad = getattr(diagnostics, 'wrap_vad', None)
+        wake_is_speech = is_speech if wake_is_speech is None else wake_is_speech
         self.command_stream = StreamingUtteranceCollector(
             observe_vad(is_speech, kind='command') if callable(observe_vad) else is_speech,
             settings=settings,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
                               else 1.0 if settings.silence_timeout_s > 1.0 else None),
             partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
+            start_qualifier=start_qualifier,
         )
         self.wake_stream = StreamingUtteranceCollector(
-            observe_vad(is_speech, kind='wake') if callable(observe_vad) else is_speech,
+            observe_vad(wake_is_speech, kind='wake') if callable(observe_vad) else wake_is_speech,
             settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
         )
         self.audio = Queue(maxsize=64)
@@ -172,6 +205,7 @@ class DialoguePipeline:
         self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
+        self._raw_tail_s = 0.3
         self._chime_playing = False
         self._chime_gate_until = 0.0
         self._tail_stream = None
@@ -215,6 +249,10 @@ class DialoguePipeline:
             raise ValueError('speech capture requires 16kHz PCM')
         self.phase = 'starting_microphone'
         self.recorder.start()
+        self._check_aec_health()
+        calibration = getattr(self.recorder, 'calibration', None)
+        if self.input_has_aec and isinstance(calibration, dict):
+            self.report('aec_ready:' + json.dumps(calibration, sort_keys=True))
         self._started = True
         self._last_capture_at = monotonic()
         self.capture_thread = Thread(target=self._capture, name='stt-capture', daemon=True)
@@ -223,6 +261,12 @@ class DialoguePipeline:
         self.asr_thread.start()
         self.phase = 'running'
         self.report('waiting_for_wake')
+
+    @property
+    def barge_in_available(self):
+        return bool(self.input_has_aec and getattr(self.recorder, 'aec_ready', True)
+                    and self.capture_ready.is_set() and self.capture_error is None
+                    and not self._capture_timed_out())
 
     def start_session(self, session_id):
         """Replace ordinary dialogue with a correlated, wake-free confirmation."""
@@ -304,7 +348,7 @@ class DialoguePipeline:
             self._stop_speech('')
         return True
 
-    def on_speech_request(self, playback_id):
+    def on_speech_request(self, playback_id, *, request_id='', interim=False):
         """Cancel Agent speech requested during a web talk before it is played."""
         if self.stopping.is_set():
             return
@@ -312,6 +356,32 @@ class DialoguePipeline:
         if (self._web_talk_quiet and isinstance(playback_id, str)
                 and playback_id.strip() and len(playback_id) <= 200):
             self._stop_speech(playback_id)
+            return
+        if (not interim and isinstance(request_id, str)
+                and request_id.startswith('conversation-opener:') and len(request_id) <= 200
+                and isinstance(playback_id, str) and playback_id.strip()):
+            if request_id in self._seen_openers:
+                return
+            self._seen_openers.append(request_id)
+            if (self.session.active or self._reply_request_id is not None
+                    or self._busy or self._pending is not None
+                    or self._web_talk_blocked(self.clock())
+                    or self.wake_stream.collector.started
+                    or self.wake_stream.collector.candidate_audio
+                    or (self.session.playback_state in ('playing', 'paused')
+                        and self.session.playback_id != playback_id
+                        and self._interim_playback != (self.session.playback_id, request_id))):
+                self._stop_speech(playback_id)
+                self.report('conversation_opener_declined:busy')
+                return
+            self._terminate('conversation_opener')
+            self._reply_request_id = request_id
+            self._followup_pending = self.followup_timeout_s > 0
+            self._retry_notice_deadline = self.clock() + RETRY_NOTICE_TIMEOUT_SECONDS
+            # Different ROS topics can deliver PLAYING before the request.
+            if self.session.playback_id == playback_id and self.session.playback_state:
+                self.on_playback_status(playback_id, self.session.playback_state,
+                                        request_id=request_id)
 
     def _stop_speech(self, playback_id):
         if self.stop_speech is not None:
@@ -348,6 +418,8 @@ class DialoguePipeline:
 
     def _input_status(self, state, uid=None):
         uid = (self.session.utterance_id or '') if uid is None else uid
+        if state == 'started':
+            self._timing('speech_started', uid)
         # Ordinary turns have no session ID, but must identify a real utterance.
         # Proactive sessions also use a blank UID for session-wide input failure.
         if self.publish_input_status is not None and (
@@ -356,6 +428,7 @@ class DialoguePipeline:
                 self.session.session_id, uid, state)
 
     def _publish_transcript(self, utterance_id, text):
+        self._timing('transcript_final', utterance_id)
         if not self.session.session_id:
             # Keep capture closed until this request's final reply actually ends.
             self._terminate('waiting_for_reply')
@@ -363,6 +436,15 @@ class DialoguePipeline:
             self._followup_pending = self.followup_timeout_s > 0
             self._tail_stream = None
         self.publish_transcript(utterance_id, text)
+
+    def _timing(self, stage, uid, **fields):
+        if not uid:
+            return
+        try:
+            self._report(json.dumps(dict(event='speech_timing', version=1,
+                stage=stage, request_id=uid, at_s=self.clock(), **fields)))
+        except Exception:
+            pass  # Observability must not interrupt capture.
 
     def _capture(self):
         try:
@@ -431,6 +513,7 @@ class DialoguePipeline:
                 self._trace_job('job_discarded', kind, generation, uid, reason='shutdown')
                 break
             text, error_name = None, None
+            turn_complete = None
             retained_start_s = 0.0
             context = (self.diagnostics.context(
                 kind=kind, generation=generation, session_id=self.session.session_id,
@@ -448,6 +531,21 @@ class DialoguePipeline:
                     # Still return through results so endpoint ownership is released.
                     if generation != self._generation:
                         raise RuntimeError('stale inference job')
+                    if kind == 'endpoint' and self.smart_turn is not None:
+                        try:
+                            prediction = self.smart_turn.check(pcm.endpoint_pcm)
+                            turn_complete = prediction.complete
+                            if self.diagnostics is not None:
+                                self.diagnostics.event(
+                                    'smart_turn_checked', complete=turn_complete,
+                                    probability=prediction.probability,
+                                    inference_ms=prediction.inference_ms)
+                        except Exception as error:
+                            # A semantic guard failure cannot lose the ordinary
+                            # transcription or override the 2 s silence fallback.
+                            if self.diagnostics is not None:
+                                self.diagnostics.event('smart_turn_error',
+                                                       error=type(error).__name__)
                     if isinstance(pcm, _StreamInput):
                         window = ({'audio_start_s': pcm.audio_start_s}
                                   if pcm.audio_start_s else {})
@@ -456,7 +554,8 @@ class DialoguePipeline:
                             speech_end_s=pcm.speech_end_s, **window)
                         retained_start_s = getattr(pcm.stream, 'retained_start_s', 0.0)
                     else:
-                        engine = self.wake if kind == 'wake' else self.transcriber
+                        engine = (self.wake if kind == 'wake' else
+                                  getattr(pcm, 'transcriber', None) or self.transcriber)
                         text = engine.transcribe(pcm, 16000)
                     wake_command = kind == 'wake' and bool(parse_wake_phrase(text))
                     if wake_command and self.validate_wake_command is not None:
@@ -483,6 +582,8 @@ class DialoguePipeline:
                         self.diagnostics.event('inference_result', text=text,
                                                error=error_name, error_detail=error_detail)
             result = (kind, generation, uid, text, error_name, retained_start_s)
+            if kind == 'endpoint' and self.smart_turn is not None:
+                result += (turn_complete,)
             waiting_reported = False
             while not self.stopping.is_set():
                 try:
@@ -509,6 +610,7 @@ class DialoguePipeline:
                 return
 
     def _reset_audio(self):
+        self._update_ducking()
         self._audio_generation += 1
         self.command_stream.reset()
         self.wake_stream.reset()
@@ -517,8 +619,10 @@ class DialoguePipeline:
         self._tail_stream = None
         self._endpoint_candidate = None
         self._endpoint_result = None
+        self._smart_turn_result = None
         self._stream = None
         self._final_input = None
+        self._capture_transcriber = None
         # A finalized utterance may own busy while reusing its in-flight
         # endpoint decode. Cancelling that owner must not block future wakes.
         if self._endpoint_final is not None:
@@ -553,6 +657,7 @@ class DialoguePipeline:
             cancel()
         self._pending = None
         self._reply_request_id = None
+        self._barge_reply_playback_id = None
         self._followup_pending = False
         self._followup_deadline = None
         self._retry_notice_deadline = None
@@ -566,6 +671,7 @@ class DialoguePipeline:
         """Advance deadlines and consume bounded work without blocking ROS callbacks."""
         if self.stopping.is_set():
             return
+        self._check_aec_health()
         self._expire_web_talk()
         if self.capture_error is None and self._capture_timed_out():
             self.capture_error = RuntimeError('microphone input timeout')
@@ -618,6 +724,36 @@ class DialoguePipeline:
                 and self.clock() >= self._retry_notice_deadline):
             self._terminate('retry_notice_timeout')
 
+    def _check_aec_health(self):
+        """Close duplex capture before allowing a failed AEC recorder's raw PCM."""
+        if not self.input_has_aec or getattr(self.recorder, 'aec_ready', True):
+            return
+        self.input_has_aec = False
+        self.barge_in_mode = 'legacy'
+        self.barge_in_ducking = False
+        if self._ducked_playback is not None:
+            self.publish_control(self._ducked_playback, 'unduck')
+            self._ducked_playback = None
+        self._barge_reply_playback_id = None
+        self._raw_playback_gate = self.session.playback_state == 'playing'
+        # XFM has an internal capture delay around half a second. Include that
+        # tail when switching from filtered to raw audio.
+        self._raw_tail_s = 1.0
+        self._raw_gate_until = self.clock() + self._raw_tail_s
+        request = self._reply_request_id
+        followup = self._followup_pending
+        retry_deadline = self._retry_notice_deadline
+        if self.session.session_id:
+            self._input_status('failed', '')
+        self._terminate('aec_input_reset')
+        self._reply_request_id = request
+        self._followup_pending = followup
+        self._retry_notice_deadline = retry_deadline
+        self.report('aec_fallback:half_duplex:' + str(getattr(self.recorder, 'failure', 'unavailable')))
+        acknowledge = getattr(self.recorder, 'acknowledge_half_duplex', None)
+        if callable(acknowledge):
+            acknowledge()
+
     def _expire_command_wait(self, captured_at):
         if (self._followup_deadline is not None
                 and captured_at >= self._followup_deadline):
@@ -632,20 +768,51 @@ class DialoguePipeline:
         return False
 
     def _input_blocked(self, captured_at):
-        return (self._web_talk_blocked(captured_at) or self._reply_request_id is not None
+        return (self.input_has_aec and not getattr(self.recorder, 'aec_ready', True)) or (self._web_talk_blocked(captured_at) or (
+                    self._reply_request_id is not None and not self._can_barge_into_reply())
                 or self._chime_playing or captured_at < self._chime_gate_until) or (
             not self.input_has_aec and (
                 self._raw_playback_gate or captured_at < self._raw_gate_until
             )
         )
 
+    def _can_barge_into_reply(self):
+        """Only an acknowledged ordinary final reply opens duplex capture."""
+        return (self.barge_in_mode == 'reachy' and self.input_has_aec
+                and self._reply_request_id is not None
+                and self._barge_reply_playback_id is not None
+                and self._barge_reply_playback_id == self.session.playback_id
+                and self.session.playback_state == 'playing'
+                and self.session.active and not self.session.session_id)
+
     def _publish_control(self, playback_id, command):
+        if command in ('pause', 'stop') and playback_id == self._ducked_playback:
+            # Pause restores gain in the player; never unduck ahead of a pause.
+            self._ducked_playback = None
         if command == 'pause' and (
             not self.input_has_aec
             or self._pending is not None and self._pending[1] != playback_id
         ):
             return
         self.publish_control(playback_id, command)
+
+    def _update_ducking(self, candidate=False):
+        """Use the existing Silero onset candidate, without another VAD/filter."""
+        pid = self.session.playback_id
+        eligible = (self.barge_in_ducking and self.input_has_aec
+                    and self.session.active and not self.session.session_id
+                    and self.session.playback_state == 'playing'
+                    and self.session.utterance_id is None and candidate)
+        desired = pid if eligible else None
+        if self._ducked_playback is not None and self._ducked_playback != desired:
+            self.publish_control(self._ducked_playback, 'unduck')
+            self._ducked_playback = None
+        if desired is not None and (self._ducked_playback is None
+                                    or self.clock() >= self._duck_renew_at):
+            # Keep the player's 300 ms lease alive while this candidate owns it.
+            self.publish_control(desired, 'duck')
+            self._ducked_playback = desired
+            self._duck_renew_at = self.clock() + .15
 
     def feed(self, pcm, *, captured_at=None, busy_at_capture=False):
         """Consume captured PCM on the owner thread; the microphone remains open."""
@@ -660,6 +827,13 @@ class DialoguePipeline:
             self._event_time = None
 
     def _feed(self, pcm, busy_at_capture):
+        # AEC3's nonlinear suppression can erase an overlapping human syllable.
+        # Keep the aligned microphone for the optional robust decoder;
+        # the conservative AEC mask still owns every onset/stop decision.
+        recovery_pcm = getattr(pcm, 'recovery_pcm', None)
+        if (recovery_pcm is not None and self.interruption_transcriber is not None
+                and (self._can_barge_into_reply() or self._capture_transcriber is not None)):
+            pcm = CapturePCM(recovery_pcm, pcm.vad_pcm)
         if self._expire_command_wait(self._event_time):
             return
         if self.session.tick():
@@ -682,11 +856,24 @@ class DialoguePipeline:
                 if self.session.active:
                     self._command_start_deadline = None
                     self._followup_deadline = None
-                    self._capture_id = self.session.user_speech_started()
+                    interrupt_reply = self._can_barge_into_reply()
+                    if interrupt_reply:
+                        # Detach the old request before STOP can acknowledge. Its
+                        # terminal event must never discard the new utterance.
+                        self._reply_request_id = None
+                        self._barge_reply_playback_id = None
+                        self._followup_pending = False
+                    self._capture_id = self.session.user_speech_started(
+                        stop_playback=interrupt_reply)
+                    if interrupt_reply:
+                        self.report('barge_in_confirmed:reachy')
+                    self._capture_transcriber = (
+                        self.interruption_transcriber if interrupt_reply else None)
                     self._input_status('started', self._capture_id)
                     self._endpoint_result = None
                     self._stream = (self._stream_factory() if callable(self._stream_factory)
                                     and self.command_stream.partial_interval_s is not None
+                                    and self._capture_transcriber is None
                                     else None)
                     self._utterance_playback_id = self.session.interrupted_playback_id
                     self.report('speech_started')
@@ -714,6 +901,13 @@ class DialoguePipeline:
                 if audio_generation != self._audio_generation:
                     # The chime discarded this chunk's remaining capture events.
                     break
+        self._update_ducking(candidate=(
+            not start_blocked and not stream.collector.started
+            and bool(stream.collector.candidate_audio)
+            # Qualify the first Reachy duck without delaying speech confirmation.
+            and (self.barge_in_mode != 'reachy'
+                 or self._ducked_playback == self.session.playback_id
+                 or stream.collector.candidate_frames >= 5)))
 
     def _submit_endpoint(self):
         if (self._endpoint_candidate is None or self._endpoint_job is not None
@@ -749,7 +943,9 @@ class DialoguePipeline:
             kind = 'partial' if partial else 'endpoint'
             payload = self._inference_input(
                 event.pcm if self._stream is not None else pcm, silence_s=event.silence_s,
-                audio_start_s=event.audio_start_s, voiced_s=event.voiced_s)
+                audio_start_s=event.audio_start_s, voiced_s=event.voiced_s,
+                endpoint_pcm=(event.pcm[-256000:]
+                              if self.smart_turn is not None and not partial else None))
             self._enqueue_job((kind, key[0], (uid, event.revision), payload))
         except Full:
             return
@@ -765,11 +961,12 @@ class DialoguePipeline:
         return error is None and isinstance(text, str) and bool(text.strip())
 
     def _inference_input(self, pcm, *, final=False, silence_s=0.0, audio_start_s=0.0,
-                         voiced_s=None):
+                         voiced_s=None, endpoint_pcm=None):
         if self._stream is None:
-            return _SpeechPCM(pcm, voiced_s)
+            return _SpeechPCM(pcm, voiced_s, endpoint_pcm, self._capture_transcriber)
         speech_end_s = audio_start_s + max(0.0, len(pcm) / 32000 - silence_s)
-        return _StreamInput(pcm, self._stream, final, speech_end_s, audio_start_s, voiced_s)
+        return _StreamInput(pcm, self._stream, final, speech_end_s, audio_start_s,
+                            voiced_s, endpoint_pcm)
 
     def _complete_capture(self, kind, event):
         uid = self._capture_id
@@ -780,6 +977,9 @@ class DialoguePipeline:
         self.report('transcribing' if kind == 'command' else 'recognizing_wake')
         if kind == 'command':
             self.report(f'endpoint_finalized:silence_s={event.silence_s:.2f}')
+            audio_at = self.clock() if self._event_time is None else self._event_time
+            self._timing('endpoint', uid,
+                         estimated_speech_end_s=audio_at - event.silence_s)
             self._play_endpoint_chime()
             if (self._endpoint_result is not None and self._endpoint_result[0] == key
                     and self._usable_text(*self._endpoint_result[1:])):
@@ -859,7 +1059,7 @@ class DialoguePipeline:
             self._chime_playing = False
 
     def _accept_endpoint(self, generation, token, text, error_name, retained_start_s=0.0,
-                         *, partial=False):
+                         turn_complete=None, *, partial=False):
         uid, revision = token
         kind = 'partial' if partial else 'endpoint'
         key = (generation, uid, revision)
@@ -909,6 +1109,11 @@ class DialoguePipeline:
                             reason='preview_only' if partial else 'speech_revision_changed')
             return
         self._endpoint_result = (key, text, error_name)
+        self._smart_turn_result = (key, turn_complete is True)
+        if self.smart_turn is not None:
+            self.report('smart_turn_complete' if turn_complete is True else
+                        'smart_turn_incomplete' if turn_complete is False else
+                        'smart_turn_unavailable')
         self._trace_job('endpoint_cached', kind, generation, token,
                         usable=self._usable_text(text, error_name))
         self._finish_ready_endpoint()
@@ -927,7 +1132,9 @@ class DialoguePipeline:
                             reason='capture_or_revision_changed')
             return
         if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
-                and error_name is None and is_complete_korean_utterance(text)):
+                and error_name is None and is_complete_korean_utterance(text)
+                and (self.smart_turn is None or self._smart_turn_result == (
+                    (generation, uid, revision), True))):
             event = self.command_stream.finish_endpoint(revision)
             if event is not None:
                 self._complete_capture('command', event)
@@ -1029,6 +1236,20 @@ class DialoguePipeline:
             self._stop_speech(playback_id)
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
+        if self.session.playback_id != previous[0]:
+            # Only the adopted PLAYING owner may identify its own final reply.
+            self._interim_playback = (playback_id, request_id) if interim else None
+        if (self.barge_in_mode == 'reachy' and self.input_has_aec
+                and self._reply_request_id is not None
+                and request_id == self._reply_request_id and not interim
+                and state == 'playing' and self.session.playback_id == playback_id
+                and self.session.playback_state == 'playing'
+                and not self.session.session_id and not self._web_talk_blocked(self.clock())
+                and self._barge_reply_playback_id != playback_id):
+            self._reset_audio()
+            self._barge_reply_playback_id = playback_id
+            self.session.activate()
+            self.report('barge_in_ready:reachy')
         if self._followup_deadline is not None:
             # Only the correlated reply starts this wait, not unrelated playback.
             self.session.deadline = None
@@ -1038,7 +1259,7 @@ class DialoguePipeline:
                 self._terminate('utterance_discarded:playback_without_aec')
             self._raw_playback_gate = current[1] == 'playing'
             # This drain guard limits queued playback tails; it is not AEC.
-            self._raw_gate_until = self.clock() + 0.3
+            self._raw_gate_until = self.clock() + self._raw_tail_s
             self._reset_audio()
             if self._raw_playback_gate:
                 self.report('barge_in_requires_aec')
@@ -1047,11 +1268,31 @@ class DialoguePipeline:
         if self._pending is not None and self._pending[1] != self.session.playback_id:
             self._terminate('addressee_unknown:stale_playback')
         if (self._reply_request_id is not None and request_id == self._reply_request_id
-                and not interim and state in ('finished', 'failed', 'stopped')):
+                and not interim and state in ('finished', 'failed', 'stopped')
+                and (self._barge_reply_playback_id is None
+                     or playback_id == self._barge_reply_playback_id)):
             # Failed synthesis can terminate before PLAYING; progress cannot unlock input.
             followup = (state == 'finished' and self._followup_pending
                         and not self._web_talk_blocked(self.clock()))
-            self._terminate('reply_finished' if followup else 'waiting_for_wake')
+            keep_onset = (followup and self.barge_in_mode == 'reachy'
+                          and self.input_has_aec and self.session.active
+                          and not self.session.session_id
+                          and self._barge_reply_playback_id == playback_id
+                          and self.session.playback_id == playback_id
+                          and not self._busy and self._pending is None
+                          and not self._chime_playing
+                          and self.clock() >= self._chime_gate_until)
+            if keep_onset:
+                # A weak first word can still be in pre-roll before VAD qualifies.
+                # Preserve bounded capture when its owning reply finishes.
+                self._reply_request_id = None
+                self._barge_reply_playback_id = None
+                self._followup_pending = False
+                self._retry_notice_deadline = None
+                self.session.deadline = None
+                self._update_ducking()
+            else:
+                self._terminate('reply_finished' if followup else 'waiting_for_wake')
             if followup:
                 self.session.activate()
                 self._followup_deadline = self.clock() + self.followup_timeout_s
@@ -1079,6 +1320,7 @@ class DialoguePipeline:
         """Stop capture before deletion and suppress any late local inference result."""
         if self._closed:
             return
+        self._update_ducking()
         self._closed = True
         self.stopping.set()
         cancel = getattr(self.transcriber, 'cancel', None)

@@ -10,6 +10,20 @@ from time import monotonic
 from typing import Callable, Optional
 
 
+class CapturePCM(bytes):
+    """Aligned local ASR, VAD, and optional overlap-recovery waveforms."""
+
+    def __new__(cls, pcm, vad_pcm, recovery_pcm=None):
+        if len(pcm) != len(vad_pcm) or len(pcm) % 2:
+            raise ValueError('Recognition and VAD PCM must have identical sample clocks')
+        if recovery_pcm is not None and len(recovery_pcm) != len(pcm):
+            raise ValueError('Recovery and recognition PCM must have identical sample clocks')
+        value = super().__new__(cls, pcm)
+        value.vad_pcm = bytes(vad_pcm)
+        value.recovery_pcm = None if recovery_pcm is None else bytes(recovery_pcm)
+        return value
+
+
 @dataclass(frozen=True)
 class CaptureSettings:
     """Audio durations in seconds; the VAD frame is always 20 milliseconds."""
@@ -66,15 +80,23 @@ class UtteranceCollector:
         sample_rate: int,
         is_speech: Callable[[bytes, int], bool],
         settings: CaptureSettings,
+        *, start_qualifier=None,
     ) -> None:
         """Create a fresh collector for one wake detection."""
         if sample_rate not in (8000, 16000, 32000, 48000):
-            raise ValueError('sample rate is unsupported by WebRTC VAD')
+            raise ValueError('unsupported capture sample rate')
         self.sample_rate = sample_rate
         self.is_speech = is_speech
+        # Stateful VADs must not reuse PCM/context from a previous capture.
+        detector = getattr(is_speech, '__self__', is_speech)
+        reset = getattr(detector, 'reset', None)
+        if callable(reset):
+            reset()
         self.settings = settings
+        self.start_qualifier = start_qualifier
         self.frame_bytes = sample_rate // 50 * 2
         self.pending = bytearray()
+        self.pending_vad = bytearray()
         self._pending_start_blocked = False
         self.pre_roll = deque(maxlen=max(1, math.ceil(settings.pre_roll_s / 0.02)))
         self.audio = bytearray()
@@ -100,14 +122,19 @@ class UtteranceCollector:
         if pcm:
             self._pending_start_blocked |= start_blocked
         self.pending.extend(pcm)
+        self.pending_vad.extend(getattr(pcm, 'vad_pcm', pcm))
         while len(self.pending) >= self.frame_bytes:
             frame = bytes(self.pending[:self.frame_bytes])
+            vad_frame = bytes(self.pending_vad[:self.frame_bytes])
             del self.pending[:self.frame_bytes]
+            del self.pending_vad[:self.frame_bytes]
             frame_blocked = self._pending_start_blocked
             # The old partial frame was consumed; remaining samples came from
             # this call and must not inherit that older frame's eligibility.
             self._pending_start_blocked = bool(self.pending) and start_blocked
-            speech = self.is_speech(frame, self.sample_rate)
+            qualified = (self.start_qualifier(vad_frame, self.sample_rate)
+                         if self.start_qualifier is not None else True)
+            speech = self.is_speech(vad_frame, self.sample_rate)
             if not self.started:
                 self.wait_frames += 1
                 self.pre_roll.append(frame)
@@ -120,7 +147,8 @@ class UtteranceCollector:
                         self.candidate_audio.extend(frame)
                     self._candidate_start_blocked |= frame_blocked
                     self.candidate_frames += 1
-                    if self.candidate_frames >= math.ceil(self.settings.min_speech_s / 0.02):
+                    if (qualified and self.candidate_frames >= math.ceil(
+                            self.settings.min_speech_s / 0.02)):
                         self.started = True
                         self.revision += self.candidate_frames
                         self.audio.extend(self.candidate_audio)
@@ -130,6 +158,13 @@ class UtteranceCollector:
                         self.start_blocked = self._candidate_start_blocked
                         self.candidate_audio.clear()
                         self.candidate_frames = 0
+                        self._candidate_start_blocked = False
+                    elif (self.start_qualifier is not None
+                          and self.candidate_frames >= math.ceil(self.settings.pre_roll_s / 0.02)):
+                        # A rejected WebRTC run must not retain unbounded PCM
+                        # or prevent the idle timeout from ever firing.
+                        self.candidate_frames = 0
+                        self.candidate_audio.clear()
                         self._candidate_start_blocked = False
                 else:
                     self.candidate_frames = 0

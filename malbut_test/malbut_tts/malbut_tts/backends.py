@@ -14,7 +14,7 @@ def create_synthesizer(model_path=None, *, backend='piper', speaker='Sohee',
                        language='Korean', cuda_dtype='float32',
                        cuda_sentence_mode=True, sentence_max_chars=80,
                        api_model='gpt-4o-mini-tts', api_voice='nova',
-                       api_timeout_seconds=10.0, piper_threads=6):
+                       api_timeout_seconds=10.0, piper_threads=3):
     """Default to local CPU speech; remote/experimental engines require opt-in."""
     if backend == 'piper':
         from malbut_tts.piper_synthesis import PiperSynthesizer

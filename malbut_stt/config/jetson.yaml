@@ -12,4 +12,8 @@ malbut_stt:
     silence_timeout_s: 2.0
     endpoint_predecode_s: 0.8
     followup_timeout_s: 10.0  # Wait for the next utterance after the final reply finishes.
-    input_has_aec: false  # Enable only for an input that already provides AEC.
+    input_has_aec: false  # External AEC only; pulse_reference verifies its own readiness.
+    aec_backend: none  # Optional pulse_reference needs explicit device/model/audio paths.
+    interruption_asr: local  # Optional openai applies only to confirmed reachy interruptions.
+    interruption_asr_timeout_s: 5.0
+    barge_in_pre_roll_s: 2.0  # Preserved audio, not an additional waiting period.

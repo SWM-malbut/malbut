@@ -28,6 +28,7 @@ def speech(monkeypatch, tmp_path):
         'speech_launch', ROOT / 'malbut_bringup/launch/speech.launch.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module.Path, 'home', lambda: tmp_path)
     monkeypatch.setattr(module, 'get_package_share_directory',
                         lambda package: str(ROOT / package))
     for name in ('ggml.bin', 'libmalbut_whisper.so'):
@@ -271,3 +272,81 @@ def test_prerecorded_option_routes_catalog_ids_and_custom_audio_directory(speech
     assert ('--no-prerecorded-audio' in command) is (enabled == 'false')
     parameters = evaluate_parameters(context, tts._Node__parameters)
     assert parameters[0]['audio_directory'] == '/robot/notices'
+
+
+def test_local_stt_config_applies_only_to_stt_and_overrides_defaults(speech, tmp_path):
+    config = tmp_path / '.config/malbut/stt.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('malbut_stt:\n  ros__parameters:\n    turn_detection: hybrid\n')
+    context = _context(speech)
+    nodes = [node for node in speech._setup(context) if isinstance(node, Node)]
+    for node in nodes:
+        parameters = evaluate_parameters(context, node._Node__parameters)
+        if node.node_executable == 'stt':
+            assert parameters[-1] == config
+        else:
+            assert config not in parameters
+
+
+
+
+@pytest.mark.parametrize('scope', ['/**', 'malbut_stt'])
+@pytest.mark.parametrize('under_bringup', [False, True])
+def test_pulse_routes_apply_only_to_stt_and_tts(speech, tmp_path, monkeypatch,
+                                              scope, under_bringup):
+    config = tmp_path / '.config/malbut/stt.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text(f'{scope}:\n  ros__parameters:\n'
+                      '    aec_backend: pulse_reference\n'
+                      '    aec_source: xfm-source\n    aec_sink: robot-speaker\n')
+    created = []
+
+    def node(**kwargs):
+        created.append(kwargs)
+        return Node(**kwargs)
+
+    monkeypatch.setattr(speech, 'Node', node)
+    context = _context(speech)
+    if under_bringup:
+        context.extend_globals({'malbut_modular_bringup': True})
+    context.environment['PULSE_SOURCE'] = 'inherited-source'
+    before = dict(context.environment)
+    speech._setup(context)
+    expected = {'MALBUT_SHARED_MICROPHONE': 'xfm-source', 'PULSE_SOURCE': 'xfm-source',
+                'PULSE_SINK': 'robot-speaker'}
+    assert {item['executable'] for item in created if item.get('additional_env')} == {
+        'stt', 'tts_node'}
+    for item in created:
+        assert item.get('additional_env') == (
+            expected if item['executable'] in ('stt', 'tts_node') else None)
+    assert dict(context.environment) == before
+
+
+@pytest.mark.parametrize('config_text', [None, 'turn_detection: legacy', 'aec_backend: none'])
+def test_non_aec_profile_does_not_override_audio_environment(
+        speech, tmp_path, monkeypatch, config_text):
+    if config_text is not None:
+        config = tmp_path / '.config/malbut/stt.yaml'
+        config.parent.mkdir(parents=True)
+        config.write_text('malbut_stt:\n  ros__parameters:\n    ' + config_text + '\n')
+    created = []
+
+    def node(**kwargs):
+        created.append(kwargs)
+        return Node(**kwargs)
+
+    monkeypatch.setattr(speech, 'Node', node)
+    speech._setup(_context(speech))
+    assert all(item.get('additional_env') is None for item in created)
+
+
+def test_invalid_pulse_profile_fails_before_creating_nodes(speech, tmp_path, monkeypatch):
+    config = tmp_path / '.config/malbut/stt.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('malbut_stt:\n  ros__parameters:\n    aec_backend: pulse_reference\n')
+    created = []
+    monkeypatch.setattr(speech, 'Node', lambda **kwargs: created.append(kwargs))
+    with pytest.raises(
+            RuntimeError, match='STT audio configuration requires a nonempty aec_source'):
+        speech._setup(_context(speech))
+    assert created == []
