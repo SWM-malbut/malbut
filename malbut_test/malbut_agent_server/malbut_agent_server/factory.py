@@ -355,6 +355,13 @@ def build_orchestrator(
         from malbut_agent_server.patrol_query import configure_patrol_from_settings
 
         configure_patrol_from_settings(runtime, settings, http_server=http_server)
+        if not http_server:
+            from malbut_agent_server.companion_service import build_companion_service
+            # Companion turns never enter source tracing, durable story queues,
+            # context compaction or the owner's ordinary conversation history.
+            runtime.companion_provider = build_provider(settings, http_server=False,
+                                                        semantic_context=False)
+            runtime.companion_service = build_companion_service(settings)
         return runtime
     except Exception:
         if story_memory is not None:

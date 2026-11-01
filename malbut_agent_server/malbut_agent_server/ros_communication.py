@@ -520,8 +520,10 @@ def create_communication_node(
                     if (response.get('kind') not in {'progress', 'acknowledgement'}
                             and response.get('utterance_id') == self._awaiting_reply):
                         self._awaiting_reply = None
+                    logged = ({key: published[key] for key in ('utterance_id', 'kind')}
+                              if getattr(response, '_companion_session', None) else published)
                     self.get_logger().info(json.dumps({
-                        'event': 'dialogue_response_published', **published,
+                        'event': 'dialogue_response_published', **logged,
                     }, ensure_ascii=False))
 
         def _mission_event(self, event):

@@ -665,6 +665,23 @@ def test_web_talk_waits_for_a_fall_check_until_its_question_ends(runtime, phase,
     assert main([]) == 0
 
 
+def test_companion_session_is_rejected_before_audio_capture_when_diagnostics_enabled(
+        runtime, monkeypatch, tmp_path):
+    monkeypatch.setenv('MALBUT_STT_DIAGNOSTIC_DIR', str(tmp_path / 'diagnostics'))
+
+    def on_spin():
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        response = callback(SimpleNamespace(session_id='patrol-chat-private', active=True), SimpleNamespace())
+        assert not response.accepted
+        # The diagnosis feature and fall checks retain their existing behavior.
+        response = callback(SimpleNamespace(session_id='fall-check-1', active=True), SimpleNamespace())
+        assert response.accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+
+
 def test_proactive_session_service_reports_aec_and_correlates_transcript(runtime):
     runtime.parameters['input_has_aec'] = True
 
