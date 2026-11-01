@@ -273,7 +273,8 @@ def ros_weather(tmp_path, monkeypatch):
         executor.add_node(run.agent)
         spin_until(lambda: (
             speech_publisher.get_subscription_count() == 1
-            and run.agent._speech.get_subscription_count() == (2 if with_manager else 1)
+            and run.agent._speech.get_subscription_count()
+                == (2 if with_manager else 1) + int(run.agent._patrol_chat is not None)
         ))
         assert not any(s.topic_name == '/malbut/weather'
                        for s in run.agent.subscriptions)

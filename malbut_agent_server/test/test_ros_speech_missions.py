@@ -261,7 +261,8 @@ def speech_graph(tmp_path, monkeypatch):
         monkeypatch.setattr(run.agent.dialogue, 'publish_reply', record_publish)
         owner.add_node(run.agent)
         spin_until(lambda: transcripts.get_subscription_count() == 1
-                   and run.agent._speech.get_subscription_count() == 2)  # Manager + observer
+                   and run.agent._speech.get_subscription_count()
+                   == 2 + int(run.agent._patrol_chat is not None))  # Manager + observers
         spin_until(run.agent.missions._client.server_is_ready)
         for name, action_type in ACTION_TYPES.items():
             probe = ActionClient(sender, action_type, '/speech_mission_test/' + name)

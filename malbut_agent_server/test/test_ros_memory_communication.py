@@ -219,13 +219,14 @@ def ros_memory(tmp_path, monkeypatch):
             executor.add_node(harness.agent)
             harness.spin_until(lambda: (
                 publisher.get_subscription_count() == 1
-                and harness.agent._speech.get_subscription_count() == 1
+                and harness.agent._speech.get_subscription_count()
+                    == 1 + int(harness.agent._patrol_chat is not None)
             ))
 
         harness.restart = restart
         harness.spin_until(lambda: (
             publisher.get_subscription_count() == 1
-            and agent._speech.get_subscription_count() == 1
+            and agent._speech.get_subscription_count() == 1 + int(agent._patrol_chat is not None)
         ))
         yield harness
     finally:

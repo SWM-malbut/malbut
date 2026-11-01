@@ -138,6 +138,9 @@ class DialogueWorker:
         self._factory = runtime_factory
         self._missions = missions
         self._scene_source = scene_source
+        self.patrol_memory = None
+        from malbut_agent_server.companion_dialogue import CompanionDialogue
+        self._companion = CompanionDialogue()
         self._navigation_confirmation = None
         self._mapping_name_question = None
         self._user_id = validate_user_id(user_id)
@@ -185,7 +188,8 @@ class DialogueWorker:
                 and self._outstanding < self._capacity
             )
 
-    def submit(self, utterance_id: str, text: str) -> bool:
+    def submit(self, utterance_id: str, text: str, *, opener_context=None,
+               companion_session=None) -> bool:
         """Queue an original utterance without waiting for model inference."""
         validate_dialogue_input(utterance_id, text)
         with self._condition:
@@ -195,6 +199,13 @@ class DialogueWorker:
             progress = RequestProgress(
                 lambda notice, state: self._progress_notice(utterance_id, notice, state),
             )
+            # This is what the robot actually said, not a fabricated user turn.
+            progress.opener_context = opener_context
+            progress.companion_session = companion_session
+            if companion_session is not None:
+                self._companion.begin(companion_session)
+            else:
+                self._companion.end()
             self._pending.append((utterance_id, text, None, progress))
             self._condition.notify()
             return True
@@ -329,6 +340,7 @@ class DialogueWorker:
 
     def close(self) -> None:
         """Discard waiting and late replies; let the running call finish."""
+        self._companion.end()
         with self._condition:
             self._closing = True
             self._navigation_confirmation = None
@@ -357,6 +369,7 @@ class DialogueWorker:
                 session = runtime.conversation_store.resume_or_create(self._user_id)
                 conversation_id = session.conversation_id
                 with self._condition:
+                    self.patrol_memory = getattr(runtime, 'patrol_memory', None)
                     self._ready = True
             except Exception as error:
                 with self._condition:
@@ -411,6 +424,9 @@ class DialogueWorker:
                             entry['decision'] = reply['decision']
                             self._results.append(reply)
                     continue
+                if getattr(progress, 'companion_session', None) is not None:
+                    self._answer_companion(runtime, utterance_id, text, progress, generation)
+                    continue
                 try:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
@@ -445,6 +461,9 @@ class DialogueWorker:
                             scene, image = self._scene_source.snapshot()
                         except Exception:
                             scene = {'image': {'available': False}, 'map': None, 'pose': None}
+                    opener = getattr(progress, 'opener_context', None)
+                    if opener is not None and not start_new:
+                        scene = dict(scene or {}, conversation_opener=opener)
                     request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
@@ -692,6 +711,30 @@ class DialogueWorker:
     def _handle_with_progress(runtime, request, progress):
         with request_scope(progress=progress):
             return runtime.handle(request)
+
+    def end_companion(self, session):
+        """Discard an encounter, including a model response still in flight."""
+        self._companion.end(session)
+
+    def _answer_companion(self, runtime, utterance_id, text, progress, generation):
+        session = progress.companion_session
+        try:
+            with request_scope(progress=progress):
+                message = self._companion.answer(runtime.provider, session, utterance_id,
+                                                 text, progress.opener_context)
+        except Exception:
+            message = ERROR_RESPONSE
+        progress.finish(cancelled=message is None)
+        with self._condition:
+            self._active_progress = None
+            self._running = False
+            if not self._closing:
+                if message is None or generation != self._generation:
+                    self._outstanding -= 1
+                else:
+                    reply = self._reply(utterance_id, session, message, 'answer')
+                    reply._generation = generation
+                    self._results.append(reply)
 
     @staticmethod
     def _addressee_reply(utterance_id, playback_id, decision):
