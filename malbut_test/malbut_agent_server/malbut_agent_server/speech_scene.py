@@ -1,17 +1,19 @@
 """One transient RGB snapshot and small observations on the existing Agent node."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import io
 import math
 import os
-from threading import RLock
+from threading import Event, RLock
 import time
 
 
 MAX_FRAME_AGE_S = 2.0
 MAX_SETTINGS_AGE_S = 30.0
 MAX_JPEG_BYTES = 256 * 1024
+SCENE_INPUT_TIMEOUT_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,16 @@ class LatestScene:
         return (self.enabled and self._permission[0]
                 and 0 <= now - self._permission[1] <= MAX_SETTINGS_AGE_S)
 
+    def permitted(self):
+        """Check permission before subscribing to the camera for a turn."""
+        with self._lock:
+            return self._permitted(self.clock())
+
+    def clear_frame(self):
+        """Release raw pixels without revoking an already frozen turn image."""
+        with self._lock:
+            self._frame = None
+
     def observe_image(self, image, source_stamp, source_age):
         """Never accumulate camera frames or accept stale/future source timestamps."""
         now = self.clock()
@@ -70,8 +82,10 @@ class LatestScene:
             if (self._permitted(now) and math.isfinite(source_age)
                     and 0 <= source_age <= MAX_FRAME_AGE_S):
                 self._frame = (image, now, source_stamp, self._epoch, source_age)
+                return True
             else:
                 self._frame = None
+                return False
 
     def capture(self, encode):
         """Freeze this turn's image; retries may reuse it but never silently recapture."""
@@ -107,21 +121,26 @@ class RosSpeechScene:
 
     def __init__(self, node, missions):
         from malbut_interfaces.msg import FallSettingsSnapshot, SystemState
-        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-        from sensor_msgs.msg import Image
+        from rclpy.qos import DurabilityPolicy, QoSProfile
         from tf2_ros import Buffer, TransformListener
 
         self.node, self.missions = node, missions
         self._lock = RLock()
+        self._sample_lock = RLock()
+        self._closed = Event()
+        self._frame_received = Event()
+        self._sampling_images = False
         self._system = None
         self._buffer = Buffer()
+        # Keep the small TF stream warm: reconnecting can miss a slow map edge.
         self._listener = TransformListener(self._buffer, node)
         self.robot_frame = node.declare_parameter('scene_robot_frame', 'base_footprint').value
         self._images = LatestScene(
             cloud_settings_required=bool(os.environ.get('HOMECAM_BACKEND_URL')),
             enabled=bool(node.declare_parameter('scene_images_enabled', True).value),
         )
-        topic = node.declare_parameter('scene_rgb_topic', '/depth_cam/rgb0/image_raw').value
+        self._rgb_topic = node.declare_parameter(
+            'scene_rgb_topic', '/depth_cam/rgb0/image_raw').value
         self._subscriptions = [
             node.create_subscription(SystemState, '/malbut/state', self._state,
                                      QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
@@ -130,10 +149,6 @@ class RosSpeechScene:
                 self._images.observe_settings,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
-        if self._images.enabled:
-            self._subscriptions.append(node.create_subscription(
-                Image, topic, self._image,
-                QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)))
 
     def _image(self, message):
         stamp = message.header.stamp.sec + message.header.stamp.nanosec / 1e9
@@ -142,7 +157,10 @@ class RosSpeechScene:
         if not (0 < message.width <= 4096 and 0 < message.height <= 4096
                 and len(message.data) <= 16 * 1024 * 1024):
             return
-        self._images.observe_image(message, stamp, now - stamp)
+        with self._lock:
+            if (self._sampling_images and not self._closed.is_set()
+                    and self._images.observe_image(message, stamp, now - stamp)):
+                self._frame_received.set()
 
     def _state(self, message):
         groups = ('active_foreground_missions', 'active_background_missions',
@@ -166,26 +184,71 @@ class RosSpeechScene:
         image.save(output, format='JPEG', quality=75)
         return output.getvalue()
 
-    def snapshot(self):
-        """Read bounded observations without waiting for a new camera/TF sample."""
-        image, attachment = self._images.capture(self._encode)
-        scene = {'image': image, 'map': None, 'pose': None, 'missions': None}
-        if self.missions is not None:
-            scene['map'] = self.missions.map_context()
-        if scene['map'] is not None:
-            try:
-                from rclpy.time import Time
+    def _pose(self):
+        try:
+            from rclpy.time import Time
 
-                transform = self._buffer.lookup_transform('map', self.robot_frame, Time())
-                stamp = transform.header.stamp.sec + transform.header.stamp.nanosec / 1e9
-                age = self.node.get_clock().now().nanoseconds / 1e9 - stamp
-                p, q = transform.transform.translation, transform.transform.rotation
-                yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
-                if 0 <= age <= MAX_FRAME_AGE_S and all(math.isfinite(v) for v in (p.x, p.y, yaw)):
-                    scene['pose'] = {'frame_id': 'map', 'x': p.x, 'y': p.y,
-                                     'yaw_deg': math.degrees(yaw), 'age_s': round(age, 3)}
-            except Exception:
-                pass  # Unknown TF is not a fabricated (0, 0) position.
+            transform = self._buffer.lookup_transform('map', self.robot_frame, Time())
+            stamp = transform.header.stamp.sec + transform.header.stamp.nanosec / 1e9
+            age = self.node.get_clock().now().nanoseconds / 1e9 - stamp
+            p, q = transform.transform.translation, transform.transform.rotation
+            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
+            if 0 <= age <= MAX_FRAME_AGE_S and all(math.isfinite(v) for v in (p.x, p.y, yaw)):
+                return {'frame_id': 'map', 'x': p.x, 'y': p.y,
+                        'yaw_deg': math.degrees(yaw), 'age_s': round(age, 3)}
+        except Exception:
+            pass  # Unknown TF is not a fabricated (0, 0) position.
+        return None
+
+    @contextmanager
+    def _sensor_window(self):
+        """Receive fresh inputs only while the dialogue worker prepares a turn."""
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from sensor_msgs.msg import Image
+
+        image_subscription = None
+        self._images.clear_frame()
+        self._frame_received.clear()
+        # A robot without an active camera must keep text-only dialogue fast.
+        want_image = (self._images.permitted() and not self._closed.is_set()
+                      and self.node.count_publishers(self._rgb_topic) > 0)
+        try:
+            with self._lock:
+                self._sampling_images = want_image
+            if want_image:
+                image_subscription = self.node.create_subscription(
+                    Image, self._rgb_topic, self._image,
+                    QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+            deadline = time.monotonic() + SCENE_INPUT_TIMEOUT_S
+            while not self._closed.is_set() and time.monotonic() < deadline:
+                image_ready = (not want_image or self._frame_received.is_set()
+                               or not self._images.permitted())
+                if image_ready:
+                    break
+                self._closed.wait(.02)
+            yield
+        finally:
+            # A callback already dispatched by the executor cannot retain raw
+            # pixels after this turn, even while its subscription is destroyed.
+            with self._lock:
+                self._sampling_images = False
+                self._images.clear_frame()
+            if image_subscription is not None:
+                self.node.destroy_subscription(image_subscription)
+
+    def snapshot(self):
+        """Bound sensor startup to one second off the ROS thread, then unsubscribe."""
+        scene = {'image': {'available': False, 'reason': 'camera_or_consent_unavailable'},
+                 'map': None, 'pose': None, 'missions': None}
+        attachment = None
+        with self._sample_lock:
+            if not self._closed.is_set():
+                if self.missions is not None:
+                    scene['map'] = self.missions.map_context()
+                with self._sensor_window():
+                    scene['image'], attachment = self._images.capture(self._encode)
+                    if scene['map'] is not None:
+                        scene['pose'] = self._pose()
         with self._lock:
             # Manager publishes transitions, not heartbeats. Keep its latched
             # observation with age, and never present it as proof of liveness.
@@ -197,6 +260,12 @@ class RosSpeechScene:
         return scene, attachment
 
     def close(self):
-        """Release TF subscriptions before their existing owning node is destroyed."""
+        """Interrupt a pending sample and release inputs before node destruction."""
+        self._closed.set()
         self._images.enabled = False
-        self._listener.unregister()
+        with self._sample_lock:
+            self._images.clear_frame()
+            if self._listener is not None:
+                self._listener.unregister()
+                self._listener = None
+            self._buffer.clear()
