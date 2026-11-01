@@ -73,8 +73,14 @@ def test_each_image_uses_its_own_depth_then_pixels_are_released(
     try:
         for index, (metadata, image) in enumerate(captures):
             stream = io.BytesIO()
-            np.save(stream, np.full((400, 640), [.5, 2., 1., float('nan')][index % 4], np.float32),
-                    allow_pickle=False)
+            distance = [.5, 2., 1., float('nan')][index % 4]
+            measured = np.full((400, 640), distance, np.float32)
+            if kind == 'person':
+                # A body has foreground support within its box. A full-frame
+                # flat wall must never serve as a person's measured surface.
+                measured[:] = 4.
+                measured[145:255, 235:405] = distance
+            np.save(stream, measured, allow_pickle=False)
             depth = stream.getvalue()
             metadata.update(version=2, media_storage='volatile_v1', media_expires_at=10**12,
                             capture_rooms=['거실'])

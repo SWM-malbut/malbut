@@ -228,7 +228,7 @@ def _planar_support(roi, valid, x0, y0, spatial):
 
 def _support_clear(points, regions, margin):
     """Check the measured footprint itself, including holes, instead of its enclosing disc."""
-    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    points = np.ascontiguousarray(points, dtype=np.float32).reshape(-1, 2)
     hull = cv2.convexHull(points).reshape(-1, 2)
     for region in regions:
         for polygon in region['polygons']:
@@ -284,6 +284,109 @@ def _connected_group(links):
         reached.update(others)
 
 
+class _DepthSurfaces:
+    """Measured depth components; no interpolation, RGB masks or stored pixel data."""
+
+    def __init__(self, depth, spatial, bbox, floor, *, background_check=True):
+        height, width = depth.shape
+        yy, xx = np.indices(depth.shape)
+        valid = np.isfinite(depth) & (depth >= .15) & (depth <= 10)
+        y, x = np.nonzero(valid)
+        z = depth[y, x]
+        rays = _rays(np.column_stack((x, y)), spatial)
+        world = _map_points(np.column_stack((rays*z[:, None], z)), spatial)
+        self.points = np.full((*depth.shape, 3), np.nan, dtype=np.float32)
+        self.points[y, x] = world
+        valid &= self.points[:, :, 2] > floor
+        left, top, right, bottom = np.asarray(bbox)/1000*[width, height, width, height]
+        self.inside = (xx > left) & (xx < right) & (yy > top) & (yy < bottom)
+        self.mask = np.ones((height+2, width+2), dtype=np.uint8)
+        self.mask[1:-1, 1:-1] = ~valid
+        self.labels = self.mask[1:-1, 1:-1]
+        # log(Z+2.5) gives the same relative local jump bound at every range:
+        # delta Z <= .025 + .01*min(Za, Zb). Flood fill uses measured neighbours.
+        self.image = np.log(np.where(valid, depth, 0)+2.5).astype(np.float32)
+        self.next_label = 2
+        self.background_check = background_check
+        self.background = set()
+        self.component_points = {}
+        self.background_planes = []
+
+    def component(self, pixel):
+        x, y = pixel
+        label = int(self.labels[y, x])
+        if label:
+            return label
+        # Bound work in noisy/fragmented sensor images. Exhaustion is uncertainty.
+        if self.next_label >= 66:
+            return None
+        label = self.next_label
+        self.next_label += 1
+        cv2.floodFill(self.image, self.mask, (int(x), int(y)), 0,
+                      math.log(1.01), math.log(1.01),
+                      4 | cv2.FLOODFILL_MASK_ONLY | (label << 8))
+        component = self.labels == label
+        # A continuous surface mostly outside the person's box is background,
+        # not an unseen limb. This also catches anchors accidentally placed on a wall.
+        points = self.points[component]
+        points = points[::max(1, math.ceil(len(points)/512))]
+        self.component_points[label] = points
+        if (self.background_check
+                and np.count_nonzero(component & self.inside) < .75*np.count_nonzero(component)):
+            self.background.add(label)
+            # A wall seen between the legs can be disconnected by occlusion.
+            # Identify it only when its measured points fit an observed background
+            # plane; never fill the occluded strip or infer a missing body surface.
+            # A depth component can turn a room corner. Fit separate observed
+            # image tiles rather than pretending the entire wall is one plane.
+            height, width = component.shape
+            for y0, y1 in zip(np.linspace(0, height, 4, dtype=int)[:-1],
+                              np.linspace(0, height, 4, dtype=int)[1:]):
+                for x0, x1 in zip(np.linspace(0, width, 4, dtype=int)[:-1],
+                                  np.linspace(0, width, 4, dtype=int)[1:]):
+                    outside = (component & ~self.inside)[y0:y1, x0:x1]
+                    patch = self.points[y0:y1, x0:x1][outside]
+                    if len(patch) < 16:
+                        continue
+                    patch = patch[::max(1, math.ceil(len(patch)/256))]
+                    center = np.mean(patch, axis=0)
+                    _, singular, axes = np.linalg.svd(patch-center, full_matrices=False)
+                    normal = axes[-1]
+                    if (singular[1] > .1
+                            and np.quantile(np.abs((patch-center) @ normal), .95) < .025):
+                        self.background_planes.append((center, normal))
+        for identity, points in self.component_points.items():
+            if any(np.quantile(np.abs((points-center) @ normal), .95) < .025
+                   for center, normal in self.background_planes):
+                self.background.add(identity)
+        return label
+
+    def footprint(self, pixels, *, person, center):
+        selected = {self.component(p) for p in pixels}
+        if None in selected or 1 in selected:
+            return None
+        if person:
+            if selected & self.background:
+                return None
+            # Disconnected limbs can still cross a boundary. Inspect them too,
+            # but exclude components extending into the surrounding background.
+            nearby = (self.inside & (self.labels != 1)
+                      & (np.linalg.norm(self.points[:, :, :2]-center[:2], axis=2) <= 1.2))
+            while True:
+                candidates = np.flatnonzero(nearby & (self.labels == 0))
+                if not len(candidates):
+                    break
+                y, x = np.unravel_index(candidates[0], self.labels.shape)
+                if self.component((x, y)) is None:
+                    return None
+            if selected & self.background:
+                return None
+            support = nearby & ~np.isin(self.labels, list(self.background))
+        else:
+            support = self.inside & np.isin(self.labels, list(selected))
+        return self.points[support]
+
+
 def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
     """Require independent visible surface patches, never bounding-box background."""
     prefix = 'person' if person else 'object'
@@ -329,6 +432,26 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
         return dict(unknown, reason=prefix+'_depth_insufficient')
     points = np.asarray([s[0] for s in samples])
     distances = np.linalg.norm(points[:, None, :2]-points[None, :, :2], axis=2)
+    surfaces = None
+    if person:
+        surfaces = _DepthSurfaces(
+            depth, spatial, item['image_bbox'], min(.05, float(np.min(points[:, 2]))-.05))
+        # Never establish a person's position from a broad background component.
+        labels = [surfaces.component(p) for p in pixels]
+        if any(label is None for label in labels):
+            return dict(unknown, reason='person_surface_fragmented')
+        if any(label in surfaces.background for label in labels):
+            keep = [i for i, label in enumerate(labels) if label not in surfaces.background]
+            if len(keep) < 2:
+                return dict(unknown, reason='person_background_anchors')
+            # A nearer unexplained patch remains an occlusion, even outside the box.
+            if any(samples[i][1] <= max(samples[j][1] for j in keep)+.15
+                   for i in range(len(samples)) if i not in keep):
+                return dict(unknown, reason='person_depth_disagreement')
+            samples = [samples[i] for i in keep]
+            pixels = [pixels[i] for i in keep]
+            points = points[keep]
+            distances = np.linalg.norm(points[:, None, :2]-points[None, :, :2], axis=2)
     connected = np.ones(distances.shape, dtype=bool)
     if not person:
         for a, b in combinations(range(len(samples)), 2):
@@ -360,8 +483,18 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
     if (region_at(world[:2], regions, margin)[0] != region
             or not _support_clear(points[:, :2], regions, margin)):
         return dict(unknown, reason='region_boundary')
-    if person and _person_crosses_region(item, spatial, depth, regions, region, world):
-        return dict(unknown, reason='visible_body_crosses_region')
+    if surfaces is None:
+        surfaces = _DepthSurfaces(
+            depth, spatial, item['image_bbox'], min(.05, float(np.min(points[:, 2]))-.05),
+            background_check=False)
+    support = surfaces.footprint([pixels[i] for i in selected], person=person, center=world)
+    if support is None or not len(support):
+        return dict(unknown, reason=prefix+'_surface_fragmented')
+    if (any(region_at(p, regions, margin)[0] != region
+            for p in cv2.convexHull(np.ascontiguousarray(support[:, :2])).reshape(-1, 2))
+            or not _support_clear(support[:, :2], regions, margin)):
+        return dict(unknown, reason=('visible_body_crosses_region' if person
+                                    else 'surface_crosses_regions'))
     return {'status': 'located', 'region': region,
             'map_position': dict(zip(('x', 'y', 'z'), np.round(world, 3).tolist())),
             'method': 'registered_rgbd', 'reason': None,
@@ -369,33 +502,6 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
             'boundary_margin_m': round(margin, 3),
             'depth_support': 'visible_body_patches' if person else 'visible_surface_patches',
             'anchor_count': len(samples)}
-
-
-def _person_crosses_region(item, spatial, depth, regions, region, center):
-    """Veto a room claim when another visible nearby body surface crosses its boundary."""
-    height, width = depth.shape
-    left, top, right, bottom = (np.asarray(item['image_bbox']) / 1000
-                                * [width, height, width, height])
-    yy, xx = np.nonzero(np.isfinite(depth) & (depth >= .15) & (depth <= 10))
-    inside = (xx > left) & (xx < right) & (yy > top) & (yy < bottom)
-    xx, yy = xx[inside], yy[inside]
-    if not len(xx):
-        return False
-    z = depth[yy, xx]
-    rays = _rays(np.column_stack((xx, yy)), spatial)
-    points = _map_points(np.column_stack((rays*z[:, None], z)), spatial)
-    # Background and floor are not evidence of a person's extent. Nearby uncertain
-    # foreground may veto an assignment but can never establish a different room.
-    nearby = ((np.linalg.norm(points[:, :2]-center[:2], axis=1) <= 1.2)
-              & (points[:, 2] > .05))
-    if not np.any(nearby):
-        return False
-    # Keep every valid foreground pixel when building the footprint: sparse
-    # sampling could miss a thin limb in the adjacent region.
-    hull = cv2.convexHull(points[nearby, :2].astype(np.float32)).reshape(-1, 2)
-    margin = .12 + .02*float(np.max(z[nearby]))
-    return (any(region_at(p, regions, margin)[0] != region for p in hull)
-            or not _support_clear(hull, regions, margin))
 
 
 def _object_position(item, metadata, regions, depth):
