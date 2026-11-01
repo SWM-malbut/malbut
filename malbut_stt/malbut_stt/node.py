@@ -205,9 +205,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
         from dataclasses import asdict
         from malbut_stt.incident import from_environment
+        from malbut_stt.session_privacy import diagnostic_environment
 
         diagnostics = from_environment(
-            os.environ,
+            diagnostic_environment(os.environ),
             metadata=dict(backend=backend, stt_model_path=str(stt_path),
                           wake_model_path=str(wake_path), device_index=device_index,
                           vad_backend='silero', input_has_aec=input_has_aec,

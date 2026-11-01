@@ -134,7 +134,10 @@ STT 입력 대기 종료는 Agent가 저장하는 대화 문맥을 지우지 않
 
 ### 문제 문구 감지 시 직전 과정 자동 저장
 
-`stt`를 실행하면 별도 명령이나 환경변수 없이 실행 기록 수집이 시작됩니다.
+일반 `stt` 실행에서는 진단 기록 수집이 기본 OFF입니다. 일상 대화의 원문을
+남기지 않도록 하며, 아래 환경변수나 `stt_incident` 명령으로 명시적으로 켤 수 있습니다.
+진단을 켠 경우에는 로그 전용 모드도 원문을 남기므로 선발화 일상 대화의 입력을
+거절합니다. 일반 호출어 대화와 낙상 확인의 기존 처리에는 영향을 주지 않습니다.
 최종 STT 발행 또는 짧은 음성 품질 검사 거절 시 조사 대상 문구가 일치하면
 **직전 30초와 이후 15초**의 관측 기록을 자원 로그 폴더 아래
 `~/.ros/malbut/resource_logs/stt_incidents`에 저장합니다. 기본값은 음성 파일을 저장하지
@@ -179,8 +182,8 @@ ros2 run malbut_stt stt_incident \
   -p stt_library_path:="$HOME/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so"
 ```
 
-일반 Bringup 실행에는 추가 설정이 필요 없습니다. 저장 위치나 관측 시간을 바꿀 때만
-시작 전에 아래 환경변수를 지정합니다. 현재 실행 중인 노드에는 적용되지 않습니다.
+일반 Bringup에서 진단을 켜려면 시작 전에 아래 환경변수를 지정합니다.
+현재 실행 중인 노드에는 적용되지 않습니다.
 연속 저장 모드인 `MALBUT_STT_DIAGNOSTIC_DIR`를 지정하면 자동 사건 수집을 대신합니다.
 사건 설정과 연속 저장을 둘 다 명시적으로 켜면 시작을 거부합니다.
 
@@ -191,7 +194,8 @@ export MALBUT_STT_INCIDENT_CONFIG='{"directory":"/tmp/malbut-stt-incidents","pre
 
 다음 실행에서 수집을 끄려면
 `export MALBUT_STT_INCIDENT_CONFIG='{"enabled":false}'`를 사용합니다.
-`unset MALBUT_STT_INCIDENT_CONFIG`는 기본 자동 수집으로 되돌립니다.
+`unset MALBUT_STT_INCIDENT_CONFIG`도 기본 수집 OFF로 되돌립니다.
+연속 진단을 사용했다면 `MALBUT_STT_DIAGNOSTIC_DIR`도 해제해야 합니다.
 CLI의 `--contains`, `--exact`는 해당 기본 목록을 대체하고 여러 번 지정할 수 있습니다.
 모든 기본 목록을 끄려면 `--no-default-triggers --exact '조사할 문장'`을 사용합니다.
 원음도 비교하려면 `--no-audio`를 생략하거나 환경변수 JSON에 `"save_audio":true`를 지정합니다.
@@ -264,7 +268,7 @@ CLI에서 `--buffer-mib`, `--disk-mib`로 조절할 수 있습니다.
 강제 종료 시 아직 RAM에만 있던 기록은 남지 않을 수 있습니다. 완료된 폴더만 `incident-*`로
 보이며, 쓰기 실패 중 남은 `.partial-*`는 미완성 증거입니다. 저장 실패는 원래 인식 결과와
 ROS 발행을 유지하고 `stt_incident_stopped:<원인>`으로 알립니다. 저장 성공 시 `stt_incident_saved:<경로>`를
-출력합니다. 기본 자동 수집에는 대화 원문과 처리 로그가 포함되며, 음성은
+출력합니다. 명시적으로 켠 사건 수집에는 대화 원문과 처리 로그가 포함되며, 음성은
 `save_audio=true`를 명시한 경우에만 추가 저장합니다.
 
 일반 요청의 답변 대기 중에는 끼어들기를 받지 않습니다. 요청 전달 전에 다른
@@ -291,11 +295,7 @@ ROS 노드는 호출 성공음과 발화 종료 수신음을 같은 로컬 출�
 재생·일시정지 상태이면 수신음을 생략하고, 수신음 출력 실패도 전사 전달을 막지 않습니다.
 수신음 재생은 동기식이므로 최종 전사 전달에는 PCM 재생 150ms와 장치 처리 시간이 추가됩니다.
 TTS 재생·중단·재개는 Manager가 중계합니다. 위 공개 Topic·Service는 Manager가 제공합니다.
-이 `malbut_test` 배포본의 ROS STT 노드는 끼어들기를 임시로 꺼 둡니다.
-`input_has_aec=true`로 실행해도 파이프라인에는 `false`를 적용합니다.
-재생 종료 뒤 0.3초 동안 잔여 입력을 비운 후 다음 발화를 듣습니다.
-
-일반 구현은 `input_has_aec=false`가 기본이며, 이때는 TTS 재생 중 마이크 입력을 버리고
+`input_has_aec=false`가 기본이며, 이때는 TTS 재생 중 마이크 입력을 버리고
 `barge_in_requires_aec`를 기록하므로 끼어들기가 비활성입니다. `true`는 선택한
 마이크가 이미 에코 제거된 입력을 제공한다는 설정이며, AEC를 구현하거나 켜는
 옵션이 아닙니다. 최종 전사·대상 판정 처리 중 추가 발화는 종료 무음까지 버립니다.

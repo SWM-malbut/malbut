@@ -403,6 +403,7 @@ def test_shadow_model_failure_keeps_stt_publication_and_cleanup(runtime, monkeyp
     from malbut_stt.shadow_vad import ShadowDiagnostics
 
     monkeypatch.setenv('MALBUT_STT_SHADOW_VAD_MODEL', str(tmp_path / 'missing.onnx'))
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{}')
 
     def spin():
         shadow = runtime.pipeline_args['diagnostics']
@@ -434,6 +435,7 @@ def test_silero_gate_wraps_only_command_outside_diagnostics(
         runtime, monkeypatch, tmp_path, shared, activation):
     from malbut_stt.silero_gate import SileroGate, _GatedModel
 
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{}')
     admissions = []
     monkeypatch.setattr(SileroGate, 'require_speech',
                         lambda self, pcm, diagnostics: admissions.append((pcm, diagnostics)))
@@ -519,9 +521,8 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert runtime.calls['ros_args'] == ['--ros-args']
     assert runtime.calls['node_name'] == 'malbut_stt'
     recorder = runtime.pipeline_args['diagnostics']
-    assert recorder.directory == tmp_path / 'resource_logs' / 'stt_incidents'
-    assert recorder.save_audio is False
-    assert not recorder._worker.is_alive()
+    assert recorder is None
+    assert '/rosout' not in runtime.callbacks
     defaults = runtime.calls['defaults']
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
@@ -572,7 +573,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
         {'utterance_id': 'u1', 'text': '원문 그대로', 'session_id': ''},
     ]
     assert set(runtime.calls['subscriptions']) == {
-        '/malbut/speech/playback_status', '/malbut/speech/response', '/rosout',
+        '/malbut/speech/playback_status', '/malbut/speech/response',
         '/malbut/falls/check/status',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
@@ -596,7 +597,8 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
         }
 
 
-def test_default_capture_saves_final_phrase_without_extra_launch_or_environment(runtime):
+def test_explicit_capture_saves_final_phrase(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{}')
     def spin():
         runtime.pipeline_args['publish_transcript']('automatic', '구독과 좋아요 부탁드려요!')
         raise KeyboardInterrupt
@@ -618,6 +620,38 @@ def test_automatic_capture_can_be_disabled(runtime, monkeypatch):
     assert main([]) == 0
     assert runtime.pipeline_args['diagnostics'] is None
     assert '/rosout' not in runtime.callbacks
+
+
+def test_default_companion_listening_is_accepted_without_recording_source(runtime, tmp_path):
+    def on_spin():
+        assert runtime.pipeline_args['diagnostics'] is None
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        response = callback(SimpleNamespace(session_id='patrol-chat-private', active=True),
+                            SimpleNamespace())
+        assert response.accepted
+        runtime.pipeline_args['publish_transcript']('private', '구독과 좋아요 부탁드려요!')
+        assert callback(SimpleNamespace(session_id='patrol-chat-private', active=False),
+                        SimpleNamespace()).accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+    assert '/rosout' not in runtime.callbacks
+    assert not (tmp_path / 'resource_logs' / 'stt_incidents').exists()
+
+
+def test_explicit_logs_only_diagnostics_still_refuse_companion(runtime, monkeypatch):
+    monkeypatch.setenv('MALBUT_STT_INCIDENT_CONFIG', '{"save_audio":false}')
+
+    def on_spin():
+        assert runtime.pipeline_args['diagnostics'].save_audio is False
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        assert not callback(SimpleNamespace(session_id='patrol-chat-private', active=True),
+                            SimpleNamespace()).accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
 
 
 @pytest.mark.parametrize('accepted', [True, False])
