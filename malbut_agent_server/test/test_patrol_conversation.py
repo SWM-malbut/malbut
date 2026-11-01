@@ -8,7 +8,7 @@ import pytest
 
 from malbut_agent_server.patrol_conversation import (
     CHAT_COOLDOWN_S, TOPIC_REPEAT_S, EncounterGate, PatrolConversationTopics,
-    conversation_preference, ends_conversation,
+    conversation_preference, ends_conversation, homecam_person_count,
 )
 from malbut_agent_server.patrol_memory import PatrolMemoryStore
 from malbut_agent_server.speech_dialogue import DialogueWorker
@@ -37,7 +37,6 @@ def remember(store, name='화분', *, at=NOW - 60, confidence='high', kind='obje
 @pytest.fixture
 def memory(tmp_path):
     store = PatrolMemoryStore(tmp_path, 'owner')
-    PatrolConversationTopics(store).set_enabled(True)
     return store
 
 
@@ -60,7 +59,7 @@ def test_unknown_region_can_start_smalltalk_without_photos_or_inferred_ownership
 def test_private_uncertain_and_unrelated_objects_do_not_become_topics(
         memory, name, kind, confidence):
     remember(memory, name, kind=kind, confidence=confidence)
-    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve() is None
+    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve().topic == 'daily_checkin'
 
 
 @pytest.mark.parametrize('name,topic', [('펼쳐진 책', 'books'), ('기타', 'music'),
@@ -73,7 +72,7 @@ def test_supported_everyday_topics(memory, name, topic):
 @pytest.mark.parametrize('at', [NOW - 86401, NOW + 1])
 def test_old_and_future_observations_do_not_sound_recent(memory, at):
     remember(memory, at=at)
-    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve() is None
+    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve().topic == 'daily_checkin'
 
 
 @pytest.mark.parametrize('fault', ['analysis', 'metadata', 'receipt', 'status'])
@@ -86,7 +85,7 @@ def test_unverified_records_are_never_topics(memory, fault):
             connection.execute('DELETE FROM patrol_observation_evidence')
         else:
             connection.execute("UPDATE observations SET status='failed' WHERE id=?", (identity,))
-    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve() is None
+    assert PatrolConversationTopics(memory, clock=lambda: NOW).reserve().topic == 'daily_checkin'
 
 
 def test_cooldown_and_topic_history_survive_reopen_and_clock_rollback(memory):
@@ -103,7 +102,7 @@ def test_cooldown_and_topic_history_survive_reopen_and_clock_rollback(memory):
     now[0] = NOW + CHAT_COOLDOWN_S + 1
     assert topics.reserve().topic == 'books'
     now[0] += CHAT_COOLDOWN_S + 1
-    assert topics.reserve() is None  # Different photo, same topic is still suppressed.
+    assert topics.reserve().topic == 'daily_checkin'  # Same observed topic remains suppressed.
     now[0] = NOW + TOPIC_REPEAT_S + 1
     remember(memory, at=now[0] - 60)
     assert topics.reserve().topic == 'plants'
@@ -160,13 +159,15 @@ def test_gate_requires_stability_idle_time_and_explicit_departure():
     assert not gate.ready()  # Last detection has expired.
 
 
-def test_spontaneous_topics_require_explicit_opt_in(tmp_path):
+def test_spontaneous_topics_default_on_without_overriding_explicit_opt_out(tmp_path):
     store = PatrolMemoryStore(tmp_path, 'owner')
     remember(store)
     topics = PatrolConversationTopics(store, clock=lambda: NOW)
-    assert topics.reserve() is None
-    topics.set_enabled(True)
     assert topics.reserve().topic == 'plants'
+    topics.set_enabled(False)
+    reopened = PatrolConversationTopics(PatrolMemoryStore(tmp_path, 'owner'),
+                                       clock=lambda: NOW + CHAT_COOLDOWN_S + 1)
+    assert reopened.reserve() is None
 
 
 @pytest.mark.parametrize('text,ended', [('나중에', True), ('아니요.', False), ('괜찮아요', False), ('아니', False),
@@ -287,3 +288,55 @@ def test_explicit_new_conversation_drops_old_opener_context():
         assert factory.provider.calls[0][0].scene_context is None
     finally:
         worker.close()
+
+
+def test_empty_patrol_has_neutral_opener_without_claiming_observation(tmp_path):
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    now = [NOW]
+    topics = PatrolConversationTopics(store, clock=lambda: now[0])
+    opener = topics.reserve()
+    assert opener.text == '오늘 하루는 어떠셨어요?'
+    assert opener.context() == {
+        'topic': 'daily_checkin', 'assistant_utterance': opener.text,
+        'source': 'current_encounter', 'person_identity': 'unknown'}
+    assert topics.reserve() is None
+    now[0] += CHAT_COOLDOWN_S
+    assert topics.reserve().topic == 'daily_checkin'
+    topics.set_enabled(False)
+    now[0] += CHAT_COOLDOWN_S
+    assert topics.reserve() is None
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('먼저 말을 걸어도 돼', True), ('아니, 먼저 말 걸어도 괜찮아.', True),
+    ('앞으로 먼저 말을 걸어주세요', True), ('먼저 대화를 시작해도 좋아요', True),
+    ('아니 먼저 나한테 말이 걸어도 된다고', True), ('먼저 말 걸고 올게요.', None),
+    ('먼저 말을 걸지 말아주세요', False), ('먼저 대화를 시작하지 마세요', False),
+    ('친구가 먼저 말을 걸어도 된대', None), ('먼저 말을 걸어도 돼?', True),
+    ('먼저 말을 걸지 않아도 돼', None), ('먼저 말을 걸어도 된다는 뜻은 아니야', None),
+])
+def test_natural_direct_preferences_do_not_fall_through_to_llm(text, expected):
+    assert conversation_preference(text) is expected
+
+
+@pytest.mark.parametrize('payload,expected', [
+    ({'schemaVersion': 1, 'status': 'ok', 'persons': [], 'unassigned': []}, 0),
+    ({'schemaVersion': 1, 'status': 'disabled', 'persons': [], 'unassigned': []}, None),
+    ({'schemaVersion': 1, 'status': 'ok', 'persons': [], 'unassigned': [{}]}, None),
+    ([], None),
+])
+def test_pose_absence_requires_valid_empty_frame(payload, expected):
+    assert homecam_person_count(payload) == expected
+
+
+@pytest.mark.parametrize('score,observed,expected', [
+    (.9, True, 1), (.65, True, 1), (.1, True, None), (float('nan'), True, None),
+    (True, True, None), (.9, False, None),
+])
+def test_pose_candidates_do_not_establish_person_or_false_empty_frame(score, observed, expected):
+    person = {'observed': observed, 'pose': {'present': True, 'boxConfidence': score}}
+    payload = {'schemaVersion': 1, 'status': 'ok', 'persons': [person], 'unassigned': []}
+    assert homecam_person_count(payload) == expected
+    if expected == 1:
+        payload['persons'].append(person)
+        assert homecam_person_count(payload) == 2

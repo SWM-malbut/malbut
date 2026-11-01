@@ -28,18 +28,22 @@ CHAT_COOLDOWN_S = 30 * 60
 
 @dataclass(frozen=True)
 class Opener:
-    """A fixed utterance bound to one verified historical observation."""
+    """A fixed greeting, optionally grounded in a verified patrol observation."""
 
     topic: str
     text: str
-    observation_id: str
-    captured_at: str
+    observation_id: str = ''
+    captured_at: str = ''
 
     def context(self):
         """No pixels, person IDs, room names, or raw model-generated prose."""
-        return {'topic': self.topic, 'assistant_utterance': self.text,
+        context = {'topic': self.topic, 'assistant_utterance': self.text,
+                   'source': 'current_encounter', 'person_identity': 'unknown'}
+        if not self.observation_id:
+            return context
+        return {**context,
                 'observation_id': self.observation_id, 'captured_at': self.captured_at,
-                'source': 'past_patrol_observation', 'person_identity': 'unknown'}
+                'source': 'past_patrol_observation'}
 
 
 class PatrolConversationTopics:
@@ -62,10 +66,11 @@ class PatrolConversationTopics:
         table = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                                    "AND name='patrol_conversation_preferences'").fetchone()
         if not table:
-            return False
+            return True
         row = connection.execute('SELECT enabled FROM patrol_conversation_preferences WHERE user_id=?',
                                  (self.store.owner_id,)).fetchone()
-        return row is not None and bool(row['enabled'])
+        # An explicit opt-out always wins, including after an upgrade/restart.
+        return row is None or bool(row['enabled'])
 
     def reserve(self):
         """Off-thread selection; atomically suppress repeated attempts across restarts."""
@@ -102,8 +107,9 @@ class PatrolConversationTopics:
                             candidates.append(Opener(topic, text, row['id'], metadata['captured_at']))
             except (ValueError, OSError, TypeError, KeyError):
                 continue
-        if not candidates:
-            return None
+        # Meeting a person does not require previous patrols or a specific object.
+        # This neutral question contains no personal memory or inferred identity.
+        candidates.append(Opener('daily_checkin', '오늘 하루는 어떠셨어요?'))
         with self.store.connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
             if not self._enabled(connection):
@@ -118,7 +124,8 @@ class PatrolConversationTopics:
             if history and now - max(history.values()) < CHAT_COOLDOWN_S:
                 return None
             for opener in candidates:
-                if opener.topic in history and now - history[opener.topic] < TOPIC_REPEAT_S:
+                repeat_s = CHAT_COOLDOWN_S if opener.topic == 'daily_checkin' else TOPIC_REPEAT_S
+                if opener.topic in history and now - history[opener.topic] < repeat_s:
                     continue
                 connection.execute('INSERT OR REPLACE INTO patrol_conversation_topics '
                                    'VALUES (?,?,?,?)', (self.store.owner_id, opener.topic,
@@ -176,10 +183,42 @@ def ends_conversation(text):
 
 def conversation_preference(text):
     """Only direct explicit requests change the durable spontaneous-speech switch."""
-    text = re.sub(r'[\s.!?~。！？]', '', text)
+    text = re.sub(r'[\s,.!?~。！？]', '', text)
+    text = re.sub(r'^(?:아니|응|그래|아)?(?:앞으로|이제부터|이제|그냥)?', '', text)
     if text in {'말걸지마', '말걸지마세요', '먼저말걸지마', '먼저말걸지마세요',
                 '먼저말걸지말아줘', '먼저말걸지말아주세요'}:
         return False
     if text in {'먼저말걸어도돼', '먼저말걸어도돼요', '먼저말걸어줘', '먼저말걸어주세요'}:
         return True
+    target = r'먼저(?:나한테|저한테|나에게|저에게)?(?:말[을이]?|대화를?)'
+    if re.fullmatch(target + r'(?:걸어|시작해)(?:도(?:돼요?|괜찮아(?:요)?|좋아(?:요)?|된다고요?)|줘|주세요)', text):
+        return True
+    if re.fullmatch(target + r'(?:걸지|시작하지)(?:마(?:세요)?|말아줘|말아주세요)', text):
+        return False
     return None
+
+
+def homecam_person_count(payload):
+    """Read current multi-person pose evidence, never a tracked/remembered identity.
+
+    Weak, missing or unassigned tracks are uncertainty, not an empty room.
+    No image, keypoints, box coordinates or track IDs leave this function.
+    """
+    if not isinstance(payload, dict) or payload.get('schemaVersion') != 1:
+        return None
+    if payload.get('status') != 'ok' or payload.get('unassigned') != []:
+        return None
+    persons = payload.get('persons')
+    if not isinstance(persons, list) or len(persons) > 100:
+        return None
+    for person in persons:
+        if not isinstance(person, dict) or person.get('observed') is not True:
+            return None
+        pose = person.get('pose')
+        if not isinstance(pose, dict) or pose.get('present') is not True:
+            return None
+        confidence = pose.get('boxConfidence')
+        if (type(confidence) not in (int, float) or not math.isfinite(confidence)
+                or not .65 <= confidence <= 1):
+            return None
+    return len(persons)

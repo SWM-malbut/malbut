@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 from datetime import datetime
+import json
 import time
 from threading import Event
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from malbut_interfaces.msg import (  # noqa: E402
 )
 from malbut_interfaces.srv import ControlSpeechPlayback, ControlSpeechSession  # noqa: E402
 from nav_msgs.msg import Odometry  # noqa: E402
+from std_msgs.msg import String  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
@@ -46,7 +48,6 @@ def robot(tmp_path, monkeypatch):
     memory_path.mkdir()
     store = PatrolMemoryStore(memory_path, 'owner')
     remember(store, at=time.time() - 60)
-    PatrolConversationTopics(store).set_enabled(True)
     runtime = RuntimeFactory()
 
     def factory():
@@ -79,6 +80,7 @@ def robot(tmp_path, monkeypatch):
     io.create_service(ControlSpeechPlayback, '/malbut/speech/playback_control', stop)
     io.create_subscription(SpeechRequest, '/malbut/speech/response', speech.append, 10)
     detections = io.create_publisher(DetectionArray, '/yolo/detections', qos_profile_sensor_data)
+    poses = io.create_publisher(String, '/homecam/person_poses', qos_profile_sensor_data)
     odom = io.create_publisher(Odometry, '/odom', qos_profile_sensor_data)
     states = io.create_publisher(SystemState, '/malbut/state', QoSProfile(
         depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
@@ -96,16 +98,24 @@ def robot(tmp_path, monkeypatch):
     pump(lambda: agent._speech_ready and detections.get_subscription_count() > 0
          and chat._input.service_is_ready())
 
-    def pulse(now, *, count=1, moving=False, idle=True, stale=False):
+    def pulse(now, *, count=1, moving=False, idle=True, stale=False, source='yolo', score=.9):
         clock[0] = now
         stamp = io.get_clock().now().to_msg()
         if stale:
             stamp.sec -= 10
         message = DetectionArray()
         message.header.stamp = stamp
-        message.detections = [Detection(class_name='person', score=.9) for _ in range(count)]
-        previous = chat._last_detection_stamp
-        detections.publish(message)
+        message.detections = [Detection(class_name='person', score=score) for _ in range(count)]
+        key = 'yolo' if source == 'yolo' else 'homecam_pose'
+        previous = chat._presence_stamps.get(key)
+        if source == 'yolo':
+            detections.publish(message)
+        else:
+            poses.publish(String(data=json.dumps({
+                'schemaVersion': 1, 'status': 'ok',
+                'captureStamp': {'sec': stamp.sec, 'nanosec': stamp.nanosec},
+                'persons': [{'observed': True, 'pose': {'present': True, 'boxConfidence': score}}
+                            for _ in range(count)], 'unassigned': []})))
         motion = Odometry()
         motion.header.stamp = io.get_clock().now().to_msg()
         motion.twist.twist.linear.y = .2 if moving else 0.
@@ -113,7 +123,7 @@ def robot(tmp_path, monkeypatch):
         states.publish(SystemState(system_state=SystemState.IDLE if idle else SystemState.EMERGENCY,
                                    control_mode=SystemState.AUTONOMOUS))
         pump(lambda: chat._odom_at == now and chat._system_idle == idle
-             and (stale or chat._last_detection_stamp != previous))
+             and (stale or chat._presence_stamps.get(key) != previous))
         chat.tick()
 
     def approach():
@@ -321,7 +331,7 @@ def test_spoken_opt_out_persists_and_can_be_reenabled_without_llm(robot):
         assert connection.execute('SELECT enabled FROM patrol_conversation_preferences').fetchone()[0] == 0
     r.inputs.publish(SpeechInputStatus(utterance_id='unmute', state='started'))
     r.pump(lambda: r.agent._input_utterance_id == 'unmute')
-    r.transcripts.publish(SpeechTranscript(utterance_id='unmute', text='먼저 말 걸어도 돼'))
+    r.transcripts.publish(SpeechTranscript(utterance_id='unmute', text='아니, 먼저 말을 걸어도 괜찮아'))
     r.pump(lambda: any(s.request_id == 'unmute' for s in r.speech))
     assert r.agent._input_utterance_id is None
     with r.store.connect() as connection:
@@ -421,3 +431,64 @@ def test_own_interim_ack_does_not_end_conversation_or_open_microphone(robot):
                                            state='finished', interim=True))
     r.pump(lambda: 'notice' not in r.chat._playing)
     assert r.chat.phase == 'responding' and not r.controls
+
+
+def test_idle_pose_stream_starts_default_greeting_without_patrol_or_app_confirmation(robot):
+    r = robot
+    with r.store.connect() as connection:
+        connection.execute('DELETE FROM observations')
+    for second in range(31, 36):
+        r.pulse(float(second), source='pose')
+    r.pump(lambda: bool(r.speech))
+    question = r.speech[0]
+    assert question.text == '오늘 하루는 어떠셨어요?'
+    assert r.chat._last_detection_stamp == -float('inf')  # Tracking YOLO stays asleep.
+    assert not r.runtime.provider.calls
+    r.finish(question)
+    r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
+                                          utterance_id='daily-answer', text='오늘 산책했어'))
+    r.pump(lambda: bool(r.runtime.provider.calls))
+    request, history, memories = r.runtime.provider.calls[-1]
+    assert request.user_id == 'unverified-companion'
+    assert request.scene_context['conversation_opener']['source'] == 'current_encounter'
+    assert not history and not memories
+
+
+@pytest.mark.parametrize('count,score,stale', [(0, .9, False), (2, .9, False),
+                                             (1, .1, False), (1, .9, True)])
+def test_pose_empty_multiple_weak_and_stale_frames_do_not_start_chat(robot, count, score, stale):
+    r = robot
+    for second in range(31, 37):
+        r.pulse(float(second), source='pose', count=count, score=score, stale=stale)
+    assert not r.speech and r.chat.phase == 'idle'
+
+
+def test_second_person_in_pose_stream_ends_chat_even_when_yolo_says_one(robot):
+    r = robot
+    r.finish(r.approach())
+    session = r.chat.session_id
+    r.pulse(36., source='pose', count=2)
+    r.pump(lambda: (session, False) in r.controls)
+    assert r.chat.phase == 'idle'
+    r.pulse(36.5, count=1)
+    assert r.chat.gate.present_since is None  # A second model cannot erase the visitor.
+
+
+def test_same_person_in_two_detectors_is_not_counted_twice(robot):
+    r = robot
+    for second in range(31, 36):
+        r.pulse(float(second), source='pose')
+        r.pulse(float(second) + .1)
+    r.pump(lambda: bool(r.speech))
+    assert r.chat.gate.present_since is not None
+
+
+@pytest.mark.parametrize('payload', [
+    '[]', '{', '{}', '{"captureStamp": null}',
+    json.dumps({'captureStamp': {'sec': 10**400, 'nanosec': 0}}),
+    json.dumps({'captureStamp': {'sec': 1, 'nanosec': -1}}),
+])
+def test_malformed_pose_input_does_not_start_or_crash_conversation(robot, payload):
+    r = robot
+    r.chat._person_poses(String(data=payload))
+    assert not r.chat._presence and not r.speech
