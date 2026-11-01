@@ -82,6 +82,96 @@ def test_information_survives_restart_without_raw_photos_and_keep_time_location(
         PatrolMemoryStore(store.directory, 'other-owner')
 
 
+def test_unchanged_history_does_not_reopen_db_but_new_captures_are_discovered(tmp_path, monkeypatch):
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    first, _ = capture(tmp_path)
+    assert store.ingest() == 1
+    assert store.ingest() == 0  # Confirm the directory and DB have settled.
+    original = store.connect
+    calls = []
+
+    def connect():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(store, 'connect', connect)
+    assert store.ingest() == 0
+    assert store.ingest() == 0
+    assert calls == []
+    second, _ = capture(tmp_path)
+    assert store.ingest() == 1
+    with original() as connection:
+        assert {row[0] for row in connection.execute('SELECT id FROM observations')} == {
+            first.stem, second.stem}
+
+
+def test_ingestion_drains_backlog_and_recovers_after_restart(tmp_path):
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    for _ in range(130):
+        capture(tmp_path)
+    assert store.ingest() == 64
+    assert store.ingest() == 64
+    reopened = PatrolMemoryStore(tmp_path, 'owner')
+    assert reopened.ingest() == 2
+    assert reopened.ingest() == 0
+    with reopened.connect() as connection:
+        assert connection.execute('SELECT count(*) FROM observations').fetchone()[0] == 130
+
+
+def test_capture_committed_during_scan_is_not_hidden_by_idle_cache(tmp_path, monkeypatch):
+    from malbut_agent_server import patrol_memory
+
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    capture(tmp_path)
+    original = patrol_memory.read_capture
+    added = []
+
+    def read_and_commit(path):
+        result = original(path)
+        if not added:
+            added.append(capture(tmp_path)[0])
+        return result
+
+    monkeypatch.setattr(patrol_memory, 'read_capture', read_and_commit)
+    assert store.ingest() == 1
+    assert store.ingest() == 1
+    with store.connect() as connection:
+        assert connection.execute('SELECT 1 FROM observations WHERE id=?',
+                                  (added[0].stem,)).fetchone()
+
+
+def test_external_wal_database_change_invalidates_ingestion_cache(tmp_path):
+    import sqlite3
+
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    path, _ = capture(tmp_path)
+    assert store.ingest() == 1
+    external = sqlite3.connect(store.path)
+    try:
+        external.execute('PRAGMA journal_mode=WAL')
+        assert store.ingest() == 0
+        external.execute('DELETE FROM observations WHERE id=?', (path.stem,))
+        external.commit()
+        assert store.ingest() == 1
+    finally:
+        external.close()
+
+
+def test_periodic_rescan_recovers_changes_hidden_by_filesystem_timestamps(tmp_path, monkeypatch):
+    from malbut_agent_server import patrol_memory
+
+    store = PatrolMemoryStore(tmp_path, 'owner')
+    clock = [100.]
+    monkeypatch.setattr(patrol_memory.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(store, '_ingest_fingerprint', lambda: ('unchanged',))
+    assert store.ingest() == 0
+    capture(tmp_path)
+    clock[0] += 59
+    assert store.ingest() == 0
+    clock[0] += 1
+    assert store.ingest() == 1
+
+
 @pytest.mark.parametrize('latest_located', [True, False])
 def test_moved_object_keeps_history_and_uses_capture_time_not_analysis_order(
         tmp_path, latest_located):

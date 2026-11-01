@@ -142,6 +142,8 @@ class PatrolMemoryStore:
         self.path = self.directory / 'observations.sqlite3'
         self.owner_id = owner_id
         self.simulation = bool(simulation)
+        self._ingested_fingerprint = None
+        self._last_ingest_scan = 0.0
         with self.connect() as connection:
             existing = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner'"
@@ -158,6 +160,8 @@ class PatrolMemoryStore:
                     error TEXT, model TEXT, analyzed_at REAL);
                 CREATE INDEX IF NOT EXISTS observations_owner_time
                     ON observations(user_id, captured_at DESC);
+                CREATE INDEX IF NOT EXISTS observations_pending
+                    ON observations(user_id, retry_at, captured_at) WHERE status='pending';
             ''')
             # Legacy databases always belong to the real robot. A simulation
             # must explicitly create a separate database, never repurpose one.
@@ -184,18 +188,31 @@ class PatrolMemoryStore:
         finally:
             connection.close()
 
+    def _ingest_fingerprint(self):
+        """Notice atomic capture commits and database changes without scanning files."""
+        values = []
+        for path in (self.directory / 'captures', self.path, Path(str(self.path) + '-wal')):
+            try:
+                stat = path.stat()
+                values.append((stat.st_dev, stat.st_ino, stat.st_size,
+                               stat.st_mtime_ns, stat.st_ctime_ns))
+            except FileNotFoundError:
+                values.append(None)
+        return tuple(values)
+
     def ingest(self):
-        """Import complete evidence once, keeping real and simulated data separate."""
-        folder = self.directory / 'captures'
-        imported = 0
-        for path in sorted(folder.glob('*.json')):
-            if not _ID.fullmatch(path.stem):
+        """Import new evidence in bounded batches; leave completed history idle."""
+        before = self._ingest_fingerprint()
+        now = time.monotonic()
+        if before == self._ingested_fingerprint and now - self._last_ingest_scan < 60:
+            return 0
+        # One ID query replaces a new connection/query for every saved photo.
+        with self.connect() as connection:
+            existing = {row[0] for row in connection.execute('SELECT id FROM observations')}
+        rows = []
+        for path in sorted((self.directory / 'captures').glob('*.json')):
+            if not _ID.fullmatch(path.stem) or path.stem in existing:
                 continue
-            with self.connect() as connection:
-                existing = connection.execute(
-                    'SELECT 1 FROM observations WHERE id=?', (path.stem,)).fetchone()
-                if existing:
-                    continue
             try:
                 metadata, _ = read_capture(path)
                 status = 'pending'
@@ -205,15 +222,23 @@ class PatrolMemoryStore:
                 error = None
             except (ValueError, OSError, TypeError, KeyError):
                 metadata, captured_at, status, error = {}, 0, 'failed', 'invalid_capture'
-            with self.connect() as connection:
-                connection.execute('''INSERT OR IGNORE INTO observations
-                    (id,user_id,captured_at,metadata,status,error) VALUES (?,?,?,?,?,?)''',
-                                   (path.stem, self.owner_id, captured_at,
-                                    json.dumps(metadata, ensure_ascii=False), status, error))
-            imported += 1
-            if imported >= 64:
+            rows.append((path.stem, self.owner_id, captured_at,
+                         json.dumps(metadata, ensure_ascii=False), status, error))
+            if len(rows) >= 64:
                 break
-        return imported
+        if rows:
+            # Validation above performs file I/O without holding a DB write lock.
+            with self.connect() as connection:
+                connection.executemany('''INSERT OR IGNORE INTO observations
+                    (id,user_id,captured_at,metadata,status,error) VALUES (?,?,?,?,?,?)''', rows)
+        after = self._ingest_fingerprint()
+        # Cache only a quiet scan. Imported rows force one more pass, including
+        # commits made during validation on filesystems with coarse timestamps.
+        # External DB changes and a full batch also require another pass.
+        self._ingested_fingerprint = (
+            after if not rows and before == after else None)
+        self._last_ingest_scan = now
+        return len(rows)
 
     def next_pending(self):
         """Claim one attempt durably; a crash retries only after its lease expires."""

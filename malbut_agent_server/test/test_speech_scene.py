@@ -174,7 +174,8 @@ def test_explicit_disabled_and_encoding_failure_do_not_block_text_dialogue():
 
 
 def test_transition_state_does_not_expire_like_a_sensor_heartbeat():
-    from threading import RLock
+    from contextlib import nullcontext
+    from threading import Event, RLock
     import time
     from malbut_agent_server.speech_scene import RosSpeechScene
 
@@ -182,6 +183,9 @@ def test_transition_state_does_not_expire_like_a_sensor_heartbeat():
     source.node = SimpleNamespace(count_publishers=lambda _: 1)
     source.missions = None
     source._lock = RLock()
+    source._sample_lock = RLock()
+    source._closed = Event()
+    source._sensor_window = nullcontext
     source._images = LatestScene(cloud_settings_required=True)
     source._system = (time.monotonic() - 60, {'system_state': 1})
     scene, attachment = source.snapshot()
@@ -191,3 +195,14 @@ def test_transition_state_does_not_expire_like_a_sensor_heartbeat():
     assert scene['missions']['source'] == 'latched_transition'
     source.node.count_publishers = lambda _: 0
     assert source.snapshot()[0]['missions'] is None
+
+
+def test_releasing_raw_pixels_preserves_frozen_image_until_revocation():
+    cache = LatestScene(cloud_settings_required=False)
+    cache.observe_image('raw', 100, 0)
+    _, image = cache.capture(lambda _: b'jpeg')
+    cache.clear_frame()
+    assert cache.capture(lambda _: pytest.fail('raw image must be released'))[1] is None
+    assert image.usable()
+    cache.observe_settings(settings(cache.clock(), consent=False))
+    assert not image.usable()
