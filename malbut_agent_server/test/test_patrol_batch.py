@@ -1,5 +1,6 @@
 """Verify one-call patrol analysis, atomic persistence and contact-sheet geometry."""
 
+import base64
 import hashlib
 import json
 import math
@@ -27,7 +28,7 @@ def batch(directory, count=24, *, sealed=True, patrol_id=None):
         assert ok
         image = encoded.tobytes()
         path.with_suffix('.jpg').write_bytes(image)
-        metadata.update(patrol_id=identity, analysis_batch='patrol_mosaic_v1',
+        metadata.update(patrol_id=identity, analysis_batch='patrol_images_v1',
                         image_sha256=hashlib.sha256(image).hexdigest())
         data = json.dumps(metadata, ensure_ascii=False).encode()
         path.write_bytes(data)
@@ -45,11 +46,11 @@ def batch(directory, count=24, *, sealed=True, patrol_id=None):
 def analysis_for(layout):
     entries = []
     for frame in layout['frames']:
-        x0, y0, x1, y1 = frame['photo_rect']
+        x0, y0, x1, y1 = frame.get('photo_rect', [0, 0, 1000, 1000])
         pixels = [x0 + .35*(x1-x0), y0 + .35*(y1-y0),
                   x0 + .65*(x1-x0), y0 + .65*(y1-y0)]
         bbox = [round(v / extent * 1000) for v, extent in zip(
-            pixels, [layout['width'], layout['height']] * 2)]
+            pixels, [layout.get('width', 1000), layout.get('height', 1000)] * 2)]
         entries.append({'frame_id': frame['frame_id'], 'summary': '빨간 상자가 보인다.',
                         'objects': [{'name': '빨간 상자', 'location': '사진 가운데',
                                      'confidence': 'high', 'sheet_bbox': bbox}],
@@ -66,11 +67,10 @@ def observer(calls, *, mutate=lambda response: response):
         calls.append(payload)
         assert timeout == 90 and not payload.get('tools') and not payload['store']
         contents = payload['input'][0]['content']
-        assert sum(c['type'] == 'input_image' for c in contents) == 1
+        assert sum(c['type'] == 'input_image' for c in contents) == len(contents[1::2])
         context = json.loads(contents[0]['text'])
-        layout = {'frames': context['frames'],
-                  'coordinates': context.get('coordinates'),
-                  'width': context['sheet_size'][0], 'height': context['sheet_size'][1]}
+        layout = {'frames': [json.loads(c['text']) for c in contents[1::2]],
+                  'coordinates': context['coordinates']}
         response = {'status': 'completed', 'usage': {
             'input_tokens': 2500, 'output_tokens': 1200, 'total_tokens': 3700,
             'input_tokens_details': {'cached_tokens': 0}},
@@ -81,7 +81,7 @@ def observer(calls, *, mutate=lambda response: response):
                                 transport=transport)
 
 
-def test_24_photos_use_one_image_and_one_call_then_survive_restart(tmp_path):
+def test_24_separate_photos_use_one_call_then_survive_restart(tmp_path):
     captures, manifest = batch(tmp_path)
     store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
     calls = []
@@ -94,10 +94,22 @@ def test_24_photos_use_one_image_and_one_call_then_survive_restart(tmp_path):
     assert len(rows) == 24 and all(row['status'] == 'ready' for row in rows)
     assert json.loads(saved['usage'])['total_tokens'] == 3700
     layout = json.loads(saved['mosaic'])
-    assert math.ceil(layout['width']/32) * math.ceil(layout['height']/32) <= 2500
-    assert len(layout['frames']) == 24 and max(layout['width'], layout['height']) <= 2048
+    assert layout['input_mode'] == 'individual_images'
+    assert len(layout['frames']) == 24 and 'width' not in layout
+    inputs = calls[0]['input'][0]['content']
+    assert len(inputs) == 49
+    for index, (metadata, image) in enumerate(captures):
+        descriptor = json.loads(inputs[1 + index*2]['text'])
+        assert descriptor['frame_id'] == f'F{index+1:02d}'
+        assert descriptor['captured_at'] == metadata['captured_at']
+        assert descriptor['capture_rooms'] == metadata['capture_rooms']
+        assert 'source_size' not in descriptor
+        assert layout['frames'][index]['source_size'] == [640, 400]
+        assert base64.b64decode(inputs[2 + index*2]['image_url'].split(',', 1)[1]) == image
+    assert 'image_url' not in saved['mosaic'] and 'base64' not in saved['mosaic']
     photo = tmp_path / 'batches' / (manifest['patrol_id'] + '.jpg')
-    assert hashlib.sha256(photo.read_bytes()).hexdigest() == layout['sha256']
+    assert not photo.exists()
+    assert not list(tmp_path.rglob('*.jpg'))
     for row in rows:
         obj = json.loads(row['analysis'])['objects'][0]
         assert np.allclose(obj['image_bbox'], [350, 350, 650, 650], atol=7)
@@ -120,7 +132,7 @@ def test_active_patrol_is_not_analyzed_and_separate_runs_never_share_a_call(tmp_
     assert not worker.run_once() and len(calls) == 1
     (tmp_path / 'runs' / (first['patrol_id'] + '.json')).write_text(json.dumps(first))
     assert worker.run_once() and len(calls) == 2
-    assert [len(json.loads(call['input'][0]['content'][0]['text'])['frames'])
+    assert [len(json.loads(call['input'][0]['content'][0]['text'])['frame_ids'])
             for call in calls] == [3, 2]
 
 
@@ -172,6 +184,8 @@ def test_invalid_batch_response_never_partially_saves_observations(tmp_path, fau
             assert count == 0
             db.execute('UPDATE observations SET retry_at=0')
     assert not worker.run_once() and len(calls) == 3
+    assert not list(tmp_path.rglob('*.jpg'))
+    assert not list(tmp_path.rglob('*.npy'))
     assert store.search('owner', {'query': None, 'since': None, 'until': None,
                                   'limit': 5})['counts'] == {'failed': 3}
 
@@ -259,10 +273,14 @@ def test_batch_request_declares_frame_before_its_contents(tmp_path):
     assert PatrolObservationWorker(store, observer(calls), autostart=False).run_once()
     schema = calls[0]['text']['format']['schema']['properties']['frames']['items']
     assert next(iter(schema['properties'])) == 'frame_id'
+    props = schema['properties']['objects']['items']['properties']
+    assert '0~1000' in props['image_bbox']['description']
+    assert '0~1000' in props['image_anchors']['description']
     context = json.loads(calls[0]['input'][0]['content'][0]['text'])
     assert context['coordinates'] == 'frame_normalized_1000'
-    assert all('photo_rect_1000' not in f and 'grid_row' in f and 'grid_column' in f
-               for f in context['frames'])
+    frames = [json.loads(c['text']) for c in calls[0]['input'][0]['content'][1::2]]
+    assert [f['frame_id'] for f in frames] == context['frame_ids']
+    assert all('photo_rect_1000' not in f and 'grid_row' not in f for f in frames)
 
 
 def test_frame_coordinates_preserve_anchors_without_sheet_rounding(tmp_path):
@@ -298,3 +316,24 @@ def test_person_anchors_are_restored_only_from_their_own_card(tmp_path, wrong_fr
         assert restored['image_bbox'] is None and restored['image_anchors'] == []
     else:
         assert np.allclose(restored['image_anchors'], [[400, 400], [600, 600]], atol=7)
+
+
+def test_pending_legacy_batch_is_analyzed_once_with_individual_inputs(tmp_path):
+    captures, manifest = batch(tmp_path, 2)
+    for (metadata, _), reference in zip(captures, manifest['captures']):
+        metadata['analysis_batch'] = 'patrol_mosaic_v1'
+        path = tmp_path / 'captures' / (metadata['observation_id'] + '.json')
+        data = json.dumps(metadata, ensure_ascii=False).encode()
+        path.write_bytes(data)
+        reference['manifest_sha256'] = hashlib.sha256(data).hexdigest()
+    (tmp_path / 'runs' / (manifest['patrol_id'] + '.json')).write_text(json.dumps(manifest))
+    store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+    calls = []
+    worker = PatrolObservationWorker(store, observer(calls), autostart=False)
+    assert worker.run_once()
+    assert not worker.run_once()
+    assert len(calls) == 1
+    assert sum(c['type'] == 'input_image' for c in calls[0]['input'][0]['content']) == 2
+    assert store.search('owner', {'query': None, 'since': None, 'until': None,
+                                  'limit': 5})['counts'] == {'ready': 2}
+    assert not list(tmp_path.rglob('*.jpg'))

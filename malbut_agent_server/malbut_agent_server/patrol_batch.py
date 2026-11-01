@@ -8,7 +8,8 @@ import time
 from malbut_agent_server.patrol_memory import validate_analysis
 
 
-POLICY = 'patrol_mosaic_v1'
+POLICY = 'patrol_images_v1'
+SUPPORTED_POLICIES = {POLICY, 'patrol_mosaic_v1'}
 MAX_FRAMES = 24
 OUTCOMES = {'completed', 'aborted', 'canceled', 'idle', 'shutdown', 'interrupted'}
 
@@ -51,7 +52,7 @@ def claim_batch(store):
     checked = set()
     for candidate in pending:
         metadata = json.loads(candidate['metadata'])
-        if metadata.get('analysis_batch') != POLICY:
+        if metadata.get('analysis_batch') not in SUPPORTED_POLICIES:
             continue
         patrol_id = metadata['patrol_id']
         if patrol_id in checked:
@@ -85,8 +86,10 @@ def claim_batch(store):
             if any(row['status'] != 'pending' or row['retry_at'] > time.time() for row in rows):
                 continue
             frames = {row['id']: dict(row) for row in rows}
+            policy = metadata['analysis_batch']
             if any(json.loads(row['metadata']).get('patrol_id') != patrol_id
-                   or json.loads(row['metadata']).get('analysis_batch') != POLICY for row in rows):
+                   or json.loads(row['metadata']).get('analysis_batch') != policy
+                   for row in rows):
                 raise ValueError('batch contains another patrol')
             connection.execute('UPDATE observations SET retry_at=? WHERE user_id=? AND id IN ('
                                + placeholders + ')', [time.time() + 120, store.owner_id] + ids)
@@ -132,3 +135,8 @@ def complete_batch(store, manifest, results, model, usage, mosaic):
                                          time.time(), identity, store.owner_id))
             if cursor.rowcount != 1:
                 raise ValueError('patrol batch state changed')
+            store.commit_evidence(connection, identity, analysis)
+    from malbut_agent_server.patrol_media import release_media
+
+    for identity in expected:
+        release_media(store.directory / 'captures' / (identity + '.json'))

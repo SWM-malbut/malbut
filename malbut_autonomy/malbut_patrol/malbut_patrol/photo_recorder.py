@@ -19,6 +19,7 @@ import numpy as np
 from malbut_patrol.spatial_capture import (
     camera_calibration, encode_lidar, encode_spatial, room_snapshot,
 )
+from malbut_patrol.transient_media import RETENTION_SECONDS, TransientMedia
 
 
 DEFAULT_DIRECTORY = '~/.local/share/malbut/patrol-observations'
@@ -63,7 +64,7 @@ def _atomic_write(path, data):
 
 
 class PhotoRecorder:
-    """Sample distinct views and publish a manifest only after its photo is durable."""
+    """Keep pixels in bounded RAM; persist only capture metadata for the Agent."""
 
     def __init__(self, directory, *, max_photos=24, max_bytes=512 * 1024 * 1024,
                  inspection=False):
@@ -80,6 +81,7 @@ class PhotoRecorder:
         self._run = None
         self._batches = {}
         self._writer_owned = False
+        self._media = None
         self._thread = threading.Thread(target=self._work, name='patrol-photo-writer', daemon=True)
         self._thread.start()
 
@@ -93,7 +95,7 @@ class PhotoRecorder:
             self.finish('interrupted')
             self._run = {'patrol_id': uuid4().hex, 'map_id': digest, 'map_frame': frame,
                          'room_map': Path(room_map_file).name if room_map_file else '',
-                         'analysis_batch': 'patrol_mosaic_v1',
+                         'analysis_batch': 'patrol_images_v1',
                          '_regions': room_snapshot(rooms, grid)}
             if reobserve_of is not None:
                 self._run.update(reobserve_of=reobserve_of, reobserve_round=reobserve_round)
@@ -161,7 +163,7 @@ class PhotoRecorder:
             return True
 
     def status(self):
-        """Report accepted versus durably written evidence, never inferred success."""
+        """Report accepted versus RAM-ready captures, never inferred analysis success."""
         with self._lock:
             return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats}
 
@@ -177,7 +179,7 @@ class PhotoRecorder:
             return run, [dict(item) for item in self._references]
 
     def finish(self, outcome='completed'):
-        """Seal this patrol without waiting for its accepted disk writes."""
+        """Seal this patrol without waiting for its accepted encodes."""
         with self._lock:
             batch = self._batches.get(self._run['patrol_id']) if self._run else None
             if batch is not None and batch['outcome'] is None:
@@ -232,12 +234,10 @@ class PhotoRecorder:
             {'id': room['id'], 'name': room['name']}
             for room in json.loads(regions)['regions']
             if room['name'] in metadata['capture_rooms']]
-        used = sum(path.stat().st_size for path in folder.iterdir() if path.is_file())
-        if (used + len(data) + len(regions) + len(depth or b'') + len(scan or b'')
-                + 16384 > self.max_bytes):
-            raise OSError('photo storage limit reached')
         identifier = metadata['observation_id']
-        metadata = dict(metadata, image_sha256=hashlib.sha256(data).hexdigest())
+        metadata = dict(metadata, image_sha256=hashlib.sha256(data).hexdigest(),
+                        media_storage='volatile_v1',
+                        media_expires_at=time.time() + RETENTION_SECONDS)
         files = {'.jpg': data, '.regions.json': regions}
         if scan is not None:
             files['.lidar.npy'] = scan
@@ -246,13 +246,11 @@ class PhotoRecorder:
             files['.depth.npy'] = depth
             spatial['depth_sha256'] = hashlib.sha256(depth).hexdigest()
         try:
-            for suffix, contents in files.items():
-                _atomic_write(folder / (identifier + suffix), contents)
+            self._media.put(identifier, files)
             _atomic_write(folder / (identifier + '.json'),
                           json.dumps(metadata, ensure_ascii=False).encode('utf-8'))
         except Exception:
-            for suffix in files:
-                (folder / (identifier + suffix)).unlink(missing_ok=True)
+            self._media.discard(identifier)
             raise
 
     def _work(self):
@@ -263,17 +261,20 @@ class PhotoRecorder:
                 self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
                 lock = (self.directory / 'producer.lock').open('a')
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._media = TransientMedia(self.directory, min(self.max_bytes, 128*1024*1024))
                 self._writer_owned = True
                 self._recover_batches()
             except OSError:
                 self._writer_owned = False
             self._write_photos()
         finally:
+            if self._media is not None:
+                self._media.close()
             if lock is not None:
                 lock.close()
 
     def _recover_batches(self):
-        """After a producer crash, retain only the photos whose manifests were committed."""
+        """Seal interrupted manifests; expired or lost RAM pixels cannot be recovered."""
         runs = {}
         for path in (self.directory / 'captures').glob('*.json'):
             if not re.fullmatch('[a-f0-9]{32}', path.stem):
@@ -284,7 +285,7 @@ class PhotoRecorder:
                 data = path.read_bytes()
                 metadata = json.loads(data)
                 identity = metadata.get('patrol_id', '')
-                if (metadata.get('analysis_batch') != 'patrol_mosaic_v1'
+                if (metadata.get('analysis_batch') not in ('patrol_images_v1', 'patrol_mosaic_v1')
                         or metadata.get('observation_id') != path.stem
                         or not isinstance(identity, str)
                         or not re.fullmatch('[a-f0-9]{32}', identity)
@@ -334,6 +335,9 @@ class PhotoRecorder:
                     })
             finally:
                 self._queue.task_done()
+                # An idle writer must not retain the last RGB/depth message outside
+                # the bounded transient store after analysis or expiry.
+                image = metadata = stats = None
             self._flush_batches()
         self._flush_batches()
 

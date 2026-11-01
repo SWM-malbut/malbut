@@ -22,11 +22,10 @@ class RegionSnapshot(list):
 
 
 def _sidecar(path, suffix, digest, limit):
-    evidence = path.with_name(path.stem + suffix)
-    if (not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest)
-            or evidence.is_symlink() or not 0 < evidence.stat().st_size <= limit):
+    if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
         raise ValueError('invalid spatial evidence')
-    contents = evidence.read_bytes()
+    from malbut_agent_server.patrol_media import read_media
+    contents = read_media(path, suffix, limit)
     if hashlib.sha256(contents).hexdigest() != digest:
         raise ValueError('spatial evidence changed')
     return contents
