@@ -92,6 +92,7 @@ def create_communication_node(
             self.weather_query = None
             self.situation = None
             self._fall_check = None
+            self._patrol_chat = None
             # Between the suspicion and the end of the question (2026-10-13).
             self._in_fall_window = False
             # The last utterance STT waits on until its reply has played.
@@ -185,6 +186,12 @@ def create_communication_node(
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
+                if self.declare_parameter('patrol_conversation_enabled', True).value:
+                    try:
+                        from malbut_agent_server.patrol_conversation_ros import RosPatrolConversation
+                        self._patrol_chat = RosPatrolConversation(self)
+                    except ImportError:
+                        self.get_logger().warning('patrol_conversation_detector_unavailable')
             except Exception:
                 self.destroy_node()
                 raise
@@ -245,7 +252,7 @@ def create_communication_node(
             self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
         def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False,
-                request_id='', audio_id=''):
+                request_id='', audio_id='', playback_id=''):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
@@ -261,11 +268,13 @@ def create_communication_node(
             options = {'audio_id': audio_id} if audio_id else {}
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type, interim=interim,
-                playback_id=str(uuid4()), request_id=request_id, **options,
+                playback_id=playback_id or str(uuid4()), request_id=request_id, **options,
             ))
             return True
 
         def _receive_input_status(self, message):
+            if self._patrol_chat is not None:
+                self._patrol_chat.input_status(message)
             if self._closing or message.session_id:
                 return
             uid = message.utterance_id
@@ -287,8 +296,14 @@ def create_communication_node(
                     self.say('잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.',
                              interim=False, request_id=uid)
 
-        def _receive_speech(self, message):
+        def _receive_speech(self, message, *, opener_context=None):
             if self._closing:
+                return
+            if self._patrol_chat is not None and self._patrol_chat.receive(message):
+                if message.utterance_id == self._input_utterance_id:
+                    self._input_utterance_id = None
+                if message.utterance_id not in self._seen_input_ids:
+                    self._seen_input_ids.append(message.utterance_id)
                 return
             if self.situation is not None and self.situation.active:
                 self.situation.transcript(message)
@@ -345,6 +360,7 @@ def create_communication_node(
                 return
             if outcome == 'received' and not self.dialogue.submit(
                 utterance_id, text,
+                **({'opener_context': opener_context} if opener_context is not None else {}),
             ):
                 self.get_logger().error('speech_dialogue submission failed')
                 self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
@@ -403,6 +419,8 @@ def create_communication_node(
                     future.set_result(decision)
 
         def _begin_situation(self):
+            if self._patrol_chat is not None:
+                self._patrol_chat.end()
             self._input_utterance_id = None
             self.dialogue.suspend()
             for waiters in self._addressee_waiters.values():
@@ -428,6 +446,8 @@ def create_communication_node(
                 if self.situation is None or not self.situation.active:
                     self.dialogue.resume()
                 return
+            if self._patrol_chat is not None:
+                self._patrol_chat.end()
             self.dialogue.suspend()
             # Played under the interrupted utterance's ID, it also ends STT's wait
             # for that reply; otherwise the microphone would stay closed.
@@ -476,6 +496,11 @@ def create_communication_node(
             for response in self.dialogue.drain():
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
+                    continue
+                if (self._patrol_chat is not None
+                        and not self._patrol_chat.allows_reply(response.get('utterance_id'))):
+                    if response.get('utterance_id') == self._awaiting_reply:
+                        self._awaiting_reply = None
                     continue
                 with self._announcer.direct_reply(
                     getattr(response, '_mission_request_id', None),
@@ -549,6 +574,8 @@ def create_communication_node(
                 self.weather_query.close()
                 self.weather_query.drain()
             try:
+                if self._patrol_chat is not None:
+                    self._patrol_chat.close()
                 if self.dialogue is not None:
                     self.dialogue.close()
             finally:

@@ -16,7 +16,7 @@ SELECTOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SELECTOR)
 SPEECH_BUILD = {
     'malbut_agent_server', 'malbut_interfaces', 'malbut_stt', 'malbut_system_manager',
-    'malbut_tts',
+    'malbut_tts', 'yolo_msgs',
 }
 CMAKE = '''project(malbut_interfaces)
 rosidl_generate_interfaces(${PROJECT_NAME}

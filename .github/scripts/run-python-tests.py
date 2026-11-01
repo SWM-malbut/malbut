@@ -26,6 +26,7 @@ AGENT_ROS_TESTS = (
     'test_ros_speech_missions.py', 'test_homecam_query.py',
     'test_manager_boundary_ros.py',
     'test_voice_map_actions_ros.py', 'test_voice_lab_graph.py', 'test_speech_scene_ros.py',
+    'test_patrol_conversation_ros.py',
 )
 
 

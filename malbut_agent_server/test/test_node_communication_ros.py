@@ -304,7 +304,7 @@ def communication(tmp_path, monkeypatch):
         thread.start()
         _wait_until(lambda: agent.count_subscribers(
             '/malbut/speech/response',
-        ) == (2 if with_manager else 1))
+        ) == (2 if with_manager else 1) + int(agent._patrol_chat is not None))
         for get_endpoints in (
             agent.get_publishers_info_by_topic,
             agent.get_subscriptions_info_by_topic,
@@ -583,7 +583,8 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
     publisher = graph.sender.create_publisher(
         SpeechInputStatus, '/malbut/speech/input_status', 10)
     try:
-        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response') == 2)
+        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response')
+                    == 2 + int(graph.agent._patrol_chat is not None))
         _wait_until(lambda: publisher.get_subscription_count() == 2)
         _publish_transcript(graph, 'earlier-answer', '안녕')
         _wait_until(provider.started.is_set)
@@ -631,7 +632,8 @@ def test_progress_notice_and_final_reply_keep_distinct_interim_flags(
     subscription = graph.sender.create_subscription(
         SpeechRequest, '/malbut/speech/response', messages.append, 10)
     try:
-        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response') == 2)
+        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response')
+                    == 2 + int(graph.agent._patrol_chat is not None))
         _publish_transcript(graph, 'progress-speech', '안녕')
         _wait_until(lambda: bool(messages))
         assert messages[0].interim is True and not provider.release.is_set()

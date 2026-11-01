@@ -138,6 +138,7 @@ class DialogueWorker:
         self._factory = runtime_factory
         self._missions = missions
         self._scene_source = scene_source
+        self.patrol_memory = None
         self._navigation_confirmation = None
         self._mapping_name_question = None
         self._user_id = validate_user_id(user_id)
@@ -185,7 +186,7 @@ class DialogueWorker:
                 and self._outstanding < self._capacity
             )
 
-    def submit(self, utterance_id: str, text: str) -> bool:
+    def submit(self, utterance_id: str, text: str, *, opener_context=None) -> bool:
         """Queue an original utterance without waiting for model inference."""
         validate_dialogue_input(utterance_id, text)
         with self._condition:
@@ -195,6 +196,8 @@ class DialogueWorker:
             progress = RequestProgress(
                 lambda notice, state: self._progress_notice(utterance_id, notice, state),
             )
+            # This is what the robot actually said, not a fabricated user turn.
+            progress.opener_context = opener_context
             self._pending.append((utterance_id, text, None, progress))
             self._condition.notify()
             return True
@@ -357,6 +360,7 @@ class DialogueWorker:
                 session = runtime.conversation_store.resume_or_create(self._user_id)
                 conversation_id = session.conversation_id
                 with self._condition:
+                    self.patrol_memory = getattr(runtime, 'patrol_memory', None)
                     self._ready = True
             except Exception as error:
                 with self._condition:
@@ -445,6 +449,9 @@ class DialogueWorker:
                             scene, image = self._scene_source.snapshot()
                         except Exception:
                             scene = {'image': {'available': False}, 'map': None, 'pose': None}
+                    opener = getattr(progress, 'opener_context', None)
+                    if opener is not None and not start_new:
+                        scene = dict(scene or {}, conversation_opener=opener)
                     request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
