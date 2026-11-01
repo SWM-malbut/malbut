@@ -14,6 +14,7 @@ from malbut_bringup.launch_support import (
 ARGUMENTS = [
     'start_hardware', 'hardware_launch_file', 'nav2_params_file', 'slam_params_file', 'map',
     'scan_topic', 'odom_topic', 'restore_pose', 'use_sim_time', 'map_selection_file',
+    'scheduled_patrol_enabled',
 ]
 
 
@@ -62,6 +63,8 @@ def _setup(context):
         package='malbut_system_manager', executable='system_manager',
         name='system_manager', output='screen', parameters=[{
             'use_sim_time': value('use_sim_time') == 'true',
+            'scheduled_patrol_enabled': (value('scheduled_patrol_enabled') == 'true'
+                                         and value('use_sim_time') != 'true'),
             # Manager owns admission/safety; optional modules do not gate it.
             'ready_topic': '',
             'prepare_service_prefix': PREPARE_PREFIX,
