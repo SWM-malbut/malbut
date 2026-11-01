@@ -59,11 +59,15 @@ class CompanionDialogue:
         if self.service:
             self.service.end(session)
 
-    def reply_allowed(self, session):
+    def reply_receipt(self):
         with self._lock:
-            return (self._session == session and (self._reply_binding is None
-                    or self.service.valid(self._reply_binding)
-                    and self.service.wall() < self._reply_expiry))
+            return self._session, self._reply_binding, self._reply_expiry
+
+    def reply_allowed(self, session, receipt=None):
+        with self._lock:
+            reply_session, binding, expiry = receipt or (self._session, self._reply_binding, self._reply_expiry)
+            return (self._session == session == reply_session and (binding is None
+                    or self.service.valid(binding) and self.service.wall() < expiry))
 
     def answer(self, provider, session, identity, text, opener):
         observed_at = self.service.wall() if self.service else time.time()

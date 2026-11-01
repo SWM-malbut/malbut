@@ -738,6 +738,7 @@ class DialogueWorker:
                                                  text, progress.opener_context)
         except Exception:
             message = ERROR_RESPONSE
+        receipt = self._companion.reply_receipt()
         progress.finish(cancelled=message is None)
         with self._condition:
             self._active_progress = None
@@ -749,7 +750,7 @@ class DialogueWorker:
                     reply = self._reply(utterance_id, session, message, 'answer')
                     reply._companion_session = session
                     def validate():
-                        if not self._companion.reply_allowed(session):
+                        if not self._companion.reply_allowed(session, receipt):
                             raise MemoryChangedError('companion identity or memory changed')
                     reply._memory_validator = validate
                     reply._generation = generation
