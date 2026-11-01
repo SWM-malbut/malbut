@@ -182,23 +182,100 @@ def test_first_reply_knows_what_robot_asked_without_a_fake_user_turn(memory):
     factory = RuntimeFactory()
     worker = DialogueWorker(factory, 'owner')
     try:
-        assert worker.submit('first', '응 좋아해', opener_context=context)
+        assert worker.submit('first', '응 좋아해', opener_context=context,
+                             companion_session='encounter')
         collect(worker, 1)
         request, history, _ = factory.provider.calls[0]
         assert history == []
         assert request.utterance == '응 좋아해'
         assert request.scene_context['conversation_opener'] == context
+        assert request.user_id == 'unverified-companion' and request.turn_image is None
         payload = OpenAIResponsesProvider('fixture', 'fixture').build_payload(request, [], [], [])
         prompt = json.loads(payload['input'].split('\n', 1)[1])
         assert prompt['scene_context_untrusted']['conversation_opener'] == context
         assert '위치 확인을 요구하지 않는다' in payload['instructions']
-        assert worker.submit('next', '요즘은 산책도 해')
+        assert worker.submit('next', '요즘은 산책도 해', companion_session='encounter')
         collect(worker, 1)
         request, history, _ = factory.provider.calls[1]
-        assert request.scene_context is None
+        assert request.scene_context == {'companion_guest': True}
         assert [turn.user_content for turn in history] == ['응 좋아해']
     finally:
         worker.close()
+
+
+def test_guest_dialogue_cannot_read_or_append_owner_conversation():
+    factory = RuntimeFactory()
+    worker = DialogueWorker(factory, 'owner')
+    try:
+        assert worker.submit('owner-first', '내 개인 이야기')
+        collect(worker, 1)
+        assert worker.submit('guest-first', '처음 왔어요', companion_session='visit-one')
+        collect(worker, 1)
+        assert factory.provider.calls[-1][1] == []
+        assert factory.provider.calls[-1][2] == []
+        assert worker.submit('guest-next', '차를 좋아해요', companion_session='visit-one')
+        collect(worker, 1)
+        assert [t.user_content for t in factory.provider.calls[-1][1]] == ['처음 왔어요']
+        worker.end_companion('visit-one')
+        assert worker.submit('new-guest', '안녕하세요', companion_session='visit-two')
+        collect(worker, 1)
+        assert factory.provider.calls[-1][1] == []
+        assert worker.submit('owner-next', '하던 이야기 계속하자')
+        collect(worker, 1)
+        assert [t.user_content for t in factory.provider.calls[-1][1]] == ['내 개인 이야기']
+        assert [r.utterance for r in factory.handled] == ['내 개인 이야기', '하던 이야기 계속하자']
+    finally:
+        worker.close()
+
+
+def test_guest_provider_receives_no_memories_or_tools_and_actions_are_rejected():
+    from types import SimpleNamespace
+    from malbut_agent_server.companion_dialogue import CompanionDialogue
+    from malbut_agent_server.schemas import AgentDecision
+
+    def complete(request, memories, turns, tools):
+        assert memories == [] and tools == [] and request.available_tools == ()
+        assert request.turn_image is None and request.user_id == 'unverified-companion'
+        return SimpleNamespace(decision=AgentDecision(
+            type='tool_call', tool_name='request_patrol', arguments={}, message='순찰 시작'))
+
+    chat = CompanionDialogue()
+    chat.begin('visit')
+    answer = chat.answer(SimpleNamespace(complete=complete), 'visit', 'q', '순찰해', None)
+    assert '기기를 조작하거나 개인 기억을 바꾸지 않아요' in answer
+
+
+def test_guest_history_is_bounded_and_end_discards_an_inflight_answer():
+    from threading import Event
+    from malbut_agent_server.companion_dialogue import CompanionDialogue
+    from test_speech_dialogue import FixedProvider
+
+    chat = CompanionDialogue()
+    provider = FixedProvider()
+    chat.begin('one')
+    for index in range(20):
+        assert chat.answer(provider, 'one', str(index), '길게 말한 내용' * 100, None)
+    history = provider.calls[-1][1]
+    assert len(history) <= 8
+    assert sum(len(t.user_content) + len(t.assistant_content) for t in history) <= 8000
+    release = Event()
+    original = provider.respond
+
+    def wait(request, turns):
+        assert release.wait(5)
+        return original(request, turns)
+
+    provider.respond = wait
+    provider.entered.clear()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(chat.answer, provider, 'one', 'late', '늦은 질문', None)
+        assert provider.entered.wait(5)
+        chat.end('one')
+        release.set()
+        assert future.result(5) is None
+    chat.begin('two')
+    assert chat.answer(provider, 'two', 'new', '새로운 사람', None)
+    assert provider.calls[-1][1] == []
 
 
 def test_explicit_new_conversation_drops_old_opener_context():

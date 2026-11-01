@@ -180,6 +180,10 @@ CONVERSATION_INSTRUCTIONS = """
 
 
 SCENE_INSTRUCTIONS = (
+    'scene_context_untrusted.companion_guest가 true이면 신원이 확인되지 않은 사람과의 임시 일상대화다. '
+    '주인의 이름·취향·과거 대화·개인 기억을 알고 있다고 주장하지 않는다. '
+    '장기기억 저장·조회·삭제 또는 기기 조작을 했다고 말하지 않는다. '
+    '먼저 공감하고 들어주며 조언이나 연속 질문을 강요하지 않는다. '
     'scene_context_untrusted.conversation_opener가 있으면 로봇이 실제로 먼저 한 일상대화와 '
     '그 소재가 된 과거 순찰 관찰이다. 현재 발화는 그 말에 대한 답일 수 있다. '
     '짧은 답도 해당 주제로 자연스럽게 받아주되 사용자가 꺼낸 이야기나 주제 전환을 우선한다. '

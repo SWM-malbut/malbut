@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
-import copy
 from datetime import datetime
 import math
 import time
@@ -227,9 +226,16 @@ class RosPatrolConversation:
         self._first_reply = False
         self.phase, self.deadline = 'responding', self.clock() + 120
         self.reply_id = message.utterance_id
-        ordinary = copy.deepcopy(message)
-        ordinary.session_id = ''
-        self.node._receive_speech(ordinary, opener_context=context)
+        try:
+            accepted = self.node.dialogue.submit(
+                message.utterance_id, message.text, opener_context=context,
+                companion_session=self.request_id)
+        except ValueError:
+            accepted = False
+        if accepted:
+            self.node._awaiting_reply = message.utterance_id
+        else:
+            self.end()
         return True
 
     def allows_reply(self, utterance_id):
@@ -300,6 +306,7 @@ class RosPatrolConversation:
         self._control_future = None
 
     def end(self):
+        self.node.dialogue.end_companion(self.request_id)
         if self.phase == 'responding' and self.reply_id:
             self._ended_reply_ids.append(self.reply_id)
         self._stop_listening()

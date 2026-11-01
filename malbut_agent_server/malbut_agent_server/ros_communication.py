@@ -296,7 +296,7 @@ def create_communication_node(
                     self.say('잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.',
                              interim=False, request_id=uid)
 
-        def _receive_speech(self, message, *, opener_context=None):
+        def _receive_speech(self, message):
             if self._closing:
                 return
             if self._patrol_chat is not None and self._patrol_chat.receive(message):
@@ -360,7 +360,6 @@ def create_communication_node(
                 return
             if outcome == 'received' and not self.dialogue.submit(
                 utterance_id, text,
-                **({'opener_context': opener_context} if opener_context is not None else {}),
             ):
                 self.get_logger().error('speech_dialogue submission failed')
                 self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
