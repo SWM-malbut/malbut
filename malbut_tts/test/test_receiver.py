@@ -31,7 +31,7 @@ def test_text_is_received_verbatim_and_json_escaped():
     assert level == 'info'
     assert '\n' not in message
     assert json.loads(message) == {
-        'event': 'tts_text_received', 'text': text,
+        'event': 'tts_text_received', 'text_length': len(text),
     }
 
 
@@ -96,7 +96,8 @@ def test_subscriber_uses_speech_request_and_agreed_qos(monkeypatch):
         'reliability': 'reliable', 'durability': 'volatile',
     }
     subscription['callback'](SimpleNamespace(text='받은 원문'))
-    assert json.loads(logger.events[0][1])['text'] == '받은 원문'
+    assert json.loads(logger.events[0][1])['text_length'] == len('받은 원문')
+    assert '받은 원문' not in logger.events[0][1]
 
 
 def test_help_and_missing_ros_work_without_audio_or_api_setup(

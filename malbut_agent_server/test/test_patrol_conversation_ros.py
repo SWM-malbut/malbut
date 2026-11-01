@@ -200,6 +200,49 @@ def test_negative_answer_is_a_normal_reply_not_a_request_to_end(robot):
     assert r.runtime.provider.calls[0][0].scene_context['conversation_opener']['topic'] == 'plants'
 
 
+def test_app_confirmation_to_summary_storage_then_visitor_revokes_identity(robot, tmp_path):
+    from malbut_agent_server.companion_memory import CompanionMemory
+    from malbut_agent_server.companion_service import CompanionService
+
+    r = robot
+    cloud = dict(ownerId='owner', revision=1, eraseRevision=0, categories=['daily'],
+                 externalProcessing=True, confirmedSessionId=None, remainingSeconds=0)
+    reports = []
+    def sync(report):
+        reports.append(report)
+        return dict(cloud)
+    summary = dict(summary='내일 친구와 산책하기로 했다고 말함.', categories=['daily'],
+                   event_state='planned', event_date='2026-10-30')
+    service = CompanionService(CompanionMemory(tmp_path / 'daily.sqlite3', clock=lambda: NOW),
+                               SimpleNamespace(sync=sync), SimpleNamespace(extract=lambda *args: [summary]),
+                               clock=lambda: r.clock[0], wall=lambda: NOW)
+    r.agent.dialogue._companion.service = service
+    service.on_change = r.agent.dialogue._companion.clear_history
+    r.finish(r.approach())
+    assert service.session == r.chat.request_id
+    # The app confirms this exact robot encounter; transcript text cannot do it.
+    service.sync()
+    assert service.binding(r.chat.request_id) is None
+    cloud.update(revision=2, confirmedSessionId=service.session, remainingSeconds=300)
+    r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
+                                          utterance_id='daily-plan', text='내일 친구와 산책하기로 했어'))
+    r.pump(lambda: any(s.request_id == 'daily-plan' and not s.interim for s in r.speech))
+    assert service.memory.recall('owner')[0]['summary'] == summary['summary']
+    assert r.runtime.provider.calls[-1][0].scene_context['companion_verified']
+    assert r.runtime.handled == []  # Bypass durable ordinary conversation/history processing.
+    reply = next(s for s in r.speech if s.request_id == 'daily-plan' and not s.interim)
+    r.pump(lambda: r.chat._playback_id == reply.playback_id)
+    r.finish(reply)
+    r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
+                                          utterance_id='daily-recall', text='내일 뭐 하기로 했지?'))
+    r.pump(lambda: len(r.runtime.provider.calls) == 2)
+    assert r.runtime.provider.calls[-1][0].scene_context['daily_memories'][0]['event_state'] == 'planned'
+    r.pulse(36., count=2)
+    assert r.chat.phase == 'idle'
+    assert service.session is None
+    assert service.binding(cloud['confirmedSessionId']) is None
+
+
 @pytest.mark.parametrize('time_text,quiet', [
     ('2026-11-01T21:59:00+09:00', False), ('2026-11-01T22:00:00+09:00', True),
     ('2026-11-02T07:59:00+09:00', True), ('2026-11-02T08:00:00+09:00', False),

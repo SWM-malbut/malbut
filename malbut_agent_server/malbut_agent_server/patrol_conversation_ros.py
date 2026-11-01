@@ -259,6 +259,9 @@ class RosPatrolConversation:
                 text = '먼저 말 걸기 설정을 저장하지 못했어요.'
             self.node.say(text, request_id=identity)
         self._playing = {key: expiry for key, expiry in self._playing.items() if expiry > now}
+        if (self.phase == 'responding' and self._playback_id
+                and not self.node.dialogue.companion_reply_allowed(self.request_id)):
+            self.end()
         if self.active and (not self._safe() or now >= self.deadline):
             self.end()
         if self._control_future is not None and self._control_future.done():
@@ -285,6 +288,7 @@ class RosPatrolConversation:
                 self._first_reply = True
                 self.phase, self.deadline = 'speaking', now + 120
                 self.request_id = 'patrol-chat-' + uuid4().hex
+                self.node.dialogue.begin_companion(self.request_id)
                 self.reply_id = ''
                 self._playback_id = uuid4().hex
                 if not self.node.say(opener.text, request_id=self.request_id,

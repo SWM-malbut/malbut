@@ -10,12 +10,12 @@ RESPONSE_TOPIC = '/malbut/speech/response'
 
 
 def receive_text(text: str, logger) -> bool:
-    """Log each nonblank response verbatim as a JSON-escaped text value."""
+    """A diagnostic receiver must not retain private spoken conversation text."""
     if not isinstance(text, str) or not text.strip():
         logger.warning('tts_text_ignored: blank response')
         return False
     logger.info(json.dumps(
-        {'event': 'tts_text_received', 'text': text},
+        {'event': 'tts_text_received', 'text_length': len(text)},
         ensure_ascii=False,
     ))
     return True

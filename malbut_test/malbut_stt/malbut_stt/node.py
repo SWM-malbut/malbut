@@ -539,8 +539,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
 
         def control_session(request, response):
+            from malbut_stt.session_privacy import can_start_session
             response.barge_in_available = pipeline.barge_in_available
             check_only = getattr(request, 'check_only', False)
+            if request.active and not check_only and not can_start_session(request.session_id, diagnostics):
+                response.accepted = False
+                node.get_logger().warning('companion_session_refused_raw_diagnostics_enabled')
+                return response
             if check_only:
                 response.accepted = pipeline.session_is_active(request.session_id)
             else:

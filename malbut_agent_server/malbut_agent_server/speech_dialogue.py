@@ -363,6 +363,10 @@ class DialogueWorker:
         try:
             try:
                 runtime = self._factory()
+                self._companion.service = getattr(runtime, 'companion_service', None)
+                if self._companion.service:
+                    self._companion.service.on_change = self._companion.clear_history
+                    self._companion.service.start()
                 start_memory = getattr(runtime, 'start_background_memory', None)
                 if start_memory is not None:
                     start_memory()
@@ -557,6 +561,8 @@ class DialogueWorker:
             with self._condition:
                 self._stopped = True
             if runtime is not None:
+                if self._companion.service:
+                    self._companion.service.close()
                 close_runtime = getattr(runtime, 'close', None)
                 if close_runtime is not None:
                     close_runtime()
@@ -712,18 +718,27 @@ class DialogueWorker:
         with request_scope(progress=progress):
             return runtime.handle(request)
 
+    def begin_companion(self, session):
+        """Expose the encounter to the app before the first spoken reply."""
+        self._companion.begin(session)
+
     def end_companion(self, session):
         """Discard an encounter, including a model response still in flight."""
         self._companion.end(session)
+
+    def companion_reply_allowed(self, session):
+        return self._companion.reply_allowed(session)
 
     def _answer_companion(self, runtime, utterance_id, text, progress, generation):
         session = progress.companion_session
         try:
             with request_scope(progress=progress):
-                message = self._companion.answer(runtime.provider, session, utterance_id,
+                provider = getattr(runtime, 'companion_provider', runtime.provider)
+                message = self._companion.answer(provider, session, utterance_id,
                                                  text, progress.opener_context)
         except Exception:
             message = ERROR_RESPONSE
+        receipt = self._companion.reply_receipt()
         progress.finish(cancelled=message is None)
         with self._condition:
             self._active_progress = None
@@ -733,6 +748,11 @@ class DialogueWorker:
                     self._outstanding -= 1
                 else:
                     reply = self._reply(utterance_id, session, message, 'answer')
+                    reply._companion_session = session
+                    def validate():
+                        if not self._companion.reply_allowed(session, receipt):
+                            raise MemoryChangedError('companion identity or memory changed')
+                    reply._memory_validator = validate
                     reply._generation = generation
                     self._results.append(reply)
 
@@ -745,9 +765,11 @@ class DialogueWorker:
 
     def _classify_interruption(self, runtime, conversation_id, utterance_id, playback_id, text):
         try:
-            snapshot = runtime.conversation_store.snapshot(
-                self._user_id, conversation_id, limit=10,
-            )
+            snapshot = self._companion.snapshot()
+            if snapshot is None:
+                snapshot = runtime.conversation_store.snapshot(
+                    self._user_id, conversation_id, limit=10,
+                )
             decision = runtime.speech_addressee.classify(text, snapshot)
             if decision not in ADDRESSEE_DECISIONS:
                 decision = 'unknown'
