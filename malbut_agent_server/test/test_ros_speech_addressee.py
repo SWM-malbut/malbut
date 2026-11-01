@@ -69,6 +69,10 @@ def node(monkeypatch, tmp_path, request):
             self.executor = None
             self.default_callback_group = object()
 
+        def declare_parameter(self, name, default):
+            # These fixtures exercise ordinary dialogue without the detector adapter.
+            return SimpleNamespace(value=False if name == "patrol_conversation_enabled" else default)
+
         def create_publisher(self, message_type, topic, qos):
             messages[topic] = []
             return SimpleNamespace(publish=messages[topic].append)

@@ -176,6 +176,10 @@ def _fake_ros(monkeypatch, spoken, logs):
             self.context = SimpleNamespace(ok=lambda: True)
             self.executor = None
 
+        def declare_parameter(self, name, default):
+            # These fixtures exercise ordinary dialogue without the detector adapter.
+            return SimpleNamespace(value=False if name == "patrol_conversation_enabled" else default)
+
         def create_publisher(self, *_args):
             return SimpleNamespace(
                 publish=lambda message: spoken.append(message.text),
