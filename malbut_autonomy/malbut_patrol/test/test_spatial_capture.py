@@ -123,15 +123,23 @@ def test_room_edit_after_capture_does_not_change_snapshot(tmp_path):
     assert recorder.offer(image, x=-1., y=0., yaw=0., room_names=['거실'],
                           phase='OBSERVING', spatial=bundle, simulated=True)
     rooms['features'][0]['properties']['name'] = '새 이름'
-    recorder.close()
+    import time
+
+    deadline = time.monotonic() + 3
+    while recorder.status()['saved'] != 1 and time.monotonic() < deadline:
+        time.sleep(.01)
     assert recorder.status()['saved'] == 1
     manifest, = (tmp_path / 'captures').glob('[a-f0-9]' * 32 + '.json')
     metadata = json.loads(manifest.read_text())
-    snapshot = json.loads(manifest.with_name(manifest.stem + '.regions.json').read_text())
+    with recorder._media._lock:
+        snapshot = json.loads(recorder._media._items[manifest.stem][1]['.regions.json'])
     assert metadata['capture_regions'] == [{'id': 'living', 'name': '거실'}]
     assert snapshot['regions'][0]['name'] == '거실'
     assert metadata['spatial']['status'] == 'available'
-    assert manifest.with_name(manifest.stem + '.depth.npy').stat().st_mode & 0o777 == 0o600
+    recorder.close()
+    assert not list(tmp_path.rglob('*.jpg'))
+    assert not list(tmp_path.rglob('*.npy'))
+    assert not manifest.with_suffix('.regions.json').exists()
 
 
 def test_camera_bearing_calibration_is_saved_even_when_depth_is_missing(tmp_path):

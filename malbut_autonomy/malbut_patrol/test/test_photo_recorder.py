@@ -3,8 +3,10 @@
 import json
 import hashlib
 import math
+import gc
 from threading import Event
 import time
+import weakref
 from types import SimpleNamespace
 
 import cv2
@@ -64,12 +66,39 @@ def test_sampling_records_initial_view_and_distinct_angles_with_a_hard_limit(tmp
     assert len(manifests) == 3
     for path in manifests:
         metadata = json.loads(path.read_text())
-        assert path.with_suffix('.jpg').exists()
+        assert not path.with_suffix('.jpg').exists()
+        assert metadata['media_storage'] == 'volatile_v1'
         assert path.stat().st_mode & 0o777 == 0o600
         assert metadata['capture_rooms'] == ['거실']
         assert metadata['camera_pose']['x'] == 1.0
         assert metadata['patrol_id'] == status['patrol_id']
         assert metadata['image_stamp']['sec'] == 1792562400
+
+
+def test_idle_writer_does_not_retain_last_sensor_image_after_encoding(tmp_path):
+    class CameraImage:
+        pass
+
+    image = CameraImage()
+    image.__dict__.update(camera_image().__dict__)
+    reference = weakref.ref(image)
+    recorder = PhotoRecorder(tmp_path)
+    begin(recorder)
+    try:
+        assert recorder.offer(image, x=1., y=2., yaw=0., room_names=['거실'],
+                              phase='OBSERVING', simulated=True)
+        del image
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if recorder.status()['saved'] == 1 and reference() is None:
+                break
+            gc.collect()
+            time.sleep(.01)
+        assert recorder.status()['saved'] == 1
+        assert reference() is None
+        assert not list(tmp_path.rglob('*.jpg'))
+    finally:
+        recorder.close()
 
 
 def test_disk_writer_does_not_block_offer_and_pending_queue_is_bounded(tmp_path):

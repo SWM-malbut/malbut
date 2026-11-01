@@ -1,4 +1,4 @@
-"""Durable photo observations, scoped to the configured robot owner."""
+"""Durable observation information, scoped to the configured robot owner."""
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -64,12 +64,16 @@ def read_capture(path):
         fov = data['camera_hfov_rad']
         if type(fov) not in (int, float) or not math.isfinite(fov) or not 0 < fov < math.pi:
             raise ValueError('invalid camera field of view')
-    if 'analysis_batch' in data and data['analysis_batch'] != 'patrol_mosaic_v1':
+    if ('analysis_batch' in data
+            and data['analysis_batch'] not in ('patrol_images_v1', 'patrol_mosaic_v1')):
         raise ValueError('unsupported capture batch policy')
-    photo = path.with_suffix('.jpg')
-    if photo.is_symlink() or not 0 < photo.stat().st_size <= 4 * 1024 * 1024:
-        raise ValueError('invalid capture photo')
-    image = photo.read_bytes()
+    if 'media_storage' in data:
+        expiry = data.get('media_expires_at')
+        if (data['media_storage'] != 'volatile_v1' or type(expiry) not in (int, float)
+                or not math.isfinite(expiry) or expiry <= 0):
+            raise ValueError('invalid transient media policy')
+    from malbut_agent_server.patrol_media import read_media
+    image = read_media(path, '.jpg', 4 * 1024 * 1024)
     if (not image.startswith(b'\xff\xd8') or not image.endswith(b'\xff\xd9')
             or hashlib.sha256(image).hexdigest() != data['image_sha256']):
         raise ValueError('capture photo integrity check failed')
@@ -233,11 +237,50 @@ class PatrolMemoryStore:
                 model=?, analyzed_at=?, error=NULL WHERE id=? AND user_id=?''',
                                (json.dumps(analysis, ensure_ascii=False), model, time.time(),
                                 identifier, self.owner_id))
+            self.commit_evidence(connection, identifier, analysis)
+        from malbut_agent_server.patrol_media import release_media
+
+        release_media(self.directory / 'captures' / (identifier + '.json'))
+
+    def commit_evidence(self, connection, identifier, analysis):
+        """Bind the metadata and localized result in the same DB transaction."""
+        from malbut_agent_server.patrol_evidence import commit_receipt
+
+        row = connection.execute('SELECT metadata FROM observations WHERE id=? AND user_id=?',
+                                 (identifier, self.owner_id)).fetchone()
+        if row is None:
+            raise ValueError('observation owner mismatch')
+        commit_receipt(connection, identifier, json.loads(row['metadata']), analysis)
+
+    def _verified_observation(self, row):
+        from malbut_agent_server.patrol_evidence import receipt
+
+        with self.connect() as connection:
+            verified = receipt(connection, row)
+        if not verified:
+            if json.loads(row['metadata']).get('media_storage') == 'volatile_v1':
+                raise ValueError('transient observation lacks committed evidence')
+            current, _ = read_capture(self.directory/'captures'/(row['id']+'.json'))
+            if current != json.loads(row['metadata']):
+                raise ValueError('legacy capture changed')
+        return verified
 
     def fail(self, identifier, *, missing_key=False):
-        """Keep photos when unavailable; limit paid inference retries to three."""
+        """Retry within the transient lifetime; release media after terminal failure."""
         with self.connect() as connection:
-            if missing_key:
+            source = connection.execute('SELECT metadata FROM observations '
+                                        "WHERE id=? AND user_id=? AND status='pending'",
+                                        (identifier, self.owner_id)).fetchone()
+            if source is None:
+                return  # A cleanup failure must never downgrade committed information.
+            metadata = json.loads(source['metadata'])
+            expired = (metadata.get('media_storage') == 'volatile_v1'
+                       and time.time() >= metadata.get('media_expires_at', 0))
+            if expired:
+                connection.execute("UPDATE observations SET status='failed', "
+                                   "error='transient_capture_expired' WHERE id=? AND user_id=?",
+                                   (identifier, self.owner_id))
+            elif missing_key:
                 connection.execute('''UPDATE observations SET retry_at=?, error='key_unavailable'
                     WHERE id=? AND user_id=?''', (time.time() + 30, identifier, self.owner_id))
             else:
@@ -245,6 +288,12 @@ class PatrolMemoryStore:
                     status=CASE WHEN attempts>=2 THEN 'failed' ELSE 'pending' END,
                     retry_at=?, error='analysis_failed' WHERE id=? AND user_id=?''',
                                    (time.time() + 60, identifier, self.owner_id))
+            final = connection.execute('SELECT status FROM observations WHERE id=? AND user_id=?',
+                                       (identifier, self.owner_id)).fetchone()
+        if final and final['status'] == 'failed':
+            from malbut_agent_server.patrol_media import release_media
+
+            release_media(self.directory / 'captures' / (identifier+'.json'))
 
     def search(self, user_id, arguments, *, include_recent_context=False):
         """Search past evidence without ever treating it as a live camera view."""
@@ -306,11 +355,9 @@ class PatrolMemoryStore:
             result['matching_semantics'] = 'keyword_evidence_and_unconfirmed_recent_context'
         for row in rows:
             metadata = json.loads(row['metadata'])
-            # Do not return assertions whose original photo was removed or changed.
+            # Committed information remains verifiable after the source pixels are released.
             try:
-                current, _ = read_capture(self.directory / 'captures' / (row['id'] + '.json'))
-                if current != metadata:
-                    continue
+                verified = self._verified_observation(row)
             except (ValueError, OSError, TypeError, KeyError):
                 continue
             item = {key: metadata[key] for key in (
@@ -333,7 +380,8 @@ class PatrolMemoryStore:
             item['objects'] = objects[:5]
             item['objects_truncated'] = len(objects) > 5
             item['uncertainties'] = item['uncertainties'][:2]
-            item['photo'] = 'captures/' + row['id'] + '.jpg'
+            item['photo'] = None
+            item['media_retention'] = 'information_only' if verified else 'legacy'
             result['observations'].append(item)
             while len(json.dumps(result, ensure_ascii=False)) > 4000 and len(item['objects']) > 1:
                 item['objects'].pop()
@@ -371,9 +419,7 @@ class PatrolMemoryStore:
             if not matches:
                 continue
             try:
-                current, _ = read_capture(self.directory/'captures'/(row['id']+'.json'))
-                if current != metadata:
-                    continue
+                self._verified_observation(row)
             except (ValueError, OSError, TypeError, KeyError):
                 continue
             for name, obj, region in matches:

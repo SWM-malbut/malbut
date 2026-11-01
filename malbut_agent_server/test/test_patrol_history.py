@@ -63,9 +63,12 @@ def test_history_never_recovers_unverified_or_irrelevant_positions(tmp_path, fau
     store.complete(path.stem, value, 'fixture')
     args = dict(ARGS, query='세탁기')
     if fault == 'removed':
-        path.with_suffix('.jpg').unlink()
+        path.with_suffix('.jpg').unlink(missing_ok=True)
+        with store.connect() as connection:
+            connection.execute('DELETE FROM patrol_observation_evidence')
     elif fault == 'changed':
-        path.with_suffix('.jpg').write_bytes(b'changed')
+        with store.connect() as connection:
+            connection.execute("UPDATE patrol_observation_evidence SET analysis_sha256='changed'")
     elif fault == 'time_filter':
         args['since'] = '2026-10-25T10:01:00+00:00'
     assert not store.search('owner', args).get('last_confirmed_observations')

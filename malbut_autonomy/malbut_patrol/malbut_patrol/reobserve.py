@@ -56,6 +56,9 @@ def read_results(directory, patrol_id, map_id, simulated):
                 if (row['status'] != 'ready' or metadata != json.loads(row['metadata'])
                         or len(row['analysis']) > 120000):
                     return []
+                from malbut_patrol.inspection import verify_observation_receipt
+
+                verify_observation_receipt(connection, row, metadata)
                 rows.append((metadata, json.loads(row['analysis'])))
             return rows
         finally:

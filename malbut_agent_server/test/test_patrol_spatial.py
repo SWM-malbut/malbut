@@ -100,8 +100,6 @@ def test_modified_evidence_is_never_used(capture, suffix):
     path, metadata = capture
     store = PatrolMemoryStore(path.parent.parent, 'owner', simulation=True)
     store.ingest()
-    regions, depth = read_spatial(path, metadata)
-    store.complete(path.stem, localize_objects(ANALYSIS, metadata, regions, depth), 'fixture')
     sidecar = path.with_name(path.stem + suffix)
     sidecar.write_bytes(sidecar.read_bytes() + b'changed')
     with pytest.raises(ValueError):

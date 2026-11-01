@@ -1,5 +1,6 @@
 """Exercise patrol ownership and camera accounting through real ROS Actions."""
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -277,7 +278,7 @@ def patrol_runtime(request, tmp_path):
         calibration = tmp_path / 'synthetic-test-calibration.json'
         calibration.write_text(json.dumps({
             'version': 1, 'validated': True, 'simulated': False,
-            'analysis_batch': 'patrol_mosaic_v1',
+            'analysis_batch': 'patrol_images_v1',
             'calibration_kind': 'object_presence', 'model': 'offline-fixture',
             'range_m': overrides.pop('inspection_fixture_range', 1.0),
             'camera': {'width': 2, 'height': 2, 'hfov_rad': 2 * math.atan2(2, 4),
@@ -561,9 +562,14 @@ def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runti
     depth_stamp = metadata['spatial']['depth_stamp']
     assert abs(stamp['sec']-depth_stamp['sec'] +
                (stamp['nanosec']-depth_stamp['nanosec'])/1e9) <= .05
-    assert manifest.with_name(manifest.stem + '.depth.npy').exists()
+    assert not manifest.with_name(manifest.stem + '.depth.npy').exists()
+    with manager.photo_recorder._media._lock:
+        files = manager.photo_recorder._media._items[manifest.stem][1]
+        assert hashlib.sha256(files['.depth.npy']).hexdigest() == (
+            metadata['spatial']['depth_sha256'])
     assert metadata['lidar']['status'] == 'available'
-    assert manifest.with_name(manifest.stem + '.lidar.npy').exists()
+    assert not manifest.with_name(manifest.stem + '.lidar.npy').exists()
+    assert hashlib.sha256(files['.lidar.npy']).hexdigest() == metadata['lidar']['sha256']
     assert _result(handle.cancel_goal_async()).goals_canceling
     assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
 
@@ -594,7 +600,9 @@ def test_photo_writer_cannot_delay_ros_cancellation(patrol_runtime):
     _wait_until(lambda: recorder.status()['saved'] == 1)
     manifest, = list((recorder.directory / 'captures').glob('[a-f0-9]' * 32 + '.json'))
     metadata = json.loads(manifest.read_text())
-    assert manifest.with_suffix('.jpg').exists()
+    assert not manifest.with_suffix('.jpg').exists()
+    with recorder._media._lock:
+        assert recorder._media._items[manifest.stem][1]['.jpg'].startswith(b'\xff\xd8')
     assert metadata['camera_pose']['x'] == 1.5
     assert metadata['camera_pose']['y'] == 1.5
     assert metadata['camera_frame'] == 'patrol_test_optical'
@@ -865,6 +873,10 @@ def test_costmap_patch_updates_candidate_safety_without_corrupting_grid(enabled)
 
 
 def _analyze_inspection_photos(recorder, objects=()):
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                         separators=(',', ':')).encode()).hexdigest()
+
     # Like the production worker, consume only a completely sealed batch.
     _wait_until(lambda: recorder.status()['batch_ready'])
     _, references = recorder.evidence()
@@ -877,15 +889,21 @@ def _analyze_inspection_photos(recorder, objects=()):
             CREATE TABLE IF NOT EXISTS observations (
                 id TEXT PRIMARY KEY, user_id TEXT, metadata TEXT, status TEXT,
                 model TEXT, error TEXT, analysis TEXT);
+            CREATE TABLE IF NOT EXISTS patrol_observation_evidence (
+                observation_id TEXT PRIMARY KEY, metadata_sha256 TEXT, analysis_sha256 TEXT);
         ''')
         for index, reference in enumerate(references):
             identity = reference['observation_id']
             metadata = (recorder.directory / 'captures' / (identity + '.json')).read_text()
+            analysis = {'summary': 'scene', 'objects': list(objects) if index == 0 else [],
+                        'uncertainties': []}
             connection.execute('INSERT OR REPLACE INTO observations VALUES (?,?,?,?,?,?,?)',
                                (identity, 'fixture-owner', metadata, 'ready', 'offline-fixture',
-                                None, json.dumps({'summary': 'scene',
-                                                  'objects': list(objects) if index == 0 else [],
-                                                  'uncertainties': []})))
+                                None, json.dumps(analysis)))
+            connection.execute('INSERT OR REPLACE INTO patrol_observation_evidence VALUES (?,?,?)',
+                               (identity, digest(json.loads(metadata)), digest(analysis)))
+    for reference in references:
+        recorder._media.discard(reference['observation_id'])
 
 
 @pytest.mark.parametrize('patrol_runtime', [{'inspection_fixture': True}], indirect=True)
@@ -972,7 +990,9 @@ def test_inspection_photo_budget_is_shared_across_viewpoint_batches(patrol_runti
     assert manager.return_status['state'] == 'arrived'
     assert len(navigation.requests) == 2  # One coverage goal and the original home.
     assert manager.return_pose[:2] == (1.5, 1.5)
-    assert len(list((recorder.directory / 'captures').glob('[a-f0-9]'*32+'.jpg'))) == 2
+    assert len(list((recorder.directory / 'captures').glob('[a-f0-9]'*32+'.json'))) == 2
+    assert not list((recorder.directory / 'captures').glob('*.jpg'))
+    assert not recorder._media._items
 
 
 @pytest.mark.parametrize('patrol_runtime', [{
@@ -1005,7 +1025,7 @@ def test_analyzed_coverage_still_reobserves_unknowns_then_returns_home(patrol_ru
     _, retry = recorder.evidence()
     path = recorder.directory / 'captures' / (retry[0]['observation_id'] + '.json')
     metadata = json.loads(path.read_text())
-    assert metadata['analysis_batch'] == 'patrol_mosaic_v1'
+    assert metadata['analysis_batch'] == 'patrol_images_v1'
     assert metadata['reobserve_of'] == root['patrol_id']
     assert metadata['reobserve_target']['observation_id'] == originals[0]['observation_id']
     _analyze_inspection_photos(recorder)

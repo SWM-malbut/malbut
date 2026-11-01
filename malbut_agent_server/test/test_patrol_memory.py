@@ -55,7 +55,7 @@ def evidence(tmp_path):
     return store, worker, path, metadata
 
 
-def test_photo_survives_restart_and_queries_keep_time_location_and_source(evidence):
+def test_information_survives_restart_without_raw_photos_and_keep_time_location(evidence):
     store, worker, path, metadata = evidence
     assert worker.run_once()
     assert not worker.run_once()  # No repeated paid analysis after completion.
@@ -64,7 +64,8 @@ def test_photo_survives_restart_and_queries_keep_time_location_and_source(eviden
     item, = result['observations']
     assert item['captured_at'] == metadata['captured_at']
     assert item['capture_rooms'] == ['거실']
-    assert item['photo'] == 'captures/' + path.stem + '.jpg'
+    assert item['photo'] is None and item['media_retention'] == 'information_only'
+    assert not path.with_suffix('.jpg').exists()
     original = {k: v for k, v in item['objects'][0].items() if k != 'spatial'}
     assert original == ANALYSIS['objects'][0]
     assert item['objects'][0]['spatial']['reason'] == 'legacy_without_depth'
@@ -155,8 +156,12 @@ def test_recent_context_catches_changed_descriptions_without_claiming_keyword_ma
     assert earlier['observation_id'] == before.stem
     with pytest.raises(PermissionError):
         store.search('other', options, include_recent_context=True)
-    # Even fallback candidates must retain valid photo provenance.
-    after.with_suffix('.jpg').unlink()
+    # Raw deletion is expected; changed observation evidence must still be rejected.
+    after.with_suffix('.jpg').unlink(missing_ok=True)
+    assert len(store.search('owner', options, include_recent_context=True)['observations']) == 2
+    with store.connect() as connection:
+        connection.execute("UPDATE patrol_observation_evidence SET analysis_sha256='changed' "
+                           'WHERE observation_id=?', (after.stem,))
     result = store.search('owner', dict(options, query='상자'), include_recent_context=True)
     assert [r['observation_id'] for r in result['observations']] == [before.stem]
 
@@ -193,7 +198,7 @@ def test_failures_are_bounded_and_never_stored_as_observations(evidence):
     with store.connect() as connection:
         row = connection.execute('SELECT * FROM observations').fetchone()
         assert row['analysis'] is None and row['error'] == 'analysis_failed'
-    assert path.with_suffix('.jpg').exists()
+    assert not path.with_suffix('.jpg').exists()
 
 
 def test_incomplete_changed_and_simulated_evidence_cannot_be_recalled(evidence):
@@ -204,7 +209,9 @@ def test_incomplete_changed_and_simulated_evidence_cannot_be_recalled(evidence):
     (store.directory / 'captures' / 'incomplete.json.tmp').write_text('{}')
     worker.run_once()
     assert store.search('owner', ARGS)['counts'] == {'failed': 1, 'ready': 1, 'simulated': 1}
-    path.with_suffix('.jpg').unlink()
+    assert not path.with_suffix('.jpg').exists()
+    with store.connect() as connection:
+        connection.execute("UPDATE patrol_observation_evidence SET analysis_sha256='changed'")
     assert store.search('owner', ARGS)['observations'] == []
 
 
@@ -213,11 +220,11 @@ def test_image_symlink_and_tampered_manifest_are_rejected(evidence, tmp_path):
     original = path.with_suffix('.jpg').read_bytes()
     outside = tmp_path / 'outside.jpg'
     outside.write_bytes(original)
-    path.with_suffix('.jpg').unlink()
+    path.with_suffix('.jpg').unlink(missing_ok=True)
     path.with_suffix('.jpg').symlink_to(outside)
     with pytest.raises(ValueError):
         read_capture(path)
-    path.with_suffix('.jpg').unlink()
+    path.with_suffix('.jpg').unlink(missing_ok=True)
     path.with_suffix('.jpg').write_bytes(original)
     metadata['observation_id'] = uuid4().hex
     path.write_text(json.dumps(metadata))
@@ -264,7 +271,7 @@ def test_inspection_photos_use_one_batch_call_and_credit_exact_saved_views(tmp_p
     path = tmp_path / 'synthetic-calibration.json'
     path.write_text(json.dumps({
         'version': 1, 'validated': True, 'simulated': True, 'range_m': 1,
-        'analysis_batch': 'patrol_mosaic_v1',
+        'analysis_batch': 'patrol_images_v1',
         'calibration_kind': 'object_presence', 'model': 'fixture-vision',
         'camera': {'width': 640, 'height': 400, 'hfov_rad': 1.2, 'height_m': .12}}))
     calibration = InspectionCalibration(path, True)
@@ -308,6 +315,12 @@ def test_inspection_photos_use_one_batch_call_and_credit_exact_saved_views(tmp_p
                 time.sleep(.01)
             assert recorder.status()['batch_ready'] and recorder.evidence()[1] == references
             assert worker.run_once()
+            from malbut_agent_server.patrol_media import read_media
+
+            for reference in references:
+                source = tmp_path / 'captures' / (reference['observation_id'] + '.json')
+                with pytest.raises(FileNotFoundError):
+                    read_media(source, '.jpg', 4 * 1024 * 1024)
             views = evidence.poll(references)
             assert len(views) == 2 and len(calls) == batch+1
             for view in views:
@@ -321,11 +334,14 @@ def test_inspection_photos_use_one_batch_call_and_credit_exact_saved_views(tmp_p
             rows = connection.execute('SELECT * FROM observations').fetchall()
         assert len(rows) == 4
         assert all(row['status'] == 'ready' for row in rows)
-        assert all(json.loads(row['metadata'])['analysis_batch'] == 'patrol_mosaic_v1'
+        assert all(json.loads(row['metadata'])['analysis_batch'] == 'patrol_images_v1'
                    for row in rows)
         first = next(iter(evidence.references))
-        (tmp_path / 'captures' / (first + '.jpg')).write_bytes(b'changed after next batch')
-        with pytest.raises(ValueError, match='Photo integrity mismatch'):
+        assert not list(tmp_path.rglob('*.jpg'))
+        with store.connect() as connection:
+            connection.execute("UPDATE patrol_observation_evidence SET analysis_sha256='changed' "
+                               'WHERE observation_id=?', (first,))
+        with pytest.raises(ValueError, match='Observation evidence integrity mismatch'):
             evidence.poll([], verify_all=True)
     finally:
         worker.close()

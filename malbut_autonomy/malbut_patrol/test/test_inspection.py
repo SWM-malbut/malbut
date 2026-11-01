@@ -22,7 +22,7 @@ def calibration_file(tmp_path):
     path = tmp_path / 'calibration.json'
     path.write_text(json.dumps({
         'version': 1, 'validated': True, 'simulated': True, 'range_m': 1,
-        'analysis_batch': 'patrol_mosaic_v1',
+        'analysis_batch': 'patrol_images_v1',
         'calibration_kind': 'object_presence', 'model': 'offline-fixture',
         'camera': {'width': 640, 'height': 400, 'hfov_rad': 1.2, 'height_m': .12}}))
     return path
@@ -81,6 +81,17 @@ def ready(photo, **changes):
     with sqlite3.connect(path.parent.parent / 'observations.sqlite3') as connection:
         connection.execute('UPDATE observations SET ' + ','.join(k + '=?' for k in values)
                            + ' WHERE id=?', [*values.values(), references[0]['observation_id']])
+        if values['analysis'] is not None:
+            def digest(value):
+                return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                                 separators=(',', ':')).encode()).hexdigest()
+            connection.execute('''CREATE TABLE IF NOT EXISTS patrol_observation_evidence (
+                observation_id TEXT PRIMARY KEY, metadata_sha256 TEXT,
+                analysis_sha256 TEXT)''')
+            metadata = json.loads(values.get('metadata', path.read_text()))
+            connection.execute('INSERT OR REPLACE INTO patrol_observation_evidence VALUES (?,?,?)',
+                               (references[0]['observation_id'], digest(metadata),
+                                digest(json.loads(values['analysis']))))
 
 
 def test_pending_photos_do_not_credit_area_and_ready_evidence_is_counted_once(photo):
@@ -111,12 +122,20 @@ def test_invalid_analysis_cannot_credit_coverage(photo, changes):
     assert not evidence.credited
 
 
-@pytest.mark.parametrize('suffix', ['.jpg', '.json', '.regions.json'])
-def test_changed_evidence_revokes_completion_even_after_initial_credit(photo, suffix):
+@pytest.mark.parametrize('fault', ['metadata', 'analysis', 'receipt'])
+def test_changed_evidence_revokes_completion_even_after_initial_credit(photo, fault):
     _, evidence, references, path, *_ = photo
     ready(photo)
     assert evidence.poll(references)
-    path.with_suffix(suffix).write_bytes(b'changed')
+    if fault == 'metadata':
+        path.write_bytes(b'changed')
+    else:
+        with sqlite3.connect(path.parent.parent/'observations.sqlite3') as connection:
+            if fault == 'analysis':
+                connection.execute("UPDATE observations SET analysis='{}'")
+            else:
+                connection.execute(
+                    "UPDATE patrol_observation_evidence SET analysis_sha256='changed'")
     with pytest.raises(ValueError, match='Inspection evidence rejected'):
         evidence.poll(references, verify_all=True)
 
@@ -174,7 +193,7 @@ def test_individual_photo_calibration_cannot_certify_mosaic_analysis(calibration
 def test_inspection_keeps_batch_analysis_and_bounds_photo_sampling(photo):
     recorder, _, _, path, image, camera, _ = photo
     metadata = json.loads(path.read_text())
-    assert metadata['analysis_batch'] == 'patrol_mosaic_v1'
+    assert metadata['analysis_batch'] == 'patrol_images_v1'
     assert recorder.max_photos == 24
     half_fov = camera['hfov_rad'] / 2
 
@@ -240,3 +259,11 @@ def test_covered_room_does_not_require_entry_but_walls_still_block():
     blocked.mark_observed(1.05, 1.55, 0, 2 * math.pi)
     assert not blocked.complete
     assert blocked.summary()['rooms']['east']['coverage_ratio'] < .95
+
+
+def test_mosaic_calibration_cannot_credit_individual_image_analysis(calibration_file):
+    value = json.loads(calibration_file.read_text())
+    value['analysis_batch'] = 'patrol_mosaic_v1'
+    calibration_file.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='batch policy'):
+        InspectionCalibration(calibration_file, True)

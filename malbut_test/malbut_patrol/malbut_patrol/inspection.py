@@ -7,6 +7,27 @@ from pathlib import Path
 import sqlite3
 
 
+def verify_observation_receipt(connection, row, metadata):
+    """Verify the analysis commit after RAM pixels have been released."""
+    exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='patrol_observation_evidence'").fetchone()
+    saved = (connection.execute('SELECT * FROM patrol_observation_evidence WHERE observation_id=?',
+                                (row['id'],)).fetchone() if exists else None)
+    if saved is None:
+        if metadata.get('media_storage') == 'volatile_v1':
+            raise ValueError('Transient observation lacks observation receipt')
+        return False
+
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                         separators=(',', ':')).encode()).hexdigest()
+
+    if (saved['metadata_sha256'] != digest(metadata)
+            or saved['analysis_sha256'] != digest(json.loads(row['analysis']))):
+        raise ValueError('Observation evidence integrity mismatch')
+    return True
+
+
 class InspectionCalibration:
     """Bind an empirical presence range to one camera, model and environment."""
 
@@ -22,7 +43,7 @@ class InspectionCalibration:
                 or type(value.get('simulated')) is not bool
                 or value['simulated'] != simulated
                 or value.get('calibration_kind') != 'object_presence'
-                or value.get('analysis_batch') != 'patrol_mosaic_v1'
+                or value.get('analysis_batch') != 'patrol_images_v1'
                 or not isinstance(value.get('model'), str) or not value['model'].strip()
                 or not self._positive(value.get('range_m'))
                 or any(type(camera.get(k)) is not int or not 0 < camera[k] <= 1280
@@ -117,7 +138,7 @@ class InspectionEvidence:
                     if row['status'] != 'ready':
                         self.failed += 1
                         raise ValueError('Inspection photo analysis failed or was excluded')
-                    view = self._verify(reference, row)
+                    view = self._verify(reference, row, connection)
                     if identity not in self.credited:
                         views.append(view)
                         ready.add(identity)
@@ -139,7 +160,7 @@ class InspectionEvidence:
             if 'connection' in locals():
                 connection.close()
 
-    def _verify(self, reference, row):
+    def _verify(self, reference, row, connection):
         identity = reference['observation_id']
         path = self.directory / 'captures' / (identity + '.json')
         data = path.read_bytes()
@@ -152,7 +173,7 @@ class InspectionEvidence:
                 or metadata['observation_id'] != identity
                 or run is None
                 or any(metadata[k] != run[k] for k in ('patrol_id', 'map_id', 'map_frame'))
-                or metadata.get('analysis_batch') != 'patrol_mosaic_v1'
+                or metadata.get('analysis_batch') != 'patrol_images_v1'
                 or metadata['simulated'] != self.calibration.simulated
                 or row['model'] != self.calibration.model
                 or row['error'] is not None or row['analysis'] is None):
@@ -171,8 +192,10 @@ class InspectionEvidence:
                                                   camera['hfov_rad'], camera['height_m'])
         if camera != expected:
             raise ValueError('Photo calibration mismatch')
+        information_only = verify_observation_receipt(connection, row, metadata)
         photo = path.with_suffix('.jpg')
-        if (photo.is_symlink() or not 0 < photo.stat().st_size <= 4 * 1024 * 1024
+        if not information_only and (
+                photo.is_symlink() or not 0 < photo.stat().st_size <= 4 * 1024 * 1024
                 or hashlib.sha256(photo.read_bytes()).hexdigest() != metadata['image_sha256']):
             raise ValueError('Photo integrity mismatch')
         # The worker validates these sidecars too. Recheck after analysis so a
@@ -180,7 +203,7 @@ class InspectionEvidence:
         for suffix, digest in [('.regions.json', metadata.get('regions_sha256')),
                                ('.depth.npy', metadata.get('spatial', {}).get('depth_sha256')),
                                ('.lidar.npy', metadata.get('lidar', {}).get('sha256'))]:
-            if digest is not None:
+            if digest is not None and not information_only:
                 sidecar = path.with_suffix(suffix)
                 if (sidecar.is_symlink()
                         or hashlib.sha256(sidecar.read_bytes()).hexdigest() != digest):

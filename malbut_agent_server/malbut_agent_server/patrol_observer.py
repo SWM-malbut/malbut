@@ -1,10 +1,9 @@
-"""Analyze durable patrol photos outside ROS motion and dialogue callbacks."""
+"""Analyze transient patrol photos outside ROS motion and dialogue callbacks."""
 
 import base64
 import fcntl
 import json
 import logging
-import os
 import threading
 
 from malbut_agent_server.endpoint_policy import is_official_openai_base_url
@@ -26,7 +25,9 @@ capture_rooms는 카메라 촬영 위치다. 사진 속 모든 물체가 그 방
 kind는 사람(일부만 보여도)이면 person, 상자·박스·큐브형 물체이면 box, 그 외에는 object다.
 모든 물체의 image_anchors에 직접 보이는 같은 물체 표면 안쪽의 서로 떨어진 [x,y] 지점
 2~3개를 같은 좌표계로 표시한다. 물체는 넓게 보이는 같은 면을 고르고,
-사람은 몸통·팔·다리 안쪽을 사용한다. 각 지점이 해당 물체인지 다시 확인한다.
+사람은 넓게 보이는 몸통 안쪽에서 2~3개 지점을 고른다. 몸통이 안 보이면
+한쪽 팔이나 한쪽 다리의 같은 부분 안쪽을 고른다. 두 다리 사이 중앙이나 bbox 중심을
+자동으로 고르지 않는다. 각 지점이 해당 물체인지 다시 확인한다.
 의자나 침대도 빈 공간·바닥·배경·윤곽선·가려진 부분을 고르지 않는다.
 충분히 보이는 지점만 표시하며 지점을 특정할 수 없으면 []다.
 지도 좌표나 실제 물체 구역을 추정하지 않는다. 구역 판정은 서버가 깊이 영상으로 수행한다.
@@ -108,33 +109,30 @@ class OpenAIPatrolObserver:
         return validate_analysis(json.loads(text))
 
     def analyze_batch(self, captures):
-        """Analyze one contact sheet; preserve frame identities and measured API usage."""
-        from malbut_agent_server.patrol_mosaic import (
-            FRAME_INSTRUCTIONS as BATCH_INSTRUCTIONS, make_mosaic, schema_for, split_results,
-        )
+        """Analyze up to 24 separate images in one request, with frame-local coordinates."""
+        from malbut_agent_server.patrol_images import INSTRUCTIONS as BATCH_INSTRUCTIONS
+        from malbut_agent_server.patrol_images import make_image_inputs
+        from malbut_agent_server.patrol_mosaic import schema_for, split_results
 
         credential = key_value(self.key)
         if not credential:
             raise ValueError('patrol analysis key unavailable')
-        image, layout = make_mosaic(captures, frame_coordinates=True)
-        metadata = {'simulated': captures[0][0]['simulated'],
-                    'coordinates': layout['coordinates'],
-                    'sheet_size': [layout['width'], layout['height']],
-                    'region_legend': layout['regions'],
-                    'frames': [{k: v for k, v in f.items() if k not in (
-                        'observation_id', 'photo_rect_1000')}
-                               for f in layout['frames']]}
+        content, layout = make_image_inputs(captures)
+        schema = schema_for([f['frame_id'] for f in layout['frames']],
+                            SCHEMA, frame_coordinates=True)
+        properties = schema['properties']['frames']['items']['properties']['objects'][
+            'items']['properties']
+        properties['image_bbox']['description'] = (
+            '각 사진 내부를 0~1000으로 정규화한 [left,top,right,bottom]. '
+            '픽셀 단위가 아니다. 사진 전체는 [0,0,1000,1000].')
+        properties['image_anchors']['description'] = (
+            '같은 사진 내부 0~1000 정규화 표면 좌표. 픽셀 단위가 아니다. 중앙은 [500,500].')
         payload = {
             'model': self.model, 'instructions': BATCH_INSTRUCTIONS, 'store': False,
             'max_output_tokens': 12000,
-            'input': [{'role': 'user', 'content': [
-                {'type': 'input_text', 'text': json.dumps(metadata, ensure_ascii=False)},
-                {'type': 'input_image', 'detail': 'high',
-                 'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image).decode('ascii')},
-            ]}],
-            'text': {'format': {'type': 'json_schema', 'name': 'patrol_mosaic', 'strict': True,
-                                'schema': schema_for([f['frame_id'] for f in layout['frames']],
-                                                     SCHEMA, frame_coordinates=True)}},
+            'input': [{'role': 'user', 'content': content}],
+            'text': {'format': {'type': 'json_schema', 'name': 'patrol_images', 'strict': True,
+                                'schema': schema}},
         }
         response = self.transport(self.base_url + '/responses',
                                   {'Authorization': 'Bearer ' + credential,
@@ -157,11 +155,12 @@ class OpenAIPatrolObserver:
                      cache_write_tokens=details.get('cache_write_tokens'),
                      cache_write_30m_tokens=writes.get('ttl_30m_tokens'),
                      cache_write_12h_tokens=writes.get('ttl_12h_tokens'))
-        return results, usage, image, layout
+        # Keep the existing observer return contract without retaining a contact sheet.
+        return results, usage, None, layout
 
 
 class PatrolObservationWorker:
-    """Recover pending photos on restart; serialize workers with a process lock."""
+    """Serialize workers; transient pixels are available only while the producer retains them."""
 
     def __init__(self, store, observer, *, autostart=True):
         self.store, self.observer = store, observer
@@ -240,19 +239,7 @@ class PatrolObservationWorker:
                 regions, depth = read_spatial(path, metadata)
                 localized[identity] = localize_objects(
                     results[identity], metadata, regions, depth, read_lidar(path, metadata))
-            folder = self.store.directory / 'batches'
-            folder.mkdir(exist_ok=True, mode=0o700)
-            path = folder / (manifest['patrol_id'] + '.jpg')
-            temporary = path.with_suffix('.jpg.tmp')
-            try:
-                with temporary.open('wb') as stream:
-                    os.chmod(temporary, 0o600)
-                    stream.write(image)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, path)
-            finally:
-                temporary.unlink(missing_ok=True)
+            # Only the pixel-free manifest and localized analysis enter durable storage.
             complete_batch(self.store, manifest, localized, self.observer.model, usage, layout)
         except Exception:
             for row in rows:
