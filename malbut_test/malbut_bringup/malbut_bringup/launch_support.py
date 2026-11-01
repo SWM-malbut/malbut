@@ -29,6 +29,7 @@ def defaults():
     values = {
         'start_hardware': 'true',
         'use_sim_time': 'false',
+        'scheduled_patrol_enabled': 'true',
         'relocalization': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',

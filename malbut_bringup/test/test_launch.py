@@ -174,6 +174,17 @@ def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
                            for child in action.get_sub_entities())
 
 
+@pytest.mark.parametrize('options, enabled', [
+    ({}, True), ({'scheduled_patrol_enabled': 'false'}, False),
+    ({'use_sim_time': 'true'}, False),
+])
+def test_daily_patrol_enabled_only_for_real_robot_launch(launch_module, options, enabled):
+    """Production defaults on; simulation and explicit opt-out never schedule motion."""
+    context = _context(launch_module, **options)
+    manager = _nodes(_core_actions(launch_module, context), 'system_manager')[0]
+    assert _parameters(context, manager)['scheduled_patrol_enabled'] is enabled
+
+
 def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
     """SHM is exactly 8 MiB; default UDP discovery and endpoint policies remain."""
     import xml.etree.ElementTree as ET
@@ -507,6 +518,7 @@ def test_optional_modules_can_all_be_disabled(launch_module):
     includes = _included_modules(module._setup(context))
     assert set(includes) == {'robot'}
     assert includes['robot']['restore_pose'] == 'false'
+    assert includes['robot']['scheduled_patrol_enabled'] == 'false'
     observer, = _nodes(module._setup(context), 'wait_for_robot')
     assert _parameters(context, observer)['speech'] is False
 

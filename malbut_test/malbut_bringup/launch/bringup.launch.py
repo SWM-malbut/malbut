@@ -57,6 +57,8 @@ def _setup(context):
         enabled.append('agent')
     for name in enabled:
         settings = dict(options)
+        if name == 'robot' and value('patrol') != 'true':
+            settings['scheduled_patrol_enabled'] = 'false'
         if name == 'robot' and value('relocalization') != 'true':
             settings['restore_pose'] = 'false'
         if name == 'speech':
