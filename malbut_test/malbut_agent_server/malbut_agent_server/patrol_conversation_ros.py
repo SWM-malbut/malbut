@@ -9,6 +9,7 @@ import time
 from uuid import NAMESPACE_URL, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from malbut_agent_server.conversation_position_ros import ConversationPosition
 from malbut_agent_server.patrol_conversation import (
     EncounterGate, PatrolConversationTopics, conversation_preference, ends_conversation,
     homecam_person_count,
@@ -16,7 +17,7 @@ from malbut_agent_server.patrol_conversation import (
 
 
 class RosPatrolConversation:
-    """Use existing detections; never subscribe to pixels, infer identity, or drive."""
+    """Use existing detections and a bounded Manager mission before stationary dialogue."""
 
     def __init__(self, node, *, clock=time.monotonic, wall_clock=time.time, pool=None):
         from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest, SystemState
@@ -40,6 +41,9 @@ class RosPatrolConversation:
         self._ended_reply_ids = deque(maxlen=64)
         self._closed = False
         self._system_idle = False
+        self._position_system_ok = False
+        self.positioning_enabled = node.declare_parameter('patrol_chat_positioning_enabled', True).value
+        self.position = ConversationPosition(node, clock=clock)
         self._odom_at = None
         self._stationary_since = None
         self._playing = {}
@@ -150,6 +154,7 @@ class RosPatrolConversation:
             self._stationary_since = self.clock()
 
     def _system(self, message):
+        self._position_system_ok = self.position.allowed_state(message)
         self._system_idle = (message.system_state == message.IDLE
                              and message.control_mode == message.AUTONOMOUS
                              and not message.active_foreground_missions
@@ -170,9 +175,36 @@ class RosPatrolConversation:
                      and 0 <= now - self.gate.last_present <= 1.5)
                 and (scene is None or scene._images.permitted()))
 
+    def _position_safe(self):
+        now = self.clock()
+        worker = self.node.dialogue
+        scene = getattr(self.node, '_scene', None)
+        return (not self._closed and not self.node._closing
+                and not self.node._in_fall_window
+                and not (self.node.situation and self.node.situation.active)
+                and self._position_system_ok and self.node.count_publishers('/malbut/state') > 0
+                and self._odom_at is not None and 0 <= now - self._odom_at <= 1.5
+                and self.gate.present_since is not None and self.gate.last_present is not None
+                and 0 <= now - self.gate.last_present <= 1.5
+                and worker.ready and self.node._speech_ready and not worker.has_pending
+                and not self.node._input_utterance_id and not self._playing and not self._quiet()
+                and (scene is None or scene._images.permitted()))
+
+    def _speak_opener(self):
+        self.gate.used = True
+        self._first_reply = True
+        self.phase, self.deadline = 'speaking', self.clock() + 120
+        self.request_id = 'patrol-chat-' + uuid4().hex
+        self.node.dialogue.begin_companion(self.request_id)
+        self.reply_id = ''
+        self._playback_id = uuid4().hex
+        if not self.node.say(self.opener.text, request_id=self.request_id,
+                             playback_id=self._playback_id):
+            self.end()
+
     def _idle(self):
         worker = self.node.dialogue
-        return (self._safe() and worker.ready and self.node._speech_ready
+        return (not self.position.busy and self._safe() and worker.ready and self.node._speech_ready
                 and not self._quiet()
                 and not worker.has_pending and not self.node._input_utterance_id
                 and not self._playing and self.gate.ready()
@@ -316,6 +348,22 @@ class RosPatrolConversation:
                 text = '먼저 말 걸기 설정을 저장하지 못했어요.'
             self.node.say(text, request_id=identity)
         self._playing = {key: expiry for key, expiry in self._playing.items() if expiry > now}
+        if self.phase in ('positioning', 'settling'):
+            allowed = self._position_safe() and now < self.deadline
+            self.position.tick(allowed)
+            if not allowed:
+                self.end()
+            elif self.phase == 'positioning' and self.position.phase == 'done':
+                if self.position.success:
+                    # Do not count a stationary sample from before motion ended.
+                    self._stationary_since = None
+                    self.phase, self.deadline = 'settling', now + 30
+                else:
+                    self.end()
+            elif self.phase == 'settling' and self._safe() and self.position.released:
+                self._speak_opener()
+            return
+        self.position.tick(False)  # Retain pending cancellations after an encounter ends.
         if (self.phase == 'responding' and self._playback_id
                 and not self.node.dialogue.companion_reply_allowed(self.request_id)):
             self.end()
@@ -341,16 +389,14 @@ class RosPatrolConversation:
                 self.node.get_logger().warning('patrol_conversation_memory_unavailable')
             if opener is not None and self._idle():
                 self.opener = opener
-                self.gate.used = True
-                self._first_reply = True
-                self.phase, self.deadline = 'speaking', now + 120
-                self.request_id = 'patrol-chat-' + uuid4().hex
-                self.node.dialogue.begin_companion(self.request_id)
-                self.reply_id = ''
-                self._playback_id = uuid4().hex
-                if not self.node.say(opener.text, request_id=self.request_id,
-                                     playback_id=self._playback_id):
-                    self.end()
+                if self.positioning_enabled:
+                    self.gate.used = True
+                    if self.position.start():
+                        self.phase, self.deadline = 'positioning', now + 60
+                    else:
+                        self.end()
+                else:
+                    self._speak_opener()
         if (not self.active and self._future is None and now >= self._retry_at
                 and self._idle()):
             store = self.node.dialogue.patrol_memory
@@ -367,6 +413,7 @@ class RosPatrolConversation:
         self._control_future = None
 
     def end(self):
+        self.position.cancel()
         self.node.dialogue.end_companion(self.request_id)
         if self.phase == 'responding' and self.reply_id:
             self._ended_reply_ids.append(self.reply_id)
@@ -386,5 +433,6 @@ class RosPatrolConversation:
         for subscription in self._subscriptions:
             self.node.destroy_subscription(subscription)
         self._pool.shutdown(wait=True, cancel_futures=True)
+        self.position.close()
         self.node.destroy_client(self._input)
         self.node.destroy_client(self._stop)

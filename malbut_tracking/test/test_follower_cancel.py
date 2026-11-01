@@ -231,3 +231,27 @@ def test_unrelated_cancel_cannot_replace_pending_cancel_handle(follow):
     cancel_follow(follow)
     assert follow.node._cancel_callback(object()) == CancelResponse.REJECT
     assert follow.node._cancel_requested_goal is follow.goal
+
+
+@pytest.mark.parametrize('success', [True, False])
+def test_approach_result_waits_for_nav2_terminal_and_releases_inputs(follow, success):
+    """Arrival/timeout is not a completed stop while Nav2 still owns motion."""
+    request_motion(follow, 'spin')
+    nav = follow.spin.accept()
+    follow.goal.is_cancel_requested = False
+    follow.node._approach = object()
+    follow.node._approach_timer = Mock()
+    PersonFollowerNode._finish_approach(follow.node, success, 'bounded approach finished')
+    assert not follow.result.done()
+    follow.node._approach_timer.cancel.assert_called_once()
+    assert follow.node._approach is None
+    nav.cancel_response.set_result(object())
+    follow.node._on_cancel_guard()
+    assert not follow.result.done()
+    nav.finish()
+    follow.node._on_cancel_guard()
+    assert follow.result.result().success is success
+    assert follow.result.result().final_state == 'STOPPED'
+    (follow.goal.succeed if success else follow.goal.abort).assert_called_once()
+    follow.goal.canceled.assert_not_called()
+    follow.node._set_follow_inputs.assert_called_once_with(False)

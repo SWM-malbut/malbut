@@ -37,6 +37,7 @@ from .costmap_tracking import (
     ObstacleTargetTracker,
     TrackedObstacle,
 )
+from .conversation_approach import ConversationApproach
 from .follow_policy import (
     directed_recovery_turn,
     FollowCommand,
@@ -327,6 +328,12 @@ class PersonFollowerNode(Node):
             self._on_recovery_retry_timer,
         )
         self._recovery_retry_timer.cancel()
+        self._approach = None
+        self._approach_outcome = None
+        self._approach_timer = self.create_timer(
+            .1, self._check_approach,
+            clock=Clock(clock_type=ClockType.STEADY_TIME))
+        self._approach_timer.cancel()
         self._cancel_guard = self.create_guard_condition(
             self._on_cancel_guard
         )
@@ -548,6 +555,9 @@ class PersonFollowerNode(Node):
             ),
         )
         settings.validate()
+        if (getattr(request, 'approach_only', False)
+                and not 1.2 <= settings.desired_distance_m <= 2.0):
+            raise ValueError('conversation distance must be between 1.2 and 2.0 m')
         return settings
 
     def _goal_callback(self, request) -> GoalResponse:
@@ -579,11 +589,22 @@ class PersonFollowerNode(Node):
                 'target_person_id is required for REGISTERED_PERSON'
             )
 
+    def _check_approach(self):
+        if self._approach is not None:
+            reason = self._approach.expired(time.monotonic())
+            if reason:
+                self._finish_approach(False, reason)
+
+    def _finish_approach(self, success, message):
+        self._approach_outcome = (success, message)
+        self._cancel_follow_action(message)
+
     def _cancel_callback(self, goal_handle) -> CancelResponse:
         """Defer cancellation until the ActionServer enters canceling state."""
         if (goal_handle is not self._active_goal
                 and goal_handle is not self._cancel_requested_goal):
             return CancelResponse.REJECT
+        self._approach_outcome = None
         self._cancel_requested_goal = goal_handle
         self._cancel_guard.trigger()
         return CancelResponse.ACCEPT
@@ -627,6 +648,11 @@ class PersonFollowerNode(Node):
         self._line_fallback_pending = False
         self._result_future = Future()
         self._settings = self._settings_for_goal(goal_handle.request)
+        self._approach_outcome = None
+        self._approach = (ConversationApproach(time.monotonic(), self._settings.desired_distance_m)
+                          if goal_handle.request.approach_only else None)
+        if self._approach is not None:
+            self._approach_timer.reset()
         self._target_mode = int(goal_handle.request.target_mode)
         self._target_person_id = str(
             goal_handle.request.target_person_id
@@ -684,6 +710,8 @@ class PersonFollowerNode(Node):
         )
 
     async def _execute_callback(self, goal_handle):
+        if goal_handle is getattr(self, '_last_finished_goal', None):
+            return self._last_finished_result
         if goal_handle.status == GoalStatus.STATUS_CANCELED:
             # A cancel with no owned motion can finish before execution starts.
             return self._canceled_follow_result()
@@ -723,6 +751,9 @@ class PersonFollowerNode(Node):
                         self._pending_detection.header.stamp)):
                 return
         self._detection_transform_pending = False
+        if getattr(self, '_approach', None) is not None and len(message.detections) != 1:
+            self._finish_approach(False, 'conversation requires one visible person')
+            return
         observation = self._select_target_observation(message)
         if observation is None:
             if self._detection_transform_pending:
@@ -738,6 +769,8 @@ class PersonFollowerNode(Node):
             self._pending_detection_received_s = None
             self._pending_detection_timer.cancel()
             self._record_camera_miss()
+            if getattr(self, '_approach', None) is not None:
+                self._finish_approach(False, 'person observation is uncertain')
             return
         self._pending_detection = None
         self._pending_detection_received_s = None
@@ -759,6 +792,13 @@ class PersonFollowerNode(Node):
                 'target_tf', f'Target TF unavailable: {error}'
             )
             return
+        if getattr(self, '_approach', None) is not None:
+            reason = self._approach.observe(
+                time.monotonic(), camera_position, robot_position, detection.id,
+                metric=not bearing_only, age=now_s - observation_s)
+            if reason:
+                self._finish_approach(False, reason)
+                return
         if bearing_only:
             grid = self._latest_global_costmap
             projected = (
@@ -1699,6 +1739,16 @@ class PersonFollowerNode(Node):
             ),
         )
         self._current_distance = decision.goal.target_distance
+        if getattr(self, '_approach', None) is not None:
+            try:
+                _, yaw = self._robot_pose()
+            except TransformException:
+                self._finish_approach(False, 'robot orientation is unavailable')
+                return
+            if self._approach.reached(time.monotonic(), decision.goal.target_distance,
+                                      normalize_angle(decision.goal.yaw - yaw)):
+                self._finish_approach(True, 'conversation position reached')
+                return
         previous_command = self._last_motion_command
         if decision.command != previous_command:
             self._reset_tracking_plan_cadence()
@@ -2409,6 +2459,9 @@ class PersonFollowerNode(Node):
 
     def _begin_loss_recovery(self, now_s: float) -> None:
         """Freeze the last green target before escalating target recovery."""
+        if getattr(self, '_approach', None) is not None:
+            self._finish_approach(False, 'person lost; conversation approach will not search')
+            return
         self._line_fallback_pending = False
         self._cancel_tracking_retry()
         self._path_planner.cancel()
@@ -2968,6 +3021,9 @@ class PersonFollowerNode(Node):
         if goal_handle is None or result_future is None:
             return
         self._cancel_requested_goal = goal_handle
+        if getattr(self, '_approach', None) is not None:
+            self._approach_timer.cancel()
+            self._approach = None
         self._active_goal = None
         self._nav2.cancel()
         self._path_planner.cancel()
@@ -3024,8 +3080,19 @@ class PersonFollowerNode(Node):
         if goal_handle is None or result_future is None or self._nav2.busy:
             return
         self._set_follow_inputs(False)
-        result = self._canceled_follow_result()
-        goal_handle.canceled()
+        outcome = getattr(self, '_approach_outcome', None)
+        if outcome is not None and not goal_handle.is_cancel_requested:
+            result = FollowPerson.Result(success=outcome[0], final_state=FollowState.STOPPED,
+                                         message=outcome[1])
+            if outcome[0]:
+                goal_handle.succeed()
+            else:
+                goal_handle.abort()
+        else:
+            result = self._canceled_follow_result()
+            goal_handle.canceled()
+        self._last_finished_goal, self._last_finished_result = goal_handle, result
+        self._approach_outcome = None
         self._cancel_requested_goal = None
         self._result_future = None
         result_future.set_result(result)

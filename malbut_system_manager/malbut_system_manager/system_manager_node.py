@@ -358,6 +358,16 @@ class SystemManagerNode(Node):
                         mission_id, TerminalOutcome.ABORTED,
                         message='scheduled patrol skipped: manager is busy',
                     )])
+                elif (manifest.capability_id == 'follow_person'
+                      and arguments.get('approach_only', False)
+                      and (self._state.system_state is not SystemState.IDLE
+                           or any(self._state.all()) or self._speech.playbacks)):
+                    # A conversational approach must never preempt or queue
+                    # behind work that began after the Agent's idle snapshot.
+                    effects = SchedulerEffects(complete=[MissionCompletion(
+                        mission_id, TerminalOutcome.ABORTED,
+                        message='conversation positioning skipped: manager is busy',
+                    )])
                 else:
                     effects = self._scheduler.submit(mission)
 

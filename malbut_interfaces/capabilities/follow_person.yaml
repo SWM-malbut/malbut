@@ -24,6 +24,10 @@ input:
       type: float32
       description: 사람과 유지할 희망 거리(m), 0.2 이상
       default: 1.0
+    approach_only:
+      type: bool
+      description: 대화 전 한 번만 위치 조정. 20초 제한, 사람 이탈 시 종료. 일반 추적은 false
+      default: false
 
 execution:
   mode: FOREGROUND

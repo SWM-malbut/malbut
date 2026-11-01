@@ -5,6 +5,9 @@ uint8 target_mode
 string target_person_id
 # Desired distance in metres, at least 0.2. Zero uses the configured default.
 float32 desired_distance_m
+# Reuse following for a single bounded conversation approach. Default false
+# preserves continuous following. Stops on arrival, loss, movement or timeout.
+bool approach_only
 ---
 bool success
 string final_state

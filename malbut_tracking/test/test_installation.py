@@ -44,7 +44,9 @@ def test_generated_follow_person_action_contract():
         'target_mode': 'uint8',
         'target_person_id': 'string',
         'desired_distance_m': 'float',
+        'approach_only': 'boolean',
     }
+    assert FollowPerson.Goal().approach_only is False
     assert FollowPerson.Result.get_fields_and_field_types() == {
         'success': 'boolean',
         'final_state': 'string',

@@ -123,6 +123,7 @@ def _write_test_manifest(directory):
         'target_mode': {'type': 'uint8', 'description': 'Target selection'},
         'target_person_id': {'type': 'string', 'description': 'Test target'},
         'desired_distance_m': {'type': 'float32', 'description': 'Distance'},
+        'approach_only': {'type': 'bool', 'description': 'Bounded approach', 'default': False},
     }
     manifest = {
         'schema_version': 1,
@@ -147,7 +148,7 @@ def _write_test_manifest(directory):
 def _arguments(target):
     return {
         'target_mode': FollowPerson.Goal.REGISTERED_PERSON,
-        'target_person_id': target, 'desired_distance_m': 1.0,
+        'target_person_id': target, 'desired_distance_m': 1.0, 'approach_only': False,
     }
 
 

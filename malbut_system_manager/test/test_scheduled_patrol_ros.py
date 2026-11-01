@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from threading import Event, Thread
+from types import SimpleNamespace
 import time
 
 from action_msgs.msg import GoalStatus
@@ -270,3 +271,35 @@ def test_receipt_failure_prevents_motion(robot, monkeypatch):
     adapter.tick()
     assert adapter.failed
     assert not adapter.goal_ids and not server.requests
+
+
+@pytest.mark.parametrize('blocker', ['patrol', 'playback'])
+def test_conversation_positioning_cannot_preempt_busy_manager(robot, blocker):
+    """Admission rechecks availability, even after the Agent observed idle."""
+    manager, server, _ = robot
+    client = ActionClient(server, ExecuteMission, '/malbut/mission/execute')
+    try:
+        assert client.wait_for_server(timeout_sec=8)
+        if blocker == 'patrol':
+            patrol = _result(client.send_goal_async(ExecuteMission.Goal(
+                capability_id='patrol', arguments_yaml='{}')))
+            patrol_result = patrol.get_result_async()
+            _wait(lambda: bool(server.requests))
+        else:
+            with manager._effects_lock:
+                manager._speech.playbacks['test-conversation-blocker'] = SimpleNamespace(
+                    mission_id='other-conversation')
+        approach = _result(client.send_goal_async(ExecuteMission.Goal(
+            capability_id='follow_person',
+            arguments_yaml='desired_distance_m: 1.5\napproach_only: true')))
+        result = _result(approach.get_result_async())
+        assert result.status == GoalStatus.STATUS_ABORTED
+        assert 'manager is busy' in result.result.message
+        assert not server.canceled.is_set()
+        if blocker == 'patrol':
+            server.release.set()
+            assert _result(patrol_result).status == GoalStatus.STATUS_SUCCEEDED
+    finally:
+        with manager._effects_lock:
+            manager._speech.playbacks.pop('test-conversation-blocker', None)
+        client.destroy()

@@ -95,10 +95,12 @@ def robot(tmp_path, monkeypatch):
         assert predicate(), (agent._patrol_chat.phase, controls)
 
     chat = agent._patrol_chat
+    chat.positioning_enabled = False  # These dialogue cases isolate speech from motion.
     pump(lambda: agent._speech_ready and detections.get_subscription_count() > 0
          and chat._input.service_is_ready())
 
-    def pulse(now, *, count=1, moving=False, idle=True, stale=False, source='yolo', score=.9):
+    def pulse(now, *, count=1, moving=False, idle=True, stale=False, source='yolo', score=.9,
+              mission_id=None):
         clock[0] = now
         stamp = io.get_clock().now().to_msg()
         if stale:
@@ -120,9 +122,15 @@ def robot(tmp_path, monkeypatch):
         motion.header.stamp = io.get_clock().now().to_msg()
         motion.twist.twist.linear.y = .2 if moving else 0.
         odom.publish(motion)
-        states.publish(SystemState(system_state=SystemState.IDLE if idle else SystemState.EMERGENCY,
-                                   control_mode=SystemState.AUTONOMOUS))
-        pump(lambda: chat._odom_at == now and chat._system_idle == idle
+        from malbut_interfaces.msg import MissionStatus
+        state = SystemState(system_state=SystemState.IDLE if idle else SystemState.EMERGENCY,
+                            control_mode=SystemState.AUTONOMOUS)
+        if mission_id:
+            state.system_state = SystemState.EXECUTING_MISSION
+            state.active_foreground_missions = [MissionStatus(
+                mission_id=mission_id, capability_id='follow_person')]
+        states.publish(state)
+        pump(lambda: chat._odom_at == now and chat._system_idle == (idle and not mission_id)
              and (stale or chat._presence_stamps.get(key) != previous))
         chat.tick()
 
@@ -492,3 +500,172 @@ def test_malformed_pose_input_does_not_start_or_crash_conversation(robot, payloa
     r = robot
     r.chat._person_poses(String(data=payload))
     assert not r.chat._presence and not r.speech
+
+
+@pytest.fixture
+def positioned_robot(robot):
+    """Real ROS mission transport; only the downstream robot motion is simulated."""
+    from malbut_interfaces.action import ExecuteMission
+    from rclpy.action import ActionServer, CancelResponse
+    from rclpy.task import Future as RosFuture
+
+    r = robot
+    r.chat.positioning_enabled = True
+    goals, cancellations = [], []
+    finish_motion = RosFuture()
+
+    async def execute(handle):
+        goals.append(handle)
+        success = await finish_motion
+        if handle.is_cancel_requested:
+            handle.canceled()
+            success = False
+        elif success:
+            handle.succeed()
+        else:
+            handle.abort()
+        return ExecuteMission.Result(result_yaml=json.dumps(
+            dict(success=success, final_state='STOPPED')))
+
+    def cancel(handle):
+        cancellations.append(handle)
+        return CancelResponse.ACCEPT
+
+    server = ActionServer(r.io, ExecuteMission, '/malbut/mission/execute',
+                          execute_callback=execute, cancel_callback=cancel)
+    usage = r.io.create_publisher(String, '/malbut/runtime/state', QoSProfile(
+        depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
+    def resources(active):
+        usage.publish(String(data=json.dumps(dict(
+            ready=True, error='', active_groups=['person_perception', 'motion'] if active else [],
+            capabilities=['follow_person'] if active else []))))
+        r.pump(lambda: r.chat.position.runtime_idle != active)
+
+    r.pump(r.chat.position.client.server_is_ready)
+    resources(False)
+    for second in range(31, 36):
+        r.pulse(float(second), source='pose')
+    r.pump(lambda: bool(goals))
+    resources(True)
+    r.pulse(35.1, source='pose', moving=True, mission_id=r.chat.position.mission_id)
+    assert not r.speech
+    try:
+        yield SimpleNamespace(**locals())
+    finally:
+        if not finish_motion.done():
+            finish_motion.set_result(False)
+        r.pump(lambda: not r.chat.position.busy)
+        server.destroy()
+
+
+def test_positioning_stops_and_releases_resources_before_speaking(positioned_robot):
+    p, r = positioned_robot, positioned_robot.r
+    args = json.loads(p.goals[0].request.arguments_yaml)
+    assert p.goals[0].request.capability_id == 'follow_person'
+    assert args['approach_only'] is True and args['desired_distance_m'] == 1.5
+    p.finish_motion.set_result(True)
+    r.pump(lambda: r.chat.phase == 'settling')
+    for second in (36., 37., 38., 39.):
+        r.pulse(second, source='pose')
+    assert not r.speech  # Motion ended, but the expensive inputs have not stopped yet.
+    p.resources(False)
+    r.chat.tick()
+    r.pump(lambda: bool(r.speech))
+    r.finish(r.speech[0])
+    r.pulse(40., source='pose')
+    assert len(p.goals) == 1 and not p.cancellations
+
+
+@pytest.mark.parametrize('cause', ['visitor', 'lost', 'other_mission', 'timeout', 'voice'])
+def test_interrupted_positioning_cancels_without_greeting_or_restarting(positioned_robot, cause):
+    p, r = positioned_robot, positioned_robot.r
+    if cause == 'voice':
+        r.chat.input_status(SpeechInputStatus(session_id='ordinary', state='started'))
+    else:
+        r.pulse(96. if cause == 'timeout' else 36., source='pose', moving=True,
+                count=2 if cause == 'visitor' else 0 if cause == 'lost' else 1,
+                mission_id='other' if cause == 'other_mission' else r.chat.position.mission_id)
+    r.pump(lambda: bool(p.cancellations))
+    assert not r.speech and r.chat.position.busy
+    p.finish_motion.set_result(False)
+    r.pump(lambda: r.chat.phase == 'idle' and not r.chat.position.busy)
+    p.resources(False)
+    for second in (97., 98., 99.):
+        r.pulse(second, source='pose')
+    assert not r.speech and len(p.goals) == 1
+
+
+def test_failed_approach_never_reports_ready_to_talk(positioned_robot):
+    p, r = positioned_robot, positioned_robot.r
+    p.finish_motion.set_result(False)
+    r.pump(lambda: r.chat.phase == 'idle')
+    p.resources(False)
+    assert not r.speech and not r.controls
+
+
+@pytest.mark.parametrize('late', [False, True])
+def test_position_cancel_waits_for_terminal_even_with_late_acceptance(late):
+    from action_msgs.msg import GoalStatus
+    from malbut_interfaces.action import ExecuteMission
+    from unittest.mock import Mock
+    from malbut_agent_server.conversation_position_ros import ConversationPosition
+
+    clock, acceptance, terminal = [0.], Future(), Future()
+    position = ConversationPosition.__new__(ConversationPosition)
+    position.node = Mock()
+    position.clock = lambda: clock[0]
+    position.client = Mock()
+    position.client.send_goal_async.return_value = acceptance
+    position.action_type = ExecuteMission
+    position.phase, position.runtime_revision = 'idle', 1
+    assert position.start()
+    handle = Mock(accepted=True)
+    handle.get_result_async.return_value = terminal
+    if late:
+        clock[0] = 6.
+        position.tick(True)
+    else:
+        acceptance.set_result(handle)
+        position.cancel()
+    if late:
+        acceptance.set_result(handle)
+    handle.cancel_goal_async.assert_called_once()
+    assert position.busy and not position.success
+    terminal.set_result(SimpleNamespace(status=GoalStatus.STATUS_CANCELED,
+        result=ExecuteMission.Result(result_yaml='success: false\nfinal_state: STOPPED')))
+    assert not position.busy and not position.success
+
+
+def test_malformed_terminal_result_does_not_leave_positioning_running():
+    from action_msgs.msg import GoalStatus
+    from malbut_interfaces.action import ExecuteMission
+    from unittest.mock import Mock
+    from malbut_agent_server.conversation_position_ros import ConversationPosition
+
+    position = ConversationPosition.__new__(ConversationPosition)
+    position.node, position.phase, position.cancel_requested = Mock(), 'running', False
+    result = Future()
+    result.set_result(SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED,
+        result=ExecuteMission.Result(result_yaml='[')))
+    position._finished(result)
+    assert not position.busy and not position.success
+
+
+def test_immediate_position_result_is_not_resurrected_by_acceptance():
+    from action_msgs.msg import GoalStatus
+    from malbut_interfaces.action import ExecuteMission
+    from unittest.mock import Mock
+    from malbut_agent_server.conversation_position_ros import ConversationPosition
+
+    position = ConversationPosition.__new__(ConversationPosition)
+    position.node, position.clock = Mock(), lambda: 0.
+    position.phase, position.cancel_requested, position.accept_deadline = 'requesting', False, 5.
+    terminal, acceptance = Future(), Future()
+    terminal.set_result(SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED,
+        result=ExecuteMission.Result(result_yaml='success: true\nfinal_state: STOPPED')))
+    handle = Mock(accepted=True)
+    handle.get_result_async.return_value = terminal
+    acceptance.set_result(handle)
+    position._accepted(acceptance)
+    assert position.phase == 'done' and position.success

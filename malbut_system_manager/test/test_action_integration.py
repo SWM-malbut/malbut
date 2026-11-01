@@ -444,6 +444,9 @@ def test_resource_preemption_keeps_unrelated_foreground_running(tmp_path):
                         'description': 'Gap',
                         'default': 1.0,
                     },
+                    'approach_only': {
+                        'type': 'bool', 'description': 'Bounded approach', 'default': False,
+                    },
                 },
             },
             'execution': {

@@ -149,6 +149,9 @@ def mixed_manager(tmp_path):
                 'desired_distance_m': {
                     'type': 'float32', 'description': 'distance', 'default': 1.0,
                 },
+                'approach_only': {
+                    'type': 'bool', 'description': 'bounded approach', 'default': False,
+                },
             },
             ['BASE'],
         ),
