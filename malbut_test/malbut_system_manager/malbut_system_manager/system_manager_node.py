@@ -42,6 +42,7 @@ from .models import (
 )
 from .state_store import StateStore
 from .speech_coordinator import SpeechCoordinator
+from .scheduled_patrol import ScheduledPatrol
 
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
@@ -178,6 +179,7 @@ class SystemManagerNode(Node):
             self._accepting_goals = True
         self._apply_effects(effects)
         self._publish_state()
+        self._scheduled_patrol = ScheduledPatrol(self)
         capabilities = ', '.join(
             manifest.capability_id for manifest in self._registry.all()
         )
@@ -202,6 +204,8 @@ class SystemManagerNode(Node):
     def destroy_node(self) -> bool:
         """Stop accepting work and release dynamic Action clients."""
         self._accepting_goals = False
+        if hasattr(self, '_scheduled_patrol'):
+            self._scheduled_patrol.close()
         if hasattr(self, '_speech'):
             self._speech.close()
         if hasattr(self, '_action_server'):
@@ -214,6 +218,7 @@ class SystemManagerNode(Node):
         """Stop admission and cancel every non-terminal managed mission."""
         with self._effects_lock:
             self._accepting_goals = False
+            self._scheduled_patrol.close()
             self._speech.close()
             with self._lock:
                 effects = self._scheduler.request_shutdown()
@@ -347,6 +352,12 @@ class SystemManagerNode(Node):
                             )
                         ]
                     )
+                elif (mission_id in self._scheduled_patrol.goal_ids
+                      and not self._scheduled_patrol.available()):
+                    effects = SchedulerEffects(complete=[MissionCompletion(
+                        mission_id, TerminalOutcome.ABORTED,
+                        message='scheduled patrol skipped: manager is busy',
+                    )])
                 else:
                     effects = self._scheduler.submit(mission)
 
