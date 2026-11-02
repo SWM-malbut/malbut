@@ -143,7 +143,7 @@ def test_preparation_is_immutable_and_submission_uses_ros_owner(harness):
     assert manager.submissions == [(
         'follow_person', {
             'target_mode': 0, 'target_person_id': '',
-            'desired_distance_m': 1.0,
+            'desired_distance_m': 0.6,
         }, 'speech-mission:' + hashlib.sha256(b'turn-1').hexdigest(),
     )]
 
