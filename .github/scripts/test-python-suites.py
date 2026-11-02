@@ -66,6 +66,7 @@ class PythonSuiteTests(unittest.TestCase):
             'test_manager_boundary_ros.py',
             'test_voice_map_actions_ros.py', 'test_voice_lab_graph.py', 'test_speech_scene_ros.py',
             'test_patrol_conversation_ros.py',
+            'test_called_conversation_ros.py',
         )}
         self.assertEqual(self.files('agent-ros'), expected)
         self.assertEqual(self.files('agent-ros', fall_job=True), expected)
@@ -111,6 +112,7 @@ class PythonSuiteTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs['cwd'], SUITES.ROOT / 'malbut_agent_server')
         self.assertEqual(run.call_args.kwargs['env']['PYTHONPATH'].split(SUITES.os.pathsep),
                          [str(SUITES.ROOT / 'malbut_agent_server'),
+                          str(SUITES.ROOT / 'malbut_tracking'),
                           str(SUITES.ROOT / 'homecam_agent/homecam_detector'),
                           str(SUITES.ROOT / 'malbut_autoslam'),
                           '/test/ros/overlay'])
