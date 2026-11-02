@@ -9,3 +9,8 @@ string session_id
 string utterance_id
 # STARTED는 VAD 발화 시작, FAILED는 청취/인식 실패, WAKE는 일반 호출어 인식
 string state
+# WAKE only: an XFM hardware direction matched to this call's captured audio.
+# Invalid/missing directions must never be interpreted as forward (zero radians).
+bool direction_valid
+float32 direction_yaw
+builtin_interfaces/Time direction_stamp

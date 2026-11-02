@@ -2,6 +2,7 @@
 
 from collections import deque
 import json
+import math
 from uuid import uuid4
 
 from malbut_agent_server.called_conversation import cancel_approach, prepare_caller_navigation
@@ -25,6 +26,7 @@ class CalledConversation:
         self.input_started = False
         self.moved = False
         self.motion_started = False
+        self.direction = None
 
     @property
     def active(self):
@@ -62,6 +64,7 @@ class CalledConversation:
             self.expires = self.clock() + 180
             self.input_started = self.moved = self.motion_started = False
             self.pending = self.proposal = None
+            self.direction = self._direction(message)
             self.questions = 0
             self.future = self.chat._input.call_async(self.chat._session_type.Request(
                 session_id=self.session_id, active=True, preserve_input=True))
@@ -71,7 +74,7 @@ class CalledConversation:
             if message.state == 'started':
                 self.input_started = True
                 self.deadline = min(self.expires, self.clock() + 60)
-                if self.phase in ('acquiring', 'navigating', 'settling'):
+                if self.phase in ('orienting', 'acquiring', 'navigating', 'settling'):
                     self._stop('input')
             elif message.state == 'failed':
                 self._stop('end')
@@ -146,6 +149,36 @@ class CalledConversation:
         else:
             self._finish('지금은 가까이 갈 수 없어요. 여기서 말씀을 들을게요.')
 
+    def _direction(self, message):
+        if not getattr(message, 'direction_valid', False):
+            return None
+        stamp = message.direction_stamp
+        at = stamp.sec + stamp.nanosec / 1e9
+        age = self.node.get_clock().now().nanoseconds / 1e9 - at
+        yaw = message.direction_yaw
+        if (not 0 <= stamp.nanosec < 10**9 or not 0 <= age <= 4
+                or not math.isfinite(yaw) or not 0.14 <= abs(yaw) <= math.pi + 1e-6
+                or self.chat._stationary_since is None
+                or self.chat._stationary_since > self.clock() - age):
+            return None
+        return max(-math.pi, min(math.pi, yaw)), self.clock() - age
+
+    def _orient_or_acquire(self):
+        direction, self.direction = self.direction, None
+        if direction is None:
+            self._acquire()
+            return
+        yaw, at = direction
+        if (not 0 <= self.clock() - at <= 4 or self.chat._stationary_since is None
+                or self.chat._stationary_since > at):
+            self._acquire()
+        elif self.chat.position.start(rotation=yaw):
+            self.motion_started = True
+            self.phase, self.deadline = 'orienting', self.clock() + 55
+            self.node.get_logger().info('called_conversation_orienting')
+        else:
+            self._finish('지금은 방향을 맞출 수 없어요. 여기서 말씀을 들을게요.')
+
     def _stop_playback(self):
         if self.playback_id and self.chat._stop.service_is_ready():
             self.chat._stop.call_async(self.chat._stop_type.Request(
@@ -179,7 +212,7 @@ class CalledConversation:
             return
         now, position = self.clock(), self.chat.position
         allowed = self._available() and now < self.expires and now < self.deadline
-        position.tick(allowed and self.phase in ('acquiring', 'navigating'))
+        position.tick(allowed and self.phase in ('orienting', 'acquiring', 'navigating'))
         if not allowed and self.phase != 'stopping':
             self._stop('end')
         if self.phase == 'stopping':
@@ -222,11 +255,13 @@ class CalledConversation:
                 accepted = False
             self.future = None
             if accepted:
-                self._acquire()
+                self._orient_or_acquire()
             else:
                 self.close()  # Original ordinary input/another session remains intact.
-        elif self.phase in ('acquiring', 'navigating') and position.phase == 'done':
-            if self.phase == 'acquiring':
+        elif self.phase in ('orienting', 'acquiring', 'navigating') and position.phase == 'done':
+            if self.phase == 'orienting':
+                self._settle('acquire' if position.success else 'orientation_blocked')
+            elif self.phase == 'acquiring':
                 self._settle('greet' if position.success else 'ask')
             else:
                 self._settle('acquire' if position.success else 'blocked')
@@ -237,6 +272,8 @@ class CalledConversation:
                 self._ask()
             elif self.after == 'blocked':
                 self._finish('그 구역까지 이동하지 못했어요. 여기서 말씀을 들을게요.')
+            elif self.after == 'orientation_blocked':
+                self._finish('안전하게 회전하지 못했어요. 여기서 말씀을 들을게요.')
             else:
                 # The follower confirmed one person; require fresh presence
                 # again after releasing tracking before opening conversation.
