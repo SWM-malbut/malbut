@@ -71,7 +71,8 @@ def check_tts(output_device, config_path=''):
         for selector in ('/**', 'malbut_tts', '/malbut_tts'):
             settings.update(document.get(selector, {}).get('ros__parameters', {}))
     options = {key: settings[key] for key in (
-        'backend', 'model_path', 'piper_threads', 'speaker', 'language',
+        'backend', 'model_path', 'piper_threads', 'piper_speed', 'piper_max_chars',
+        'speaker', 'language',
         'cuda_dtype', 'cuda_sentence_mode', 'sentence_max_chars',
         'api_model', 'api_voice', 'api_timeout_seconds',
     ) if key in settings}

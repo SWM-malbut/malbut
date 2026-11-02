@@ -351,8 +351,10 @@ def test_tts_diagnostic_uses_robot_voice_threads_and_output_override(audio_outpu
     config = tmp_path / 'tts.yaml'
     config.write_text('/**:\n  ros__parameters:\n    backend: piper\n'
                       '    model_path: /local/kss.onnx\n    piper_threads: 4\n'
+                      '    piper_speed: 1.3\n    piper_max_chars: 32\n'
                       '    output_device: 2\n')
     preflight.check_tts(-1, str(config))
     assert audio_output.options == {
-        'backend': 'piper', 'model_path': '/local/kss.onnx', 'piper_threads': 4}
+        'backend': 'piper', 'model_path': '/local/kss.onnx', 'piper_threads': 4,
+        'piper_speed': 1.3, 'piper_max_chars': 32}
     assert audio_output.calls[0][1]['device'] == 2

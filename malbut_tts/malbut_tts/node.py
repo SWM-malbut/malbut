@@ -39,6 +39,8 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'piper')
                 self.declare_parameter('piper_threads', 3)
+                self.declare_parameter('piper_speed', 0.9)
+                self.declare_parameter('piper_max_chars', 40)
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
                 self.declare_parameter('api_voice', 'nova')
                 self.declare_parameter('api_timeout_seconds', 10.0)
@@ -109,13 +111,17 @@ def create_tts_node(runtime_factory=None):
                 speaker=self.get_parameter('speaker').value,
                 language=self.get_parameter('language').value,
                 piper_threads=self.get_parameter('piper_threads').value,
+                piper_speed=self.get_parameter('piper_speed').value,
+                piper_max_chars=self.get_parameter('piper_max_chars').value,
             )
             if backend == 'piper':
                 synthesizer.load()
                 self.get_logger().info(
                     'Piper ready: CPU only, Korean normalization v2.1; '
                     f'{synthesizer.sample_rate} Hz, '
-                    f'{self.get_parameter("piper_threads").value} threads')
+                    f'{self.get_parameter("piper_threads").value} threads, '
+                    f'{self.get_parameter("piper_speed").value}x speed, '
+                    f'{self.get_parameter("piper_max_chars").value} chars/segment')
             if backend == 'openai':
                 self.get_logger().info(
                     'OpenAI TTS: speech text is sent to a paid external API; '

@@ -360,7 +360,14 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
 `piper` 백엔드는 KSS medium ONNX 모델과 한국어 정규화 v2.1을 로봇 CPU에서
 실행합니다. 숫자·단위·영문 약어와 발음 사전을 적용하며 TTS 서버/API를 호출하지
 않습니다. 기존 Manager 요청 경로, 재생 큐, pause/resume/stop을 사용합니다.
-중지는 진행 중인 한 문장의 ONNX 계산이 끝나는 시점에 반영됩니다.
+기본 말하기 속도는 `piper_speed=0.9`로, 모델 기본 속도보다 조금 느리게 말합니다.
+음높이와 샘플레이트를 바꾸지 않고 모델의 발음 길이를 늘립니다.
+`piper_speed`는 0.5~2.0 범위이며 1.0으로 기존 속도를 복원할 수 있습니다.
+정규화한 텍스트를 기본 `piper_max_chars=40`자 이하로 나누어 첫 음성을 먼저
+재생합니다. 문장부호·공백 경계를 우선하며 범위는 16~512자입니다.
+짧게 나누면 억양과 문장 사이 쉬는 시간이 달라질 수 있습니다.
+중지는 진행 중인 한 구간의 ONNX 계산이 끝나는 시점에 반영됩니다.
+저장된 알림 WAV(`audio_id`)의 재생 속도는 이 설정으로 바뀌지 않습니다.
 
 음성용 전처리에서 짝이 맞는 `**강조**`, `*강조*`, `__강조__`, `_강조_`와
 줄 시작의 별표 목록 기호를 제거합니다. 따라서 LLM 답변의 강조용 별표를 읽지
@@ -379,7 +386,9 @@ PYTHONPATH=malbut_tts python3 -m pytest -q malbut_tts/test
   ros__parameters:
     backend: piper
     model_path: /home/ubuntu/.cache/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx
-    piper_threads: 6
+    piper_threads: 3
+    piper_speed: 0.9
+    piper_max_chars: 40
     output_device: -1
 ```
 

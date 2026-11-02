@@ -41,8 +41,9 @@ def test_cpu_load_and_local_configuration(tmp_path, monkeypatch, configured_thre
     monkeypatch.setitem(sys.modules, 'piper', SimpleNamespace(
         PiperVoice=lambda **kwargs: SimpleNamespace(**kwargs)))
     monkeypatch.setitem(sys.modules, 'piper.config', SimpleNamespace(
-        PiperConfig=SimpleNamespace(from_dict=lambda _: SimpleNamespace(sample_rate=22050)),
-        SynthesisConfig=object))
+        PiperConfig=SimpleNamespace(from_dict=lambda _: SimpleNamespace(
+            sample_rate=22050, length_scale=1.0)),
+        SynthesisConfig=SimpleNamespace))
     for module in ('torch', 'qwen_tts', 'openai', 'malbut_tts.api_synthesis'):
         monkeypatch.setitem(sys.modules, module, None)
     engine = (create_synthesizer(path) if configured_threads is None else

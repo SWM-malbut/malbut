@@ -14,11 +14,15 @@ def create_synthesizer(model_path=None, *, backend='piper', speaker='Sohee',
                        language='Korean', cuda_dtype='float32',
                        cuda_sentence_mode=True, sentence_max_chars=80,
                        api_model='gpt-4o-mini-tts', api_voice='nova',
-                       api_timeout_seconds=10.0, piper_threads=3):
+                       api_timeout_seconds=10.0, piper_threads=3,
+                       piper_speed=0.9, piper_max_chars=40):
     """Default to local CPU speech; remote/experimental engines require opt-in."""
     if backend == 'piper':
-        from malbut_tts.piper_synthesis import PiperSynthesizer
-        return PiperSynthesizer(model_path or default_piper_model(), threads=piper_threads)
+        from malbut_tts.live_piper_synthesis import LivePiperSynthesizer
+        return LivePiperSynthesizer(
+            model_path or default_piper_model(), threads=piper_threads,
+            speed=piper_speed, max_chars=piper_max_chars,
+        )
     if backend == 'openai':
         from malbut_tts.api_synthesis import OpenAISynthesizer
         return OpenAISynthesizer(

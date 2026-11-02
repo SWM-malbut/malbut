@@ -285,6 +285,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
         cuda_sentence_mode=True, sentence_max_chars=80,
         api_model='gpt-4o-mini-tts', api_voice='nova', api_timeout_seconds=10.0,
         speaker='Sohee', language='Korean', device=expected_device, piper_threads=3,
+        piper_speed=0.9, piper_max_chars=40,
         max_pending_requests=8, pending_timeout_s=12.0,
     )
     assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC
@@ -348,13 +349,15 @@ def test_default_node_warms_local_voice_without_api_key(fake_ros, monkeypatch):
     engine = Mock(sample_rate=22050)
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', None)
-    monkeypatch.setitem(sys.modules, 'malbut_tts.piper_synthesis', SimpleNamespace(
-        PiperSynthesizer=lambda *a, **k: engine))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.live_piper_synthesis', SimpleNamespace(
+        LivePiperSynthesizer=lambda *a, **k: engine))
     monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
         SpeechRuntime=lambda synth, player, on_status, **kwargs: FakeRuntime(on_status)))
     node = tts_node.create_tts_node()
     assert node.parameters['backend'] == 'piper'
     assert node.parameters['piper_threads'] == 3
+    assert node.parameters['piper_speed'] == 0.9
+    assert node.parameters['piper_max_chars'] == 40
     engine.load.assert_called_once_with()
     assert any('CPU only' in line for line in fake_ros.logs)
     node.destroy_node()
