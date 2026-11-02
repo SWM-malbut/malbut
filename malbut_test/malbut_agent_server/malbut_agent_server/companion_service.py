@@ -1,5 +1,7 @@
 """App-confirmed, encounter-bound access to expiring daily summaries."""
 
+from collections import deque
+from dataclasses import dataclass, field
 import json
 import math
 import threading
@@ -8,7 +10,8 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from malbut_agent_server.companion_memory import CATEGORIES, CompanionMemory
+from malbut_agent_server.companion_extractor import trivial_utterance
+from malbut_agent_server.companion_memory import CATEGORIES, CompanionMemory, expires_at
 from malbut_agent_server.homecam_query import HomecamQueryClient
 
 
@@ -32,6 +35,15 @@ class CompanionCloudClient(HomecamQueryClient):
         return json.loads(body)
 
 
+@dataclass(frozen=True)
+class _MemoryJob:
+    binding: tuple
+    turn_id: str
+    text: str = field(repr=False)
+    observed_at: float
+    deadline: float
+
+
 class CompanionService:
     """No identity survives end/restart; stale/offline confirmations grant no access."""
 
@@ -40,7 +52,13 @@ class CompanionService:
         self.clock, self.wall = clock, wall
         self.lock, self._sync_lock = threading.RLock(), threading.Lock()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread = None
+        self._memory_condition = threading.Condition(self.lock)
+        self._memory_thread = None
+        self._memory_jobs = deque()
+        self._memory_active = None
+        self._memory_seen = deque(maxlen=128)
         self.on_change = lambda: None
         self.session = None
         self.owner = None
@@ -50,13 +68,25 @@ class CompanionService:
         self._fresh_until = -math.inf
 
     def start(self):
-        if self._thread is None:
-            self._thread = threading.Thread(target=self._run, name='companion-policy', daemon=True)
-            self._thread.start()
+        with self.lock:
+            if not self._stop.is_set() and self._thread is None:
+                self._thread = threading.Thread(target=self._run, name='companion-policy', daemon=True)
+                self._thread.start()
+
+    def _poll_delay(self, failures=0):
+        if failures:
+            return min(30, 3 * 2 ** min(failures - 1, 4))
+        with self.lock:
+            # Preserve 3 s erasure delivery whenever data exists, including idle.
+            # An empty, inactive robot can poll at 6 s within the 10 s heartbeat.
+            active = self.session is not None or self._memory_active or self._memory_jobs
+            return 3 if active or self.memory.has_summaries() else 6
 
     def _run(self):
         next_purge = -math.inf
+        failures = 0
         while not self._stop.is_set():
+            self._wake.clear()
             if self.clock() >= next_purge:
                 try:
                     self.memory.purge()
@@ -65,11 +95,28 @@ class CompanionService:
                 next_purge = self.clock() + 60
             try:
                 self.sync()
+                failures = 0
             except Exception:
-                # No network response, transcript, credential or summary in logs.
-                with self.lock:
-                    self._fresh_until = -math.inf
-            self._stop.wait(3)
+                failures += 1
+            with self.lock:
+                self._prune_jobs()
+            self._wake.wait(self._poll_delay(failures))
+
+    def _discard_jobs(self):
+        self._memory_jobs.clear()
+        self._memory_seen.clear()
+        self._memory_condition.notify_all()
+
+    def _prune_jobs(self):
+        count = len(self._memory_jobs)
+        self._memory_jobs = deque(job for job in self._memory_jobs
+                                  if self._job_valid(job))
+        if len(self._memory_jobs) != count:
+            self._memory_condition.notify_all()
+
+    def _job_valid(self, job):
+        return (not self._stop.is_set() and self.clock() < job.deadline
+                and expires_at(job.observed_at) > self.wall() and self.valid(job.binding))
 
     def begin(self, session):
         with self.lock:
@@ -78,6 +125,8 @@ class CompanionService:
                 self.epoch += 1
                 self._verified_until = -math.inf
                 self._fresh_until = -math.inf
+                self._discard_jobs()
+                self._wake.set()  # Do not wait for an idle/backoff interval to report an encounter.
 
     def end(self, session=None):
         with self.lock:
@@ -85,6 +134,8 @@ class CompanionService:
                 self.session = None
                 self.epoch += 1
                 self._verified_until = self._fresh_until = -math.inf
+                self._discard_jobs()
+                self._wake.set()
 
     def sync(self):
         try:
@@ -92,6 +143,8 @@ class CompanionService:
         except Exception:
             with self.lock:
                 self._fresh_until = -math.inf
+                self.epoch += 1
+                self._discard_jobs()
             raise
 
     def _sync_once(self):
@@ -99,7 +152,10 @@ class CompanionService:
             return
         with self._sync_lock:
             with self.lock:
+                if self._stop.is_set():
+                    return
                 session = self.session
+                epoch = self.epoch
                 report = {'sessionId': session, 'appliedRevision': max(self.revision, 0)}
             started = self.clock()
             data = self.client.sync(report)
@@ -118,24 +174,27 @@ class CompanionService:
                          or len(data['confirmedSessionId']) > 128)):
                 raise ValueError('invalid companion confirmation')
             with self.lock:
-                if session != self.session:
+                if self._stop.is_set() or session != self.session or epoch != self.epoch:
                     return
                 self.memory.apply_policy(owner, revision, data['eraseRevision'], categories,
                                          data['externalProcessing'])
                 changed = (owner, revision) != (self.owner, self.revision)
                 if changed:
                     self.epoch += 1
+                    self._discard_jobs()
                 self.owner, self.revision = owner, revision
                 self._fresh_until = started + 10
                 confirmed = session and data['confirmedSessionId'] == session
                 self._verified_until = started + remaining if confirmed else -math.inf
+                if not confirmed or remaining <= 0:
+                    self._discard_jobs()
             if changed:
                 self.on_change()
 
     def binding(self, session):
         with self.lock:
             now = self.clock()
-            if (not session or self.session != session or self.owner is None
+            if (self._stop.is_set() or not session or self.session != session or self.owner is None
                     or now >= min(self._verified_until, self._fresh_until)):
                 return None
             policy = self.memory.policy(self.owner)
@@ -152,16 +211,73 @@ class CompanionService:
             return [dict(row, observed_at_local=datetime.fromtimestamp(
                 row['observed_at'], ZoneInfo('Asia/Seoul')).isoformat()) for row in rows]
 
-    def remember(self, binding, turn_id, text, observed_at):
+    def enqueue_remember(self, binding, turn_id, text, observed_at):
+        """Bounded, ordered, RAM-only work; overload never delays a spoken answer."""
+        if (not isinstance(text, str) or not 1 <= len(text) <= 8000 or trivial_utterance(text)
+                or not isinstance(turn_id, str) or not 1 <= len(turn_id) <= 256
+                or type(observed_at) not in (int, float) or not math.isfinite(observed_at)
+                or observed_at > self.wall() + 1 or expires_at(observed_at) <= self.wall()):
+            return False
+        with self._memory_condition:
+            if self._stop.is_set() or not self.valid(binding) or self.extractor is None:
+                return False
+            self._prune_jobs()
+            current = ([self._memory_active] if self._memory_active else []) + list(self._memory_jobs)
+            key = binding, turn_id
+            if (key in self._memory_seen or len(current) >= 4
+                    or sum(len(job.text) for job in current) + len(text) > 16000):
+                return False
+            self._memory_seen.append(key)
+            self._memory_jobs.append(_MemoryJob(binding, turn_id, text, observed_at,
+                                                self.clock() + 60))
+            if self._memory_thread is None:
+                self._memory_thread = threading.Thread(target=self._run_memory,
+                                                       name='companion-memory', daemon=True)
+                self._memory_thread.start()
+            self._memory_condition.notify_all()
+            return True
+
+    def _run_memory(self):
+        while True:
+            with self._memory_condition:
+                self._memory_condition.wait_for(lambda: self._stop.is_set() or self._memory_jobs)
+                if self._stop.is_set():
+                    return
+                self._prune_jobs()
+                if not self._memory_jobs:
+                    continue
+                job = self._memory_active = self._memory_jobs.popleft()
+            try:
+                self.remember(job.binding, job.turn_id, job.text, job.observed_at, job=job)
+            except Exception:
+                pass  # No durable retry, original text, provider response or error logging.
+            finally:
+                with self._memory_condition:
+                    self._memory_active = None
+                    self._memory_condition.notify_all()
+                job = None  # Do not retain the last source in an idle worker frame.
+
+    def remember(self, binding, turn_id, text, observed_at, *, job=None):
+        if job is not None:
+            # A queued source may have waited behind another extraction. Refresh
+            # permission before sending it to the external provider.
+            with self.lock:
+                if not self._job_valid(job):
+                    return 0
+            self.sync()
         with self.lock:
-            if not self.valid(binding) or self.extractor is None:
+            if (not self.valid(binding) or self.extractor is None or trivial_utterance(text)
+                    or job is not None and not self._job_valid(job)):
                 return 0
             categories = self.memory.policy(binding[1])['categories']
         summaries = self.extractor.extract(text, observed_at, categories)
+        with self.lock:
+            if not self.valid(binding) or job is not None and not self._job_valid(job):
+                return 0
         # Refresh consent after external work; a withdrawal fences late results.
         self.sync()
         with self.lock:
-            if not self.valid(binding):
+            if not self.valid(binding) or job is not None and not self._job_valid(job):
                 return 0
             return self.memory.save(binding[1], binding[2], turn_id, observed_at, summaries)
 
@@ -169,16 +285,33 @@ class CompanionService:
         with self.lock:
             if not self.valid(binding):
                 return None
-            count = self.memory.forget(binding[1], latest=latest)
+            jobs = list(self._memory_jobs) + ([self._memory_active] if self._memory_active else [])
+            jobs = [job for job in jobs if job.binding == binding and self._job_valid(job)]
+            newest = max(jobs, key=lambda job: job.observed_at, default=None)
+            stored = self.memory.latest_turn(binding[1]) if latest else None
+            if latest and newest and (stored is None or newest.observed_at >= stored['observed_at']):
+                # "The last memory" may still be waiting for extraction. Do not delete
+                # an unrelated older summary while allowing the new one to arrive later.
+                count = max(1, self.memory.forget(binding[1], turn_id=newest.turn_id))
+            else:
+                count = self.memory.forget(binding[1], latest=latest) + int(bool(jobs) and not latest)
             self.epoch += 1
+            self._discard_jobs()
             return count
 
     def close(self):
-        self.end()
-        self._stop.set()
+        with self.lock:
+            if self._stop.is_set():
+                return
+            self._stop.set()
+            self.end()
+            self._memory_condition.notify_all()
         if self._thread:
             self._thread.join()
-        self.memory.close()
+        if self._memory_thread:
+            self._memory_thread.join()  # Existing extractor/HTTP timeouts bound active work.
+        with self._sync_lock:
+            self.memory.close()
 
 
 def build_companion_service(settings):

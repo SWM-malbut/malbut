@@ -154,3 +154,15 @@ def test_reset_discards_both_partial_audio_clocks():
     assert not collector.pending_vad
     with pytest.raises(ValueError, match='identical sample clocks'):
         CapturePCM(bytes(640), bytes(642))
+
+
+@pytest.mark.parametrize('recovery', [None, b'\x03\x00' * 512])
+def test_worker_payload_accepts_optional_recovery_with_aligned_clocks(recovery):
+    recorder = EchoCancelledRecorder({}, lambda: None)
+    recorder.aec_ready = True
+    recorder._queue = Queue()
+    pcm, vad = b'\x01\x00' * 512, bytes(1024)
+    payload = (pcm, vad) if recovery is None else (pcm, vad, recovery)
+    recorder._queue.put(('audio', payload, monotonic()))
+    block = recorder.read()
+    assert block == pcm and block.vad_pcm == vad and block.recovery_pcm == recovery

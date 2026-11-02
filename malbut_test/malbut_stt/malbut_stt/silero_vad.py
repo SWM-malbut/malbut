@@ -38,6 +38,13 @@ class SileroVad:
             raise ValueError('expected a Silero recurrent ONNX model with input/state/sr')
         self.reset()
 
+    def new_stream(self):
+        """Share immutable ONNX weights/execution, never recurrent audio state."""
+        stream = object.__new__(type(self))
+        stream.session = self.session
+        stream.reset()
+        return stream
+
     def reset(self):
         import numpy as np
 
