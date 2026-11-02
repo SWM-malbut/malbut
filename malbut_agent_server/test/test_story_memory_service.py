@@ -437,18 +437,34 @@ class StoryMemoryServiceTests(unittest.TestCase):
         self.assertEqual(len(self.service.list_stories('alice')), 1)
 
     def test_successful_automatic_retry_clears_old_error(self):
+        self.service.close()
+        now = [time.time()]
+        store = StoryRuntimeStore(self.conversations, self.memory, clock=lambda: now[0])
+        self.service = self._service(runtime_store=store)
         original_extract = self.extractor.extract
+        original_fail = store.fail
         attempts = []
+        failure_errors = []
+
         def transient_failure(stories, sources):
             attempts.append(1)
             if len(attempts) == 1:
                 raise ProviderError('synthetic transient failure')
             return original_extract(stories, sources)
+
+        def fail_and_advance(job, error):
+            original_fail(job, error)
+            failure_errors.append(self.service.policy('alice')['error'])
+            # Error clearing must not depend on waiting out real retry backoff.
+            now[0] += 60
+
         self.extractor.extract = transient_failure
-        self.service.enable('alice')
-        self._turn('전시가 즐거웠어.')
-        self.assertTrue(self.service.flush('alice', timeout=5))
+        with patch.object(store, 'fail', side_effect=fail_and_advance):
+            self.service.enable('alice')
+            self._turn('전시가 즐거웠어.')
+            self.assertTrue(self.service.flush('alice', timeout=5))
         self.assertEqual(len(attempts), 2)
+        self.assertEqual(failure_errors, ['provider_error'])
         self.assertIsNone(self.service.policy('alice')['error'])
 
 
