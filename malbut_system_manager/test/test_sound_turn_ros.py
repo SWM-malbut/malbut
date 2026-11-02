@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
+from action_msgs.msg import GoalInfo, GoalStatus
+from action_msgs.srv import CancelGoal
 from builtin_interfaces.msg import Duration
 from nav2_msgs.action import Spin
 from nav_msgs.msg import Odometry
@@ -18,6 +20,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.task import Future
 from std_msgs.msg import String
+from unique_identifier_msgs.msg import UUID
 
 from malbut_system_manager.models import MissionRecord
 from malbut_system_manager.sound_direction import Directions
@@ -203,3 +206,142 @@ def test_manager_busy_admission_does_not_preempt_existing_work(robot):
     h.reader.add(240., time.monotonic())
     h.until(lambda: h.turn.next_turn > 0)
     assert not h.requests and not h.turn.inflight
+
+
+def owned_handle(h, *, result_failure='', cancel_failure=''):
+    """Inject failures at the public Action transport without moving a robot."""
+    now = SimpleNamespace(value=time.monotonic())
+    h.turn.clock = lambda: now.value
+    h.turn.inflight = True
+    h.turn.mission_id = '12' * 16
+    h.turn.deadline, h.turn.accept_deadline = now.value + 55, now.value + 5
+    result = Future()
+    calls = SimpleNamespace(result=0, cancel=0, cancel_futures=[])
+
+    def get_result():
+        calls.result += 1
+        if calls.result == 1 and result_failure:
+            if result_failure == 'request':
+                raise RuntimeError('result request failed')
+            failed = Future()
+            if result_failure == 'future':
+                failed.set_exception(RuntimeError('result response failed'))
+            else:
+                failed.set_result(SimpleNamespace(status=GoalStatus.STATUS_UNKNOWN))
+            return failed
+        return result
+
+    def cancel():
+        calls.cancel += 1
+        response = Future()
+        calls.cancel_futures.append(response)
+        if calls.cancel == 1 and cancel_failure:
+            if cancel_failure == 'request':
+                raise RuntimeError('cancel request failed')
+            if cancel_failure == 'pending':
+                return response
+            if cancel_failure == 'future':
+                response.set_exception(RuntimeError('cancel response failed'))
+            else:
+                response.set_result(CancelGoal.Response(
+                    return_code=CancelGoal.Response.ERROR_REJECTED))
+        else:
+            response.set_result(CancelGoal.Response(goals_canceling=[GoalInfo(
+                goal_id=UUID(uuid=list(bytes.fromhex(h.turn.mission_id))))]))
+        return response
+
+    handle = SimpleNamespace(accepted=True, get_result_async=get_result, cancel_goal_async=cancel)
+    h.turn._accepted(SimpleNamespace(result=lambda: handle))
+    return now, calls, result
+
+
+@pytest.mark.parametrize('failure', ['request', 'future', 'unknown'])
+def test_unconfirmed_result_cancels_and_keeps_ownership_until_terminal(robot, failure):
+    """Lost/unknown results never release an owned goal or disable cancellation."""
+    h = robot
+    now, calls, result = owned_handle(h, result_failure=failure)
+    assert h.turn.inflight and h.turn.cancel_requested and calls.cancel == 1
+    for _ in range(20):
+        h.turn.tick()
+    assert calls.result == 1 and calls.cancel == 1
+    now.value += 1.01
+    h.reader.add(60., now.value)
+    h.turn.tick()
+    assert calls.result == 2 and calls.cancel == 1
+    assert h.turn.inflight and not h.requests
+    result.set_result(SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+    assert not h.turn.inflight
+
+
+@pytest.mark.parametrize('failure', [
+    'request', 'future', 'rejected', 'pending', 'shutdown_request',
+])
+def test_unconfirmed_cancel_retries_with_backoff_without_releasing_ownership(robot, failure):
+    """A failed cancel remains desired, including during graceful shutdown."""
+    h = robot
+    closing = failure == 'shutdown_request'
+    now, calls, result = owned_handle(h, cancel_failure='request' if closing else failure)
+    h.turn.close() if closing else h.turn.cancel()
+    for _ in range(20):
+        h.turn.cancel()
+    assert h.turn.inflight and calls.cancel == 1
+    now.value += 1.01
+    h.until(lambda: calls.cancel == 2)
+    assert h.turn.inflight and h.turn.cancel_confirmed
+    if failure == 'pending':
+        assert calls.cancel_futures[0].cancelled()
+        h.turn._canceled(calls.cancel_futures[0])
+        assert h.turn.cancel_confirmed
+    now.value += 2.
+    h.turn.tick()
+    assert calls.cancel == 2 and not h.requests
+    result.set_result(SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+    assert not h.turn.inflight
+
+
+def test_cancel_timeout_unregisters_old_rpc_and_keeps_waiting_for_the_result(robot):
+    """Retire a stalled RPC, ignoring its late reply while retaining goal ownership."""
+    h = robot
+    h.reader.add(240., time.monotonic())
+    h.until(lambda: len(h.requests) == 1 and h.turn.goal_handle is not None)
+    now = SimpleNamespace(value=time.monotonic())
+    h.turn.clock = lambda: now.value
+    result = h.turn.result_future
+    h.turn.cancel()
+    pending = h.turn.cancel_future
+    assert pending in h.turn.client._pending_cancel_requests.values()
+    # Do not spin the server until the first response has missed its deadline.
+    now.value += 1.01
+    h.turn.cancel()
+    assert pending.cancelled() and h.turn.cancel_future is not pending
+    h.until(lambda: pending not in h.turn.client._pending_cancel_requests.values()
+            and h.requests[0].is_cancel_requested)
+    assert h.turn.inflight and h.turn.result_future is result and len(h.requests) == 1
+    h.completions[0].set_result(False)
+    h.until(lambda: not h.turn.inflight)
+
+
+def test_old_odometry_does_not_gain_freshness_at_reception(robot, monkeypatch):
+    """Source age still limits authorization after a delayed message arrives."""
+    h = robot
+    message = Odometry()
+    message.header.stamp = h.peer.get_clock().now().to_msg()
+    stamp = message.header.stamp.sec * 10**9 + message.header.stamp.nanosec
+    ros_time = SimpleNamespace(nanoseconds=stamp + 1_400_000_000)
+    monkeypatch.setattr(h.turn, 'get_clock', lambda: SimpleNamespace(now=lambda: ros_time))
+    h.turn._odom(message)
+    assert h.turn._available(time.monotonic())
+    ros_time.nanoseconds += 200_000_000
+    h.reader.add(240., time.monotonic())
+    h.turn.tick()
+    assert not h.turn.inflight and not h.requests
+
+
+def test_replayed_odometry_cannot_confirm_stationarity(robot):
+    """Repeating the same timestamp cannot renew a stationary observation."""
+    h = robot
+    message = Odometry()
+    message.header.stamp.sec, message.header.stamp.nanosec = divmod(h.turn.odom_stamp, 10**9)
+    h.turn._odom(message)
+    assert h.turn.stationary_since is None
+    assert not h.turn._available(time.monotonic())

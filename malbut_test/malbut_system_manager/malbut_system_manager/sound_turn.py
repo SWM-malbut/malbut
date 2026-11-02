@@ -6,6 +6,7 @@ import signal
 import time
 from uuid import uuid4
 
+from action_msgs.msg import GoalStatus
 from malbut_interfaces.action import ExecuteMission
 from malbut_interfaces.msg import SystemState
 from nav_msgs.msg import Odometry
@@ -34,10 +35,14 @@ class SoundTurn(Node):
             raise ValueError('forward_degrees must be within [0, 360)')
         self.state = None
         self.odom_at = -math.inf
+        self.odom_stamp = 0
         self.stationary_since = None
         self.runtime_idle = False
         self.inflight = self.cancel_requested = self.closed = False
         self.goal_handle = None
+        self.result_future = self.cancel_future = None
+        self.result_retry_at = self.cancel_retry_at = 0.
+        self.cancel_confirmed = False
         self.mission_id = ''
         self.next_turn = 0.
         self.client = ActionClient(self, ExecuteMission, '/malbut/mission/execute')
@@ -67,16 +72,20 @@ class SoundTurn(Node):
         if not 0 <= now - self.odom_at <= 1.5:
             self.stationary_since = None
         stamp = message.header.stamp
-        age = self.get_clock().now().nanoseconds / 1e9 - stamp.sec - stamp.nanosec / 1e9
+        stamp_ns = stamp.sec * 10**9 + stamp.nanosec
+        age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
         v = message.twist.twist
         values = (v.linear.x, v.linear.y, v.angular.z)
-        valid = 0 <= age <= 1.5 and all(math.isfinite(x) for x in values)
+        valid = (stamp_ns > self.odom_stamp and 0 <= age <= 1.5
+                 and all(math.isfinite(x) for x in values))
         if (not valid
                 or math.hypot(*values[:2]) > .02 or abs(values[2]) > .03):
             self.stationary_since = None
         elif self.stationary_since is None:
             self.stationary_since = now
         self.odom_at = now if valid else -math.inf
+        if valid:
+            self.odom_stamp = stamp_ns
 
     def _available(self, now):
         state = self.state
@@ -84,6 +93,7 @@ class SoundTurn(Node):
                 or self.count_publishers('/malbut/state') != 1
                 or self.count_publishers('/malbut/runtime/state') != 1
                 or not 0 <= now - self.odom_at <= 1.5
+                or not 0 <= (self.get_clock().now().nanoseconds - self.odom_stamp) / 1e9 <= 1.5
                 or state.control_mode != state.AUTONOMOUS
                 or state.system_state not in (state.IDLE, state.EXECUTING_MISSION)):
             return False
@@ -97,7 +107,8 @@ class SoundTurn(Node):
         sample = self.reader.take(now, forward_degrees=self.forward)
         allowed = self._available(now)
         if self.inflight:
-            if (not allowed or now >= self.deadline
+            self._request_result()
+            if (self.cancel_requested or not allowed or now >= self.deadline
                     or self.goal_handle is None and now >= self.accept_deadline):
                 self.cancel()
             return
@@ -111,6 +122,9 @@ class SoundTurn(Node):
         identity = uuid4()
         self.mission_id = identity.hex
         self.inflight, self.cancel_requested, self.goal_handle = True, False, None
+        self.result_future = self.cancel_future = None
+        self.result_retry_at = self.cancel_retry_at = 0.
+        self.cancel_confirmed = False
         self.deadline, self.accept_deadline = now + 55, now + 5
         goal = ExecuteMission.Goal(capability_id='spin', idle_only=True,
                                    arguments_yaml=json.dumps(dict(
@@ -130,47 +144,99 @@ class SoundTurn(Node):
             if not self.goal_handle.accepted:
                 self._done()
                 return
-            self.goal_handle.get_result_async().add_done_callback(self._finished)
+            self._request_result()
             if self.cancel_requested or self.clock() >= self.accept_deadline:
-                self.cancel_requested = False
                 self.cancel()
         except Exception:
-            self.cancel_requested = True
+            self.cancel()
             self.get_logger().error('sound_turn_acceptance_unconfirmed')
 
+    def _request_result(self):
+        if (not self.inflight or self.goal_handle is None or self.result_future is not None
+                or self.clock() < self.result_retry_at):
+            return
+        self.result_retry_at = self.clock() + 1.
+        try:
+            self.result_future = self.goal_handle.get_result_async()
+            self.result_future.add_done_callback(self._finished)
+        except Exception:
+            self.result_future = None
+            self.cancel()
+            self.get_logger().error('sound_turn_result_unconfirmed', throttle_duration_sec=5.)
+
     def _finished(self, future):
+        if future is not self.result_future or not self.inflight:
+            return
         try:
             result = future.result()
+            if result.status not in (GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_CANCELED,
+                                     GoalStatus.STATUS_ABORTED):
+                raise RuntimeError('mission has no confirmed terminal result')
             self.get_logger().info(f'sound_turn_finished status={result.status}')
         except Exception:
+            self.result_future = None
+            self.result_retry_at = self.clock() + 1.
             self.cancel()
-            self.get_logger().error('sound_turn_result_unconfirmed')
+            self.get_logger().error('sound_turn_result_unconfirmed', throttle_duration_sec=5.)
             return
         self._done()
 
     def _done(self):
         self.inflight, self.goal_handle = False, None
+        self.result_future = self.cancel_future = None
         self.stationary_since = None
         self.next_turn = self.clock() + 3
+        if self.closed:
+            self.timer.cancel()
 
     def cancel(self):
         """Cancel only this node's mission, retaining ownership until its result."""
         if not self.inflight:
             return
-        if self.goal_handle is not None and not self.cancel_requested:
-            try:
-                self.goal_handle.cancel_goal_async()
-            except Exception:
-                self.get_logger().error('sound_turn_cancel_unconfirmed')
         self.cancel_requested = True
+        if (self.goal_handle is None or self.cancel_confirmed
+                or self.clock() < self.cancel_retry_at):
+            return
+        if self.cancel_future is not None:
+            if self.cancel_future.done():
+                self._canceled(self.cancel_future)
+                return
+            expired, self.cancel_future = self.cancel_future, None
+            # Detach first: cancel() invokes callbacks and releases rclpy's
+            # pending-request bookkeeping, but does not cancel the ROS goal.
+            expired.cancel()
+            self.get_logger().error('sound_turn_cancel_timeout', throttle_duration_sec=5.)
+        self.cancel_retry_at = self.clock() + 1.
+        try:
+            self.cancel_future = self.goal_handle.cancel_goal_async()
+            self.cancel_future.add_done_callback(self._canceled)
+        except Exception:
+            self.cancel_future = None
+            self.get_logger().error('sound_turn_cancel_unconfirmed', throttle_duration_sec=5.)
+
+    def _canceled(self, future):
+        if future is not self.cancel_future or not self.inflight:
+            return
+        self.cancel_future = None
+        self.cancel_retry_at = self.clock() + 1.
+        try:
+            response = future.result()
+            self.cancel_confirmed = (response.return_code == response.ERROR_NONE and any(
+                bytes(goal.goal_id.uuid).hex() == self.mission_id
+                for goal in response.goals_canceling))
+        except Exception:
+            self.cancel_confirmed = False
+        if not self.cancel_confirmed:
+            self.get_logger().error('sound_turn_cancel_unconfirmed', throttle_duration_sec=5.)
 
     def close(self):
         """Stop receiving directions and request cancellation of the owned turn."""
         if not self.closed:
             self.closed = True
-            self.timer.cancel()
             self.reader.close()
             self.cancel()
+            if not self.inflight:
+                self.timer.cancel()
 
 
 def main(args=None):

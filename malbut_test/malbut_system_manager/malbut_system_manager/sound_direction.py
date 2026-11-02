@@ -5,9 +5,14 @@
 
 from collections import deque
 import json
+import logging
 import math
 from threading import Event, Lock, Thread
 from time import monotonic
+
+
+MAX_SAMPLE_AGE = 1.
+LOGGER = logging.getLogger(__name__)
 
 
 def packet(kind, payload, identity=b'\0\0'):
@@ -22,27 +27,57 @@ class DirectionFrames:
     def __init__(self):
         """Start with an empty protocol buffer."""
         self.buffer = bytearray()
+        self.arrived = []
+
+    def _discard(self, count):
+        del self.buffer[:count]
+        del self.arrived[:count]
 
     def feed(self, data):
         """Return complete valid frames and retain only a bounded partial frame."""
-        self.buffer.extend(data[:4096])
+        return [frame[:3] for frame in self.feed_timed(data, monotonic())]
+
+    def feed_timed(self, data, at, *, now=None):
+        """Include the first observed byte time; expire stalled partial frames."""
+        now = at if now is None else now
+        data = data[:4096]
+        self.buffer.extend(data)
+        self.arrived.extend([at] * len(data))
         frames = []
-        while len(self.buffer) >= 8:
+        while self.buffer:
+            if not 0 <= now - self.arrived[0] <= MAX_SAMPLE_AGE:
+                self._discard(1)
+                continue
+            if len(self.buffer) < 8:
+                break
             if self.buffer[:2] != b'\xa5\x01':
-                del self.buffer[0]
+                self._discard(1)
                 continue
             length = int.from_bytes(self.buffer[3:5], 'little') + 8
             if length > 8192:
-                del self.buffer[0]
+                self._discard(1)
                 continue
             if len(self.buffer) < length:
-                break
+                # A JSON payload cannot contain raw A5 01. Recover at a later
+                # complete checksummed frame instead of trusting a corrupt length.
+                start = self.buffer.find(b'\xa5\x01', 2)
+                while start >= 0 and len(self.buffer) - start >= 8:
+                    size = int.from_bytes(self.buffer[start + 3:start + 5], 'little') + 8
+                    if (size <= 8192 and start + size <= len(self.buffer)
+                            and not sum(self.buffer[start:start + size]) & 255):
+                        self._discard(start)
+                        break
+                    start = self.buffer.find(b'\xa5\x01', start + 1)
+                else:
+                    break
+                continue
             frame = bytes(self.buffer[:length])
             if sum(frame) & 255:
-                del self.buffer[0]
+                self._discard(1)
                 continue
-            del self.buffer[:length]
-            frames.append((frame[2], frame[5:7], frame[7:-1]))
+            received_at = self.arrived[0]
+            self._discard(length)
+            frames.append((frame[2], frame[5:7], frame[7:-1], received_at))
         return frames
 
 
@@ -59,7 +94,7 @@ def wake_angle(payload):
         info = unpack(content['info'])
         result = unpack(info.get('ivw', info))
         angle = result['angle']
-        if type(angle) not in (int, float) or not math.isfinite(angle) or not 0 <= angle < 360:
+        if type(angle) not in (int, float) or not 0 <= angle < 360:
             return None
         return float(angle)
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError):
@@ -87,14 +122,14 @@ class Directions:
         if len(samples) != 1 or not math.isfinite(now):
             return None
         at, angle = samples[0]
-        if (not math.isfinite(at) or not 0 <= now - at <= 1.
+        if (not math.isfinite(at) or not 0 <= now - at <= MAX_SAMPLE_AGE
                 or not math.isfinite(angle) or not 0 <= angle < 360):
             return None
         return at, math.radians((angle - forward_degrees + 180) % 360 - 180)
 
 
 class SerialDirections(Directions):
-    """One sleeping reader; only acknowledge packets, never modify firmware."""
+    """Read wake events; an open transport is not proof of microphone liveness."""
 
     def __init__(self, port, *, clock=monotonic):
         """Open the existing serial port exclusively without audio capture."""
@@ -108,6 +143,7 @@ class SerialDirections(Directions):
         self.serial.rts = self.serial.dtr = False
         self.serial.port = port
         self.serial.open()
+        self._input_reset_at = self.clock()
         self.serial.reset_input_buffer()  # Discard packets queued before this process existed.
         self.connected = True
         self.thread = Thread(target=self._run, name='xfm-direction', daemon=True)
@@ -116,22 +152,35 @@ class SerialDirections(Directions):
     def _run(self):
         decoder = DirectionFrames()
         recent = deque(maxlen=32)
+        last_read = getattr(self, '_input_reset_at', self.clock())
         try:
             while not self.stop.is_set():
+                received_at = self.clock()
                 data = self.serial.read(min(max(self.serial.in_waiting, 1), 4096))
-                for kind, identity, payload in decoder.feed(data):
+                now = self.clock()
+                gap = now - last_read
+                last_read = now
+                if not 0 <= gap <= MAX_SAMPLE_AGE:
+                    # A stall makes queued bytes and later retries untrustworthy.
+                    # Fail closed until an explicit restart, just as on a serial fault.
+                    LOGGER.warning(
+                        'Sound direction input stopped: reader gap %.3fs exceeds '
+                        'the %.1fs limit or is invalid; restart required.', gap, MAX_SAMPLE_AGE)
+                    break
+                for kind, identity, payload, at in decoder.feed_timed(data, received_at, now=now):
                     if kind in (1, 4):
                         self.serial.write(packet(0xff, b'\xa5\0\0\0', identity))
                     if kind != 4:
                         continue
-                    # Retransmissions are acknowledged but must not become new observations.
+                    # Suppress recent retransmissions, including interleaved messages.
+                    # The bounded cache does not prove device time or session identity.
                     current = (identity, payload)
                     if current in recent:
                         continue
                     recent.append(current)
                     angle = wake_angle(payload)
                     if angle is not None:
-                        self.add(angle, self.clock())
+                        self.add(angle, at)
         except (OSError, ValueError):
             pass  # The controller observes disconnected state and cancels its own turn.
         finally:
