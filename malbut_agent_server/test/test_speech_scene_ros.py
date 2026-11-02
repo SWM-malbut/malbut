@@ -89,7 +89,8 @@ def test_idle_has_no_camera_reader_and_each_turn_gets_fresh_pixels_and_pose(sens
         assert context['image']['available'] and second.jpeg == bytes([20] * 3)
         assert image.jpeg == bytes([10] * 3)  # A frozen image is never replaced.
     assert scene._images._frame is None
-    assert publisher.get_subscription_count() == 0
+    # Reader destruction is synchronous locally; DDS graph updates may arrive later.
+    wait_for(lambda: publisher.get_subscription_count() == 0)
     late_frame = Image(height=1, width=1, step=3, encoding='rgb8', data=[99] * 3)
     late_frame.header.stamp = node.get_clock().now().to_msg()
     scene._image(late_frame)  # A previously dispatched callback cannot retain pixels.

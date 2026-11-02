@@ -29,6 +29,10 @@ class SileroStreamVad:
             default_model_path() if model_path is None else model_path)
         self.reset()
 
+    def new_stream(self):
+        """Create an independent capture clock using the already loaded model."""
+        return type(self)(model=self.model.new_stream())
+
     def reset(self):
         self.model.reset()
         self.pending = bytearray()
