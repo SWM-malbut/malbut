@@ -84,9 +84,12 @@ def test_partial_serial_reads_acknowledge_without_changing_device(monkeypatch):
     class Port:
         def __init__(self, *args, **kwargs):
             self.data = bytearray(packet(1, b'\xa5\0\0\0')
-                                  + packet(4, event(240, nested=True), b'\x02\0') * 2)
+                                  + packet(4, event(240, nested=True), b'\x02\0')
+                                  + packet(4, b'{"type":"version"}', b'\x03\0')
+                                  + packet(4, event(240, nested=True), b'\x02\0'))
             self.writes = []
-            self.done = threading.Event()
+            self.drained = threading.Event()
+            self.stopped = threading.Event()
             self.closed = False
 
         def open(self):
@@ -100,11 +103,13 @@ def test_partial_serial_reads_acknowledge_without_changing_device(monkeypatch):
             return min(5, len(self.data))
 
         def read(self, count):
+            if not self.data:
+                # Next read means all preceding frames have been processed.
+                self.drained.set()
+                self.stopped.wait(.01)
+                return b''
             data = bytes(self.data[:count])
             del self.data[:count]
-            if not self.data:
-                self.done.set()
-                self.done.wait(.01)
             return data
 
         def write(self, data):
@@ -112,15 +117,19 @@ def test_partial_serial_reads_acknowledge_without_changing_device(monkeypatch):
 
         def close(self):
             self.closed = True
+            self.stopped.set()
 
     port = Port()
     monkeypatch.setitem(sys.modules, 'serial', SimpleNamespace(Serial=lambda *a, **kw: port))
     reader = SerialDirections('/dev/test', clock=lambda: 10.)
     try:
-        assert port.done.wait(2)
-        # Take after the reader has processed the last fragment.
+        assert port.drained.wait(2)
+        # The duplicate arrived after another event; it still belongs to the
+        # original wake and must not become a second direction measurement.
+        assert reader.take((10., 11.), 12.) == (10., pytest.approx(math.pi / 2))
+        assert reader.take((10., 11.), 12.) is None
         reader.close()
-        assert len(port.writes) == 3
+        assert len(port.writes) == 4
         assert all(frame[2] == 0xff for frame in port.writes)
         assert not reader.connected and port.closed
         assert reader.take((10., 11.), 12.) is None

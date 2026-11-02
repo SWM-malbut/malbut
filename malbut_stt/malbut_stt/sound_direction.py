@@ -119,7 +119,7 @@ class SerialDirections(WakeDirections):
 
     def _run(self):
         decoder = DirectionFrames()
-        previous = None
+        recent = deque(maxlen=32)
         try:
             while not self.stop.is_set():
                 data = self.serial.read(min(max(self.serial.in_waiting, 1), 4096))
@@ -130,9 +130,9 @@ class SerialDirections(WakeDirections):
                         continue
                     # Retransmissions are acknowledged but must not become new observations.
                     current = (identity, payload)
-                    if current == previous:
+                    if current in recent:
                         continue
-                    previous = current
+                    recent.append(current)
                     angle = wake_angle(payload)
                     if angle is not None:
                         self.add(angle, self.clock())
