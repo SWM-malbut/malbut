@@ -186,7 +186,9 @@ def create_communication_node(
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
-                if self.declare_parameter('patrol_conversation_enabled', True).value:
+                proactive = self.declare_parameter('patrol_conversation_enabled', True).value
+                called = self.declare_parameter('called_conversation_enabled', True).value
+                if proactive or called:
                     try:
                         from malbut_agent_server.patrol_conversation_ros import RosPatrolConversation
                         self._patrol_chat = RosPatrolConversation(self)

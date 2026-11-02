@@ -752,6 +752,10 @@ class PersonFollowerNode(Node):
                 return
         self._detection_transform_pending = False
         if getattr(self, '_approach', None) is not None and len(message.detections) != 1:
+            if not message.detections and self._approach.last_seen is None:
+                # Allow the existing detector to acquire its first person;
+                # the steady watchdog bounds this stationary search to 3 s.
+                return
             self._finish_approach(False, 'conversation requires one visible person')
             return
         observation = self._select_target_observation(message)

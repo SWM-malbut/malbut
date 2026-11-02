@@ -136,6 +136,7 @@ def test_separate_real_identical_utterances_are_each_accepted(dialogue):
     assert [text for _, text in run.transcripts] == ['감사합니다.', '감사합니다.']
     ids = [uid for uid, _ in run.transcripts]
     assert len(set(ids)) == 2
+    assert run.statuses.pop(0)[2] == 'wake'
     assert run.statuses == [('', uid, 'started') for uid in ids]
     assert [kind for kind, _ in run.calls] == ['wake', 'command', 'command']
     assert run.endpoint_chimes == ['endpoint', 'endpoint']

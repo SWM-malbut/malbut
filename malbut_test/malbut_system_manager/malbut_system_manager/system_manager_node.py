@@ -358,8 +358,9 @@ class SystemManagerNode(Node):
                         mission_id, TerminalOutcome.ABORTED,
                         message='scheduled patrol skipped: manager is busy',
                     )])
-                elif (manifest.capability_id == 'follow_person'
-                      and arguments.get('approach_only', False)
+                elif ((goal_handle.request.idle_only
+                       or manifest.capability_id == 'follow_person'
+                       and arguments.get('approach_only', False))
                       and (self._state.system_state is not SystemState.IDLE
                            or any(self._state.all()) or self._speech.playbacks)):
                     # A conversational approach must never preempt or queue

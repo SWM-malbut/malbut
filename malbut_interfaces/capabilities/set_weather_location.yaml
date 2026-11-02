@@ -19,6 +19,10 @@ input:
     arguments_yaml:
       type: string
       description: 사용자가 알려준 지역 이름을 location 필드에 담은 YAML
+    idle_only:
+      type: bool
+      description: 하위 지역 설정 요청은 기존 동작을 유지한다.
+      default: false
 
 execution:
   mode: BACKGROUND

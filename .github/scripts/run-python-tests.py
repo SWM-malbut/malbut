@@ -27,6 +27,7 @@ AGENT_ROS_TESTS = (
     'test_manager_boundary_ros.py',
     'test_voice_map_actions_ros.py', 'test_voice_lab_graph.py', 'test_speech_scene_ros.py',
     'test_patrol_conversation_ros.py',
+    'test_called_conversation_ros.py',
 )
 
 
@@ -78,6 +79,7 @@ def main(argv=None):
     env = os.environ.copy()
     # Navigation fixtures import Bringup's User Map, which uses AutoSLAM's map_view.
     roots = [str(ROOT / 'malbut_agent_server'),
+             str(ROOT / 'malbut_tracking'),
              str(ROOT / 'homecam_agent/homecam_detector'),
              str(ROOT / 'malbut_autoslam')]
     if env.get('PYTHONPATH'):

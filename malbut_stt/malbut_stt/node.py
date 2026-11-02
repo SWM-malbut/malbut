@@ -551,7 +551,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 response.accepted = pipeline.session_is_active(request.session_id)
             else:
                 response.accepted = (
-                    pipeline.start_session(request.session_id) if request.active
+                    pipeline.start_session(request.session_id,
+                                           preserve_input=getattr(request, 'preserve_input', False))
+                    if request.active
                     else pipeline.stop_session(request.session_id))
             if response.accepted and not check_only:
                 clear_classification()

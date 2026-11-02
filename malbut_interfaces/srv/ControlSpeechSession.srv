@@ -6,6 +6,9 @@ string session_id
 bool active
 # true면 상태만 조회한다. active는 무시하고 세션/예약 종료 상태를 변경하지 않는다.
 bool check_only
+# true: 현재 호출어 대화를 입력 손실 없이 인계한다. 다른 세션/종료된 입력은 거절한다.
+# active=true, check_only=false일 때만 적용한다. 기본 false는 기존 교체 동작이다.
+bool preserve_input
 ---
 # true는 세션 시작·종료 또는 미수신 ID 예약 종료를 접수했다는 뜻이다.
 # check_only=true에서는 요청 ID가 현재 활성 세션이고 마이크 입력이 정상일 때만 true다.

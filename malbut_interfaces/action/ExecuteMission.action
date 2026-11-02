@@ -1,6 +1,8 @@
 # Capability Manifest에 등록된 기능과 입력값을 요청한다.
 string capability_id
 string arguments_yaml
+# true: 접수 시 다른 작업이나 음성 재생이 있으면 대기/선점 없이 거절한다.
+bool idle_only
 ---
 # mission_id는 이 Action Goal의 UUID를 문자열로 표현한 값이다.
 string mission_id

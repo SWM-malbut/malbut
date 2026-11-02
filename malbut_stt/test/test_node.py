@@ -268,7 +268,8 @@ def runtime(monkeypatch, tmp_path):
             state.decisions.append((uid, pid, decision))
             self.pending_addressee = None
 
-        def start_session(self, session_id):
+        def start_session(self, session_id, *, preserve_input=False):
+            state.calls['preserve_input'] = preserve_input
             self.session.session_id = session_id
             return True
 
@@ -751,6 +752,18 @@ def test_proactive_service_reports_actual_pipeline_aec_not_parameter(runtime):
         response = runtime.callbacks['/malbut/speech/session_control'](
             SimpleNamespace(session_id='question-1', active=True), SimpleNamespace())
         assert response.accepted and not response.barge_in_available
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+
+
+def test_called_session_service_forwards_input_preservation(runtime):
+    def on_spin():
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        assert callback(SimpleNamespace(session_id='patrol-chat-called-test', active=True,
+                                        preserve_input=True), SimpleNamespace()).accepted
+        assert runtime.calls['preserve_input'] is True
         raise KeyboardInterrupt
 
     runtime.on_spin = on_spin

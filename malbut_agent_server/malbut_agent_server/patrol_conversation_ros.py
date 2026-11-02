@@ -10,6 +10,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from malbut_agent_server.conversation_position_ros import ConversationPosition
+from malbut_agent_server.called_conversation_ros import CalledConversation
 from malbut_agent_server.patrol_conversation import (
     EncounterGate, PatrolConversationTopics, conversation_preference, ends_conversation,
     homecam_person_count,
@@ -44,6 +45,7 @@ class RosPatrolConversation:
         self._position_system_ok = False
         self.positioning_enabled = node.declare_parameter('patrol_chat_positioning_enabled', True).value
         self.position = ConversationPosition(node, clock=clock)
+        self.proactive_enabled = node.get_parameter('patrol_conversation_enabled').value
         self._odom_at = None
         self._stationary_since = None
         self._playing = {}
@@ -82,6 +84,7 @@ class RosPatrolConversation:
             node.create_subscription(SpeechRequest, '/malbut/speech/response',
                                      self._speech_request, node._speech_qos),
         ]
+        self.called = CalledConversation(self)
         self._timer = node.create_timer(.25, self.tick)
 
     @property
@@ -202,9 +205,23 @@ class RosPatrolConversation:
                              playback_id=self._playback_id):
             self.end()
 
+    def begin_called_dialogue(self):
+        """Reuse stationary companion turns after a caller's approach has ended."""
+        self.gate.used = True
+        self._first_reply = False
+        self.phase, self.deadline = 'speaking', self.clock() + 120
+        self.request_id = 'patrol-chat-' + uuid4().hex
+        self.node.dialogue.begin_companion(self.request_id)
+        self.reply_id = ''
+        self._playback_id = uuid4().hex
+        if not self.node.say('왔어요. 말씀하세요.', request_id=self.request_id,
+                             playback_id=self._playback_id):
+            self.end()
+
     def _idle(self):
         worker = self.node.dialogue
-        return (not self.position.busy and self._safe() and worker.ready and self.node._speech_ready
+        return (self.proactive_enabled and not self.called.active and not self.position.busy
+                and self._safe() and worker.ready and self.node._speech_ready
                 and not self._quiet()
                 and not worker.has_pending and not self.node._input_utterance_id
                 and not self._playing and self.gate.ready()
@@ -212,6 +229,7 @@ class RosPatrolConversation:
                 and self._input.service_is_ready())
 
     def _speech_request(self, message):
+        self.called.speech_request(message)
         self.gate.activity()
         if message.playback_id:
             self._playing[message.playback_id] = self.clock() + 180
@@ -223,6 +241,7 @@ class RosPatrolConversation:
             self.end()
 
     def _playback(self, message):
+        self.called.playback(message)
         terminal = message.state in ('finished', 'failed', 'stopped')
         if terminal:
             self._playing.pop(message.playback_id, None)
@@ -248,6 +267,7 @@ class RosPatrolConversation:
             self._session_type.Request(session_id=self.session_id, active=True))
 
     def input_status(self, message):
+        self.called.input_status(message)
         self.gate.activity()
         if message.session_id and message.session_id == self.session_id:
             if message.state == 'failed':
@@ -259,6 +279,8 @@ class RosPatrolConversation:
 
     def receive(self, message):
         """Route our wake-free reply into ordinary dialogue, leaving other sessions alone."""
+        if self.called.receive(message):
+            return True
         if self.node._in_fall_window or (self.node.situation and self.node.situation.active):
             return False
         if not message.utterance_id.strip() or len(message.utterance_id) > 256:
@@ -316,6 +338,9 @@ class RosPatrolConversation:
 
     def tick(self):
         if self._closed:
+            return
+        self.called.tick()
+        if self.called.active:
             return
         now = self.clock()
         if now >= self._report_at:
@@ -428,6 +453,7 @@ class RosPatrolConversation:
 
     def close(self):
         self._closed = True
+        self.called.close()
         self.end()
         self.node.destroy_timer(self._timer)
         for subscription in self._subscriptions:

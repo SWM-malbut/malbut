@@ -93,10 +93,11 @@ def test_weather_does_not_bypass_missing_manager(boundary):
         assert boundary.calls == ['weather']
 
 
-def test_public_manager_types_are_the_pre_integration_contract():
+def test_public_manager_types_keep_default_execution_and_optional_idle_admission():
     assert set(ExecuteMission.Goal.get_fields_and_field_types()) == {
-        'capability_id', 'arguments_yaml',
+        'capability_id', 'arguments_yaml', 'idle_only',
     }
+    assert ExecuteMission.Goal().idle_only is False
     assert set(SystemState.get_fields_and_field_types()) == {
         'system_state', 'control_mode', 'active_foreground_missions',
         'active_background_missions', 'suspended_missions', 'pending_missions',

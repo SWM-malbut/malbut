@@ -274,7 +274,8 @@ def test_receipt_failure_prevents_motion(robot, monkeypatch):
 
 
 @pytest.mark.parametrize('blocker', ['patrol', 'playback'])
-def test_conversation_positioning_cannot_preempt_busy_manager(robot, blocker):
+@pytest.mark.parametrize('capability', ['follow_person', 'navigate_to_pose'])
+def test_conversation_positioning_cannot_preempt_busy_manager(robot, blocker, capability):
     """Admission rechecks availability, even after the Agent observed idle."""
     manager, server, _ = robot
     client = ActionClient(server, ExecuteMission, '/malbut/mission/execute')
@@ -290,8 +291,10 @@ def test_conversation_positioning_cannot_preempt_busy_manager(robot, blocker):
                 manager._speech.playbacks['test-conversation-blocker'] = SimpleNamespace(
                     mission_id='other-conversation')
         approach = _result(client.send_goal_async(ExecuteMission.Goal(
-            capability_id='follow_person',
-            arguments_yaml='desired_distance_m: 1.5\napproach_only: true')))
+            capability_id=capability, idle_only=capability == 'navigate_to_pose',
+            arguments_yaml=('desired_distance_m: 1.5\napproach_only: true'
+                            if capability == 'follow_person' else
+                            'pose: {header: {frame_id: map}, pose: {orientation: {w: 1.0}}}'))))
         result = _result(approach.get_result_async())
         assert result.status == GoalStatus.STATUS_ABORTED
         assert 'manager is busy' in result.result.message

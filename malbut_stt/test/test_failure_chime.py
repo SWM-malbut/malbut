@@ -49,6 +49,7 @@ def wake_up(state):
     assert job[0] == 'wake'
     reply(state, job, '제이크야')
     assert p.session.active and p.session.session_id == ''
+    assert state.statuses.pop()[2] == 'wake'  # Remaining assertions concern actual utterances.
 
 
 def final_command(state):

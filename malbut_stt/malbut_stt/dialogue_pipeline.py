@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
+from uuid import uuid4
 
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession
@@ -268,7 +269,7 @@ class DialoguePipeline:
                     and self.capture_ready.is_set() and self.capture_error is None
                     and not self._capture_timed_out())
 
-    def start_session(self, session_id):
+    def start_session(self, session_id, *, preserve_input=False):
         """Replace ordinary dialogue with a correlated, wake-free confirmation."""
         self._expire_web_talk()
         if (self.stopping.is_set() or self.capture_error is not None
@@ -279,6 +280,15 @@ class DialoguePipeline:
         if session_id in self._retired_session_ids:
             return False
         if self.session.active and self.session.session_id == session_id:
+            return True
+        if preserve_input:
+            # Adopt a live wake turn without clearing PCM, an in-flight decode,
+            # or its utterance ID. Never resurrect input that already finished.
+            if not self.session.active or self.session.session_id:
+                return False
+            self.session.session_id = session_id
+            self._command_start_deadline = None
+            self._followup_deadline = None
             return True
         self._terminate('session_replaced:proactive')
         self._tail_stream = None
@@ -1186,6 +1196,9 @@ class DialoguePipeline:
                     self._play_endpoint_chime()
                     self._accept_result('command', generation, uid, command, None)
                     return
+                # A call alone invites approach. An attached command already
+                # expresses what to do and follows the ordinary command path.
+                self._input_status('wake', str(uuid4()))
                 if self.on_wake is None:
                     self.report('wake_chime_unavailable')
                 else:
@@ -1200,7 +1213,7 @@ class DialoguePipeline:
                         self._chime_gate_until = self.clock() + self.chime_tail_s
                         self._reset_audio()
                         self._chime_playing = False
-                if self.session.active:
+                if self.session.active and not self.session.session_id:
                     self._command_start_deadline = (
                         max(self.clock(), self._chime_gate_until)
                         + self.command_stream.settings.start_timeout_s)

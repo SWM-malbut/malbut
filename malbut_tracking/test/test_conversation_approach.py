@@ -76,3 +76,22 @@ def test_delayed_camera_frame_does_not_extend_freshness_from_arrival():
     assert policy.expired(1.11) == 'person observation lost'
     assert ConversationApproach(0., 1.5).observe(
         1., Point2D(2., 0.), Point2D(0., 0.), 'a', metric=True, age=.7)
+
+
+def test_empty_initial_frames_wait_but_lost_confirmed_person_aborts():
+    pytest.importorskip('rclpy')
+    from geometry_msgs.msg import PoseStamped
+    from malbut_tracking.person_follower_node import PersonFollowerNode
+
+    policy = ConversationApproach(0., 1.5)
+    follower = SimpleNamespace(
+        _active_goal=object(), _now_seconds=lambda: 1., _last_camera_source_stamp_ns=None,
+        _observation_is_current=lambda *_: True, _pending_detection=None,
+        _approach=policy, _finish_approach=Mock())
+    message = SimpleNamespace(header=PoseStamped().header, detections=[])
+    PersonFollowerNode._on_detections(follower, message)
+    follower._finish_approach.assert_not_called()
+    assert observe(policy, 1.) is None
+    PersonFollowerNode._on_detections(follower, message)
+    follower._finish_approach.assert_called_once_with(
+        False, 'conversation requires one visible person')

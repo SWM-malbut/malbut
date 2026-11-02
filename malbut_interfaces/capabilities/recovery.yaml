@@ -17,6 +17,10 @@ input:
       type: string
       description: 추가 실행 명령은 받지 않는다.
       default: '{}'
+    idle_only:
+      type: bool
+      description: 복구 하위 요청의 기본값. 대화 이동 접수 제한은 Manager가 처리한다.
+      default: false
 execution:
   mode: FOREGROUND
   priority: URGENT

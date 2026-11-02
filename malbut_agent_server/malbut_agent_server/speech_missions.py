@@ -174,6 +174,19 @@ class SpeechMissions:
             except (OSError, ValueError):
                 return False
 
+    def prepare_conversation_navigation(self, request_id, location):
+        """Reuse named navigation, also requiring free space around its saved point."""
+        with self._lock:
+            proposal = self.prepare(request_id, 'request_navigation', {'location': location})
+            if proposal.blocked:
+                return None
+            try:
+                point = json.loads(proposal.arguments_json)['pose']['pose']['position']
+                self._targets.resolve_point(point['x'], point['y'], 0, self._active_map)
+            except (OSError, ValueError, KeyError, TypeError):
+                return None
+            return proposal if self.navigation_matches(proposal) else None
+
     def prepare(self, request_id, tool_name, arguments):
         """Validate inputs and bind a destination without executing it."""
         if not isinstance(request_id, str) or not request_id.strip():

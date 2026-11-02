@@ -607,6 +607,7 @@ def test_proactive_answer_is_captured_while_previous_asr_is_still_running(harnes
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
+    assert statuses.pop(0)[2] == 'wake'
     harness.allow_asr.clear()
     finish_command(pipeline)
     assert harness.entered_asr.wait(timeout=1.0)
@@ -866,6 +867,7 @@ def test_failed_command_closes_turn_and_requires_another_wake(harness, failure):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
+    assert statuses.pop(0)[2] == 'wake'
     original = pipeline.transcriber.transcribe
 
     def fail(_pcm, _rate):
@@ -911,6 +913,7 @@ def test_failed_command_sound_guard_does_not_wait_for_agent_playback(harness, te
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(
         (*args, pipeline._input_blocked(harness.now))))
     wake_up(harness, pipeline)
+    assert statuses.pop(0)[2] == 'wake'
     pipeline.feed(VOICE)
     uid, generation = pipeline.session.utterance_id, pipeline._generation
     pipeline._accept_result('command', generation, uid, None, 'ValueError')
@@ -1065,6 +1068,7 @@ def test_ordinary_input_status_ignores_empty_ids_and_busy_discard(harness):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
+    assert statuses.pop(0)[2] == 'wake'
     pipeline._input_status('failed')
     pipeline._busy = True
     pipeline.feed(VOICE + QUIET * 100)
@@ -1077,6 +1081,7 @@ def test_failed_interruption_keeps_actual_pause_and_requires_another_wake(harnes
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
+    assert statuses.pop(0)[2] == 'wake'
     original = pipeline.transcriber.transcribe
 
     def fail(_pcm, _rate):

@@ -36,7 +36,8 @@ class ConversationPosition:
     @property
     def released(self):
         return (self.phase == 'done' and self.runtime_idle
-                and self.runtime_revision > self.start_revision
+                and (self.runtime_revision > self.start_revision
+                     or getattr(self, 'unstarted', False))
                 and self.node.count_publishers('/malbut/runtime/state') > 0)
 
     def _runtime(self, message):
@@ -50,7 +51,7 @@ class ConversationPosition:
             self.runtime_idle = False
         self.runtime_revision += 1
 
-    def start(self):
+    def start(self, navigation=None):
         from unique_identifier_msgs.msg import UUID
 
         if self.busy or not self.client.server_is_ready():
@@ -59,14 +60,18 @@ class ConversationPosition:
         self.mission_id = identity.hex
         self.phase, self.handle = 'requesting', None
         self.success = self.cancel_requested = False
+        self.unstarted = False
         self.start_revision = self.runtime_revision
-        self.deadline = self.clock() + 55  # Manager preparation plus bounded 20 s approach.
+        self.navigation = navigation is not None
+        self.deadline = self.clock() + (120 if self.navigation else 55)
         self.accept_deadline = self.clock() + 5
+        capability = 'navigate_to_pose' if self.navigation else 'follow_person'
+        arguments = navigation if self.navigation else dict(
+            target_mode=0, target_person_id='', desired_distance_m=1.5, approach_only=True)
         try:
             future = self.client.send_goal_async(self.action_type.Goal(
-                capability_id='follow_person', arguments_yaml=json.dumps(dict(
-                    target_mode=0, target_person_id='', desired_distance_m=1.5,
-                    approach_only=True))), goal_uuid=UUID(uuid=list(identity.bytes)))
+                capability_id=capability, arguments_yaml=json.dumps(arguments), idle_only=True),
+                goal_uuid=UUID(uuid=list(identity.bytes)))
             future.add_done_callback(self._accepted)
         except Exception:
             # Dispatch uncertainty is not proof that the base is free.
@@ -79,6 +84,7 @@ class ConversationPosition:
         try:
             handle = future.result()
             if not handle.accepted:
+                self.unstarted = True
                 self.phase = 'done'
                 return
             self.handle = handle
@@ -100,12 +106,22 @@ class ConversationPosition:
             self.success = False
             self.cancel()
             return  # A lost result does not confirm that motion ended.
+        if (getattr(reply, 'status', None) == GoalStatus.STATUS_ABORTED
+                and getattr(getattr(reply, 'result', None), 'message', None)
+                == 'conversation positioning skipped: manager is busy'):
+            # Manager rejected before submitting any downstream goal. No
+            # runtime transition is expected, but idle state/odometry still gate speech.
+            self.unstarted = True
         try:
             result = yaml.safe_load(reply.result.result_yaml)
-            self.success = (not self.cancel_requested
-                            and reply.status == GoalStatus.STATUS_SUCCEEDED
-                            and isinstance(result, dict) and result.get('success') is True
-                            and result.get('final_state') == 'STOPPED')
+            stopped = (isinstance(result, dict) and result.get('success') is True
+                       and result.get('final_state') == 'STOPPED')
+            # Nav2 NavigateToPose has an empty result; terminal SUCCEEDED is
+            # followed by independent runtime release and odometry checks.
+            completed = (isinstance(result, dict) and not result
+                         if getattr(self, 'navigation', False) else stopped)
+            self.success = (not self.cancel_requested and completed
+                            and reply.status == GoalStatus.STATUS_SUCCEEDED)
         except Exception:
             self.success = False
         self.phase = 'done'
