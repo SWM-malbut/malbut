@@ -186,7 +186,8 @@ def create_communication_node(
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
-                if self.declare_parameter('patrol_conversation_enabled', True).value:
+                # Keep spontaneous conversation opt-in while it is being stabilized.
+                if self.declare_parameter('patrol_conversation_enabled', False).value:
                     try:
                         from malbut_agent_server.patrol_conversation_ros import RosPatrolConversation
                         self._patrol_chat = RosPatrolConversation(self)

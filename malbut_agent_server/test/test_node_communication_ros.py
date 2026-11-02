@@ -495,6 +495,25 @@ def _publish_transcript(graph, utterance_id, text, *, repeat=1):
         publisher.publish(message)
 
 
+def test_proactive_chat_defaults_off_but_user_dialogue_still_replies(communication, monkeypatch):
+    from malbut_agent_server import patrol_conversation_ros
+
+    def unexpected_proactive_start(_node):
+        pytest.fail('Default startup must not construct the proactive conversation adapter')
+
+    monkeypatch.setattr(patrol_conversation_ros, 'RosPatrolConversation',
+                        unexpected_proactive_start)
+    provider = _DialogueProvider()
+    graph = communication(with_manager=False, provider=provider)
+    assert graph.agent.get_parameter('patrol_conversation_enabled').value is False
+    assert graph.agent._patrol_chat is None
+
+    _publish_transcript(graph, 'user-initiated', '오늘 하루는 어땠어?')
+    _wait_until(lambda: graph.speech == ['대화 연결 확인 응답'])
+    assert len(provider.calls) == 1
+    assert provider.calls[0].utterance == '오늘 하루는 어땠어?'
+
+
 def test_ordinary_recognition_failure_guidance_and_followup_use_existing_topics(communication):
     provider = _DialogueProvider()
     graph = communication(with_manager=False, provider=provider)

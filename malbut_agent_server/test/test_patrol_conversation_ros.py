@@ -54,7 +54,7 @@ def robot(tmp_path, monkeypatch):
         configure_patrol_queries(instance, store)
         return instance
 
-    rclpy.init()
+    rclpy.init(args=['--ros-args', '-p', 'patrol_conversation_enabled:=true'])
     agent = create_communication_node(
         speech_db_path=str(tmp_path / 'receipts.sqlite3'),
         dialogue_settings=Settings(user_id='owner'), dialogue_factory=factory)
