@@ -90,7 +90,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         control_timeout = parameter('playback_control_timeout_s', 5.0)
         max_utterance_s = parameter('max_utterance_s', 0.0)
         max_buffer_s = parameter('max_buffer_s', 60.0)
-        endpoint_predecode_s = parameter('endpoint_predecode_s', 0.8)
+        endpoint_predecode_s = parameter('endpoint_predecode_s', 0.4)
+        endpoint_min_silence_s = parameter('endpoint_min_silence_s', 0.6)
         turn_detection = parameter('turn_detection', 'legacy')
         turn_model_directory = parameter('turn_model_directory', str(
             Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
@@ -117,6 +118,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 or not isfinite(endpoint_predecode_s)
                 or not 0 < endpoint_predecode_s <= 1.0):
             raise ValueError('endpoint_predecode_s must be positive and at most one second')
+        if (type(endpoint_min_silence_s) not in (int, float)
+                or not isfinite(endpoint_min_silence_s)
+                or not 0.2 <= endpoint_min_silence_s <= 1.0):
+            raise ValueError('endpoint_min_silence_s must be between 0.2 and 1.0 seconds')
         settings = CaptureSettings(
             start_timeout_s=parameter('start_timeout_s', 5.0),
             silence_timeout_s=parameter('silence_timeout_s', 2.0),
@@ -501,6 +506,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),
+            endpoint_min_silence_s=(endpoint_min_silence_s
+                                   if settings.silence_timeout_s > 1.0 else 1.0),
         )
 
         def playback_status(message):

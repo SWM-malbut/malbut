@@ -73,7 +73,7 @@ def test_early_snapshot_is_once_per_pause_and_revision_survives_reset():
 
 
 @pytest.fixture
-def run():
+def run(request):
     state = SimpleNamespace(now=0.0, transcripts=[], reports=[], controls=[],
                             statuses=[], failure_chimes=[])
     pipeline = DialoguePipeline(
@@ -87,6 +87,7 @@ def run():
         clock=lambda: state.now, input_has_aec=True,
         # Keep exact single-frame PCM boundaries independent of onset debounce.
         settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
+        **getattr(request, 'param', {}),
     )
     pipeline.session.activate()
     state.pipeline = pipeline
@@ -113,6 +114,75 @@ def reply(run, job, text, error=None):
     kind, generation, token, _pcm = job
     run.pipeline.results.put_nowait((kind, generation, token, text, error))
     run.pipeline.poll()
+
+
+@pytest.mark.parametrize('run', [dict(endpoint_predecode_s=.4, endpoint_min_silence_s=.6)],
+                         indirect=True)
+@pytest.mark.parametrize('text, final_frames', [
+    ('문을 닫아 주세요.', 30), ('문을 닫고', 100),
+])
+def test_fast_endpoint_uses_observed_silence_and_preserves_unfinished_fallback(
+        run, text, final_frames):
+    pipeline = run.pipeline
+    pipeline.feed(VOICE + QUIET * 19)
+    assert pipeline.jobs.empty()
+    pipeline.feed(QUIET)
+    job = pipeline.jobs.get_nowait()
+    # Padding for inference never counts toward observed microphone silence.
+    assert job[3] == VOICE + QUIET * 100
+    reply(run, job, text)
+    assert run.transcripts == []
+    pipeline.feed(QUIET * (final_frames - 21))
+    pipeline.poll()
+    assert run.transcripts == []
+    pipeline.feed(QUIET)
+    pipeline.poll()
+    assert run.transcripts == [(job[2][0], text)]
+    assert f'endpoint_finalized:silence_s={final_frames * .02:.2f}' in run.reports
+    reply(run, job, text)
+    assert run.transcripts == [(job[2][0], text)] and pipeline.jobs.empty()
+
+
+@pytest.mark.parametrize('run', [dict(endpoint_predecode_s=.4, endpoint_min_silence_s=.6)],
+                         indirect=True)
+def test_fast_endpoint_discards_candidate_when_speech_resumes_before_six_tenths(run):
+    pipeline = run.pipeline
+    pipeline.feed(VOICE + QUIET * 20)
+    old = pipeline.jobs.get_nowait()
+    reply(run, old, '문을 열어 주세요.')
+    pipeline.feed(QUIET * 9 + SECOND + QUIET * 20)
+    assert run.transcripts == []
+    new = pipeline.jobs.get_nowait()
+    assert new[2][1] != old[2][1]
+    reply(run, old, '문을 열어 주세요.')  # Even a delayed duplicate is stale.
+    assert run.transcripts == []
+    reply(run, new, '문을 열지 말고 닫아 주세요.')
+    pipeline.feed(QUIET * 10)
+    pipeline.poll()
+    assert run.transcripts == [(new[2][0], '문을 열지 말고 닫아 주세요.')]
+
+
+@pytest.mark.parametrize('run', [dict(endpoint_predecode_s=.4, endpoint_min_silence_s=.6)],
+                         indirect=True)
+def test_fast_endpoint_still_waits_for_inference_and_ignores_boilerplate(run):
+    pipeline = run.pipeline
+    pipeline.feed(VOICE + QUIET * 20)
+    job = pipeline.jobs.get_nowait()
+    pipeline.feed(QUIET * 20)
+    assert run.transcripts == []
+    reply(run, job, '감사합니다.')
+    assert run.transcripts == []
+    assert not any(report.startswith('endpoint_finalized:') for report in run.reports)
+
+
+@pytest.mark.parametrize('minimum', [True, None, '0.6', .19, 1.01, float('inf'), float('nan')])
+def test_invalid_minimum_silence_is_rejected(minimum):
+    with pytest.raises(ValueError, match='endpoint_min_silence_s'):
+        DialoguePipeline(
+            recorder_factory=None, wake=None, transcriber=None, is_speech=lambda *_: False,
+            publish_transcript=None, publish_control=None, publish_interruption=None,
+            report=None, endpoint_min_silence_s=minimum,
+        )
 
 
 @pytest.mark.parametrize('text', ['문을 닫아 주세요.', '좋아져'])

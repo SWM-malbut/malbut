@@ -12,16 +12,25 @@ from malbut_tts.backends import create_synthesizer
 def test_default_piper_needs_no_api_or_cuda_and_never_falls_back(monkeypatch, tmp_path):
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
     factory = Mock()
-    monkeypatch.setitem(sys.modules, 'malbut_tts.piper_synthesis',
-                        SimpleNamespace(PiperSynthesizer=factory))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.live_piper_synthesis',
+                        SimpleNamespace(LivePiperSynthesizer=factory))
     for module in ('openai', 'torch', 'malbut_tts.api_synthesis', 'malbut_tts.cuda_synthesis'):
         monkeypatch.setitem(sys.modules, module, None)
     assert create_synthesizer() is factory.return_value
     factory.assert_called_once_with(
-        tmp_path / 'malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx', threads=3)
+        tmp_path / 'malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx',
+        threads=3, speed=0.9, max_chars=40)
     factory.side_effect = FileNotFoundError('local voice missing')
     with pytest.raises(FileNotFoundError, match='local voice missing'):
         create_synthesizer()
+
+
+def test_explicit_piper_timing_reaches_local_engine(monkeypatch):
+    factory = Mock()
+    monkeypatch.setitem(sys.modules, 'malbut_tts.live_piper_synthesis',
+                        SimpleNamespace(LivePiperSynthesizer=factory))
+    create_synthesizer('/local/voice.onnx', piper_speed=1.0, piper_max_chars=80)
+    factory.assert_called_once_with('/local/voice.onnx', threads=3, speed=1.0, max_chars=80)
 
 
 def test_cuda_is_explicit_and_receives_precision(monkeypatch):

@@ -80,6 +80,7 @@ class DialoguePipeline:
                  publish_transcript, publish_control, publish_interruption,
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
+                 endpoint_min_silence_s: float = 1.0,
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  adaptive_partials=True,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
@@ -156,8 +157,13 @@ class DialoguePipeline:
         if barge_in_mode == 'reachy':
             settings = replace(settings, pre_roll_s=max(settings.pre_roll_s,
                 min(barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s)))
+        if (type(endpoint_min_silence_s) not in (int, float)
+                or not math.isfinite(endpoint_min_silence_s)
+                or not 0.2 <= endpoint_min_silence_s <= 1.0):
+            raise ValueError('endpoint_min_silence_s must be between 0.2 and 1.0 seconds')
+        self.endpoint_min_silence_s = endpoint_min_silence_s
         if endpoint_predecode_s is not None and (
-            isinstance(endpoint_predecode_s, bool)
+            type(endpoint_predecode_s) not in (int, float)
             or not math.isfinite(endpoint_predecode_s)
             or not 0 < endpoint_predecode_s <= 1.0 < settings.silence_timeout_s
         ):
@@ -168,7 +174,8 @@ class DialoguePipeline:
             observe_vad(is_speech, kind='command') if callable(observe_vad) else is_speech,
             settings=settings,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
-                              else 1.0 if settings.silence_timeout_s > 1.0 else None),
+                              else endpoint_min_silence_s
+                              if settings.silence_timeout_s > endpoint_min_silence_s else None),
             partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
             start_qualifier=start_qualifier,
         )
@@ -1173,7 +1180,7 @@ class DialoguePipeline:
         self._finish_ready_endpoint()
 
     def _finish_ready_endpoint(self):
-        """Reuse early inference only after 1.0 seconds of current observed silence."""
+        """Reuse early inference only after the configured observed silence floor."""
         if self._endpoint_result is None:
             return
         (generation, uid, revision), text, error_name = self._endpoint_result
@@ -1185,7 +1192,7 @@ class DialoguePipeline:
             self._trace_job('endpoint_cache_discarded', 'endpoint', generation, (uid, revision),
                             reason='capture_or_revision_changed')
             return
-        if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
+        if (self.command_stream.collector.silent_frames * 0.02 >= self.endpoint_min_silence_s
                 and self._usable_text(text, error_name) and is_complete_korean_utterance(text)
                 and (self.smart_turn is None or self._smart_turn_result == (
                     (generation, uid, revision), True))):
