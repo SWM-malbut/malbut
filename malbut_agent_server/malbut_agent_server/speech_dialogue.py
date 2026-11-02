@@ -462,7 +462,9 @@ class DialogueWorker:
                     scene, image = None, None
                     if self._scene_source is not None:
                         try:
-                            scene, image = self._scene_source.snapshot()
+                            prepare = getattr(self._scene_source, 'prepare_turn',
+                                              self._scene_source.snapshot)
+                            scene, image = prepare()
                         except Exception:
                             scene = {'image': {'available': False}, 'map': None, 'pose': None}
                     opener = getattr(progress, 'opener_context', None)
@@ -735,7 +737,8 @@ class DialogueWorker:
             with request_scope(progress=progress):
                 provider = getattr(runtime, 'companion_provider', runtime.provider)
                 message = self._companion.answer(provider, session, utterance_id,
-                                                 text, progress.opener_context)
+                                                 text, progress.opener_context,
+                                                 scene_source=self._scene_source)
         except Exception:
             message = ERROR_RESPONSE
         receipt = self._companion.reply_receipt()
