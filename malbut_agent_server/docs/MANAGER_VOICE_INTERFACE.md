@@ -159,7 +159,7 @@ Agent는 목적지 설정이 있을 때 이 Topic을 구독하고, `LOCALIZATION
 | 현재 발화의 요청 | Manager에 전달할 값 |
 | --- | --- |
 | 등록된 장소로 이동 | `capability_id=navigate_to_pose`, 설정에서 해석한 `pose`, 빈 `behavior_tree` |
-| 따라오기 | `capability_id=follow_person`, `target_mode=FollowPerson.Goal.VISIBLE_PERSON`, 빈 `target_person_id`, `desired_distance_m=1.0` |
+| 따라오기 | `capability_id=follow_person`, `target_mode=FollowPerson.Goal.VISIBLE_PERSON`, 빈 `target_person_id`, `desired_distance_m=0.6` |
 | 순찰 | `capability_id=patrol`, 요청에 맞는 `Patrol.Goal` 상수의 `thoroughness`; 기본 `NORMAL` |
 | 취소 | 음성 경로가 소유한 기존 Goal에 Action 취소 요청 |
 

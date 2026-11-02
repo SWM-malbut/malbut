@@ -152,7 +152,7 @@ def _payload(checks, goal, capability, level=1):
         _check(checks, correct, '실제 거실 fixture의 map 좌표와 방향을 전달함')
     elif capability == 'follow_person':
         _check(checks, args == {
-            'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 1.0,
+            'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 0.6,
         }, '화자 ID를 만들지 않고 보이는 사람·기본 거리로 추적 요청함')
     elif capability == 'autoslam':
         _check(checks, args == {'map_name': '새집'}, '발화의 지도 이름을 AutoSlam에 전달함')
