@@ -2,15 +2,11 @@
 
 import copy
 import hashlib
-import io
 import json
 from pathlib import Path
 import sqlite3
-import time
 from types import SimpleNamespace
 
-import cv2
-import numpy as np
 import pytest
 
 from malbut_agent_server.patrol_media import read_media, release_media
@@ -215,130 +211,3 @@ def test_invalid_volatile_policy_cannot_fall_back_to_legacy_disk(tmp_path, stora
     path.write_text(json.dumps(metadata))
     with pytest.raises(ValueError, match='media policy'):
         read_capture(path)
-
-
-def transient_rgbd_capture(directory, media, *, batched):
-    """Build full socket evidence so post-inference checks exercise every source."""
-    from test_patrol_spatial import capture as spatial_capture
-    from test_patrol_lidar import scan
-
-    path, metadata = spatial_capture.__wrapped__(directory)
-    image = cv2.imencode('.jpg', np.full((100, 100, 3), 120, np.uint8))[1].tobytes()
-    laser = scan()
-    stream = io.BytesIO()
-    np.save(stream, laser.pop('ranges'), allow_pickle=False)
-    lidar = stream.getvalue()
-    files = {'.jpg': image, '.lidar.npy': lidar}
-    for suffix in ('.depth.npy', '.regions.json'):
-        files[suffix] = path.with_suffix(suffix).read_bytes()
-    metadata.update(
-        image_sha256=hashlib.sha256(image).hexdigest(), media_storage='volatile_v1',
-        media_expires_at=time.time() + 900,
-        lidar=dict(laser, count=47, sha256=hashlib.sha256(lidar).hexdigest()))
-    if batched:
-        metadata['analysis_batch'] = 'patrol_images_v1'
-    path.write_text(json.dumps(metadata, ensure_ascii=False))
-    media.put(path.stem, files)
-    for suffix in files:
-        path.with_suffix(suffix).unlink(missing_ok=True)
-    if batched:
-        (directory / 'runs').mkdir()
-        (directory / 'runs' / (metadata['patrol_id'] + '.json')).write_text(json.dumps({
-            'version': 1, 'patrol_id': metadata['patrol_id'], 'outcome': 'completed',
-            'capture_failures': 0, 'captures': [{'observation_id': path.stem,
-                'manifest_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}]}))
-    return path, metadata, files
-
-
-def spatial_observer(*, batched, after_request):
-    if batched:
-        from test_patrol_batch import observer
-
-        def mutate(response):
-            after_request()
-            return response
-
-        return observer([], mutate=mutate)
-    from test_patrol_spatial import ANALYSIS as spatial_analysis
-
-    def analyze(*_):
-        after_request()
-        return copy.deepcopy(spatial_analysis)
-
-    return SimpleNamespace(available=lambda: True, model='fixture', analyze=analyze)
-
-
-@pytest.mark.parametrize('batched', [False, True])
-def test_transient_spatial_bundle_reuses_reads_without_skipping_validation_stages(
-        tmp_path, media_module, monkeypatch, batched):
-    from collections import Counter
-    from malbut_agent_server import patrol_media
-
-    media = media_module.TransientMedia(tmp_path)
-    try:
-        path, _, _ = transient_rgbd_capture(tmp_path, media, batched=batched)
-        reads = Counter()
-        original = patrol_media.read_media
-
-        def read(path, suffix, limit):
-            reads[suffix] += 1
-            return original(path, suffix, limit)
-
-        monkeypatch.setattr(patrol_media, 'read_media', read)
-        store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
-        worker = PatrolObservationWorker(store, spatial_observer(
-            batched=batched, after_request=lambda: None), autostart=False)
-        assert worker.run_once()
-        # Ingest, before API, after API; localization reuses that last checked bundle.
-        assert reads == {'.jpg': 3, '.depth.npy': 3, '.regions.json': 3, '.lidar.npy': 3}
-        result = store.search('owner', dict(ARGS, query='상자'))
-        obj = result['observations'][0]['objects'][0]
-        assert obj['spatial']['region'] == {'id': 'workroom', 'name': '작업실'}
-        with pytest.raises(FileNotFoundError):
-            read_media(path, '.jpg', 1024 * 1024)
-        assert not list(tmp_path.rglob('*.jpg')) and not list(tmp_path.rglob('*.npy'))
-    finally:
-        media.close()
-
-
-@pytest.mark.parametrize('batched', [False, True])
-@pytest.mark.parametrize('fault', [
-    'expiry', 'release', 'manifest_removed', 'metadata',
-    '.jpg', '.depth.npy', '.regions.json', '.lidar.npy',
-])
-def test_evidence_changed_during_api_never_commits_cached_spatial_bundle(
-        tmp_path, media_module, batched, fault):
-    clock = [100.]
-    media = media_module.TransientMedia(tmp_path, clock=lambda: clock[0])
-    try:
-        path, metadata, files = transient_rgbd_capture(tmp_path, media, batched=batched)
-
-        def invalidate():
-            if fault == 'expiry':
-                clock[0] += media_module.RETENTION_SECONDS + 1
-            elif fault == 'release':
-                media.discard(path.stem)
-            elif fault == 'manifest_removed':
-                path.unlink()
-            elif fault == 'metadata':
-                changed = copy.deepcopy(metadata)
-                changed['camera_pose']['x'] += 1
-                path.write_text(json.dumps(changed, ensure_ascii=False))
-            else:
-                media.put(path.stem, {**files, fault: files[fault] + b'changed'})
-
-        store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
-        worker = PatrolObservationWorker(store, spatial_observer(
-            batched=batched, after_request=invalidate), autostart=False)
-        assert worker.run_once()
-        with store.connect() as db:
-            row = db.execute('SELECT status, analysis FROM observations').fetchone()
-            assert row['status'] != 'ready' and row['analysis'] is None
-            evidence_table = db.execute("SELECT name FROM sqlite_master WHERE type='table' "
-                                        "AND name='patrol_observation_evidence'").fetchone()
-            if evidence_table is not None:
-                assert db.execute(
-                    'SELECT count(*) FROM patrol_observation_evidence').fetchone()[0] == 0
-        assert not list(tmp_path.rglob('*.jpg')) and not list(tmp_path.rglob('*.npy'))
-    finally:
-        media.close()

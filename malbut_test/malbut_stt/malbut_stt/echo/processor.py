@@ -62,12 +62,10 @@ def calibrate(microphone, reference, anchor_difference=0.0):
 class EchoProcessor:
     """Own one stream's adaptive filters; never share between microphones."""
 
-    def __init__(self, gain, neural_models, *, retain_recovery=False):
+    def __init__(self, gain, neural_models):
         if not math.isfinite(gain) or not 1 <= gain <= 8:
             raise ValueError('Invalid microphone normalization')
         self.gain = gain
-        self.retain_recovery = retain_recovery
-        self.silence = np.zeros(HOP, np.float32)
         self.aec = AudioProcessor(
             sample_rate=RATE, echo_cancellation=True, noise_suppression=True,
             high_pass_filter=True, auto_gain_control=False, ns_level=2)
@@ -101,16 +99,16 @@ class EchoProcessor:
                 self.output = np.zeros(HOP, np.float32)
             self.active = False
             self.far_delay = far.copy()
-            self.last_voice = dry
+            self.last_voice = dry.copy()
             return dry
         self.mic = np.concatenate([self.mic, near])
         self.ref = np.concatenate([self.ref, far])
         while len(self.mic) >= 160:
             clean = self.aec.process(
-                (self.mic[:160] / self.gain), self.ref[:160].copy())
+                (self.mic[:160] / self.gain).astype(np.float32), self.ref[:160].copy())
             self.output = np.concatenate([self.output, clean * self.gain])
             self.mic, self.ref = self.mic[160:], self.ref[160:]
-        out, self.output = self.output[:HOP], self.output[HOP:]
+        out, self.output = self.output[:HOP].copy(), self.output[HOP:]
         if len(out) != HOP:
             raise RuntimeError('AEC output clock discontinuity')
         if not self.active:
@@ -120,14 +118,13 @@ class EchoProcessor:
         self.voice_delay[:-HOP] = self.voice_delay[HOP:]
         self.voice_delay[-HOP:] = out
         out = self.neural.process(out, self.far_delay)
-        # Keep ASR ungated; the VAD mask uses a separate immutable zero frame.
-        self.last_voice = voice
+        self.last_voice = voice.copy()
         self.active = True
         self.far_delay = far.copy()
         # This XFM/speaker pair still self-triggered at -20 dB. Use the
         # measured conservative -12 dB floor for VAD; ASR remains ungated.
         if float(out @ out) / HOP < self.envelope * 0.0630957344:
-            return self.silence
+            voice.fill(0)
         return voice
 
     def process_array(self, near, far):
@@ -137,13 +134,11 @@ class EchoProcessor:
             raise ValueError('AEC requires matching finite frames in 128-sample hops')
         out = np.empty_like(near)
         self.asr_output = np.empty_like(near)
-        if self.retain_recovery:
-            self.recovery_output = np.empty_like(near)
+        self.recovery_output = np.empty_like(near)
         for start in range(0, len(near), HOP):
             out[start:start + HOP] = self._step(near[start:start + HOP], far[start:start + HOP])
             self.asr_output[start:start + HOP] = self.last_voice
-            if self.retain_recovery:
-                self.recovery_output[start:start + HOP] = self.last_recovery
+            self.recovery_output[start:start + HOP] = self.last_recovery
         if not np.isfinite(out).all() or not np.isfinite(self.asr_output).all():
             raise RuntimeError('AEC produced invalid PCM')
         return out

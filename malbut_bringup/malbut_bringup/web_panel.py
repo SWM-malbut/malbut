@@ -437,8 +437,8 @@ class RosBridge:
     """Own Action handles and execute all ROS commands on the ROS executor."""
 
     def __init__(self, data, *, node_name='robot_web_panel',
-                 map_topic='/global_costmap/costmap', subscribe_images=True):
-        """Subscribe to state and optional LAN video; prepare nonblocking Actions."""
+                 map_topic='/global_costmap/costmap'):
+        """Subscribe to diagnostics/images and prepare nonblocking Action clients."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
         from malbut_interfaces.msg import SystemState
         from action_msgs.msg import GoalStatusArray
@@ -509,6 +509,12 @@ class RosBridge:
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
         self.subscriptions = [
+            self.node.create_subscription(Image, self.topics['rgb_topic'],
+                                          lambda msg: data.receive_frame('raw', msg),
+                                          sensor_qos),
+            self.node.create_subscription(CompressedImage, self.topics['debug_topic'],
+                                          lambda msg: data.receive_frame('debug', msg),
+                                          sensor_qos),
             self.node.create_subscription(String, '/tracking/person/status',
                                           self._tracking, 1),
             self.node.create_subscription(
@@ -541,17 +547,6 @@ class RosBridge:
                 OccupancyGrid, self.topics['map_topic'], self._map,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
-        # Only the LAN panel serves these streams. The cloud bridge forwards
-        # homecam's existing health heartbeat and never consumes image pixels.
-        if subscribe_images:
-            self.subscriptions.extend([
-                self.node.create_subscription(Image, self.topics['rgb_topic'],
-                                              lambda msg: data.receive_frame('raw', msg),
-                                              sensor_qos),
-                self.node.create_subscription(CompressedImage, self.topics['debug_topic'],
-                                              lambda msg: data.receive_frame('debug', msg),
-                                              sensor_qos),
-            ])
         self.subscriptions.extend(self.node.create_subscription(
             GoalStatusArray, name + '/_action/status',
             lambda msg, name=name: self._action_status(name, msg),

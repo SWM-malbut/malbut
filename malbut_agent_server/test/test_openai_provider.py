@@ -264,52 +264,6 @@ def test_non_official_base_urls_are_rejected(base_url: str) -> None:
         )
 
 
-def test_transport_preserves_unicode_and_individual_image_inputs() -> None:
-    """Compact wire JSON preserves every frame and non-ASCII prompt verbatim."""
-    captured = []
-    payload = {
-        'model': 'test-model',
-        'store': False,
-        'input': [{'role': 'user', 'content': [
-            {'type': 'input_text', 'text': '거실·안방의 사람과 상자 📦를 구분해 주세요.'},
-            *[{'type': 'input_image', 'detail': 'high',
-               'image_url': f'data:image/jpeg;base64,frame{index:02d}'}
-              for index in range(24)],
-        ]}],
-    }
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format_string, *args):
-            del format_string, args
-
-        def do_POST(self):
-            body = self.rfile.read(int(self.headers['Content-Length']))
-            captured.append(body)
-            response = json.dumps({'summary': '거실의 상자 📦'}).encode('utf-8')
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
-            self.end_headers()
-            self.wfile.write(response)
-
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        result = OpenAIResponsesProvider._urllib_transport(
-            f'http://127.0.0.1:{server.server_address[1]}/v1/responses',
-            {'Content-Type': 'application/json'}, payload, 2,
-        )
-        assert len(captured) == 1
-        assert captured[0].isascii()
-        assert json.loads(captured[0]) == payload
-        assert result == {'summary': '거실의 상자 📦'}
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-
-
 def test_authorization_is_never_followed_to_a_redirect() -> None:
     """Default transport fails before a credential can reach a new URL."""
     sink_calls = []

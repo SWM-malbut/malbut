@@ -26,21 +26,12 @@ SENSITIVE = {
 }
 
 
-def trivial_utterance(text):
-    """Skip only complete greetings/acknowledgements, never a phrase within an event."""
-    if not isinstance(text, str):
-        return False
-    normalized = re.sub(r'[\s.!?~。！？]', '', text).casefold()
-    return normalized in {'네', '예', '응', '음', '어', '그래', '알겠어', '알겠어요',
-                           '고마워', '고마워요', '감사합니다', '안녕', '안녕하세요'}
-
-
 class CompanionExtractor:
     def __init__(self, backend):
         self.backend = backend
 
     def extract(self, text, observed_at, categories):
-        if not isinstance(text, str) or not 1 <= len(text) <= 8000 or trivial_utterance(text):
+        if not isinstance(text, str) or not 1 <= len(text) <= 8000:
             return []
         if any(category not in categories and re.search(pattern, text)
                for category, pattern in SENSITIVE.items()):

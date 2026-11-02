@@ -729,11 +729,9 @@ class OpenAIResponsesProvider(AgentProvider):
         payload: Dict[str, Any],
         timeout_seconds: int,
     ) -> Dict[str, Any]:
-        # Keep image-heavy JSON in a one-byte string even with Unicode prompts.
-        # JSON escapes preserve text while avoiding a widened base64 buffer.
         body = json.dumps(
             payload,
-            ensure_ascii=True,
+            ensure_ascii=False,
             separators=(',', ':'),
         ).encode('utf-8')
         request = urllib.request.Request(

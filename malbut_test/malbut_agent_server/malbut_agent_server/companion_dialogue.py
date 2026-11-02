@@ -118,8 +118,14 @@ class CompanionDialogue:
         else:
             message = decision.message[:2000]
         now = time.time()
-        if binding and not self.service.valid(binding):
-            return None
+        if binding:
+            try:
+                self.service.remember(binding, identity, text, observed_at)
+            except Exception:
+                # Failed extraction must not persist raw text as a retry job.
+                pass
+            if not self.service.valid(binding):
+                return None
         turn = ConversationTurn(
             conversation_id=session, user_id='unverified-companion',
             session_instance_id=session, turn_id=identity, request_id=identity,
@@ -140,8 +146,4 @@ class CompanionDialogue:
             while (len(self._turns) > 8 or sum(len(t.user_content) + len(t.assistant_content)
                                              for t in self._turns) > 8000):
                 self._turns.pop(0)
-        if binding:
-            # Extraction is serialized in bounded RAM; the answer does not wait
-            # for a second model request. Late work cannot outlive this binding.
-            self.service.enqueue_remember(binding, identity, text, observed_at)
         return message

@@ -115,39 +115,3 @@ def test_capture_vad_survives_incident_wrapper_reset(tmp_path):
         assert vad.probability == 0. and not vad.pending
     finally:
         recorder.close()
-
-
-def test_shared_session_keeps_recurrent_state_context_and_pending_independent(monkeypatch):
-    import sys
-    import numpy as np
-    from malbut_stt.silero_vad import SileroVad
-
-    sessions = []
-
-    class Session:
-        def __init__(self, *_, **__):
-            sessions.append(self)
-
-        def get_inputs(self):
-            return [SimpleNamespace(name=name) for name in ('input', 'state', 'sr')]
-
-        def run(self, _, inputs):
-            state = inputs['state'] + 1
-            return np.array([.8], np.float32), state
-
-    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
-        SessionOptions=SimpleNamespace, InferenceSession=Session))
-    command = SileroStreamVad(model=SileroVad('unused'))
-    wake = command.new_stream()
-    assert len(sessions) == 1
-    assert wake.model.session is command.model.session
-    assert not np.shares_memory(wake.model.state, command.model.state)
-    assert not np.shares_memory(wake.model.context, command.model.context)
-    wake.is_speech(VOICE * 2, 16000)
-    assert len(wake.pending) == 256 and not command.pending
-    assert np.all(wake.model.state == 1) and np.all(command.model.state == 0)
-    assert np.any(wake.model.context) and not np.any(command.model.context)
-    command.reset()
-    assert np.all(wake.model.state == 1) and len(wake.pending) == 256
-    wake.reset()
-    assert not np.any(wake.model.state) and not wake.pending

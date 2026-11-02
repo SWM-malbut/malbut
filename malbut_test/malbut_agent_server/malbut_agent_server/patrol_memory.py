@@ -1,7 +1,6 @@
 """Durable observation information, scoped to the configured robot owner."""
 
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -33,25 +32,8 @@ def timestamp(value):
     return parsed.timestamp()
 
 
-@dataclass(frozen=True)
-class CaptureBundle:
-    """Validated evidence for one processing stage; never cache across inference."""
-
-    metadata: dict
-    image: bytes
-    regions: list
-    depth: object
-    lidar: dict | None
-
-
 def read_capture(path):
-    """Validate all evidence and preserve the metadata/JPEG reader contract."""
-    bundle = read_capture_bundle(path)
-    return bundle.metadata, bundle.image
-
-
-def read_capture_bundle(path):
-    """Read and validate each current source once, including its exact pixels."""
+    """Validate a committed manifest and its exact local JPEG before inference."""
     if path.is_symlink() or path.stat().st_size > 16384 or not _ID.fullmatch(path.stem):
         raise ValueError('invalid capture manifest')
     data = json.loads(path.read_text(encoding='utf-8'))
@@ -96,10 +78,10 @@ def read_capture_bundle(path):
             or hashlib.sha256(image).hexdigest() != data['image_sha256']):
         raise ValueError('capture photo integrity check failed')
     from malbut_agent_server.patrol_spatial import read_spatial
-    regions, depth = read_spatial(path, data)
+    read_spatial(path, data)
     from malbut_agent_server.patrol_lidar import read_lidar
-    lidar = read_lidar(path, data)
-    return CaptureBundle(data, image, regions, depth, lidar)
+    read_lidar(path, data)
+    return data, image
 
 
 def validate_analysis(value, *, localized=False):

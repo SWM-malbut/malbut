@@ -251,7 +251,6 @@ def test_app_confirmation_to_summary_storage_then_visitor_revokes_identity(robot
     r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
                                           utterance_id='daily-plan', text='내일 친구와 산책하기로 했어'))
     r.pump(lambda: any(s.request_id == 'daily-plan' and not s.interim for s in r.speech))
-    r.pump(lambda: bool(service.memory.recall('owner')))
     assert service.memory.recall('owner')[0]['summary'] == summary['summary']
     assert r.runtime.provider.calls[-1][0].scene_context['companion_verified']
     assert r.runtime.handled == []  # Bypass durable ordinary conversation/history processing.
