@@ -41,6 +41,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     close_requests = None
     close_transcriber = None
     diagnostics = None
+    directions = None
     phase = 'initializing_ros'
     try:
         rclpy.init(args=args)
@@ -60,6 +61,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         stt_decode_timeout_s = parameter('stt_decode_timeout_s', 30.0)
         compute_type = parameter('compute_type', 'int8')
         device_index = parameter('device_index', 0)
+        direction_port = parameter('sound_direction_port', '')
+        direction_forward = parameter('sound_direction_forward_degrees', 150.0)
+        direction_delay = parameter('sound_direction_capture_delay_s', .5)
+        if (type(direction_forward) not in (float, int) or not isfinite(direction_forward)
+                or not 0 <= direction_forward < 360
+                or type(direction_delay) not in (float, int) or not isfinite(direction_delay)
+                or not 0 <= direction_delay <= 2):
+            raise ValueError('Invalid microphone direction calibration')
         wake_chime_device_index = parameter('wake_chime_device_index', -1)
         chime_tail_s = parameter('chime_tail_s', 0.3)
         short_speech_guard = parameter('short_speech_guard', False)
@@ -327,8 +336,22 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         def publish_input_status(session_id, utterance_id, state):
             if rclpy.ok():
-                input_publisher.publish(SpeechInputStatus(
-                    session_id=session_id, utterance_id=utterance_id, state=state))
+                message = SpeechInputStatus(
+                    session_id=session_id, utterance_id=utterance_id, state=state)
+                if state == 'wake' and directions is not None:
+                    now = monotonic()
+                    direction = directions.take(
+                        pipeline.wake_audio_window, now,
+                        capture_delay=direction_delay, forward_degrees=direction_forward)
+                    if direction is not None:
+                        from rclpy.duration import Duration
+                        at, yaw = direction
+                        message.direction_valid = True
+                        message.direction_yaw = yaw
+                        message.direction_stamp = (
+                            node.get_clock().now() - Duration(seconds=now - at)).to_msg()
+                    node.get_logger().info('wake_direction_matched=' + str(direction is not None))
+                input_publisher.publish(message)
 
         def publish_control(playback_id, command, *, web_talk=False):
             # Web talk stops do not follow the dialogue playback, so they are never stale.
@@ -586,6 +609,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             ControlWebTalk, '/malbut/speech/web_talk_control', control_web_talk)
         # The media agent's previous 3 s lease may survive this STT process restart.
         pipeline.control_web_talk('startup-quarantine', True, 3.0, quiet=False)
+        if direction_port:
+            try:
+                from malbut_stt.sound_direction import SerialDirections
+                directions = SerialDirections(direction_port)
+                node.get_logger().info('sound_direction_reader_ready')
+            except (ImportError, OSError, ValueError) as error:
+                node.get_logger().warning('sound_direction_unavailable:' + type(error).__name__)
         pipeline.start()
         ready_publisher = None
         while rclpy.ok():
@@ -620,7 +650,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         # The existing supervisor bounds native cleanup even after readiness.
         print('malbut_speech_stopping', flush=True)
         cleanup_failed = False
-        for cleanup in (close_requests, pipeline.close if pipeline is not None else None,
+        for cleanup in (getattr(directions, 'close', None), close_requests,
+                        pipeline.close if pipeline is not None else None,
                         close_transcriber, getattr(diagnostics, 'close', None)):
             if cleanup is None:
                 continue

@@ -1368,3 +1368,66 @@ def test_recovery_pcm_is_only_requested_for_overlap_recovery(runtime, monkeypatc
     assert main([]) == 0, runtime.logs
     recorder = runtime.pipeline_args['recorder_factory']()
     assert recorder.config['retain_recovery'] is expected
+
+
+def test_unavailable_direction_port_preserves_ordinary_microphone(runtime, monkeypatch):
+    runtime.parameters['sound_direction_port'] = '/dev/missing'
+
+    def unavailable(port):
+        raise OSError('private path')
+
+    monkeypatch.setattr('malbut_stt.sound_direction.SerialDirections', unavailable)
+    assert main() == 0
+    assert ('warning', 'sound_direction_unavailable:OSError') in runtime.logs
+    assert 'private path' not in str(runtime.logs)
+
+
+def test_direction_reader_is_closed_and_nonmatching_angle_is_not_forward(runtime, monkeypatch):
+    runtime.parameters['sound_direction_port'] = '/dev/test'
+    reads = []
+    direction = SimpleNamespace(
+        take=lambda *a, **kw: reads.append((a, kw)),
+        close=lambda: runtime.closed.append('directions'))
+    monkeypatch.setattr('malbut_stt.sound_direction.SerialDirections', lambda port: direction)
+
+    def spin():
+        runtime.pipeline.wake_audio_window = (9., 10.)
+        runtime.pipeline_args['publish_input_status']('', 'wake-one', 'wake')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    assert len(reads) == 1 and reads[0][0][0] == (9., 10.)
+    assert reads[0][1] == dict(capture_delay=.5, forward_degrees=150.)
+    assert 'directions' in runtime.closed
+    messages = [msg for topic, msg in runtime.published if topic.endswith('input_status')]
+    assert len(messages) == 1 and not getattr(messages[0], 'direction_valid', False)
+
+
+def test_matching_direction_stamp_and_zero_angle_survive_ros_publication(runtime, monkeypatch):
+    runtime.parameters['sound_direction_port'] = '/dev/test'
+    runtime.now = 12.
+    direction = SimpleNamespace(take=lambda *a, **kw: (10., 0.), close=lambda: None)
+    monkeypatch.setattr('malbut_stt.sound_direction.SerialDirections', lambda port: direction)
+    monkeypatch.setitem(sys.modules, 'rclpy.duration', SimpleNamespace(Duration=SimpleNamespace))
+
+    class Time:
+        def __sub__(self, delta):
+            return SimpleNamespace(to_msg=lambda: SimpleNamespace(sec=100 - int(delta.seconds),
+                                                                   nanosec=0))
+
+    monkeypatch.setattr(sys.modules['rclpy.node'].Node, 'get_clock',
+                        lambda _: SimpleNamespace(now=Time), raising=False)
+
+    def spin():
+        runtime.pipeline.wake_audio_window = (9., 11.)
+        runtime.pipeline_args['publish_input_status']('', 'wake-one', 'wake')
+        runtime.pipeline_args['publish_input_status']('', 'utterance', 'started')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = spin
+    assert main() == 0
+    messages = [msg for topic, msg in runtime.published if topic.endswith('input_status')]
+    assert messages[0].direction_valid and messages[0].direction_yaw == 0.
+    assert messages[0].direction_stamp.sec == 98
+    assert not getattr(messages[1], 'direction_valid', False)
