@@ -8,8 +8,21 @@ from malbut_agent_server.conversation import ConversationSession, ConversationSn
 from malbut_agent_server.schemas import RobotState, SpeechAgentRequest
 
 
+def requests_current_view(text):
+    """Opt in for explicit present-view questions; ordinary small talk stays text-only."""
+    normalized = re.sub(r'[\s.!?~。！？,]', '', text).lower()
+    return bool(re.search(
+        r'(?:카메라|화면).*(?:보|확인|설명|뭐|무엇)|'
+        r'(?:앞에|주변|눈앞).*(?:보여|보이|뭐|무엇)|'
+        r'지금.*(?:보여|보이)|'
+        r'(?:이거|이게|저거|저게|저것).*(?:뭐|무엇)|'
+        r'(?:^|어|아)저(?:뭐|무엇)|'
+        r'(?:뭐가|무엇이|뭘|뭐).*(?:보여|보이)|'
+        r'(?:이것|저것).*(?:봐|봐줘|보세요)', normalized))
+
+
 class CompanionDialogue:
-    """Reuse the provider, never the owner's history, memory, images or tools."""
+    """Isolated small talk; only an explicitly requested, consented current view."""
 
     def __init__(self, service=None):
         self.service = service
@@ -69,7 +82,7 @@ class CompanionDialogue:
             return (self._session == session == reply_session and (binding is None
                     or self.service.valid(binding) and self.service.wall() < expiry))
 
-    def answer(self, provider, session, identity, text, opener):
+    def answer(self, provider, session, identity, text, opener, *, scene_source=None):
         observed_at = self.service.wall() if self.service else time.time()
         if self.service:
             try:
@@ -102,11 +115,21 @@ class CompanionDialogue:
             scene.update(companion_verified=True, daily_memories=memories)
         if opener:
             scene['conversation_opener'] = opener
+        image = None
+        if requests_current_view(text):
+            scene['image'] = {'available': False, 'reason': 'camera_unavailable'}
+            if scene_source is not None:
+                try:
+                    image = scene_source.prepare_image()
+                    scene['image']['reason'] = 'pending_capture'
+                except Exception:
+                    pass  # Report unavailable through the existing text response.
         request = SpeechAgentRequest(
             request_id=identity, turn_id=identity, conversation_id=session,
             user_id='unverified-companion' if binding is None else 'app-verified-companion', utterance=text,
             robot_state=RobotState(camera_available=False),
             scene_context=scene, available_tools=(),
+            turn_image=image,
         )
         if binding and not self.service.valid(binding):
             return None

@@ -29,6 +29,30 @@ class TurnImage:
                 and bool(self.allowed()))
 
 
+@dataclass(eq=False)
+class PendingTurnScene:
+    """Capture once after memory lookup, immediately before model preparation."""
+
+    capture: object = field(repr=False, compare=False)
+    _lock: object = field(default_factory=RLock, repr=False, compare=False)
+    _result: object = field(default=None, init=False, repr=False, compare=False)
+
+    def resolve(self):
+        with self._lock:
+            if self._result is None:
+                # Failures are final too; a retry must never silently change views.
+                self._result = ({'image': {'available': False, 'reason': 'capture_failed'}}, None)
+                try:
+                    self._result = self.capture()
+                except Exception:
+                    pass  # Text dialogue still works without a camera.
+            metadata, image = self._result
+            return dict(metadata), image
+
+    def __deepcopy__(self, memo):
+        return self  # Internal request copies share this turn's capture.
+
+
 class LatestScene:
     """Retain at most one RGB frame; compress only when a speech turn needs it."""
 
@@ -139,6 +163,11 @@ class RosSpeechScene:
             cloud_settings_required=bool(os.environ.get('HOMECAM_BACKEND_URL')),
             enabled=bool(node.declare_parameter('scene_images_enabled', True).value),
         )
+        if self._images.enabled:
+            try:
+                self._warm_encoder()
+            except Exception:
+                node.get_logger().warning('speech_scene_encoder_warmup_failed')
         self._rgb_topic = node.declare_parameter(
             'scene_rgb_topic', '/depth_cam/rgb0/image_raw').value
         self._subscriptions = [
@@ -171,6 +200,15 @@ class RosSpeechScene:
                            for item in getattr(message, name)[:16]]
         with self._lock:
             self._system = (time.monotonic(), value)
+
+    @staticmethod
+    def _warm_encoder():
+        """Load codecs before receiving a frame with a two-second lifetime."""
+        from cv_bridge import CvBridge
+        from PIL import Image
+
+        CvBridge()
+        Image.new('RGB', (1, 1)).save(io.BytesIO(), format='JPEG')
 
     @staticmethod
     def _encode(message):
@@ -236,7 +274,22 @@ class RosSpeechScene:
             if image_subscription is not None:
                 self.node.destroy_subscription(image_subscription)
 
-    def snapshot(self):
+    def prepare_turn(self):
+        return self.snapshot(defer_image=True)
+
+    def prepare_image(self):
+        """A guest may request a current view, without the owner's map/missions."""
+        return PendingTurnScene(self._image_snapshot)
+
+    def _image_snapshot(self):
+        with self._sample_lock:
+            if self._closed.is_set():
+                return {'image': {'available': False, 'reason': 'scene_closed'}}, None
+            with self._sensor_window():
+                metadata, image = self._images.capture(self._encode)
+        return {'image': metadata}, image
+
+    def snapshot(self, *, defer_image=False):
         """Bound sensor startup to one second off the ROS thread, then unsubscribe."""
         scene = {'image': {'available': False, 'reason': 'camera_or_consent_unavailable'},
                  'map': None, 'pose': None, 'missions': None}
@@ -245,10 +298,15 @@ class RosSpeechScene:
             if not self._closed.is_set():
                 if self.missions is not None:
                     scene['map'] = self.missions.map_context()
-                with self._sensor_window():
-                    scene['image'], attachment = self._images.capture(self._encode)
-                    if scene['map'] is not None:
-                        scene['pose'] = self._pose()
+                if defer_image:
+                    scene['image'] = {'available': False, 'reason': 'pending_capture'}
+                    # Refresh pose/map with RGB if the robot moved during lookup.
+                    attachment = PendingTurnScene(self.snapshot)
+                else:
+                    metadata, attachment = self._image_snapshot()
+                    scene.update(metadata)
+                if scene['map'] is not None:
+                    scene['pose'] = self._pose()
         with self._lock:
             # Manager publishes transitions, not heartbeats. Keep its latched
             # observation with age, and never present it as proof of liveness.
