@@ -1,6 +1,7 @@
 """Real ROS Agent orchestration with simulated motion, camera, odometry and speech."""
 
 import json
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -59,6 +60,8 @@ def called(robot, tmp_path):
         else:
             handle.abort()
         result = ({} if handle.request.capability_id == 'navigate_to_pose'
+                  else dict(total_elapsed_time=dict(sec=1, nanosec=0))
+                  if handle.request.capability_id == 'spin'
                   else dict(success=success, final_state='STOPPED'))
         return ExecuteMission.Result(result_yaml=json.dumps(result))
 
@@ -136,6 +139,83 @@ def test_visible_caller_approaches_releases_tracking_and_listens(called):
         utterance_id='daily-chat', text='오늘 산책했어'))
     r.pump(lambda: len(r.runtime.provider.calls) == 1)
     assert len(c.goals) == 1  # No following during dialogue.
+
+
+def direction_wake(c, *, yaw=1.0, age=0., moving=False):
+    r = c.r
+    for second in (1., 2., 3.):
+        r.pulse(second, count=0, moving=moving and second == 2.)
+    from rclpy.duration import Duration
+    stamp = (r.io.get_clock().now() - Duration(seconds=age)).to_msg()
+    r.inputs.publish(SpeechInputStatus(state='wake', utterance_id='direction-wake',
+        direction_valid=True, direction_yaw=yaw, direction_stamp=stamp))
+    r.pump(lambda: bool(c.goals))
+    return c.goals[-1].request
+
+
+def test_wake_rotates_then_reuses_follower_only_after_standstill(called):
+    c, r = called, called.r
+    request = direction_wake(c)
+    assert request.capability_id == 'spin' and request.idle_only
+    arguments = json.loads(request.arguments_yaml)
+    assert arguments == dict(target_yaw=1., time_allowance=dict(sec=20, nanosec=0))
+    assert c.controller.phase == 'orienting' and not r.runtime.provider.calls
+    c.resources(True)
+    c.finish_motion(True, release=False)
+    assert len(c.goals) == 1 and c.controller.phase == 'settling'
+    c.resources(False)
+    r.pulse(r.clock[0] + .1)
+    r.pump(lambda: len(c.goals) == 2)
+    assert c.goals[1].request.capability_id == 'follow_person'
+    assert json.loads(c.goals[1].request.arguments_yaml)['approach_only'] is True
+    c.resources(True)
+    c.finish_motion(True, count=1)
+    r.pump(lambda: any(s.text == '왔어요. 말씀하세요.' for s in r.speech))
+    assert len(c.goals) == 2 and not r.runtime.provider.calls
+
+
+@pytest.mark.parametrize('yaw,age', [(float('nan'), 0.), (4., 0.), (1., 5.),
+                                    (1., -2.), (.01, 0.), (1., 3.)])
+def test_invalid_stale_future_small_or_pre_standstill_angle_skips_rotation(called, yaw, age):
+    request = direction_wake(called, yaw=yaw, age=age)
+    assert request.capability_id == 'follow_person'
+
+
+@pytest.mark.parametrize('yaw', [-math.pi, math.pi])
+def test_rear_direction_survives_float32_ros_rounding(called, yaw):
+    request = direction_wake(called, yaw=yaw)
+    assert request.capability_id == 'spin'
+    angle = json.loads(request.arguments_yaml)['target_yaw']
+    assert angle == pytest.approx(yaw) and abs(angle) <= math.pi
+
+
+def test_blocked_rotation_never_starts_person_approach(called):
+    c = called
+    direction_wake(c)
+    c.resources(True)
+    c.finish_motion(False)
+    c.r.pump(lambda: not c.controller.active)
+    assert len(c.goals) == 1
+    c.r.pump(lambda: any('회전하지 못했어요' in s.text for s in c.r.speech))
+
+
+def test_speech_during_rotation_cancels_and_replies_after_stop(called):
+    c, r = called, called.r
+    direction_wake(c)
+    c.resources(True)
+    r.inputs.publish(SpeechInputStatus(session_id=c.controller.session_id,
+        state='started', utterance_id='during-spin'))
+    r.pump(lambda: bool(c.cancellations))
+    c.answer('그냥 여기서 이야기하자', uid='during-spin')
+    r.pump(lambda: c.controller.pending is not None)
+    assert not r.runtime.provider.calls
+    c.terminals[-1].set_result(False)
+    r.pump(lambda: not r.chat.position.busy)
+    c.resources(False)
+    for _ in range(6):
+        r.pulse(r.clock[0] + .5, count=1)
+    r.pump(lambda: len(r.runtime.provider.calls) == 1)
+    assert len(c.goals) == 1
 
 
 def test_unseen_caller_room_navigation_reacquisition_and_stationary_dialogue(called):

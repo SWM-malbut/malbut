@@ -6,6 +6,11 @@ malbut_stt:
     stt_library_path: ""
     cpp_use_gpu: true
     cpp_threads: 6
+    # Optional XFM/R818 metadata only; no additional audio capture or inference.
+    # Hardware must emit a wake event during the actual "제이크" audio window.
+    sound_direction_port: /dev/ring_mic
+    sound_direction_forward_degrees: 150.0
+    sound_direction_capture_delay_s: 0.5
     max_utterance_s: 0.0  # No total duration limit; accumulate text until the endpoint.
     max_buffer_s: 60.0  # Retained PCM/backlog only; acknowledged prefixes are released.
     stt_decode_timeout_s: 30.0
