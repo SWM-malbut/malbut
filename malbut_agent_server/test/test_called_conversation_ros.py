@@ -369,3 +369,34 @@ def test_manager_busy_rejection_needs_no_nonexistent_runtime_transition():
         result=ExecuteMission.Result(message='conversation positioning skipped: manager is busy')))
     p._finished(result)
     assert not p.success and p.released
+
+
+@pytest.mark.parametrize('accepted', [True, False])
+def test_fallback_waits_for_microphone_close_acknowledgement(called, monkeypatch, accepted):
+    from concurrent.futures import Future as DoneFuture
+
+    c, r = called, called.r
+    c.wake()
+    c.finish_motion(False)
+    c.finish_speech()
+    closed = DoneFuture()
+    session = c.controller.session_id
+    original = r.chat._input.call_async
+
+    def delayed_close(request):
+        if request.session_id == session and not request.active:
+            return closed
+        return original(request)
+
+    monkeypatch.setattr(r.chat._input, 'call_async', delayed_close)
+    before = len(r.speech)
+    c.controller._finish('여기서 말씀을 들을게요.')
+    r.pulse(r.clock[0] + .1, count=0)
+    assert c.controller.phase == 'finishing' and len(r.speech) == before
+    closed.set_result(SimpleNamespace(accepted=accepted))
+    r.pump(lambda: not c.controller.active)
+    if accepted:
+        r.pump(lambda: len(r.speech) == before + 1)
+        assert r.speech[-1].request_id.startswith('conversation-opener:')
+    else:
+        assert len(r.speech) == before

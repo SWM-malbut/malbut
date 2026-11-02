@@ -206,7 +206,16 @@ class CalledConversation:
             return
         if self.input_started:
             return
-        if self.phase == 'adopting' and self.future.done():
+        if self.phase == 'finishing' and self.future.done():
+            try:
+                closed = self.future.result().accepted
+            except Exception:
+                closed = False
+            text = self.final_text
+            self.close()
+            if closed:
+                self.node.say(text, request_id='conversation-opener:' + uuid4().hex)
+        elif self.phase == 'adopting' and self.future.done():
             try:
                 accepted = self.future.result().accepted
             except Exception:
@@ -273,16 +282,24 @@ class CalledConversation:
                 self.map_check_at = now + 2
 
     def _finish(self, text):
+        closed = self._close_input()
         self.close()
-        # Use the existing ordinary follow-up after this final spoken notice.
-        self.node.say(text, request_id='conversation-opener:' + uuid4().hex)
+        if closed is None:
+            self.node.say(text, request_id='conversation-opener:' + uuid4().hex)
+        else:
+            # The opener protocol declines while another microphone session
+            # is active. A stop request alone is not proof that it has closed.
+            self.future, self.final_text = closed, text
+            self.phase, self.deadline = 'finishing', self.clock() + 3
 
     def _close_input(self):
+        future = None
         if self.session_id:
             self.retired.append(self.session_id)
-            self.chat._input.call_async(self.chat._session_type.Request(
+            future = self.chat._input.call_async(self.chat._session_type.Request(
                 session_id=self.session_id, active=False))
         self.session_id = ''
+        return future
 
     def close(self):
         self.chat.position.cancel()
