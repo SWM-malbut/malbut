@@ -17,7 +17,7 @@ def dialogue():
     """Run captured PCM and queued fake inference on one deterministic owner."""
     pipelines = []
 
-    def create(*, awake=True, text='감사합니다.', aec=True):
+    def create(*, awake=True, text='안녕하세요.', aec=True):
         run = SimpleNamespace(
             now=0.0, transcripts=[], statuses=[], controls=[], interruptions=[],
             calls=[], reports=[], endpoint_chimes=[], wake_chimes=[], failure_chimes=[],
@@ -80,7 +80,7 @@ def dialogue():
 
 
 @pytest.mark.parametrize('awake', [False, True], ids=['wake-listening', 'dialogue'])
-@pytest.mark.parametrize('text', ['감사합니다.', ''], ids=['plausible-asr', 'empty-asr'])
+@pytest.mark.parametrize('text', ['안녕하세요.', ''], ids=['plausible-asr', 'empty-asr'])
 def test_isolated_vad_blips_never_reach_asr_or_create_dialogue_events(dialogue, awake, text):
     """Five brief false positives cannot become five answers or retry notices."""
     run = dialogue(awake=awake, text=text)
@@ -119,8 +119,8 @@ def test_short_confirmation_survives_the_default_onset_guard(dialogue):
 
 
 def test_separate_real_identical_utterances_are_each_accepted(dialogue):
-    """The guard checks audio onset, never a blacklist or repeated text."""
-    run = dialogue(awake=False, text='감사합니다.')
+    """Separate ordinary utterances remain valid even when their text repeats."""
+    run = dialogue(awake=False, text='안녕하세요.')
     run.feed(VOICE * 4 + QUIET * 20)
     for turn in range(2):
         assert run.pipeline.session.active
@@ -133,7 +133,7 @@ def test_separate_real_identical_utterances_are_each_accepted(dialogue):
         run.pipeline.on_playback_status(f'answer-{turn}', 'finished', request_id=uid)
         assert run.pipeline.session.active and run.pipeline._reply_request_id is None
 
-    assert [text for _, text in run.transcripts] == ['감사합니다.', '감사합니다.']
+    assert [text for _, text in run.transcripts] == ['안녕하세요.', '안녕하세요.']
     ids = [uid for uid, _ in run.transcripts]
     assert len(set(ids)) == 2
     assert run.statuses == [('', uid, 'started') for uid in ids]
@@ -155,7 +155,7 @@ def test_quiet_gap_requires_a_new_consecutive_onset(dialogue):
     uid = run.pipeline.session.utterance_id
     assert uid and run.statuses == [('', uid, 'started')]
     run.feed(QUIET * 100)
-    assert run.transcripts == [(uid, '감사합니다.')]
+    assert run.transcripts == [(uid, '안녕하세요.')]
     assert len(run.calls) == 1
 
 
@@ -178,7 +178,7 @@ def test_raw_tts_playback_and_tail_cannot_satisfy_the_onset_guard(dialogue):
     uid = run.pipeline.session.utterance_id
     assert uid and run.statuses == [('', uid, 'started')]
     run.feed(QUIET * 100)
-    assert run.transcripts == [(uid, '감사합니다.')]
+    assert run.transcripts == [(uid, '안녕하세요.')]
     assert run.controls == []
     assert run.endpoint_chimes == ['endpoint']
 
@@ -217,7 +217,7 @@ def test_busy_onset_cannot_become_a_new_turn_when_inference_finishes(dialogue, b
     uid = run.pipeline.session.utterance_id
     assert uid and run.statuses == [('', uid, 'started')]
     run.feed(QUIET * 100)
-    assert run.transcripts == [(uid, '감사합니다.')]
+    assert run.transcripts == [(uid, '안녕하세요.')]
     assert len(run.calls) == 1
 
 
@@ -232,5 +232,5 @@ def test_quiet_resets_a_busy_candidate_before_a_fresh_valid_onset(dialogue):
     uid = run.pipeline.session.utterance_id
     assert uid and run.statuses == [('', uid, 'started')]
     run.feed(QUIET * 100)
-    assert run.transcripts == [(uid, '감사합니다.')]
+    assert run.transcripts == [(uid, '안녕하세요.')]
     assert len(run.calls) == 1

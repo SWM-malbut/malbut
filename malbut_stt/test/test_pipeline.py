@@ -72,6 +72,7 @@ def make_pipeline(recordings, responses, wake_responses=None, manual=False):
         events.append(event)
         if event.startswith((
             'published:', 'empty_transcript', 'transcription_failed:',
+            'transcript_filtered:',
             'no_speech', 'too_long', 'not_wake', 'wake_no_speech', 'wake_too_long',
         )) and not recordings:
             stopped[0] = True
@@ -138,6 +139,18 @@ def test_same_sentence_spoken_twice_gets_different_ids():
     run.pipeline.run()
     assert len(run.calls) == len(run.messages) == 2
     assert run.messages[0][0] != run.messages[1][0]
+
+
+@pytest.mark.parametrize('text', [
+    '감사합니다.', 'MBC 뉴스 김민수입니다.', '구독과 좋아요!', '아' * 300,
+])
+@pytest.mark.parametrize('attached', [False, True])
+def test_boilerplate_never_reaches_publication(text, attached):
+    run = (make_pipeline([wake_frames()], [], ['제이크야 ' + text]) if attached else
+           make_pipeline([command_frames()], [text], manual=True))
+    run.pipeline.run()
+    assert run.messages == []
+    assert any(event.startswith('transcript_filtered:') for event in run.events)
 
 
 @pytest.mark.parametrize('failure', ['', ' \n', TimeoutError('secret'), RuntimeError('secret')])

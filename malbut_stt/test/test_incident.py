@@ -100,6 +100,9 @@ def test_snapshot_contains_lossless_model_input_and_before_after_events(capture)
     ('inference_result', PHRASE, False),
     ('tts_request', PHRASE, False),
     ('recognition_rejected', PHRASE, True),
+    ('recognition_rejected', 'MBC 뉴스 김민수입니다.', True),
+    ('recognition_rejected', '감사합니다. 감사합니다.', True),
+    ('recognition_rejected', '아, ' * 12, True),
     ('recognition_rejected', '지금 거실로 와 주세요.', False),
 ])
 def test_matching_publications_or_quality_rejections_trigger(capture, event, text, matched):
@@ -273,7 +276,7 @@ def test_vad_decision_and_model_exception_are_unchanged(capture):
     assert result['error']['type'] == 'RuntimeError' and len(result['segments']) == 1
 
 
-def test_pipeline_publishes_original_text_and_captures_actual_vad(capture):
+def test_pipeline_records_filtered_original_text_and_actual_vad(capture):
     r = capture()
     published = []
     voice = b'\x01\x00' * 320
@@ -293,15 +296,16 @@ def test_pipeline_publishes_original_text_and_captures_actual_vad(capture):
         pipeline.feed(voice * 4)
         uid = pipeline.session.utterance_id
         pipeline._accept_result('command', pipeline._generation, uid, PHRASE, None)
-        assert published == [(uid, PHRASE)]
-        assert pipeline._reply_request_id == uid
+        assert published == []
+        assert pipeline._reply_request_id is None
     finally:
         pipeline.close()
         r.close()
     events = read_events(r.last_incident)
     assert any(e['event'] == 'vad_frame' and e['kind'] == 'command' for e in events)
-    assert events[-1]['event'] == 'transcript_published'
-    assert events[-1]['utterance_id'] == uid
+    rejected, = [event for event in events if event['event'] == 'recognition_rejected']
+    assert rejected['utterance_id'] == uid and rejected['text'] == PHRASE
+    assert not any(event['event'] == 'transcript_published' for event in events)
 
 
 def test_microphone_evidence_is_captured_before_playback_gating(capture):
@@ -463,10 +467,10 @@ def test_program_log_filter_and_missing_receipt_do_not_claim_agent_success(captu
     assert logs[-2]['payload'] is None and logs[-2]['utterance_id'] is None
 
 
-def trace_pipeline(recorder):
+def trace_pipeline(recorder, text=PHRASE):
     return DialoguePipeline(
         recorder_factory=lambda: None, wake=SimpleNamespace(),
-        transcriber=SimpleNamespace(transcribe=lambda pcm, rate: PHRASE),
+        transcriber=SimpleNamespace(transcribe=lambda pcm, rate: text),
         is_speech=lambda f, rate: True, diagnostics=recorder,
         publish_transcript=lambda uid, text: recorder.event(
             'transcript_published', utterance_id=uid, text=text),
@@ -474,9 +478,11 @@ def trace_pipeline(recorder):
         report=lambda event: None)
 
 
-def test_real_worker_queue_path_links_result_adoption_to_final_publication(capture, monkeypatch):
-    r = capture(save_audio=False)
-    pipeline = trace_pipeline(r)
+@pytest.mark.parametrize('text,accepted', [(PHRASE, False), ('거실로 가 주세요.', True)])
+def test_real_worker_queue_path_links_result_to_publication_or_filter(
+        capture, monkeypatch, text, accepted):
+    r = capture(save_audio=False, exact=(text,))
+    pipeline = trace_pipeline(r, text)
     result_ready = Event()
     original = r.event
 
@@ -504,8 +510,10 @@ def test_real_worker_queue_path_links_result_adoption_to_final_publication(captu
     transaction, = document['transactions']
     names = [e['event'] for e in transaction['stages']]
     expected = ['job_enqueued', 'job_dequeued', 'inference_result', 'result_enqueued',
-                'result_dequeued', 'result_accepted', 'transcript_published']
+                'result_dequeued'] + (['result_accepted', 'transcript_published'] if accepted
+                                     else ['result_rejected', 'recognition_rejected'])
     assert [n for n in names if n in expected] == expected
+    assert transaction['observed']['stt_published'] is accepted
     assert transaction['utterance_id'] == uid and not transaction['observed']['agent_received']
 
 
@@ -535,21 +543,22 @@ def test_rejected_result_preserves_reason_and_does_not_publish(capture, case, re
 
 @pytest.mark.parametrize('cached', [True, False])
 def test_endpoint_reuse_has_an_explicit_link_to_the_final_result(capture, cached):
-    r = capture(save_audio=False)
-    pipeline = trace_pipeline(r)
+    text = '거실로 가 주세요.'
+    r = capture(save_audio=False, exact=(text,))
+    pipeline = trace_pipeline(r, text)
     try:
         pipeline.session.activate()
         pipeline.feed(bytes(640) * 4)
         uid = pipeline.session.utterance_id
         key = (pipeline._generation, uid, 1)
         if cached:
-            pipeline._endpoint_result = (key, PHRASE, None)
+            pipeline._endpoint_result = (key, text, None)
             pipeline._complete_capture('command', SimpleNamespace(
                 revision=1, pcm=bytes(640), silence_s=2.0, audio_start_s=0.0))
         else:
             pipeline._endpoint_final = key
             pipeline._final_input = bytes(640)
-            pipeline._accept_endpoint(key[0], key[1:], PHRASE, None)
+            pipeline._accept_endpoint(key[0], key[1:], text, None)
     finally:
         pipeline.close()
         r.close()
