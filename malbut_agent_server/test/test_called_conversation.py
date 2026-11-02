@@ -9,6 +9,7 @@ from navigation_user_map import room, write_user_map, rooms, rewrite
 
 @pytest.mark.parametrize('text,expected', [
     ('거실', '거실'), ('거실이야', '거실'), ('지금 거실에 있어요', '거실'),
+    ('거실이요', '거실'), ('거실요', '거실'), ('안방입니다', '안방'),
     ('거실 소파 옆이야', '거실'), ('저는 안방이에요.', '안방'),
     ('여기!', None), ('큰거실', None), ('거실 말고 안방', None),
     ('거실에 없어', None), ('거실에 있었어', None), ('거실이랑 안방 사이', None),

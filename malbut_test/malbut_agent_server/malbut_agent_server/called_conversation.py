@@ -15,7 +15,8 @@ def caller_location(text, names):
     matches = []
     for name in names:
         # Korean particles/endings are permitted, but not a room-name substring.
-        pattern = r'(?<![가-힣\w])' + re.escape(name) + r'(?=$|\s|[,.!?]|에|야|이야|이에요|예요)'
+        pattern = (r'(?<![가-힣\w])' + re.escape(name)
+                   + r'(?=$|\s|[,.!?]|에|야|이야|이에요|예요|이요|요|입니다)')
         if re.search(pattern, text):
             matches.append(name)
     return matches[0] if len(matches) == 1 else None
