@@ -7,9 +7,8 @@ import logging
 import threading
 
 from malbut_agent_server.endpoint_policy import is_official_openai_base_url
-from malbut_agent_server.patrol_memory import read_capture, validate_analysis
-from malbut_agent_server.patrol_lidar import read_lidar
-from malbut_agent_server.patrol_spatial import localize_objects, read_spatial
+from malbut_agent_server.patrol_memory import read_capture, read_capture_bundle, validate_analysis
+from malbut_agent_server.patrol_spatial import localize_objects
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.service_keys import key_value
 
@@ -191,17 +190,20 @@ class PatrolObservationWorker:
                 self.store.fail(row['id'], missing_key=True)
                 return False
             try:
-                metadata, image = read_capture(
-                    self.store.directory / 'captures' / (row['id'] + '.json'))
+                path = self.store.directory / 'captures' / (row['id'] + '.json')
+                metadata, image = read_capture(path)
                 if metadata != json.loads(row['metadata']):
                     raise ValueError('capture changed after ingestion')
                 analysis = self.observer.analyze(metadata, image)
                 validate_analysis(analysis)
-                regions, depth = read_spatial(
-                    self.store.directory / 'captures' / (row['id'] + '.json'), metadata)
-                lidar = read_lidar(
-                    self.store.directory / 'captures' / (row['id'] + '.json'), metadata)
-                analysis = localize_objects(analysis, metadata, regions, depth, lidar)
+                # Do not reuse pre-request pixels: expiry, release or edits
+                # during inference must invalidate the result before storage.
+                current = read_capture_bundle(path)
+                if current.metadata != metadata:
+                    raise ValueError('capture changed during analysis')
+                analysis = localize_objects(
+                    analysis, metadata, current.regions, current.depth, current.lidar)
+                del current
                 self.store.complete(row['id'], analysis, self.observer.model)
             except Exception:
                 self.store.fail(row['id'])
@@ -233,12 +235,12 @@ class PatrolObservationWorker:
                 identity = metadata['observation_id']
                 path = self.store.directory / 'captures' / (identity + '.json')
                 # Evidence must still be intact after the external request.
-                current, _ = read_capture(path)
-                if current != metadata:
+                current = read_capture_bundle(path)
+                if current.metadata != metadata:
                     raise ValueError('capture changed during batch analysis')
-                regions, depth = read_spatial(path, metadata)
                 localized[identity] = localize_objects(
-                    results[identity], metadata, regions, depth, read_lidar(path, metadata))
+                    results[identity], metadata, current.regions, current.depth, current.lidar)
+                del current
             # Only the pixel-free manifest and localized analysis enter durable storage.
             complete_batch(self.store, manifest, localized, self.observer.model, usage, layout)
         except Exception:
