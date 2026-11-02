@@ -284,20 +284,41 @@ def _connected_group(links):
         reached.update(others)
 
 
-class _DepthSurfaces:
-    """Measured depth components; no interpolation, RGB masks or stored pixel data."""
+class _DepthGeometry:
+    """Lazy, read-only geometry shared only within one photo's localization."""
 
-    def __init__(self, depth, spatial, bbox, floor, *, background_check=True):
-        height, width = depth.shape
-        yy, xx = np.indices(depth.shape)
+    def __init__(self, depth, spatial):
+        self.depth, self.spatial = depth, spatial
+        self._arrays = None
+
+    def arrays(self):
+        if self._arrays is not None:
+            return self._arrays
+        depth, spatial = self.depth, self.spatial
         valid = np.isfinite(depth) & (depth >= .15) & (depth <= 10)
         y, x = np.nonzero(valid)
         z = depth[y, x]
         rays = _rays(np.column_stack((x, y)), spatial)
         world = _map_points(np.column_stack((rays*z[:, None], z)), spatial)
-        self.points = np.full((*depth.shape, 3), np.nan, dtype=np.float32)
-        self.points[y, x] = world
-        valid &= self.points[:, :, 2] > floor
+        points = np.full((*depth.shape, 3), np.nan, dtype=np.float32)
+        points[y, x] = world
+        valid.setflags(write=False)
+        points.setflags(write=False)
+        self._arrays = valid, points
+        return self._arrays
+
+
+class _DepthSurfaces:
+    """Object-local surface labels over immutable, measured frame geometry."""
+
+    def __init__(self, depth, spatial, bbox, floor, *, background_check=True, geometry=None):
+        height, width = depth.shape
+        geometry = geometry if geometry is not None else _DepthGeometry(depth, spatial)
+        measured, self.points = geometry.arrays()
+        # The floor and connected/background components belong to this object.
+        # Never mutate the shared geometry or reuse another object's labels.
+        valid = measured & (self.points[:, :, 2] > floor)
+        yy, xx = np.ogrid[:height, :width]
         left, top, right, bottom = np.asarray(bbox)/1000*[width, height, width, height]
         self.inside = (xx > left) & (xx < right) & (yy > top) & (yy < bottom)
         self.mask = np.ones((height+2, width+2), dtype=np.uint8)
@@ -387,7 +408,7 @@ class _DepthSurfaces:
         return self.points[support]
 
 
-def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
+def _anchor_position(item, spatial, regions, depth, unknown, *, person=True, geometry=None):
     """Require independent visible surface patches, never bounding-box background."""
     prefix = 'person' if person else 'object'
     anchors = item.get('image_anchors', [])
@@ -435,7 +456,8 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
     surfaces = None
     if person:
         surfaces = _DepthSurfaces(
-            depth, spatial, item['image_bbox'], min(.05, float(np.min(points[:, 2]))-.05))
+            depth, spatial, item['image_bbox'], min(.05, float(np.min(points[:, 2]))-.05),
+            geometry=geometry)
         # Never establish a person's position from a broad background component.
         labels = [surfaces.component(p) for p in pixels]
         if any(label is None for label in labels):
@@ -486,7 +508,7 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
     if surfaces is None:
         surfaces = _DepthSurfaces(
             depth, spatial, item['image_bbox'], min(.05, float(np.min(points[:, 2]))-.05),
-            background_check=False)
+            background_check=False, geometry=geometry)
     support = surfaces.footprint([pixels[i] for i in selected], person=person, center=world)
     if support is None or not len(support):
         return dict(unknown, reason=prefix+'_surface_fragmented')
@@ -504,7 +526,7 @@ def _anchor_position(item, spatial, regions, depth, unknown, *, person=True):
             'anchor_count': len(samples)}
 
 
-def _object_position(item, metadata, regions, depth):
+def _object_position(item, metadata, regions, depth, *, geometry=None):
     unknown = {'status': 'unknown', 'region': None, 'map_position': None,
                'method': 'registered_rgbd', 'reason': None}
     spatial = metadata.get('spatial', {'status': 'legacy_without_depth'})
@@ -514,9 +536,10 @@ def _object_position(item, metadata, regions, depth):
     if bbox is None or item['confidence'] != 'high':
         return dict(unknown, reason='object_not_grounded')
     if item.get('kind') == 'person':
-        return _anchor_position(item, spatial, regions, depth, unknown)
+        return _anchor_position(item, spatial, regions, depth, unknown, geometry=geometry)
     if 'image_anchors' in item:
-        return _anchor_position(item, spatial, regions, depth, unknown, person=False)
+        return _anchor_position(item, spatial, regions, depth, unknown,
+                                person=False, geometry=geometry)
     height, width = depth.shape
     left, top, right, bottom = np.asarray(bbox) / 1000 * [width, height, width, height]
     # Avoid bounding-box background; use the central 40% of visible object pixels.
@@ -584,8 +607,12 @@ def localize_objects(analysis, metadata, regions, depth, lidar=None):
     """Only trusted geometry assigns object regions; never copy the capture room."""
     result = copy.deepcopy(analysis)
     object_regions = getattr(regions, 'object_regions', regions)
+    # No global/cross-photo cache: depth, calibration and TF must stay frame-local.
+    # Allocation remains lazy for empty, uncertain or ungroundable observations.
+    geometry = _DepthGeometry(depth, metadata.get('spatial', {}))
     for item in result['objects']:
-        item['spatial'] = _object_position(item, metadata, object_regions, depth)
+        item['spatial'] = _object_position(item, metadata, object_regions, depth,
+                                           geometry=geometry)
         policy = getattr(regions, 'object_region_policy', None)
         if policy is not None:
             item['spatial']['region_basis'] = copy.deepcopy(policy)

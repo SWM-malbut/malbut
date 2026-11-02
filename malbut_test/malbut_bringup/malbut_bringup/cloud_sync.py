@@ -872,7 +872,7 @@ def main(args=None):
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     previous_term = signal.signal(signal.SIGTERM, _terminate)
     bridge = RosBridge(PanelData(map_palette='map'),
-                       node_name='robot_cloud_sync', map_topic='/map')
+                       node_name='robot_cloud_sync', map_topic='/map', subscribe_images=False)
     executor = SingleThreadedExecutor()
     executor.add_node(bridge.node)
     sync = None
