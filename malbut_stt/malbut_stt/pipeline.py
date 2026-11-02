@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from malbut_stt.audio import CapturePCM, CaptureResult, CaptureSettings, UtteranceCollector
+from malbut_stt.transcript_filter import boilerplate_reason
 from malbut_stt.wake import parse_wake_phrase
 
 
@@ -133,6 +134,10 @@ class SpeechPipeline:
 
     def _publish(self, text):
         if self.should_stop():
+            return
+        reason = boilerplate_reason(text)
+        if reason is not None:
+            self.report('transcript_filtered:' + reason)
             return
         utterance_id = str(uuid4())
         self.phase = 'publishing'

@@ -306,8 +306,8 @@ def test_wake_bypasses_silero_but_next_command_is_still_gated(pipeline, gate):
     assert not state.transcripts and not state.pipeline.session.active
 
 
-@pytest.mark.parametrize('text', ['네', '아니요', '구독과 좋아요 부탁드려요!'])
-def test_positive_short_input_reaches_whisper_and_publication_without_text_blacklist(
+@pytest.mark.parametrize('text', ['네', '아니요', '오늘 날씨 알려 주세요.'])
+def test_positive_short_input_reaches_whisper_and_publication(
         pipeline, gate, text):
     gate.model.probability = lambda pcm: .9 if any(pcm) else .01
     state = pipeline(text=text)

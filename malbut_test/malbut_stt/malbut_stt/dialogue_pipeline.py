@@ -14,6 +14,7 @@ from malbut_stt.conversation import ConversationSession
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
+from malbut_stt.transcript_filter import boilerplate_reason
 from malbut_stt.wake import parse_wake_phrase
 
 
@@ -1008,7 +1009,8 @@ class DialoguePipeline:
 
     @staticmethod
     def _usable_text(text, error):
-        return error is None and isinstance(text, str) and bool(text.strip())
+        return (error is None and isinstance(text, str) and bool(text.strip())
+                and boilerplate_reason(text) is None)
 
     def _inference_input(self, pcm, *, final=False, silence_s=0.0, audio_start_s=0.0,
                          voiced_s=None, endpoint_pcm=None):
@@ -1184,7 +1186,7 @@ class DialoguePipeline:
                             reason='capture_or_revision_changed')
             return
         if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
-                and error_name is None and is_complete_korean_utterance(text)
+                and self._usable_text(text, error_name) and is_complete_korean_utterance(text)
                 and (self.smart_turn is None or self._smart_turn_result == (
                     (generation, uid, revision), True))):
             event = self.command_stream.finish_endpoint(revision)
@@ -1198,6 +1200,25 @@ class DialoguePipeline:
         if kind != 'wake' and (not self.session.active or uid != self.session.utterance_id):
             self._trace_job('result_rejected', kind, generation, uid,
                             reason='inactive_or_different_utterance')
+            return
+        reason = boilerplate_reason(text) if kind != 'wake' and error_name is None else None
+        if reason is not None:
+            self._trace_job('result_rejected', kind, generation, uid, reason=reason)
+            if self.diagnostics is not None:
+                self.diagnostics.event('recognition_rejected', utterance_id=uid,
+                                       text=text, reason=reason)
+            if self.session.session_id:
+                self._input_status('failed', uid)
+            # Treat this as no request. Resume any paused answer without sending
+            # the boilerplate to Agent addressee classification or final speech.
+            self.session.finish_utterance(uid, text, addressed=False)
+            self._utterance_playback_id = None
+            self._reset_audio()
+            if not self.session.session_id:
+                self.session.deadline = None
+                self._followup_deadline = self.clock() + (
+                    self.followup_timeout_s or self.command_stream.settings.start_timeout_s)
+            self.report('transcript_filtered:' + reason)
             return
         failure = (
             'transcription_failed:' + error_name if error_name is not None

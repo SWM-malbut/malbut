@@ -108,7 +108,7 @@ def test_sparse_voiced_frames_do_not_become_two_seconds_of_speech(create):
     assert state.calls[0][1]['final'] is False
 
 
-@pytest.mark.parametrize('text', ['네', '아니요', '감사합니다.'])
+@pytest.mark.parametrize('text', ['네', '아니요', '고마워요.'])
 @pytest.mark.parametrize('streaming', [False, True])
 def test_short_real_replies_still_reach_final_publication(create, text, streaming):
     state = create(text=text, streaming=streaming)
@@ -117,18 +117,18 @@ def test_short_real_replies_still_reach_final_publication(create, text, streamin
     assert state.transcripts[0][1] == text
 
 
-def test_matching_phrase_with_sufficient_speech_is_not_blacklisted(create):
-    state = create()
+def test_ordinary_phrase_with_sufficient_speech_is_not_rejected(create):
+    state = create(text='오늘 날씨가 어떤지 알려 주세요.')
     state.pipeline.feed(VOICE * 40 + QUIET * 100)
     pump(state.pipeline, lambda: bool(state.transcripts))
-    assert state.transcripts[0][1] == LONG_TEXT
+    assert state.transcripts[0][1] == '오늘 날씨가 어떤지 알려 주세요.'
 
 
 def test_guard_can_be_disabled_for_controlled_comparison(create):
-    state = create(short_speech_guard=False)
+    state = create(short_speech_guard=False, text='오늘 날씨가 어떤지 알려 주세요.')
     state.pipeline.feed(VOICE * 14 + QUIET * 100)
     pump(state.pipeline, lambda: bool(state.transcripts))
-    assert state.transcripts[0][1] == LONG_TEXT
+    assert state.transcripts[0][1] == '오늘 날씨가 어떤지 알려 주세요.'
 
 
 @pytest.mark.parametrize('aec', [False, True])

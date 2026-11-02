@@ -20,6 +20,7 @@ import wave
 
 from malbut_stt.diagnostics import TranscriptionDiagnostics, _json
 from malbut_stt.incident_trace import AGENT_EVENTS, ROSOUT_LOGGERS, transactions
+from malbut_stt.transcript_filter import boilerplate_reason
 
 
 DEFAULT_CONTAINS = ('구독', '시청해주셔서', '자막제공')
@@ -149,6 +150,10 @@ class IncidentRecorder(TranscriptionDiagnostics):
         text = normalize(record.get('text', ''))
         matches = ([p for p in self.contains if p in text]
                    + [p for p in self.exact if p == text])
+        if record['event'] == 'recognition_rejected':
+            reason = boilerplate_reason(record.get('text', ''))
+            if reason is not None:
+                matches.append(reason)
         uid = record.get('utterance_id')
         if not matches or not uid:
             return
