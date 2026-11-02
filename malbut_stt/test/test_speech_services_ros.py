@@ -29,6 +29,7 @@ def test_stt_service_round_trip_and_status_topic(
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
                             decisions=[], statuses=[], input_statuses=[], web_talk=[],
                             web_talk_quiet=[], speech_requests=[], closed=False)
+    monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', '')
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
     monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
@@ -179,8 +180,10 @@ def test_stt_service_round_trip_and_status_topic(
     monkeypatch.setitem(sys.modules, 'pvrecorder', None)
     monkeypatch.setattr(stt_node, 'SoundDeviceRecorder', lambda **_: object())
     monkeypatch.setitem(sys.modules, 'webrtcvad', None)
-    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad',
-        lambda *_: SimpleNamespace(is_speech=lambda *_: False, reset=lambda: None))
+    def stream(*_):
+        return SimpleNamespace(is_speech=lambda *_: False, reset=lambda: None,
+                               new_stream=stream)
+    monkeypatch.setattr('malbut_stt.silero_stream.SileroStreamVad', stream)
 
     assert stt_node.main(['--ros-args', '-p', f'wake_model_path:={tmp_path}']) == 0
     assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1

@@ -89,6 +89,17 @@ class CompanionMemory:
         with self.transaction() as db:
             db.execute('DELETE FROM companion_episodes WHERE expires_at<=?', (self.clock(),))
 
+    def has_summaries(self):
+        """Any retained summary requires prompt cloud erasure/consent delivery."""
+        with self._lock:
+            return self.db.execute('SELECT 1 FROM companion_episodes LIMIT 1').fetchone() is not None
+
+    def latest_turn(self, owner):
+        with self._lock:
+            row = self.db.execute('SELECT turn_id,observed_at FROM companion_episodes WHERE owner=? '
+                                  'ORDER BY observed_at DESC,id DESC LIMIT 1', (owner,)).fetchone()
+            return dict(row) if row else None
+
     def apply_policy(self, owner, revision, erase_revision, categories, external_processing):
         """Withdrawing a category removes its summaries, including mixed-category rows."""
         categories = set(categories)
@@ -162,8 +173,11 @@ class CompanionMemory:
                                               'observed_at', 'expires_at')}
                     for row in rows if set(json.loads(row['categories'])) <= set(policy['categories'])]
 
-    def forget(self, owner, *, latest=False):
+    def forget(self, owner, *, latest=False, turn_id=None):
         with self.transaction() as db:
+            if turn_id is not None:
+                return db.execute('DELETE FROM companion_episodes WHERE owner=? AND turn_id=?',
+                                  (owner, turn_id)).rowcount
             if latest:
                 return db.execute('DELETE FROM companion_episodes WHERE owner=? AND turn_id IN '
                                   '(SELECT turn_id FROM companion_episodes WHERE owner=? '

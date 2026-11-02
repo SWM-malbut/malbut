@@ -2,22 +2,26 @@
 
 from collections import OrderedDict
 from concurrent.futures import TimeoutError as FutureTimeout
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import base64
 import fcntl
 import hashlib
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 import json
 import math
 import os
 from pathlib import Path
 import re
 import signal
+import socket
 import stat
+import ssl
 import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener, getproxies, proxy_bypass
 
 import yaml
 
@@ -218,6 +222,104 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+class _CloudTransport:
+    """Serialize one origin's HTTP connection without replaying failed requests."""
+
+    def __init__(self, backend_url):
+        """Keep configuration and a lazy socket; never connect during construction."""
+        parsed = urlsplit(backend_url)
+        self._origin = (parsed.scheme, parsed.hostname, parsed.port)
+        self._lock = threading.Lock()
+        self._connection = None
+        self._socket = None
+        self._closed = False
+        # Preserve urllib's proxy configuration, including NO_PROXY. Its fallback
+        # still rejects redirects; direct robot connections use keep-alive.
+        self._proxy = (build_opener(NoRedirect()) if getproxies().get(parsed.scheme)
+                       and not proxy_bypass(parsed.netloc) else None)
+        self._tls = (ssl.create_default_context() if parsed.scheme == 'https'
+                     and self._proxy is None else None)
+        if self._tls is not None:
+            self._tls.set_alpn_protocols(['http/1.1'])
+
+    def _disconnect(self):
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        self._socket = None
+
+    @contextmanager
+    def open(self, request, timeout):
+        """Hold the connection through one bounded response, without automatic retry."""
+        # HTTPConnection is not thread-safe. The lock covers response consumption
+        # as well as send/getresponse, so concurrent callers cannot mix bodies.
+        if not self._lock.acquire(timeout=timeout):
+            raise URLError(TimeoutError('Cloud transport is busy'))
+        try:
+            if self._closed:
+                raise URLError('Cloud transport is closed')
+            parsed = urlsplit(request.full_url)
+            if (parsed.scheme, parsed.hostname, parsed.port) != self._origin:
+                raise ValueError('Cloud transport origin changed')
+            if self._proxy is not None:
+                with self._proxy.open(request, timeout=timeout) as response:
+                    yield response
+                return
+            if self._connection is None:
+                connection_type = HTTPSConnection if self._tls is not None else HTTPConnection
+                options = {'context': self._tls} if self._tls is not None else {}
+                self._connection = connection_type(parsed.hostname, parsed.port,
+                                                   timeout=timeout, **options)
+            connection = self._connection
+            response = None
+            try:
+                connection.timeout = timeout
+                if connection.sock is None:
+                    connection.connect()
+                self._socket = connection.sock
+                if self._closed:
+                    raise URLError('Cloud transport is closed')
+                connection.sock.settimeout(timeout)
+                connection.request(request.get_method(), parsed.path, body=request.data,
+                                   headers=dict(request.header_items()))
+                response = connection.getresponse()
+                # Do not follow even same-origin redirects or read error bodies.
+                if not 200 <= response.status < 300:
+                    raise HTTPError(request.full_url, response.status,
+                                    'Cloud HTTP error', response.headers, None)
+                yield response
+                # read(limit) does not raise IncompleteRead for a short fixed-size
+                # body; a valid JSON prefix must not make truncation look successful.
+                if response.length not in (None, 0) or not response.isclosed():
+                    raise HTTPException('Incomplete cloud response')
+                if response.will_close:
+                    self._disconnect()
+            except BaseException:
+                self._disconnect()
+                raise
+            finally:
+                if response is not None:
+                    response.close()
+        finally:
+            self._lock.release()
+
+    def close(self):
+        """Interrupt direct in-flight I/O and release the retained connection."""
+        self._closed = True
+        if self._proxy is not None:
+            # urllib does not retain a reusable connection after its request.
+            self._proxy.close()
+            return
+        active_socket = self._socket
+        if active_socket is not None:
+            try:
+                active_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        with self._lock:
+            self._disconnect()
+
+
 class CloudClient:
     """Perform bounded JSON requests with normal certificate verification."""
 
@@ -227,8 +329,10 @@ class CloudClient:
         if not TOKEN_PATTERN.fullmatch(token):
             raise ValueError('Invalid device credential')
         self._token = token
+        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('Cloud timeout must be positive and finite')
         self.timeout = timeout
-        self.opener = build_opener(NoRedirect())
+        self.opener = _CloudTransport(self.backend_url)
 
     def request(self, path, method='GET', payload=None):
         """Send only fixed device API paths and reject oversized responses."""
@@ -258,12 +362,16 @@ class CloudClient:
                 return value
         except HTTPError as error:
             raise CloudError(f'Cloud returned HTTP {error.code}', error.code) from None
-        except (URLError, TimeoutError, OSError) as error:
+        except (URLError, TimeoutError, OSError, HTTPException) as error:
             timeout = isinstance(error, TimeoutError) or isinstance(
                 getattr(error, 'reason', None), TimeoutError)
             raise CloudError('Cloud request failed', timeout=timeout) from None
         except (ValueError, UnicodeError):
             raise CloudError('Cloud response is not valid JSON') from None
+
+    def close(self):
+        """Release pooled transport resources when synchronization stops."""
+        self.opener.close()
 
 
 def panel_command(operation, payload):
@@ -861,6 +969,7 @@ class CloudSync:
         self.stop_event.set()
         if self.thread.is_alive():
             self.thread.join(timeout=35.0)
+        self.client.close()
 
 
 def main(args=None):

@@ -254,7 +254,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         phase = 'initializing_vad'
         vad_path = Path(turn_model_directory).expanduser() / 'silero-v6.2.3.onnx'
         vad = SileroStreamVad(vad_path)
-        wake_vad = SileroStreamVad(vad_path)
+        wake_vad = vad.new_stream()
         node.get_logger().info('stt_vad:silero,threshold=0.5')
         phase = 'creating_publisher'
         qos = QoSProfile(
@@ -458,7 +458,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 return raw()
             from malbut_stt.echo.recorder import EchoCancelledRecorder, IsolatedMicrophoneRecorder
             return EchoCancelledRecorder(dict(source=aec_source, sink=aec_sink,
-                models=aec_models, calibration_audio=aec_calibration),
+                models=aec_models, calibration_audio=aec_calibration,
+                retain_recovery=interruption_asr == 'openai'),
                 lambda: IsolatedMicrophoneRecorder(aec_source))
 
         interruption_transcriber = None

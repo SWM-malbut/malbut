@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from queue import Empty, Full, Queue
 from threading import Event, Thread
-from time import monotonic
+from time import monotonic, perf_counter
 from uuid import uuid4
 
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
@@ -81,6 +81,7 @@ class DialoguePipeline:
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
+                 adaptive_partials=True,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
                  short_speech_guard=False, followup_timeout_s=10.0,
@@ -89,6 +90,8 @@ class DialoguePipeline:
                  interruption_transcriber=None, barge_in_pre_roll_s=2.0):
         if type(barge_in_ducking) is not bool:
             raise ValueError('barge_in_ducking must be a boolean')
+        if type(adaptive_partials) is not bool:
+            raise ValueError('adaptive_partials must be a boolean')
         if barge_in_mode not in ('legacy', 'reachy'):
             raise ValueError('barge_in_mode must be legacy or reachy')
         if barge_in_mode == 'reachy' and input_has_aec is not True:
@@ -169,6 +172,12 @@ class DialoguePipeline:
             partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
             start_qualifier=start_qualifier,
         )
+        self._partial_base_interval = self.command_stream.partial_interval_s
+        # Explicit low-latency/custom cadences retain their existing behavior.
+        self._adaptive_partials = (adaptive_partials and self._partial_base_interval is not None
+                                   and 2 <= self._partial_base_interval <= 4)
+        self._partial_cost_s = None
+        self._partial_submitted_frame = None
         self.wake_stream = StreamingUtteranceCollector(
             observe_vad(wake_is_speech, kind='wake') if callable(observe_vad) else wake_is_speech,
             settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
@@ -536,6 +545,7 @@ class DialoguePipeline:
             ) if self.diagnostics is not None else nullcontext())
             with context:
                 error_detail = None
+                decode_started = perf_counter()
                 try:
                     # A reset can cancel a preview before the worker picks it up.
                     # Still return through results so endpoint ownership is released.
@@ -587,12 +597,15 @@ class DialoguePipeline:
                     if self.diagnostics is not None:
                         error_detail = str(error)[:2048]
                 finally:
+                    decode_seconds = max(0.0, perf_counter() - decode_started)
                     pcm = None
                     if self.diagnostics is not None:
                         self.diagnostics.event('inference_result', text=text,
                                                error=error_name, error_detail=error_detail)
             result = (kind, generation, uid, text, error_name, retained_start_s)
-            if kind == 'endpoint' and self.smart_turn is not None:
+            if kind == 'partial':
+                result += (turn_complete, decode_seconds)
+            elif kind == 'endpoint' and self.smart_turn is not None:
                 result += (turn_complete,)
             waiting_reported = False
             while not self.stopping.is_set():
@@ -623,6 +636,10 @@ class DialoguePipeline:
         self._update_ducking()
         self._audio_generation += 1
         self.command_stream.reset()
+        if self._adaptive_partials:
+            self.command_stream.partial_interval_s = self._partial_base_interval
+        self._partial_cost_s = None
+        self._partial_submitted_frame = None
         self.wake_stream.reset()
         self._capture_id = None
         self._discard_capture = False
@@ -855,6 +872,7 @@ class DialoguePipeline:
                 self._tail_stream = None
             return
         stream = self.command_stream if self.session.active else self.wake_stream
+        self._refresh_partial_interval()
         start_blocked = busy_at_capture or self._busy or self._pending is not None
         for event in stream.feed(pcm, start_blocked=start_blocked):
             if event.status == 'speech_started':
@@ -864,6 +882,7 @@ class DialoguePipeline:
                     self.report('speech_discarded:busy')
                     continue
                 if self.session.active:
+                    self._partial_submitted_frame = None
                     self._command_start_deadline = None
                     self._followup_deadline = None
                     interrupt_reply = self._can_barge_into_reply()
@@ -919,6 +938,30 @@ class DialoguePipeline:
                  or self._ducked_playback == self.session.playback_id
                  or stream.collector.candidate_frames >= 5)))
 
+    def _refresh_partial_interval(self):
+        """Budget preview work only; endpoints and the retained PCM bound stay unchanged."""
+        if not self._adaptive_partials or self._partial_cost_s is None:
+            return
+        interval = max(self._partial_base_interval, min(4.0, 2 * self._partial_cost_s))
+        collector = self.command_stream.collector
+        remaining = collector.settings.max_buffer_s - len(collector.audio) / 32000
+        # Near the PCM limit, prefer fresh agreement and prefix release over
+        # saving a preview. Unconfirmed audio is never trimmed to make space.
+        if remaining <= max(4.0, 2 * self._partial_cost_s):
+            interval = self._partial_base_interval
+        self.command_stream.partial_interval_s = interval
+
+    def _observe_partial_cost(self, seconds):
+        if (not self._adaptive_partials or type(seconds) not in (int, float)
+                or not math.isfinite(seconds) or seconds <= 0):
+            return
+        # Respond immediately to slower inference, relax gradually when it
+        # speeds up, and never include queue/ROS polling time in this sample.
+        previous = self._partial_cost_s
+        self._partial_cost_s = (seconds if previous is None else
+                                max(seconds, .75 * previous + .25 * seconds))
+        self._refresh_partial_interval()
+
     def _submit_endpoint(self):
         if (self._endpoint_candidate is None or self._endpoint_job is not None
                 or self._busy or self._discard_capture):
@@ -937,6 +980,11 @@ class DialoguePipeline:
             if collector.silent_frames:
                 self._endpoint_candidate = None
                 return
+            self._refresh_partial_interval()
+            if (self._adaptive_partials and self._partial_submitted_frame is not None
+                    and (collector.speech_frames - self._partial_submitted_frame) * .02
+                    < self.command_stream.partial_interval_s):
+                return  # Keep the candidate; a final/endpoint always bypasses this gate.
             # Replace an older pending preview with all audio collected so far.
             event = collector.snapshot('partial_check')
         key = (self._generation, uid, event.revision)
@@ -962,6 +1010,8 @@ class DialoguePipeline:
         self._endpoint_job = key
         self._endpoint_is_partial = partial
         self._endpoint_requested_at = self.clock()
+        if partial:
+            self._partial_submitted_frame = collector.speech_frames
         self._endpoint_candidate = None
         self.report('partial_started' if partial else
                     f'checking_endpoint:silence_s={event.silence_s:.2f}')
@@ -1069,7 +1119,7 @@ class DialoguePipeline:
             self._chime_playing = False
 
     def _accept_endpoint(self, generation, token, text, error_name, retained_start_s=0.0,
-                         turn_complete=None, *, partial=False):
+                         turn_complete=None, decode_seconds=None, *, partial=False):
         uid, revision = token
         kind = 'partial' if partial else 'endpoint'
         key = (generation, uid, revision)
@@ -1099,6 +1149,8 @@ class DialoguePipeline:
             self._trace_job('result_rejected', kind, generation, token,
                             reason='inactive_or_different_capture')
             return
+        if partial:
+            self._observe_partial_cost(decode_seconds)
         if self._usable_text(text, error_name):
             self._trace_job('preview_accepted', kind, generation, token, text=text)
             # Apply only to this live utterance. Its VAD revision may advance
