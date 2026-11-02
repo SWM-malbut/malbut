@@ -25,6 +25,7 @@ from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.serialization import deserialize_message
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
@@ -271,8 +272,8 @@ class PatrolManager(Node):
             OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
             self._receive_costmap_update, 10, callback_group=self.group)
         self._image_subscription = self.create_subscription(
-            Image, self.settings['camera_image_topic'], self._receive_image,
-            qos_profile_sensor_data, callback_group=self.group)
+            Image, self.settings['camera_image_topic'], self._receive_image_raw,
+            qos_profile_sensor_data, callback_group=self.group, raw=True)
         self.create_subscription(CameraInfo, self.settings['camera_info_topic'],
                                  self._receive_info, qos_profile_sensor_data,
                                  callback_group=self.group)
@@ -329,8 +330,20 @@ class PatrolManager(Node):
         if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
             return None
         return self.create_subscription(
-            Image, self.settings['depth_image_topic'], self._receive_depth,
-            qos_profile_sensor_data, callback_group=self.group)
+            Image, self.settings['depth_image_topic'], self._receive_depth_raw,
+            qos_profile_sensor_data, callback_group=self.group, raw=True)
+
+    def _receive_image_raw(self, payload):
+        # Keep subscriptions alive to avoid executor handle races, but skip the
+        # large Python Image allocation while idle. DDS still receives bytes.
+        with self.lock:
+            if self._processing_enabled:
+                self._receive_image(deserialize_message(payload, Image))
+
+    def _receive_depth_raw(self, payload):
+        with self.lock:
+            if self._processing_enabled and self.photo_recorder is not None:
+                self._receive_depth(deserialize_message(payload, Image))
 
     def _set_processing(self, request, response):
         # Goal acceptance reserves ownership under the same lock. Do not

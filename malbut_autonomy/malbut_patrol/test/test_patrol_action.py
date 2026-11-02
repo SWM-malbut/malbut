@@ -574,6 +574,36 @@ def test_depth_subscriptions_follow_processing_and_capture_evidence(patrol_runti
     assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
 
 
+@pytest.mark.parametrize('patrol_runtime', [{
+    'depth_aligned_to_rgb': True, 'depth_image_topic': '/patrol_test/depth',
+}], indirect=True)
+def test_idle_camera_streams_skip_deserialization_and_resume_after_wake(
+        patrol_runtime, monkeypatch):
+    """Actual raw subscriptions must gate decoding before constructing an Image."""
+    import malbut_patrol.patrol_manager as module
+
+    manager, navigation, _sensors, _client = patrol_runtime
+    decode = module.deserialize_message
+    decoded = []
+
+    def counted_decode(payload, message_type):
+        decoded.append(message_type)
+        return decode(payload, message_type)
+
+    monkeypatch.setattr(module, 'deserialize_message', counted_decode)
+    assert manager._image_subscription.raw and manager._depth_subscription.raw
+    _wait_until(lambda: len(decoded) > 2 and bool(manager.depth_images))
+    manager._change_processing(False)
+    idle_count = len(decoded)
+    time.sleep(.2)
+    assert len(decoded) == idle_count
+    assert not manager.rgb_images and not manager.depth_images and manager.image is None
+    manager._change_processing(True)
+    _wait_until(lambda: len(decoded) > idle_count and bool(manager.rgb_images)
+                and bool(manager.depth_images))
+    assert not navigation.requests and not navigation.spin_requests
+
+
 def test_photo_writer_cannot_delay_ros_cancellation(patrol_runtime):
     """Save real camera evidence while a blocked disk writer leaves Nav2 cancellable."""
     manager, navigation, _sensors, client = patrol_runtime

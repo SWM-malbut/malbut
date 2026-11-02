@@ -130,6 +130,9 @@ class RosSpeechScene:
         self._closed = Event()
         self._frame_received = Event()
         self._sampling_images = False
+        self._image_subscription = None
+        self._image_generation = 0
+        self._reader_generation = None
         self._system = None
         self._buffer = Buffer()
         # Keep the small TF stream warm: reconnecting can miss a slow map edge.
@@ -149,6 +152,59 @@ class RosSpeechScene:
                 self._images.observe_settings,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
+        # The dialogue worker only requests changes. The communication node's
+        # SingleThreadedExecutor owns ROS entity creation and destruction.
+        self._sensor_update = node.create_guard_condition(self._update_sensors)
+
+    def _update_sensors(self):
+        """Reconcile demand on the ROS thread, including late turn/close requests."""
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from sensor_msgs.msg import Image
+
+        try:
+            with self._lock:
+                wanted = (self._sampling_images and not self._closed.is_set()
+                          and self._images.permitted())
+                if self._image_subscription is not None and (
+                        not wanted or self._reader_generation != self._image_generation):
+                    self.node.destroy_subscription(self._image_subscription)
+                    self._image_subscription = None
+                    self._reader_generation = None
+                if wanted and self._image_subscription is None:
+                    generation = self._image_generation
+                    self._image_subscription = self.node.create_subscription(
+                        Image, self._rgb_topic,
+                        lambda message: self._turn_image(message, generation),
+                        QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+                    self._reader_generation = generation
+                if self._closed.is_set():
+                    if self._listener is not None:
+                        self._listener.unregister()
+                        self._listener = None
+                    self._buffer.clear()
+        except Exception as error:
+            # A camera setup error must fall back to text, not escape an
+            # executor callback and take down the whole dialogue node.
+            with self._lock:
+                self._sampling_images = False
+                self._images.clear_frame()
+                self._frame_received.set()
+            self.node.get_logger().warning(f'speech_scene_sensor_update_failed: {error}')
+
+    def _turn_image(self, message, generation):
+        with self._lock:
+            if generation == self._image_generation:
+                self._image(message)
+
+    def _wake_sensors(self):
+        from rclpy.exceptions import InvalidHandle
+
+        try:
+            self._sensor_update.trigger()
+        except InvalidHandle:
+            if not self._closed.is_set():
+                raise
+            # Node destruction also releases the guard and any remaining inputs.
 
     def _image(self, message):
         stamp = message.header.stamp.sec + message.header.stamp.nanosec / 1e9
@@ -203,22 +259,17 @@ class RosSpeechScene:
     @contextmanager
     def _sensor_window(self):
         """Receive fresh inputs only while the dialogue worker prepares a turn."""
-        from rclpy.qos import QoSProfile, ReliabilityPolicy
-        from sensor_msgs.msg import Image
-
-        image_subscription = None
-        self._images.clear_frame()
-        self._frame_received.clear()
         # A robot without an active camera must keep text-only dialogue fast.
         want_image = (self._images.permitted() and not self._closed.is_set()
                       and self.node.count_publishers(self._rgb_topic) > 0)
         try:
             with self._lock:
-                self._sampling_images = want_image
+                self._images.clear_frame()
+                self._frame_received.clear()
+                self._image_generation += 1
+                self._sampling_images = want_image and not self._closed.is_set()
             if want_image:
-                image_subscription = self.node.create_subscription(
-                    Image, self._rgb_topic, self._image,
-                    QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+                self._wake_sensors()
             deadline = time.monotonic() + SCENE_INPUT_TIMEOUT_S
             while not self._closed.is_set() and time.monotonic() < deadline:
                 image_ready = (not want_image or self._frame_received.is_set()
@@ -228,13 +279,12 @@ class RosSpeechScene:
                 self._closed.wait(.02)
             yield
         finally:
-            # A callback already dispatched by the executor cannot retain raw
-            # pixels after this turn, even while its subscription is destroyed.
+            # Gate callbacks immediately; the owning executor detaches the reader.
             with self._lock:
                 self._sampling_images = False
                 self._images.clear_frame()
-            if image_subscription is not None:
-                self.node.destroy_subscription(image_subscription)
+            if want_image:
+                self._wake_sensors()
 
     def snapshot(self):
         """Bound sensor startup to one second off the ROS thread, then unsubscribe."""
@@ -261,11 +311,9 @@ class RosSpeechScene:
 
     def close(self):
         """Interrupt a pending sample and release inputs before node destruction."""
-        self._closed.set()
-        self._images.enabled = False
-        with self._sample_lock:
+        with self._lock:
+            self._closed.set()
+            self._images.enabled = False
+            self._sampling_images = False
             self._images.clear_frame()
-            if self._listener is not None:
-                self._listener.unregister()
-                self._listener = None
-            self._buffer.clear()
+        self._wake_sensors()

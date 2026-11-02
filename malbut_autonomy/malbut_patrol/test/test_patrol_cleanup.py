@@ -227,3 +227,40 @@ def test_processing_disable_check_and_change_share_goal_acceptance_lock(patrol):
     manager._change_processing.side_effect = lambda _: (
         manager.lock._is_owned() or pytest.fail('processing changed without ownership lock'))
     assert manager._set_processing(SimpleNamespace(data=False), SimpleNamespace()).success
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_raw_camera_input_is_decoded_only_during_processing(patrol, monkeypatch, enabled):
+    manager, _ = patrol
+    manager._processing_enabled = enabled
+    manager.photo_recorder = Mock()
+    image = object()
+    image_type = object()
+    decode = Mock(return_value=image)
+    namespace = manager._receive_image_raw.__func__.__globals__
+    monkeypatch.setitem(namespace, 'Image', image_type)
+    monkeypatch.setitem(namespace, 'deserialize_message', decode)
+    manager._receive_image = Mock()
+    manager._receive_depth = Mock()
+    manager._receive_image_raw(b'rgb')
+    manager._receive_depth_raw(b'depth')
+    if enabled:
+        assert [call.args for call in decode.call_args_list] == [
+            (b'rgb', image_type), (b'depth', image_type)]
+        manager._receive_image.assert_called_once_with(image)
+        manager._receive_depth.assert_called_once_with(image)
+    else:
+        decode.assert_not_called()
+        manager._receive_image.assert_not_called()
+        manager._receive_depth.assert_not_called()
+
+
+def test_depth_without_recorder_does_not_decode_raw_pixels(patrol, monkeypatch):
+    manager, _ = patrol
+    manager._processing_enabled = True
+    manager.photo_recorder = None
+    decode = Mock()
+    monkeypatch.setitem(manager._receive_depth_raw.__func__.__globals__,
+                        'deserialize_message', decode)
+    manager._receive_depth_raw(b'depth')
+    decode.assert_not_called()
