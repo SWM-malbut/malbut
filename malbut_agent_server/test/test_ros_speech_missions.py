@@ -329,11 +329,11 @@ def test_transcript_follow_and_next_spoken_cancel_cross_manager_once(speech_grap
     uid, _ = run.say('따라와')
     run.spin_until(lambda: len(run.actuators.goals['follow_person']) == 1)
     assert run.manager_goals == [('follow_person', {
-        'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 1.0,
+        'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 0.6,
     })]
     goal = run.actuators.goals['follow_person'][0]
     assert goal.target_mode == FollowPerson.Goal.VISIBLE_PERSON
-    assert goal.target_person_id == '' and goal.desired_distance_m == pytest.approx(1.0)
+    assert goal.target_person_id == '' and goal.desired_distance_m == pytest.approx(0.6)
     mission_id = next(event['request_id'] for event in run.events
                       if event['capability_id'] == 'follow_person')
     run.spin_until(lambda: any(event['kind'] == 'accepted' for event in run.events))

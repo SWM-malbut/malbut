@@ -221,7 +221,7 @@ class SpeechMissions:
                 raise ValueError('this voice mission takes no arguments')
             manager_arguments = ({
                 'target_mode': 0, 'target_person_id': '',
-                'desired_distance_m': 1.0,
+                'desired_distance_m': 0.6,
             } if tool_name == 'request_follow_person' else
                 {'time_allowance': {'sec': 0, 'nanosec': 0}}
                 if tool_name == 'request_manual_control' else {})
