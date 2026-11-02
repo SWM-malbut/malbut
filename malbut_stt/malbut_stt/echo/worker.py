@@ -138,7 +138,8 @@ def run(config, output, stop):
                 anchors = {n: float(np.median(v)) for n, v in offsets.items()}
                 mic, ref = (np.concatenate(recorded[n]) for n in ('mic', 'ref'))
                 calibration = calibrate(mic, ref, anchors['mic'] - anchors['ref'])
-                processor = EchoProcessor(gain=calibration['microphone_gain'], neural_models=models)
+                processor = EchoProcessor(gain=calibration['microphone_gain'], neural_models=models,
+                    retain_recovery=bool(config.get('retain_recovery', False)))
                 shift = calibration['lag_samples'] - round(calibration['reference_lead_s'] * 16000)
                 aligned = np.pad(ref, (shift, len(mic)))[:len(mic)]
                 processor.process_array(mic, aligned)
@@ -167,8 +168,12 @@ def run(config, output, stop):
             # decides voice activity; it must not erase syllables from decoding.
             pcm = (processor.asr_output * 32768).clip(-32768, 32767).astype('<i2').tobytes()
             vad_pcm = (clean * 32768).clip(-32768, 32767).astype('<i2').tobytes()
-            recovery_pcm = (processor.recovery_output * 32768).clip(-32768, 32767).astype('<i2').tobytes()
-            output.put(('audio', (pcm, vad_pcm, recovery_pcm), timestamp), timeout=0.2)
+            payload = (pcm, vad_pcm)
+            if processor.retain_recovery:
+                recovery_pcm = (processor.recovery_output * 32768).clip(
+                    -32768, 32767).astype('<i2').tobytes()
+                payload += (recovery_pcm,)
+            output.put(('audio', payload, timestamp), timeout=0.2)
     except Exception as error:
         try:
             output.put(('error', type(error).__name__ + ': ' + str(error), monotonic()), timeout=0.1)

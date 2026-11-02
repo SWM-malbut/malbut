@@ -23,6 +23,12 @@ SUMMARY = dict(summary='영희와 내일 산책하기로 했다고 말함.', cat
                event_state='planned', event_date='2026-11-02')
 
 
+def wait_memory(service):
+    with service._memory_condition:
+        assert service._memory_condition.wait_for(
+            lambda: service._memory_active is None and not service._memory_jobs, timeout=3)
+
+
 class Client:
     def __init__(self):
         self.data = dict(ownerId='owner', revision=1, eraseRevision=0, categories=['daily'],
@@ -179,6 +185,7 @@ def test_explicit_forget_clears_memory_and_recalled_dialogue_context(setup):
     dialogue, provider = CompanionDialogue(service), Provider()
     dialogue.begin(SESSION)
     dialogue.answer(provider, SESSION, 'event', '내일 산책할 거야', None)
+    wait_memory(service)
     assert service.memory.recall('owner')
     assert '삭제했어요' in dialogue.answer(provider, SESSION, 'delete', '일상 기억 모두 지워줘', None)
     assert service.memory.recall('owner') == []
@@ -212,6 +219,7 @@ def test_verified_conversation_recall_and_save_use_no_owner_history_tools_or_raw
     dialogue, provider = CompanionDialogue(service), Provider()
     dialogue.begin(SESSION)
     assert dialogue.answer(provider, SESSION, 'first', '내일 영희와 산책할 거야', None)
+    wait_memory(service)
     assert service.memory.recall('owner')[0]['event_state'] == 'planned'
     assert dialogue.answer(provider, SESSION, 'second', '내일 뭐 하기로 했지?', None)
     request, memories, turns, tools = provider.calls[-1]

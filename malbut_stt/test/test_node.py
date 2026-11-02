@@ -215,8 +215,10 @@ def runtime(monkeypatch, tmp_path):
 
     def create_vad(path):
         state.calls.setdefault('vad_paths', []).append(path)
-        return SimpleNamespace(is_speech=lambda frame, _: frame[:2] != b'\x00\x00',
-                               reset=lambda: None)
+        def stream():
+            return SimpleNamespace(is_speech=lambda frame, _: frame[:2] != b'\x00\x00',
+                                   reset=lambda: None, new_stream=stream)
+        return stream()
 
     class Pipeline:
         def __init__(self, **kwargs):
@@ -543,7 +545,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert 'api_timeout_s' not in defaults
     assert 'keyword_path' not in defaults and 'language_model_path' not in defaults
     assert 'vad_mode' not in defaults
-    assert len(runtime.calls['vad_paths']) == 2
+    assert len(runtime.calls['vad_paths']) == 1
     assert runtime.pipeline_args['is_speech'] is not runtime.pipeline_args['wake_is_speech']
     assert defaults['device_index'] == 0
     assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 0}
@@ -1304,3 +1306,18 @@ def test_web_talk_speech_stops_reach_tts_without_dialogue_staleness(runtime):
     assert ('info', 'playback_control_accepted:stop_all') in runtime.logs
     assert ('info', 'playback_control_accepted:stop') in runtime.logs
     assert ('warning', 'playback_control_response_stale') not in runtime.logs
+
+
+@pytest.mark.parametrize('backend,expected', [('local', False), ('openai', True)])
+def test_recovery_pcm_is_only_requested_for_overlap_recovery(runtime, monkeypatch, backend, expected):
+    runtime.parameters.update(aec_backend='pulse_reference', interruption_asr=backend,
+                              aec_source='mic', aec_sink='speaker',
+                              aec_model_directory='/models', aec_calibration_audio='/tone.wav')
+    monkeypatch.setenv('MALBUT_SHARED_MICROPHONE', 'mic')
+    monkeypatch.setenv('PULSE_SOURCE', 'mic')
+    monkeypatch.setenv('PULSE_SINK', 'speaker')
+    monkeypatch.setattr('malbut_stt.echo.recorder.EchoCancelledRecorder',
+                        lambda config, fallback: SimpleNamespace(config=config))
+    assert main([]) == 0, runtime.logs
+    recorder = runtime.pipeline_args['recorder_factory']()
+    assert recorder.config['retain_recovery'] is expected
