@@ -306,7 +306,12 @@ class VoiceLabGraph:
         if (type(timeout) not in (int, float) or not math.isfinite(timeout)
                 or not 0 <= timeout <= 1):
             raise ValueError('spin timeout must be 0..1 seconds')
-        self._executor.spin_once(timeout_sec=float(timeout))
+        try:
+            self._executor.spin_once(timeout_sec=float(timeout))
+        except TypeError as error:
+            if isinstance(error.__cause__, KeyboardInterrupt):
+                raise KeyboardInterrupt from None
+            raise
         self._drain_output()
 
     def send(self, text, utterance_id=None):
