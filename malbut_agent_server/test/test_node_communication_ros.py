@@ -623,7 +623,7 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
 
 
 @pytest.mark.parametrize('prerecorded_audio', [False, True])
-def test_progress_notice_and_final_reply_keep_distinct_interim_flags(
+def test_slow_reply_has_no_delay_notice_and_still_publishes_final_answer(
     communication, prerecorded_audio,
 ):
     provider = _DialogueProvider(blocked=True)
@@ -636,19 +636,16 @@ def test_progress_notice_and_final_reply_keep_distinct_interim_flags(
         _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response')
                     == 2 + int(graph.agent._patrol_chat is not None))
         _publish_transcript(graph, 'progress-speech', '안녕')
-        _wait_until(lambda: bool(messages))
-        assert messages[0].interim is True and not provider.release.is_set()
-        assert messages[0].text == '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
-        assert messages[0].audio_id == ('conversation.delay' if prerecorded_audio else '')
+        _wait_until(provider.started.is_set)
+        # Exceed the removed five-second timer with the real ROS executor running.
+        time.sleep(5.2)
+        assert messages == [] and not provider.release.is_set()
         provider.release.set()
-        _wait_until(lambda: len(messages) == 2)
-        assert messages[1].text == '대화 연결 확인 응답'
-        assert messages[1].interim is False
-        assert messages[1].audio_id == ''
-        assert [message.request_id for message in messages] == [
-            'progress-speech', 'progress-speech',
-        ]
-        assert messages[0].playback_id != messages[1].playback_id
+        _wait_until(lambda: len(messages) == 1)
+        assert messages[0].text == '대화 연결 확인 응답'
+        assert messages[0].interim is False
+        assert messages[0].audio_id == ''
+        assert messages[0].request_id == 'progress-speech'
     finally:
         provider.release.set()
         graph.sender.destroy_subscription(subscription)
