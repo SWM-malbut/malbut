@@ -255,6 +255,7 @@ class OpenAIResponsesProvider(AgentProvider):
                 ProviderFailureCode.MISSING_CREDENTIALS
             )
         memory_mode = memory_context.get('mode') if memory_context else None
+        request = self._resolve_turn_image(request, memory_mode)
         prepared = prepare_model_input(
             request,
             memories,
@@ -348,6 +349,9 @@ class OpenAIResponsesProvider(AgentProvider):
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
         memory_mode = memory_context.get('mode') if memory_context else None
+        resolved = self._resolve_turn_image(request, memory_mode)
+        if resolved is not request:
+            request, prepared = resolved, None
         image = getattr(request, 'turn_image', None)
         include_image = (memory_mode not in {'automatic_extraction', 'source_review'}
                          and image is not None and image.usable())
@@ -355,7 +359,8 @@ class OpenAIResponsesProvider(AgentProvider):
             scene = copy.deepcopy(request.scene_context)
             if scene.get('image', {}).get('available'):
                 scene['image'] = {'available': False, 'reason': 'stale_or_permission_changed'}
-                request = replace(request, scene_context=scene)
+                request = replace(request, scene_context=scene,
+                                  robot_state=replace(request.robot_state, camera_available=False))
                 prepared = None
         if memory_mode == 'automatic_extraction' and (
             memories or conversation_turns or tools or request.available_tools
@@ -509,6 +514,14 @@ class OpenAIResponsesProvider(AgentProvider):
                 raise ContextBudgetExceeded()
         if memory_mode == 'source_review':
             payload['instructions'] += '\n\n' + SOURCE_REVIEW_SCOPE_INSTRUCTIONS
+        if include_image and not image.usable():
+            # Tokenization may be slow on its first call, or consent may change.
+            # Rebuild text metadata too so the model cannot claim it saw a view.
+            return self.build_payload(
+                replace(request, turn_image=None), memories, conversation_turns,
+                tools, conversation_summary, memory_context=memory_context,
+                weather_context=weather_context,
+            )
         if include_image:
             # Count only the text/schema above, not the Base64 representation.
             # low-detail is <=512x512; reserve 512 image tokens conservatively.
@@ -518,6 +531,21 @@ class OpenAIResponsesProvider(AgentProvider):
                  'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image.jpeg).decode('ascii')},
             ]}]
         return payload
+
+    @staticmethod
+    def _resolve_turn_image(request, memory_mode):
+        from malbut_agent_server.speech_scene import PendingTurnScene
+
+        pending = getattr(request, 'turn_image', None)
+        if (isinstance(pending, PendingTurnScene)
+                and memory_mode not in {'automatic_extraction', 'source_review'}):
+            metadata, image = pending.resolve()
+            return replace(
+                request, scene_context=dict(request.scene_context or {}, **metadata),
+                turn_image=image,
+                robot_state=replace(request.robot_state, camera_available=image is not None),
+            )
+        return request
 
     def _preserve_conversation(self, memory_mode: Optional[str]) -> bool:
         return self.semantic_context and memory_mode not in {

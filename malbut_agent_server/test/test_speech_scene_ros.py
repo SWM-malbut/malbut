@@ -97,6 +97,48 @@ def test_idle_has_no_camera_reader_and_each_turn_gets_fresh_pixels_and_pose(sens
     assert scene._images._frame is None
 
 
+def test_deferred_turn_waits_until_provider_and_refreshes_map_and_pixels(sensors):
+    scene, node, publisher, controls = sensors
+    context, pending = scene.prepare_turn()
+    assert context['image']['reason'] == 'pending_capture'
+    assert publisher.get_subscription_count() == 0
+    controls['pixel'] = 42
+    scene.missions.map_context = lambda: {'revision': 'new-map'}
+    with ThreadPoolExecutor() as pool:
+        current, image = pool.submit(pending.resolve).result(timeout=3)
+    assert current['map']['revision'] == 'new-map'
+    assert current['pose']['x'] == 1.25
+    assert image.jpeg == bytes([42] * 3)
+    wait_for(lambda: publisher.get_subscription_count() == 0)
+    controls['pixel'] = 99
+    assert pending.resolve()[1] is image
+    assert scene._images._frame is None
+
+
+def test_guest_image_never_reads_owner_map_or_mission_context(sensors):
+    scene, node, publisher, controls = sensors
+    scene.missions.map_context = lambda: pytest.fail('guest must not read owner map')
+    pending = scene.prepare_image()
+    assert publisher.get_subscription_count() == 0
+    with ThreadPoolExecutor() as pool:
+        context, image = pool.submit(pending.resolve).result(timeout=3)
+    assert set(context) == {'image'} and context['image']['available']
+    assert image.jpeg == bytes([10] * 3)
+    wait_for(lambda: publisher.get_subscription_count() == 0)
+    assert scene._images._frame is None
+
+
+def test_real_encoder_produces_bounded_jpeg_in_memory(sensors):
+    scene, node, publisher, controls = sensors
+    scene._encode = RosSpeechScene._encode
+    with ThreadPoolExecutor() as pool:
+        context, image = pool.submit(scene.prepare_image().resolve).result(timeout=3)
+    assert context['image']['available'] and image.usable()
+    assert image.jpeg.startswith(b'\xff\xd8') and image.jpeg.endswith(b'\xff\xd9')
+    wait_for(lambda: publisher.get_subscription_count() == 0)
+    assert scene._images._frame is None
+
+
 def test_missing_sensors_timeout_and_do_not_leave_subscriptions(sensors):
     scene, node, publisher, controls = sensors
     controls['publish'] = False
