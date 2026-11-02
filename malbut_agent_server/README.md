@@ -7,6 +7,20 @@ Agent의 기준 문서는 [Malbut Agent 명세](docs/malbut_agent.md)다.
 서버 소유 Tool capability 경계를
 제공하는 ROS 2 Python 패키지다.
 
+## 먼저 말 걸기 임시 중지
+
+선발화 기능 안정화 동안 `patrol_conversation_enabled=false`를 기본으로 사용한다.
+사람을 보고 먼저 말을 걸지는 않지만, `called_conversation_enabled=true`이면 호출 후
+접근·대화를 지원하는 공용 어댑터와 구독·타이머는 유지한다. 사람 감지 구독은 접근 종료 후
+현재 사람이 보이는지와 대화 중 자리를 떠났는지를 확인하는 데도 사용하며, 이 구독이
+추가 인식 모델을 실행하지는 않는다. 두 설정을 모두 끄면 공용 어댑터를 시작하지 않는다.
+사용자가 시작한 일반 대화와 순찰·기억 기능은 그대로 유지한다.
+
+기능 검증 시에만 Agent 시작 인자로 `--ros-args -p patrol_conversation_enabled:=true`를
+명시하면 선발화 처리를 켤 수 있다. 이때도 기존 사용자 허용 설정과 조용한 시간 등의
+조건을 만족해야 한다. 이 파라미터는 시작 시 읽으므로 변경 적용에는 Agent 재시작이
+필요하다. 기존 사용자 허용 설정만으로 기본 중지 상태가 해제되지는 않는다.
+
 ## 이름을 부른 뒤 대화 위치 맞추기
 
 - `called_conversation_enabled=true`가 기본값이다. 단독 호출어 “제이크”가 인식되면

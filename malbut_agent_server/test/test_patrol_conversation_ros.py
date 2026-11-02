@@ -37,7 +37,12 @@ from test_speech_dialogue import RuntimeFactory  # noqa: E402
 
 
 @pytest.fixture
-def robot(tmp_path, monkeypatch):
+def proactive_enabled():
+    return True
+
+
+@pytest.fixture
+def robot(tmp_path, monkeypatch, proactive_enabled):
     monkeypatch.setenv('ROS_DOMAIN_ID', '198')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     clock = [0.]
@@ -55,7 +60,8 @@ def robot(tmp_path, monkeypatch):
         configure_patrol_queries(instance, store)
         return instance
 
-    rclpy.init()
+    args = ['--ros-args', '-p', 'patrol_conversation_enabled:=true'] if proactive_enabled else []
+    rclpy.init(args=args)
     agent = create_communication_node(
         speech_db_path=str(tmp_path / 'receipts.sqlite3'),
         dialogue_settings=Settings(user_id='owner'), dialogue_factory=factory)

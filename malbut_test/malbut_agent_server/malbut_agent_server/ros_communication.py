@@ -186,7 +186,8 @@ def create_communication_node(
                 self.create_timer(0.05, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
-                proactive = self.declare_parameter('patrol_conversation_enabled', True).value
+                # Keep spontaneous conversation opt-in while it is being stabilized.
+                proactive = self.declare_parameter('patrol_conversation_enabled', False).value
                 called = self.declare_parameter('called_conversation_enabled', True).value
                 if proactive or called:
                     try:

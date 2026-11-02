@@ -194,11 +194,11 @@ class _DialogueProvider(AgentProvider):
 
 
 @pytest.fixture
-def communication(tmp_path, monkeypatch):
+def communication(tmp_path, monkeypatch, request):
     """Connect production nodes on a loopback-only, isolated ROS domain."""
     monkeypatch.setenv('ROS_DOMAIN_ID', '193')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
-    rclpy.init()
+    rclpy.init(args=getattr(request, 'param', []))
     nodes = []
     manager = None
     follow = None
@@ -494,6 +494,32 @@ def _publish_transcript(graph, utterance_id, text, *, repeat=1):
     message = SpeechTranscript(utterance_id=utterance_id, text=text)
     for _ in range(repeat):
         publisher.publish(message)
+
+
+@pytest.mark.parametrize('communication, called_enabled', [
+    ([], True),
+    (['--ros-args', '-p', 'called_conversation_enabled:=false'], False),
+], indirect=['communication'])
+def test_proactive_chat_defaults_off_but_user_dialogue_still_replies(
+        communication, called_enabled):
+    provider = _DialogueProvider()
+    graph = communication(with_manager=False, provider=provider)
+    assert graph.agent.get_parameter('patrol_conversation_enabled').value is False
+    assert graph.agent.get_parameter('called_conversation_enabled').value is called_enabled
+    chat = graph.agent._patrol_chat
+    if called_enabled:
+        # Explicit calls still need presence/odometry and speech safety checks.
+        assert chat is not None and chat.called.enabled
+        assert not chat.proactive_enabled and not chat._idle()
+    else:
+        assert chat is None
+        assert graph.agent.count_subscribers('/yolo/detections') == 0
+        assert graph.agent.count_subscribers('/homecam/person_poses') == 0
+
+    _publish_transcript(graph, 'user-initiated', '오늘 하루는 어땠어?')
+    _wait_until(lambda: graph.speech == ['대화 연결 확인 응답'])
+    assert len(provider.calls) == 1
+    assert provider.calls[0].utterance == '오늘 하루는 어땠어?'
 
 
 def test_ordinary_recognition_failure_guidance_and_followup_use_existing_topics(communication):

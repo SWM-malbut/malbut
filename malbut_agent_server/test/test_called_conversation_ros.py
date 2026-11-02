@@ -21,9 +21,17 @@ from test_patrol_conversation_ros import robot  # noqa: E402
 
 
 @pytest.fixture
+def proactive_enabled():
+    # Exercise normal startup defaults, not a switch changed after construction.
+    return False
+
+
+@pytest.fixture
 def called(robot, tmp_path):
     r = robot
-    r.chat.proactive_enabled = False
+    assert r.agent.get_parameter('patrol_conversation_enabled').value is False
+    assert r.agent.get_parameter('called_conversation_enabled').value is True
+    assert not r.chat.proactive_enabled and r.chat.called.enabled
     r.agent.speech_missions = SpeechMissions(r.agent.missions)
     catalog, selected, _, document = write_user_map(tmp_path, rooms=[room('거실', 0, 0)])
     r.agent.speech_missions.observe_localization({'mode': 'LOCALIZATION', 'map': str(selected)})
@@ -101,6 +109,15 @@ def called(robot, tmp_path):
             if not terminal.done():
                 terminal.set_result(False)
         server.destroy()
+
+
+def test_default_person_presence_does_not_start_spontaneous_conversation(called):
+    r = called.r
+    for second in range(31, 36):
+        r.pulse(float(second))
+    assert r.chat.gate.ready()  # A stable, fresh encounter would otherwise qualify.
+    assert not r.speech and not called.goals and not r.runtime.provider.calls
+    assert r.chat.phase == 'idle' and not called.controller.active
 
 
 def test_visible_caller_approaches_releases_tracking_and_listens(called):
