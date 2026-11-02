@@ -133,35 +133,29 @@ def test_function_start_suppresses_pending_delay_and_repeated_start():
     try:
         state.start_function('get_weather')
         state.start_function('get_weather')
-        assert state._timer.finished.is_set()
         assert notices == [FUNCTION_STARTS['get_weather']]
-        assert not state.publish(lambda _: pytest.fail('extra delay notice'), progress.DELAY_NOTICE)
+        assert not state.publish(
+            lambda _: pytest.fail('extra delay notice'), progress.DELAY_NOTICE)
     finally:
         state.finish()
 
 
-class Timer:
-    instances = []
-
-    def __init__(self, seconds, callback, args):
-        self.seconds, self.callback, self.args = seconds, callback, args
-        self.canceled = False
-        self.instances.append(self)
-
-    def start(self):
-        pass
-
-    def cancel(self):
-        self.canceled = True
-
-    def fire(self):
-        self.callback(*self.args)
+def test_obsolete_delay_notice_is_neither_queued_nor_published():
+    notices = []
+    state = progress.RequestProgress(lambda text, _: notices.append(text))
+    try:
+        state._notice(progress.DELAY_NOTICE)
+        assert notices == []
+        assert not state.publish(lambda _: pytest.fail('delay notice published'),
+                                 progress.DELAY_NOTICE)
+        assert state.retry(progress.MODEL_RETRY_NOTICE)
+        assert notices == [progress.MODEL_RETRY_NOTICE]
+    finally:
+        state.finish()
 
 
 @pytest.mark.parametrize('finish', ['answer', 'close'])
-def test_speech_progress_does_not_release_capacity_or_publish_after_finish(monkeypatch, finish):
-    Timer.instances = []
-    monkeypatch.setattr(progress, 'Timer', Timer)
+def test_speech_progress_does_not_release_capacity_or_publish_after_finish(finish):
     release = threading.Event()
 
     def answer(request, history):
@@ -174,19 +168,18 @@ def test_speech_progress_does_not_release_capacity_or_publish_after_finish(monke
     try:
         assert worker.submit('utterance-1', '안녕')
         assert provider.entered.wait(5)
-        timer = Timer.instances[0]
-        assert timer.seconds == 5.0
-        timer.fire()
+        state = worker._active_progress
+        assert state.retry(progress.MODEL_RETRY_NOTICE)
         notice = collect(worker, 1)[0]
         assert notice['kind'] == 'progress' and notice['utterance_id'] == 'utterance-1'
         assert not worker.has_capacity()
         published = []
         assert worker.publish_reply(notice, lambda text: published.append(text) or True)
-        assert published == [progress.DELAY_NOTICE]
+        assert published == [progress.MODEL_RETRY_NOTICE]
         if finish == 'close':
             closer = threading.Thread(target=worker.close)
             closer.start()
-            wait_until(lambda: timer.canceled)
+            wait_until(lambda: not state.active)
         release.set()
         if closer is None:
             assert collect(worker, 1)[0]['kind'] == 'answer'
@@ -194,11 +187,11 @@ def test_speech_progress_does_not_release_capacity_or_publish_after_finish(monke
         else:
             closer.join(5)
             assert not closer.is_alive()
-        assert timer.canceled
-        timer.fire()
+        assert not state.active
+        state._notice(progress.MODEL_RETRY_NOTICE)
         assert worker.drain() == []
         assert worker.publish_reply(notice, lambda text: published.append(text) or True) is None
-        assert published == [progress.DELAY_NOTICE]
+        assert published == [progress.MODEL_RETRY_NOTICE]
     finally:
         release.set()
         worker.close()
@@ -206,9 +199,7 @@ def test_speech_progress_does_not_release_capacity_or_publish_after_finish(monke
             closer.join(5)
 
 
-def test_waiting_speech_notice_starts_at_admission_and_shutdown_cancels_queue(monkeypatch):
-    Timer.instances = []
-    monkeypatch.setattr(progress, 'Timer', Timer)
+def test_shutdown_cancels_queued_requests_and_suppresses_late_notices():
     release = threading.Event()
 
     def answer(request, history):
@@ -222,14 +213,16 @@ def test_waiting_speech_notice_starts_at_admission_and_shutdown_cancels_queue(mo
         assert worker.submit('first', '안녕')
         assert provider.entered.wait(5)
         assert worker.submit('waiting', '기다리는 다음 질문')
-        assert len(Timer.instances) == 2 and len(provider.calls) == 1
-        Timer.instances[1].fire()
+        assert len(provider.calls) == 1
+        active = worker._active_progress
+        waiting = worker._pending[0][3]
+        waiting._notice(progress.MODEL_RETRY_NOTICE)
         notice = collect(worker, 1)[0]
         assert notice['kind'] == 'progress' and notice['utterance_id'] == 'waiting'
         assert not worker.has_capacity()
         closer = threading.Thread(target=worker.close)
         closer.start()
-        wait_until(lambda: all(timer.canceled for timer in Timer.instances))
+        wait_until(lambda: not active.active and not waiting.active)
         release.set()
         closer.join(5)
         assert not closer.is_alive() and len(provider.calls) == 1
