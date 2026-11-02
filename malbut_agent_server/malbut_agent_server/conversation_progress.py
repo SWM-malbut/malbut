@@ -3,11 +3,11 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from threading import RLock, Timer
+from threading import RLock
 
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 
-DELAY_SECONDS = 5.0
+# Retain the text for old audio catalogs and discard any stale queued notice.
 DELAY_NOTICE = '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
 MODEL_RETRY_NOTICE = '답변 생성을 한 번 다시 시도할게요.'
 WEATHER_RETRY_NOTICE = '날씨 정보 조회를 한 번 다시 시도할게요.'
@@ -26,16 +26,11 @@ class RequestProgress:
         self._retry_notice = None
         self._retry_published = False
         self._notify = notify
-        self._timer = None
-        if notify is not None:
-            self._timer = Timer(DELAY_SECONDS, self._notice, args=(DELAY_NOTICE,))
-            self._timer.daemon = True
-            self._timer.start()
 
     def _notice(self, text):
         # Publication checks active again; never call the worker under this lock.
         with self._lock:
-            notify = self._notify if self.active else None
+            notify = self._notify if self.active and text != DELAY_NOTICE else None
         if notify is not None:
             notify(text, self)
 
@@ -55,13 +50,12 @@ class RequestProgress:
             if not self.active or tool not in FUNCTION_STARTS or tool in self._started:
                 return
             self._started.add(tool)
-            if self._timer is not None:
-                self._timer.cancel()
         self._notice(FUNCTION_STARTS[tool])
 
     def can_publish(self, text):
         with self._lock:
-            return (not self._aborted and text not in self._published_starts
+            return (text != DELAY_NOTICE and not self._aborted
+                    and text not in self._published_starts
                     and not (self._started and text in {
                         DELAY_NOTICE, MODEL_RETRY_NOTICE, WEATHER_RETRY_NOTICE,
                     })
@@ -91,8 +85,6 @@ class RequestProgress:
         with self._lock:
             self.active = False
             self._aborted = self._aborted or cancelled
-            if self._timer is not None:
-                self._timer.cancel()
 
 
 def announce_function_start(tool):
