@@ -1,7 +1,6 @@
 """One bounded follow mission through Manager, with confirmed cleanup before speech."""
 
 import json
-import math
 import time
 from uuid import uuid4
 
@@ -52,13 +51,10 @@ class ConversationPosition:
             self.runtime_idle = False
         self.runtime_revision += 1
 
-    def start(self, navigation=None, *, rotation=None):
+    def start(self, navigation=None):
         from unique_identifier_msgs.msg import UUID
 
         if self.busy or not self.client.server_is_ready():
-            return False
-        if rotation is not None and (navigation is not None or not math.isfinite(rotation)
-                                     or not 0 < abs(rotation) <= math.pi):
             return False
         identity = uuid4()
         self.mission_id = identity.hex
@@ -67,15 +63,11 @@ class ConversationPosition:
         self.unstarted = False
         self.start_revision = self.runtime_revision
         self.navigation = navigation is not None
-        self.rotation = rotation is not None
         self.deadline = self.clock() + (120 if self.navigation else 55)
         self.accept_deadline = self.clock() + 5
         capability = 'navigate_to_pose' if self.navigation else 'follow_person'
         arguments = navigation if self.navigation else dict(
             target_mode=0, target_person_id='', desired_distance_m=1.5, approach_only=True)
-        if self.rotation:
-            capability = 'spin'
-            arguments = dict(target_yaw=rotation, time_allowance=dict(sec=20, nanosec=0))
         try:
             future = self.client.send_goal_async(self.action_type.Goal(
                 capability_id=capability, arguments_yaml=json.dumps(arguments), idle_only=True),
@@ -128,10 +120,6 @@ class ConversationPosition:
             # followed by independent runtime release and odometry checks.
             completed = (isinstance(result, dict) and not result
                          if getattr(self, 'navigation', False) else stopped)
-            if getattr(self, 'rotation', False):
-                completed = (isinstance(result, dict)
-                             and isinstance(result.get('total_elapsed_time'), dict)
-                             and result.get('error_code', 0) == 0)
             self.success = (not self.cancel_requested and completed
                             and reply.status == GoalStatus.STATUS_SUCCEEDED)
         except Exception:

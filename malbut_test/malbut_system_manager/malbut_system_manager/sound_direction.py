@@ -1,8 +1,7 @@
-"""Read the existing XFM/R818 wake-angle wire protocol without capturing audio.
+"""Read XFM/R818 direction events without STT or audio capture."""
 
-The board emits angles for its own wake words, not for arbitrary speech. Never
-manufacture an angle by sending manual_wakeup (that command selects a beam).
-"""
+# Current firmware reports hardware wake angles, not continuous sound direction.
+# Only acknowledge packets; never select a beam or change microphone firmware.
 
 from collections import deque
 import json
@@ -21,9 +20,11 @@ class DirectionFrames:
     """Bound buffering and recover after partial, corrupt or oversized packets."""
 
     def __init__(self):
+        """Start with an empty protocol buffer."""
         self.buffer = bytearray()
 
     def feed(self, data):
+        """Return complete valid frames and retain only a bounded partial frame."""
         self.buffer.extend(data[:4096])
         frames = []
         while len(self.buffer) >= 8:
@@ -65,43 +66,38 @@ def wake_angle(payload):
         return None
 
 
-class WakeDirections:
-    """Consume a single direction only from the matched utterance's audio window."""
+class Directions:
+    """Consume one fresh hardware direction once, independently of speech."""
 
     def __init__(self):
+        """Bound the pending measurements and protect reader access."""
         self.samples = deque(maxlen=16)
         self.lock = Lock()
 
     def add(self, angle, at):
+        """Buffer a measurement using the local monotonic reception time."""
         with self.lock:
             self.samples.append((at, angle))
 
-    def take(self, window, now, *, capture_delay=.5, forward_degrees=150.):
-        # 150 degrees is the raw forward axis derived from ROSOrin's existing
-        # conversions: raw -> (240-raw)%360 -> yaw = 90-vendor_angle.
+    def take(self, now, *, forward_degrees=150.):
+        """Drop stale/ambiguous events and map the measured axis to robot yaw."""
         with self.lock:
             samples = list(self.samples)
-            self.samples.clear()  # No reuse on a second call, including rejected calls.
-        if window is None or not all(math.isfinite(v) for v in (*window, now)):
+            self.samples.clear()
+        if len(samples) != 1 or not math.isfinite(now):
             return None
-        start, end = window
-        if not start <= end <= now or now - end > 3.:
+        at, angle = samples[0]
+        if (not math.isfinite(at) or not 0 <= now - at <= 1.
+                or not math.isfinite(angle) or not 0 <= angle < 360):
             return None
-        matches = [(at, angle) for at, angle in samples
-                   if start - capture_delay - .15 <= at <= end - capture_delay + .15
-                   and 0 <= now - at <= 4.]
-        # Multiple wake events can belong to different people; don't guess.
-        if len(matches) != 1:
-            return None
-        at, angle = matches[0]
-        yaw = math.radians((angle - forward_degrees + 180) % 360 - 180)
-        return at, yaw
+        return at, math.radians((angle - forward_degrees + 180) % 360 - 180)
 
 
-class SerialDirections(WakeDirections):
+class SerialDirections(Directions):
     """One sleeping reader; only acknowledge packets, never modify firmware."""
 
     def __init__(self, port, *, clock=monotonic):
+        """Open the existing serial port exclusively without audio capture."""
         super().__init__()
         import serial
 
@@ -137,7 +133,7 @@ class SerialDirections(WakeDirections):
                     if angle is not None:
                         self.add(angle, self.clock())
         except (OSError, ValueError):
-            pass  # Direction loss must not terminate ordinary microphone listening.
+            pass  # The controller observes disconnected state and cancels its own turn.
         finally:
             self.connected = False
             with self.lock:
@@ -145,9 +141,11 @@ class SerialDirections(WakeDirections):
             self.serial.close()
 
     def take(self, *args, **kwargs):
+        """Return measurements only while the serial source remains connected."""
         return super().take(*args, **kwargs) if self.connected else None
 
     def close(self):
+        """Release the port and join the bounded reader thread."""
         self.stop.set()
         self.thread.join(timeout=1.)
         self.serial.close()
