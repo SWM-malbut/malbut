@@ -15,6 +15,7 @@ from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.task import Future
 from std_msgs.msg import String
 
@@ -35,9 +36,12 @@ class Reader(Directions):
 
 
 @pytest.fixture
-def robot(request):
+def robot(request, monkeypatch):
     """Keep motion inside a fake Nav2 server and exercise the real public action."""
-    rclpy.init()
+    # Other colcon packages also provide /spin and /malbut/state. Keep this
+    # simulated robot off their DDS graph and off the physical robot's network.
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    rclpy.init(domain_id=212)
     request.addfinalizer(rclpy.try_shutdown)
     executor = SingleThreadedExecutor()
     peer = Node('sound_turn_test_sensors')
@@ -51,7 +55,8 @@ def robot(request):
     requests, completions = [], []
     sensor = SimpleNamespace(speed=0., stale=False)
     odom = peer.create_publisher(Odometry, '/odom', 10)
-    runtime = peer.create_publisher(String, '/malbut/runtime/state', 10)
+    runtime = peer.create_publisher(String, '/malbut/runtime/state', QoSProfile(
+        depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
     def publish():
         message = Odometry()
@@ -62,11 +67,6 @@ def robot(request):
         runtime.publish(String(data=json.dumps(dict(
             ready=True, active_groups=[], capabilities=[]))))
 
-    # Match transient-local state delivery in Bringup.
-    peer.destroy_publisher(runtime)
-    from rclpy.qos import DurabilityPolicy, QoSProfile
-    runtime = peer.create_publisher(String, '/malbut/runtime/state', QoSProfile(
-        depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     timer = peer.create_timer(.05, publish)
 
     async def execute(goal):
