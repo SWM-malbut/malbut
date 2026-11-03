@@ -105,7 +105,7 @@ class HTTPConnectionPool:
                     return connection
                 self._condition.wait(remaining)
 
-    def post(self, url, headers, body, timeout, max_bytes):
+    def post(self, url, headers, body, timeout, max_bytes, *, reader=None):
         """Send exactly one POST and return a complete, size-bounded body."""
         parsed = urllib.parse.urlsplit(url)
         if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
@@ -134,10 +134,22 @@ class HTTPConnectionPool:
                         url, response.status, response.reason,
                         response.headers, io.BytesIO(detail),
                     )
-                result = response.read(max_bytes + 1)
-                if len(result) <= max_bytes and response.length not in (None, 0):
-                    raise http.client.IncompleteRead(result, response.length)
-                reusable = (len(result) <= max_bytes and not response.will_close
+                if reader is None:
+                    result = response.read(max_bytes + 1)
+                    complete = len(result) <= max_bytes
+                else:
+                    # The reader owns cumulative byte bounds and must consume
+                    # EOF; exceptions always discard this connection.
+                    result = reader(response, max_bytes)
+                    # Python 3.10 readline() reaches Content-Length zero
+                    # without closing the response wrapper. Both states mean
+                    # the body is exhausted; finally closes that wrapper.
+                    complete = response.isclosed() or response.length == 0
+                    if not complete:
+                        raise http.client.HTTPException('response reader did not consume EOF')
+                if complete and response.length not in (None, 0):
+                    raise http.client.IncompleteRead(b'', response.length)
+                reusable = (complete and not response.will_close
                             and connection.sock is not None)
                 return result
             finally:

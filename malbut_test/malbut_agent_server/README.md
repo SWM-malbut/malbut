@@ -965,3 +965,33 @@ CI 모듈 선택 시험, 신규 코드 lint, `git diff --check`도 통과했다.
 기능 시험과 lint는 분리 실행했으며, 저장소 전체 CI 완료를 뜻하지 않는다.
 당시 사용자 작성 Agent·STT 명세와 기존 ROS 인터페이스 정의는 해당 통신
 작업 전후 SHA-256이 동일한지 확인했다.
+
+### 실험용 조용한 첫 구간 합성
+
+`MALBUT_AGENT_SPEECH_PREFETCH_ENABLED=false`가 기본값이다. 실험에서만 Agent의
+이 값을 `true`로, Piper의 `piper_prefetch_enabled`를 `true`로 함께 설정한다.
+`SpeechPreparation`과 확장된 `SpeechRequest`를 포함해 ROS 인터페이스를 다시
+빌드해야 한다. 모델·추론 설정·출력 길이·말하기 속도는 이 설정으로 바뀌지 않는다.
+
+활성화된 ROS 대화 워커는 직접 OpenAI 연결에서 Responses SSE를 읽는다. 한
+assistant message의 최상위 `type=message`와 완결 문장 다음 비공백 문자까지
+확인되면 정확한 원문 prefix를 `/malbut/tts/prepare`로 보낸다. 이는 무음 캐시
+준비일 뿐이며 Tool 실행, 기억 저장, 재생 상태나 발화 요청을 승인하지 않는다.
+전체 `response.completed`와 기존 구조화 응답·오케스트레이터·메모리 검증을
+통과하고 최종 문장이 동일할 때만 기존 최종 `SpeechRequest` 한 개에
+`prepared_id`와 `generation_id`를 붙인다. TTS는 최종 정규화된 첫 구간과
+설정·요청 ID까지 일치해야 캐시를 재사용한다.
+
+실패·새 요청·중단·최종 문장 변경·종료 시 준비를 취소한다. 이미 진행 중인
+HTTP 요청은 기존 timeout 정책으로 끝나며, 준비 취소 때문에 POST를 다시
+보내지 않는다. 재시도는 기존 `ReliableProvider` 정책만 수행한다. 프록시나
+주입한 transport는 기존 JSON 요청을 유지하고, 서버가 SSE 대신 JSON을
+반환하면 그 응답을 그대로 검증한다. SSE를 거절한 서버에 자동으로 두 번째
+POST를 보내지는 않는다. 잘못된 이벤트, 미완료 연결, 비정상 UTF-8/JSON은
+기존 오류 경로로 전달한다.
+
+전체 응답은 기존 4 MiB 한도, 후보 탐색 버퍼는 65,536자, 준비 텍스트는
+512자로 제한한다. 내용 없는 첫 delta·후보·완료·검증 시각을 최종 발행 로그의
+`prefetch` 항목에 남긴다. 실제 로봇에서의 hit 비율이나 대기 감소는 별도
+측정이 필요하다. [Responses streaming 안내](https://developers.openai.com/api/docs/guides/streaming-responses)와
+[typed event 계약](https://developers.openai.com/api/reference/resources/responses/streaming-events)을 따른다.

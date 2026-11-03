@@ -76,6 +76,13 @@ def _env_int(
     return result
 
 
+def _env_bool(environ, key):
+    value = environ.get(key, 'false').strip().lower()
+    if value not in {'true', 'false', '1', '0'}:
+        raise ValueError(f'{key} must be true or false')
+    return value in {'true', '1'}
+
+
 def _valid_model_id(value: str) -> bool:
     """Accept a bounded printable model identifier."""
     return (
@@ -123,6 +130,7 @@ class Settings:
     openai_base_url: str = OFFICIAL_OPENAI_BASE_URL
     openai_reasoning_effort: str = 'low'
     openai_max_output_tokens: int = 1024
+    speech_prefetch_enabled: bool = False
     auth_token: str = ''
     tool_mode: str = 'proposal'
     rai_sidecar_python: str = ''
@@ -393,6 +401,7 @@ class Settings:
                 64,
                 4096,
             ),
+            speech_prefetch_enabled=_env_bool(source, 'MALBUT_AGENT_SPEECH_PREFETCH_ENABLED'),
             auth_token=source.get(
                 'MALBUT_AGENT_AUTH_TOKEN',
                 '',
@@ -455,6 +464,8 @@ class Settings:
         self._validate_runtime(http_server=False, require_api_key=require_api_key)
 
     def _validate_runtime(self, *, http_server: bool, require_api_key: bool = True) -> None:
+        if type(self.speech_prefetch_enabled) is not bool:
+            raise ValueError('MALBUT_AGENT_SPEECH_PREFETCH_ENABLED must be a boolean')
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
         if self.tool_mode not in SUPPORTED_TOOL_MODES:

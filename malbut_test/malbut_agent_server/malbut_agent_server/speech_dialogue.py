@@ -64,6 +64,8 @@ class _DialogueReply(dict):
         self._mission_callback = None
         self._mission_request_id = None
         self._on_publish = None
+        self._prefetch = None
+        self._prepared_hint = {}
 
 
 @dataclass(frozen=True)
@@ -128,7 +130,7 @@ class DialogueWorker:
 
     def __init__(
         self, runtime_factory: Callable, user_id: str, capacity: int = 10,
-        *, missions=None, scene_source=None,
+        *, missions=None, scene_source=None, prefetch_enabled=False,
     ):
         """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
@@ -138,6 +140,12 @@ class DialogueWorker:
         self._factory = runtime_factory
         self._missions = missions
         self._scene_source = scene_source
+        if type(prefetch_enabled) is not bool:
+            raise TypeError('prefetch_enabled must be a boolean')
+        self._prefetch_enabled = prefetch_enabled
+        self._preparations = deque()
+        self._prefetch_turns = {}
+        self._prefetch_epoch = 0
         self.patrol_memory = None
         from malbut_agent_server.companion_dialogue import CompanionDialogue
         self._companion = CompanionDialogue()
@@ -195,10 +203,12 @@ class DialogueWorker:
         with self._condition:
             if not self.has_capacity():
                 return False
+            self._cancel_prefetch()
             self._outstanding += 1
             progress = RequestProgress(
                 lambda notice, state: self._progress_notice(utterance_id, notice, state),
             )
+            progress.prefetch_epoch = self._prefetch_epoch
             # This is what the robot actually said, not a fabricated user turn.
             progress.opener_context = opener_context
             progress.companion_session = companion_session
@@ -252,6 +262,52 @@ class DialogueWorker:
             self._condition.notify()
             return True
 
+    def _cancel_prefetch(self):
+        self._prefetch_epoch += 1
+        for turn in tuple(self._prefetch_turns.values()):
+            turn.cancel()
+        self._prefetch_turns.clear()
+
+    def _queue_preparation(self, event):
+        # The ROS thread publishes these separately from speech replies. A
+        # dropped optimization must not prevent ordinary final text delivery.
+        with self._condition:
+            if event.operation == 'cancel':
+                self._preparations = deque(item for item in self._preparations
+                                           if item.prepared_id != event.prepared_id)
+            elif self._closing or self._suspended:
+                return False
+            if len(self._preparations) >= 32:
+                if event.operation != 'cancel':
+                    return False
+                self._preparations.popleft()
+            self._preparations.append(event)
+            return True
+
+    def drain_preparations(self):
+        """Return quiet preparation commands, never playback status or replies."""
+        with self._condition:
+            events = list(self._preparations)
+            self._preparations.clear()
+            return events
+
+    def cancel_preparations(self):
+        """Invalidate quiet work before waiting for an in-flight request to end."""
+        with self._condition:
+            self._cancel_prefetch()
+
+    def discard_reply(self, reply):
+        """Release quiet work when the ROS publication policy suppresses a reply."""
+        with self._condition:
+            self._release_prefetch(reply)
+
+    def _release_prefetch(self, reply, *, published=False):
+        turn = getattr(reply, '_prefetch', None)
+        if turn is not None:
+            if not published:
+                turn.cancel()
+            self._prefetch_turns.pop(turn.request_id, None)
+
     def drain(self) -> list[dict]:
         """Recheck ready replies and release their admission capacity."""
         with self._condition:
@@ -272,6 +328,7 @@ class DialogueWorker:
             if (self._closing or self._stopped or self._suspended
                     or getattr(reply, '_generation', self._generation)
                     != self._generation):
+                self._release_prefetch(reply)
                 return None
             if reply.get('kind') == 'addressee':
                 return None
@@ -287,7 +344,17 @@ class DialogueWorker:
                 except Exception:
                     reply['text'] = '실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.'
                     reply['kind'] = 'error'
-            if publish(reply['text']):
+            prefetch = getattr(reply, '_prefetch', None)
+            if prefetch is not None:
+                reply._prepared_hint = prefetch.hint(reply['text']) if reply['kind'] == 'answer' else {}
+                if not reply._prepared_hint:
+                    prefetch.cancel()
+            published = False
+            try:
+                published = publish(reply['text'])
+            finally:
+                self._release_prefetch(reply, published=published)
+            if published:
                 activate = reply._on_publish
                 reply._on_publish = None
                 if activate is not None:
@@ -302,6 +369,7 @@ class DialogueWorker:
             self._navigation_confirmation = None
             self._mapping_name_question = None
             self._generation += 1
+            self._cancel_prefetch()
             if self._active_progress is not None:
                 self._active_progress.finish(cancelled=True)
             for _, _, _, progress in self._pending:
@@ -326,12 +394,14 @@ class DialogueWorker:
                 raise MemoryChangedError('dialogue worker is closed')
             validator()
         except MemoryChangedError:
+            self._release_prefetch(reply)
             reply['text'] = MEMORY_CHANGED_RESPONSE
             reply['kind'] = 'error'
             reply._memory_validator = None
             reply._mission_callback = None
             reply._on_publish = None
         except Exception:
+            self._release_prefetch(reply)
             reply['text'] = ERROR_RESPONSE
             reply['kind'] = 'error'
             reply._memory_validator = None
@@ -343,6 +413,7 @@ class DialogueWorker:
         self._companion.end()
         with self._condition:
             self._closing = True
+            self._cancel_prefetch()
             self._navigation_confirmation = None
             self._mapping_name_question = None
             if self._active_progress is not None:
@@ -431,6 +502,7 @@ class DialogueWorker:
                 if getattr(progress, 'companion_session', None) is not None:
                     self._answer_companion(runtime, utterance_id, text, progress, generation)
                     continue
+                prefetch = None
                 try:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
@@ -490,7 +562,19 @@ class DialogueWorker:
                                                  if confirmation is not None else ''),
                         mapping_name_requested=mapping_question is not None,
                     )
-                    result = self._handle_with_progress(runtime, request, progress)
+                    if self._prefetch_enabled:
+                        from malbut_agent_server.speech_prefetch import PrefetchTurn
+
+                        with self._condition:
+                            prefetch = PrefetchTurn(
+                                request_id, utterance_id, self._queue_preparation,
+                                lock=self._condition,
+                                current=lambda g=generation, epoch=progress.prefetch_epoch: (
+                                    not self._closing and not self._suspended
+                                    and g == self._generation and epoch == self._prefetch_epoch),
+                            )
+                            self._prefetch_turns[request_id] = prefetch
+                    result = self._handle_with_progress(runtime, request, progress, prefetch)
                     decision = result.decision
                     if (navigation_binding is not None
                             and result.raw_decision.tool_name == 'request_navigation'
@@ -546,12 +630,21 @@ class DialogueWorker:
                         utterance_id, conversation_id, ERROR_RESPONSE, 'error',
                     )
                 finally:
+                    if prefetch is not None:
+                        if reply is None or reply['kind'] != 'answer':
+                            prefetch.cancel()
+                            with self._condition:
+                                self._prefetch_turns.pop(prefetch.request_id, None)
+                        else:
+                            reply._prefetch = prefetch
                     progress.finish(cancelled=reply is None)
                 with self._condition:
                     self._active_progress = None
                     self._running = False
                     if not self._closing:
                         if reply is None or generation != self._generation:
+                            if reply is not None:
+                                self._release_prefetch(reply)
                             self._outstanding -= 1
                         else:
                             reply._generation = generation
@@ -716,8 +809,10 @@ class DialogueWorker:
             self._results.append(reply)
 
     @staticmethod
-    def _handle_with_progress(runtime, request, progress):
-        with request_scope(progress=progress):
+    def _handle_with_progress(runtime, request, progress, prefetch=None):
+        from malbut_agent_server.speech_prefetch import prefetch_scope
+
+        with request_scope(progress=progress), prefetch_scope(prefetch):
             return runtime.handle(request)
 
     def begin_companion(self, session):
