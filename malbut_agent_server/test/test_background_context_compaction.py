@@ -316,6 +316,7 @@ def test_factory_enables_compaction_only_for_foreground_openai(monkeypatch):
         pytest.fail('factory construction must not call OpenAI')
 
     monkeypatch.setattr(OpenAIResponsesProvider, '_urllib_transport', no_network)
+    monkeypatch.setattr(OpenAIResponsesProvider, '_pooled_transport', no_network)
     settings = Settings.from_env({
         'MALBUT_AGENT_PROVIDER': 'openai', 'OPENAI_API_KEY': 'test-only',
         'MALBUT_AGENT_DB': ':memory:',

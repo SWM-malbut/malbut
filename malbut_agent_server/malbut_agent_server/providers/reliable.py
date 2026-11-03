@@ -22,6 +22,7 @@ from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
+    close_providers,
     accepts_memory_context,
     accepts_weather_context,
 )
@@ -297,6 +298,10 @@ class ReliableProvider(AgentProvider):
         self._seen_generation = (
             credential_generation() if credential_generation else None
         )
+
+    def close(self) -> None:
+        """Release transports owned by primary and fallback providers."""
+        close_providers(*self._providers)
 
     def _reset_circuits_on_new_key(self) -> None:
         if self._credential_generation is None:

@@ -9,7 +9,7 @@ import pytest
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 
 from malbut_interfaces.msg import (  # noqa: E402
-    SpeechPlaybackStatus, SpeechRequest,
+    SpeechPlaybackStatus, SpeechPreparation, SpeechRequest,
 )
 from malbut_interfaces.srv import ControlSpeechPlayback  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
@@ -45,6 +45,44 @@ class ControlledRuntime:
 
     def close(self):
         self.closed = True
+
+
+def test_generated_optional_prepare_is_silent_and_final_hint_reaches_runtime():
+    rclpy.init(args=['--ros-args', '-p', 'piper_prefetch_enabled:=true'])
+    executor=SingleThreadedExecutor();tts=peer=None
+    preparation=[];final=[];statuses=[]
+    def spin_until(predicate):
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            if predicate():return
+            executor.spin_once(timeout_sec=.01)
+        raise AssertionError('Optional preparation DDS path did not progress')
+    try:
+        tts=tts_node.create_tts_node(ControlledRuntime)
+        tts._runtime.prepare=lambda *args,**kwargs:preparation.append((args,kwargs))
+        tts._runtime.submit=lambda *args,**kwargs:final.append((args,kwargs))
+        peer=Node('tts_preparation_test_peer')
+        executor.add_node(tts);executor.add_node(peer)
+        qos=QoSProfile(depth=10,reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.VOLATILE)
+        prepare=peer.create_publisher(SpeechPreparation,tts_node.PREPARATION_TOPIC,qos)
+        reply=peer.create_publisher(SpeechRequest,tts_node.RESPONSE_TOPIC,qos)
+        peer.create_subscription(SpeechPlaybackStatus,tts_node.STATUS_TOPIC,statuses.append,qos)
+        spin_until(lambda:prepare.get_subscription_count()==reply.get_subscription_count()==1)
+        common=dict(request_id='turn',generation_id='generation',prepared_id='prepared')
+        prepare.publish(SpeechPreparation(operation=SpeechPreparation.PREPARE,text='첫 문장. 다',**common))
+        prepare.publish(SpeechPreparation(operation=SpeechPreparation.CANCEL,**common))
+        spin_until(lambda:len(preparation)==2)
+        assert statuses==[] and final==[]
+        assert [p[1]['cancel'] for p in preparation]==[False,True]
+        reply.publish(SpeechRequest(text='최종 승인 답변',**common))
+        spin_until(lambda:len(final)==1)
+        assert final==[(('최종 승인 답변',0),{**common,'interim':False})]
+    finally:
+        if tts is not None:tts.destroy_node()
+        if peer is not None:peer.destroy_node()
+        executor.shutdown(timeout_sec=0)
+        if rclpy.ok():rclpy.shutdown()
 
 
 def test_generated_request_kind_service_and_worker_status_round_trip():

@@ -18,6 +18,7 @@ def test_classifier_reuses_agent_configuration_and_bypasses_robot_routing(
         pytest.fail('constructing the Agent must not make a model request')
 
     monkeypatch.setattr(OpenAIResponsesProvider, '_urllib_transport', no_network)
+    monkeypatch.setattr(OpenAIResponsesProvider, '_pooled_transport', no_network)
     runtime = build_orchestrator(Settings(
         database_path=':memory:', provider='openai',
         openai_api_key='test-key-not-for-network',

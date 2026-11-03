@@ -10,6 +10,8 @@ from time import monotonic
 from typing import Callable, Optional
 from uuid import uuid4
 
+from malbut_tts.prefetch import MAX_PREPARED_BYTES, PrefetchSlot, preparation_key
+
 
 DIALOGUE = 0
 NOTIFICATION = 1
@@ -41,6 +43,8 @@ class _Request:
     interim: bool = False
     request_id: str = ''
     audio_id: str = ''
+    prepared_id: str = ''
+    generation_id: str = ''
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -58,7 +62,7 @@ class SpeechRuntime:
 
     def __init__(self, synthesizer, player_factory, on_status, logger=None, *,
                  max_pending_requests=32, pending_timeout_s=0.0,
-                 clock=monotonic, prerecorded=None):
+                 clock=monotonic, prerecorded=None, prefetch_enabled=False):
         if type(max_pending_requests) is not int or max_pending_requests < 1:
             raise ValueError('max_pending_requests must be a positive integer')
         if (isinstance(pending_timeout_s, bool)
@@ -82,6 +86,12 @@ class SpeechRuntime:
         self._max_pending_requests = max_pending_requests
         self._pending_timeout_s = pending_timeout_s
         self._clock = clock
+        if type(prefetch_enabled) is not bool:
+            raise ValueError('prefetch_enabled must be a boolean')
+        if prefetch_enabled and not all(callable(getattr(synthesizer, name, None))
+                                        for name in ('prepare_first', 'resume_prepared')):
+            raise ValueError('Speech preparation requires the live Piper backend')
+        self._prefetch = PrefetchSlot(clock) if prefetch_enabled else None
         self._worker = Thread(target=self._run, name='tts', daemon=True)
         # Playback (including pause) blocks _worker inside player.finish().
         # An explicitly enabled TTL expires waiting text during active playback.
@@ -93,7 +103,7 @@ class SpeechRuntime:
             self._expiry_worker.start()
 
     def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='',
-               interim=False, request_id='', audio_id=''):
+               interim=False, request_id='', audio_id='', prepared_id='', generation_id=''):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
@@ -142,6 +152,18 @@ class SpeechRuntime:
                 validate, request_type=request_type, interim=interim,
                 request_id=correlated_id, audio_id=audio_id,
             )
+            key = preparation_key(correlated_id, generation_id, prepared_id)
+            if (self._prefetch is not None and key is not None
+                    and request_type == DIALOGUE and not interim and not audio_id):
+                request.prepared_id, request.generation_id = prepared_id, generation_id
+            else:
+                key = None
+            if self._prefetch is not None and self._prefetch.job is not None:
+                job = self._prefetch.job
+                if job.key != key or job.state == 'queued':
+                    # A committed request wins if speculation has not started;
+                    # never run redundant preparation after its normal playback.
+                    self._prefetch.cancel()
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
                 request.state = 'stopped'
@@ -199,6 +221,26 @@ class SpeechRuntime:
             self._fail_waiting([request], 'full')
         return request.playback_id
 
+    def prepare(self, text, *, request_id, generation_id, prepared_id, cancel=False):
+        """Admit at most one silent, idle-only job; never publish speech states."""
+        key = preparation_key(request_id, generation_id, prepared_id)
+        if self._prefetch is None or key is None or type(cancel) is not bool:
+            return False
+        with self._condition:
+            if self._closed:
+                return False
+            if cancel:
+                self._prefetch.cancel(key)
+                self._condition.notify_all()
+                return True
+            if (not isinstance(text, str) or not text.strip() or len(text) > 4096
+                    or self._active is not None or self._pending
+                    or request_id in self._finalized_request_ids):
+                return False
+            accepted = self._prefetch.request(key, text)
+            self._condition.notify_all()
+            return accepted
+
     def _expire_pending_locked(self, now):
         if self._pending_timeout_s == 0:
             return []
@@ -241,6 +283,9 @@ class SpeechRuntime:
             if self._closed:
                 return False
             if command == 'stop':
+                if self._prefetch is not None:
+                    self._prefetch.cancel()
+                    self._condition.notify_all()
                 pending = next((entry for entry in self._pending
                                 if entry[2].playback_id == playback_id), None)
                 if pending is not None:
@@ -300,6 +345,8 @@ class SpeechRuntime:
         with self._condition:
             if self._closed:
                 return False
+            if self._prefetch is not None:
+                self._prefetch.cancel()
             pending = [entry[2] for entry in self._pending]
             self._pending.clear()
             request = self._active
@@ -329,6 +376,8 @@ class SpeechRuntime:
         """Cancel active work, drop waiting jobs, and close the worker."""
         with self._condition:
             self._closed = True
+            if self._prefetch is not None:
+                self._prefetch.cancel()
             self._pending.clear()
             request = self._active
             if request is not None and request.state in TERMINAL_STATES:
@@ -392,9 +441,14 @@ class SpeechRuntime:
     def _run(self):
         while True:
             with self._condition:
-                self._condition.wait_for(
-                    lambda: self._closed or bool(self._pending),
-                )
+                job = None
+                while not self._closed and not self._pending:
+                    if self._prefetch is not None:
+                        job = self._prefetch.start()
+                        if job is not None:
+                            break
+                    self._condition.wait(timeout=(self._prefetch.wait_timeout()
+                                                  if self._prefetch is not None else None))
                 if self._closed:
                     return
                 expired = self._expire_pending_locked(self._clock())
@@ -402,6 +456,19 @@ class SpeechRuntime:
                            if self._pending else None)
                 self._active = request
             self._fail_waiting(expired, 'expired')
+            if job is not None:
+                audio = None
+                try:
+                    audio = self._synthesizer.prepare_first(
+                        job.text, job.cancel, max_bytes=MAX_PREPARED_BYTES)
+                except Exception as error:
+                    # Speculation failures must not fail a later final answer.
+                    self._logger.info(f'tts_prefetch_discarded: {type(error).__name__}')
+                with self._condition:
+                    self._prefetch.finish(job, audio)
+                    self._condition.notify_all()
+                del audio  # The slot is the only retained preparation owner.
+                continue
             if request is None:
                 continue
             self._play(request)
@@ -431,9 +498,19 @@ class SpeechRuntime:
                 source = self._prerecorded if request.audio_id else self._synthesizer
                 if source is None:
                     raise ValueError('prerecorded audio is not configured')
-                chunks = iter(source.generate(
-                    request.audio_id or request.text, request.cancel,
-                ))
+                prepared = None
+                if self._prefetch is not None and request.prepared_id:
+                    with self._condition:
+                        prepared = self._prefetch.take(preparation_key(
+                            request.request_id, request.generation_id, request.prepared_id))
+                if prepared is not None:
+                    chunks, hit = self._synthesizer.resume_prepared(
+                        request.text, request.cancel, prepared)
+                    self._logger.info(f'tts_prefetch_{"hit" if hit else "miss"}')
+                else:
+                    chunks = iter(source.generate(
+                        request.audio_id or request.text, request.cancel,
+                    ))
                 has_audio = False
                 sentence_mode = getattr(source, 'sentence_streaming', False)
                 while not request.cancel.is_set():

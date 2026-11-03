@@ -35,7 +35,12 @@ def test_audit_keeps_answers_out_of_input_and_bounds_paid_calls(tmp_path, monkey
         }]}
 
     monkeypatch.setenv('OPENAI_API_KEY', 'test-only-key-never-save')
-    monkeypatch.setattr(OpenAIResponsesProvider, '_urllib_transport', staticmethod(transport))
+    # Inject at the public transport seam, independent of which HTTP client
+    # the production adapter chooses by default.
+    monkeypatch.setattr(
+        'malbut_agent_server.providers.openai_responses.OpenAIResponsesProvider',
+        lambda *args, **kwargs: OpenAIResponsesProvider(*args, transport=transport, **kwargs),
+    )
     monkeypatch.setattr(sys, 'argv', [str(runner), '--live', '--cases', str(fixture),
                                      '--output', str(output)])
     fixture.write_text(json.dumps([case] * 2))

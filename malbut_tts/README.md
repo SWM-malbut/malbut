@@ -40,11 +40,33 @@ backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하
 
 | 방향 | 이름 | 타입 및 데이터 |
 | --- | --- | --- |
-| Manager → TTS | `/malbut/tts/request` Topic | `SpeechRequest`: `text`, `audio_id`, `request_type`, `playback_id`, `request_id`, `interim`, `owner_goal_id` |
+| Manager → TTS | `/malbut/tts/request` Topic | `SpeechRequest`: `text`, `audio_id`, `request_type`, `playback_id`, `request_id`, `interim`, `owner_goal_id`, optional `prepared_id`/`generation_id` |
+| Agent → TTS (선택 기능) | `/malbut/tts/prepare` Topic | `SpeechPreparation`: `operation`, `text`, `request_id`, `generation_id`, `prepared_id`; 무음 준비/취소만 수행 |
 | Manager → TTS | `/malbut/tts/playback_control` Service | `ControlSpeechPlayback`: `playback_id`, `command` → `accepted` |
 | TTS → Manager | `/malbut/tts/playback_status` Topic | `SpeechPlaybackStatus`: `playback_id`, `state` |
 
-Agent와 STT는 기존 `/malbut/speech/*` 주소의 **Manager**에 요청한다.
+실험 옵션 `piper_prefetch_enabled`는 기본 `false`다. 켜면 Agent의
+`/malbut/tts/prepare` (`SpeechPreparation`)에서 무음 준비/취소를 받는다.
+기존 Piper 모델과 작업 스레드를 재사용하며, 재생과 대기 요청이 없는 동안
+첫 구간 하나만 준비한다. 준비 PCM은 최대 2 MiB, 8초 동안 한 건만 보관하며
+이 단계에서는 스피커를 열거나 재생 상태를 발행하지 않는다.
+2 MiB는 캐시 payload 한도이며 native 합성 배열과 재생 복사를 포함한 프로세스
+전체 메모리 한도는 아니다.
+Agent의 최종 검증과 commit을 마친 기존 `SpeechRequest` 한 건이
+`prepared_id`, `generation_id`를 전달하면 요청/세대/토큰, 정확 원문 prefix,
+최종 전체 텍스트를 정규화한 첫 구간과 합성 설정이 모두 같은 경우에만
+한 번 재사용한다. 나머지 구간은 중복 없이 이어서 합성한다.
+불일치·만료·취소된 준비는 버리고 기존 합성을 수행한다. `audio_id` 경로는
+이 캐시를 사용하지 않는다. STOP/종료도 준비 작업을 취소하지만 진행 중인
+ONNX 호출은 반환까지 기다려야 하므로 잘못된 추측이 대기를 늘릴 수 있다.
+Agent 쪽 선택 옵션도 함께 켜야 한다. 기본 꺼짐/빈 필드는 소스 동작의
+호환성을 뜻하며 이전 ROS wire schema와의 호환성을 보장하지 않는다.
+배포할 때 `malbut_interfaces`와 모든 `SpeechRequest` 발행자·구독자
+(Agent, system_manager, TTS, STT 알림 경로 등)를 함께 재빌드·재시작하며,
+이전 compiled 메시지를 쓰는 프로세스와 혼합하지 않는다.
+실제 조기 문장 재생이나 종단간 지연 단축을 보장하는 기능은 아니다.
+
+Agent와 STT의 발화·재생 제어 요청은 기존 `/malbut/speech/*` 주소의 **Manager**로 보낸다.
 TTS는 Manager의 실행용 `/malbut/tts/*` 주소만 제공한다. 발화 소유권과 미션의
 스피커 선점은 [Manager 발화 실행](../malbut_system_manager/README.md#발화-실행)을 따른다.
 `accepted`는 Manager의 접수 상태이며 실제 재생 시작·완료를 뜻하지 않는다.

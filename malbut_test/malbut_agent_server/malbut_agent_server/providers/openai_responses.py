@@ -3,10 +3,12 @@
 import copy
 import base64
 import hashlib
+import http.client
 import json
 import time
 import urllib.error
 import urllib.request
+import weakref
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -40,6 +42,9 @@ from malbut_agent_server.prompting import (
     system_instructions_for_tools,
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
+from malbut_agent_server.providers.http_pool import (
+    HTTPConnectionPool, uses_environment_proxy,
+)
 from malbut_agent_server.providers.reliable import (
     classify_exception,
     NormalizedProviderError,
@@ -206,7 +211,17 @@ class OpenAIResponsesProvider(AgentProvider):
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
         self._validate_base_url()
-        self.transport = transport or self._urllib_transport
+        self._http_pool = HTTPConnectionPool() if transport is None else None
+        self._transport_finalizer = (
+            weakref.finalize(self, self._http_pool.close)
+            if self._http_pool is not None else None
+        )
+        self.transport = transport if transport is not None else self._pooled_transport
+
+    def close(self) -> None:
+        """Release owned idle connections; injected transports stay caller-owned."""
+        if self._transport_finalizer is not None:
+            self._transport_finalizer()
 
     @property
     def _api_key(self) -> str:
@@ -287,15 +302,26 @@ class OpenAIResponsesProvider(AgentProvider):
         }
         from malbut_agent_server.memory_trace import model_input_ready
         model_input_ready(prepared.text, provider='openai', model=self.model)
+        from malbut_agent_server.speech_prefetch import current_prefetch
+
+        prefetch = current_prefetch(request.request_id)
+        if prefetch is not None and not prefetch.begin_attempt():
+            prefetch = None
         started = time.perf_counter()
         try:
-            response = self.transport(
-                f'{self.base_url}/responses',
-                headers,
-                payload,
-                self.timeout_seconds,
-            )
+            url = f'{self.base_url}/responses'
+            if (prefetch is not None and self._http_pool is not None
+                    and self.transport == self._pooled_transport
+                    and not uses_environment_proxy(url)):
+                response = self._pooled_transport(
+                    url, headers, dict(payload, stream=True), self.timeout_seconds,
+                    stream_turn=prefetch,
+                )
+            else:
+                response = self.transport(url, headers, payload, self.timeout_seconds)
         except Exception as error:
+            if prefetch is not None:
+                prefetch.fail_attempt()
             failure = classify_exception(error).code
             if failure is ProviderFailureCode.AUTHENTICATION:
                 self._report_key('invalid', 'authentication_failed')
@@ -307,17 +333,23 @@ class OpenAIResponsesProvider(AgentProvider):
         memory_enabled = (
             memory_context is not None and memory_mode != 'answer_only'
         )
-        decision, memory_proposal = self._parse_output(
-            response, memory_enabled=memory_enabled,
-            automatic_extraction=memory_mode == 'automatic_extraction',
-            mapping_clarification='clarification_for' in payload['text']['format']['schema']['properties'],
-        )
         try:
+            decision, memory_proposal = self._parse_output(
+                response, memory_enabled=memory_enabled,
+                automatic_extraction=memory_mode == 'automatic_extraction',
+                mapping_clarification='clarification_for' in payload['text']['format']['schema']['properties'],
+            )
             decision.validate()
-        except (ValueError, TypeError) as error:
+        except (ProviderError, ValueError, TypeError) as error:
+            if prefetch is not None:
+                prefetch.fail_attempt()
+            if isinstance(error, ProviderError):
+                raise
             raise ProviderError(
                 'OpenAI returned an invalid normalized decision'
             ) from error
+        if prefetch is not None:
+            prefetch.approve_provider(decision)
         return ProviderResult(
             decision=decision,
             provider=self.name,
@@ -794,6 +826,47 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ProviderError(
                 'OpenAI request failed due to a network error'
             ) from error
+        return OpenAIResponsesProvider._decode_response_body(response_body)
+
+    def _pooled_transport(self, url, headers, payload, timeout_seconds, *, stream_turn=None):
+        try:
+            self._http_pool.check_open()
+            if uses_environment_proxy(url):
+                if stream_turn is not None:
+                    payload = dict(payload)
+                    payload.pop('stream', None)
+                return self._urllib_transport(url, headers, payload, timeout_seconds)
+            reader = None
+            if stream_turn is not None:
+                from malbut_agent_server.providers.response_stream import read_response_stream
+
+                reader = lambda response, limit: read_response_stream(response, limit, stream_turn)
+            response_body = self._http_pool.post(
+                url, headers,
+                json.dumps(payload, ensure_ascii=True, separators=(',', ':')).encode('utf-8'),
+                timeout_seconds, MAX_PROVIDER_RESPONSE_BYTES, reader=reader,
+            )
+        except urllib.error.HTTPError as error:
+            try:
+                if error.code == 429 and _insufficient_quota(error):
+                    raise NormalizedProviderError(ProviderFailureCode.QUOTA) from error
+                raise ProviderError(
+                    f'OpenAI request failed with HTTP status {error.code}'
+                ) from error
+            finally:
+                error.close()
+        except http.client.HTTPException as error:
+            raise ProviderError('OpenAI request failed due to a network error') from (
+                urllib.error.URLError(error)
+            )
+        except OSError as error:
+            # A disconnected keep-alive socket may fail after the server read
+            # the POST. Leave retry decisions to the existing reliability layer.
+            raise ProviderError('OpenAI request failed due to a network error') from error
+        return response_body if stream_turn is not None else self._decode_response_body(response_body)
+
+    @staticmethod
+    def _decode_response_body(response_body):
         if len(response_body) > MAX_PROVIDER_RESPONSE_BYTES:
             raise ProviderError(
                 'OpenAI response exceeded the size limit'

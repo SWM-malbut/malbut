@@ -11,6 +11,7 @@ from typing import Optional, Sequence
 RESPONSE_TOPIC = '/malbut/tts/request'
 STATUS_TOPIC = '/malbut/tts/playback_status'
 CONTROL_SERVICE = '/malbut/tts/playback_control'
+PREPARATION_TOPIC = '/malbut/tts/prepare'
 # How the OpenAI key is doing, for key_sync to tell the web (std_msgs/String JSON).
 KEY_HEALTH_TOPIC = '/malbut/keys/health'
 
@@ -41,6 +42,10 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('piper_threads', 3)
                 self.declare_parameter('piper_speed', 0.9)
                 self.declare_parameter('piper_max_chars', 40)
+                self.declare_parameter('piper_prefetch_enabled', False)
+                self._prefetch_enabled = self.get_parameter('piper_prefetch_enabled').value
+                if type(self._prefetch_enabled) is not bool:
+                    raise ValueError('piper_prefetch_enabled must be a boolean')
                 self.declare_parameter('api_model', 'gpt-4o-mini-tts')
                 self.declare_parameter('api_voice', 'nova')
                 self.declare_parameter('api_timeout_seconds', 10.0)
@@ -71,6 +76,10 @@ def create_tts_node(runtime_factory=None):
                 self.create_subscription(
                     SpeechRequest, RESPONSE_TOPIC, self._receive, qos,
                 )
+                if self._prefetch_enabled:
+                    from malbut_interfaces.msg import SpeechPreparation
+                    self.create_subscription(
+                        SpeechPreparation, PREPARATION_TOPIC, self._receive_preparation, qos)
                 self.create_service(
                     ControlSpeechPlayback, CONTROL_SERVICE, self._control,
                 )
@@ -83,6 +92,8 @@ def create_tts_node(runtime_factory=None):
             backend = self.get_parameter('backend').value
             if backend not in ('openai', 'qwen-cuda', 'piper'):
                 raise ValueError('backend must be openai, qwen-cuda or piper')
+            if self._prefetch_enabled and backend != 'piper':
+                raise ValueError('Speech preparation requires the live Piper backend')
             if backend == 'qwen-cuda' and not model_path.strip():
                 raise ValueError(
                     'Set the local TTS model path with '
@@ -141,6 +152,7 @@ def create_tts_node(runtime_factory=None):
                 max_pending_requests=self.get_parameter('max_pending_requests').value,
                 pending_timeout_s=self.get_parameter('pending_timeout_s').value,
                 prerecorded=PrerecordedAudio(self.get_parameter('audio_directory').value or None),
+                **({'prefetch_enabled': True} if self._prefetch_enabled else {}),
             )
 
         def _watch_key(self, key):
@@ -182,9 +194,21 @@ def create_tts_node(runtime_factory=None):
                 audio_id = getattr(message, 'audio_id', '')
                 if audio_id:
                     options['audio_id'] = audio_id
+                if self._prefetch_enabled:
+                    prepared_id = getattr(message, 'prepared_id', '')
+                    generation_id = getattr(message, 'generation_id', '')
+                    if prepared_id and generation_id:
+                        options.update(prepared_id=prepared_id, generation_id=generation_id)
                 self._runtime.submit(
                     message.text, message.request_type, interim=message.interim, **options,
                 )
+
+        def _receive_preparation(self, message):
+            if not self._closing and message.operation in (0, 1):
+                self._runtime.prepare(
+                    message.text, request_id=message.request_id,
+                    generation_id=message.generation_id, prepared_id=message.prepared_id,
+                    cancel=message.operation == 1)
 
         def _control(self, request, response):
             response.accepted = (

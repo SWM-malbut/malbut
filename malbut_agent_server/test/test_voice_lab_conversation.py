@@ -200,6 +200,8 @@ def test_live_runtime_startup_is_lazy_and_role_models_do_not_replace_foreground(
 
     monkeypatch.setattr(OpenAIResponsesProvider, '_urllib_transport',
                         staticmethod(forbidden_transport))
+    monkeypatch.setattr(OpenAIResponsesProvider, '_pooled_transport',
+                        staticmethod(forbidden_transport))
     # Tokenizer warmup is local infrastructure, not an API call; avoid even its
     # optional first-run download so this test is entirely offline.
     monkeypatch.setattr(factory, 'count_tokens', lambda value: 1)

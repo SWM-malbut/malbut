@@ -20,6 +20,37 @@ def _same(left, right):
     return left.text.strip() == right.text.strip()
 
 
+def _resegmented_overlap(retained, decoded):
+    """Recognize an exact overlap prefix without inventing segment boundaries."""
+    if not retained or not decoded:
+        return False
+    if len(decoded) >= len(retained) and all(
+            _same(old, new) for old, new in zip(retained, decoded)):
+        return False  # Same partition with changed timing still needs recovery.
+    for segments in (retained, decoded):
+        if (any(not segment.timing_valid for segment in segments)
+                or any(left.end > right.start for left, right in zip(segments, segments[1:]))):
+            return False
+    old_text = ''.join(segment.text for segment in retained)
+    new_text = ''.join(segment.text for segment in decoded)
+    if (not old_text.strip() or not new_text.startswith(old_text)
+            or abs(retained[0].start - decoded[0].start) > 0.8):
+        return False
+    if (len(new_text) > len(old_text) and old_text[-1].isalnum()
+            and new_text[len(old_text)].isalnum()):
+        return False  # A word extension/correction is not merely resegmentation.
+    prefix_length = 0
+    for segment in decoded:
+        prefix_length += len(segment.text)
+        if prefix_length == len(old_text):
+            return abs(retained[-1].end - segment.end) <= 0.8
+        if prefix_length > len(old_text):
+            # The matching text can end inside a merged segment. Its old end
+            # must lie within that segment, but is never used to split it.
+            return segment.start - 0.8 <= retained[-1].end <= segment.end + 0.8
+    return False
+
+
 class IncrementalWhisperStream:
     """Keep agreed text and decode an overlapping suffix of the original audio.
 
@@ -31,8 +62,15 @@ class IncrementalWhisperStream:
     overlap re-decodes available audio, preserving the already released prefix.
     """
 
-    def __init__(self, model):
+    def __init__(self, model, *, min_trim_advance_s: float = 4.0):
+        # This controls how often a safe boundary is used, not whether one is
+        # safe. Keep the previous 8 s setting available for controlled replays.
+        if (type(min_trim_advance_s) not in (int, float)
+                or not math.isfinite(min_trim_advance_s) or min_trim_advance_s <= 0
+                or round(min_trim_advance_s * 16000) < 1):
+            raise ValueError('min_trim_advance_s must be finite and at least one sample')
         self.model = model
+        self._min_trim_advance_samples = round(min_trim_advance_s * 16000)
         self._committed = []
         self._previous = []
         self._offset_samples = 0
@@ -114,6 +152,7 @@ class IncrementalWhisperStream:
             'trimmed_s': offset, 'fallback_full': False, 'final': final,
             'tail_gap_s': None, 'fallback_reason': None,
             'reused_tail_coverage_end_s': None,
+            'reused_resegmented_overlap': False,
         }
         if not any(pcm):
             self._untrimmed_coverage = None
@@ -145,6 +184,25 @@ class IncrementalWhisperStream:
             and abs(old.end - new.end) <= 0.8
             for old, new in zip(retained, decoded)
         )
+        if (not overlap_matches and self._offset_samples and speech_end_s is not None
+                and not uncovered_tail and not invalid_timing
+                and _resegmented_overlap(retained, decoded)):
+            prefix = [segment for segment in self._committed
+                      if round(segment.end * 16000) <= self._offset_samples]
+            if prefix + retained == self._committed:
+                # Text is unchanged across the overlap; only its native
+                # partition changed. Preserve the earlier prefix, and demote
+                # the entire decoded suffix until another hypothesis agrees.
+                # Keep the existing PCM watermark, including a merged segment
+                # whose matching text ends before its timestamp boundary.
+                self._committed = prefix
+                self._previous = decoded
+                self._untrimmed_coverage = None
+                self.last_metrics.update(
+                    committed_s=prefix[-1].end if prefix else 0.0,
+                    reused_resegmented_overlap=True,
+                )
+                return _text(prefix + decoded)
         reset = not overlap_matches or bool(
             self._offset_samples and (uncovered_tail or invalid_timing))
         if reset and self._offset_samples:
@@ -207,9 +265,18 @@ class IncrementalWhisperStream:
         if self._committed:
             stable_end = self._committed[-1].end
             # Keep the newest completed segment, including its acoustic context.
-            if (len(self._committed) >= 2
-                    and self._committed[-2].end >= self._offset_samples / 16000 + 8):
-                self._offset_samples = round(self._committed[-2].end * 16000)
+            # Accepted timestamp drift can make adjacent committed segments
+            # overlap. An older end is not a safe release point when it lies
+            # inside another segment; retain the PCM instead of changing times.
+            newest_start = round(self._committed[-1].start * 16000)
+            for segment in reversed(self._committed[:-1]):
+                boundary = round(segment.end * 16000)
+                if (boundary >= self._offset_samples + self._min_trim_advance_samples
+                        and boundary <= newest_start
+                        and not any(round(kept.start * 16000) < boundary
+                                    < round(kept.end * 16000) for kept in self._committed)):
+                    self._offset_samples = boundary
+                    break
             self.last_metrics['committed_s'] = stable_end
         self.last_metrics['trimmed_s'] = self._offset_samples / 16000
         self._untrimmed_coverage = (

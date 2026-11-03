@@ -25,6 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MissionStatus.msg"
   "msg/SensorProcessingTrace.msg"
   "msg/SpeechPlaybackStatus.msg"
+  "msg/SpeechPreparation.msg"
   "msg/SpeechInputStatus.msg"
   "msg/SpeechRequest.msg"
   "msg/SpeechTranscript.msg"

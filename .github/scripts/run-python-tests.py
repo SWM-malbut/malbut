@@ -23,7 +23,7 @@ AGENT_ROS_TESTS = (
     'test_ros_weather_communication.py', 'test_weather_action.py',
     'test_speech_addressee_service_ros.py', 'test_fall_runtime.py',
     'test_situation_action_ros.py', 'test_situation_recovery_ros.py',
-    'test_ros_speech_missions.py', 'test_homecam_query.py',
+    'test_ros_speech_missions.py', 'test_ros_speech_prefetch.py', 'test_homecam_query.py',
     'test_manager_boundary_ros.py',
     'test_voice_map_actions_ros.py', 'test_voice_lab_graph.py', 'test_speech_scene_ros.py',
     'test_patrol_conversation_ros.py',

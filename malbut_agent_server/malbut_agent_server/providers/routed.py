@@ -92,6 +92,13 @@ class RoutedAgentProvider(AgentProvider):
         self.fallback_provider = fallback_provider
         self.policy_revision = policy_revision
 
+    def close(self) -> None:
+        """Release transports for every role, including shared fallbacks."""
+        from malbut_agent_server.providers.base import close_providers
+
+        close_providers(self.general_provider, self.robot_planner_provider,
+                        self.fallback_provider)
+
     def complete(
         self,
         request: AgentRequest,

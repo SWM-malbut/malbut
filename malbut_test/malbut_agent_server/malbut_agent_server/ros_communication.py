@@ -85,6 +85,7 @@ def create_communication_node(
             self._receipts = None
             self._closing = False
             self._speech_ready = False
+            self._preparation = None
             self._input_utterance_id = None
             self._seen_input_ids = deque(maxlen=128)
             self._addressee_waiters = {}
@@ -107,6 +108,13 @@ def create_communication_node(
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
+                if settings.speech_prefetch_enabled:
+                    from malbut_interfaces.msg import SpeechPreparation
+
+                    self._preparation_type = SpeechPreparation
+                    self._preparation = self.create_publisher(
+                        SpeechPreparation, '/malbut/tts/prepare', qos,
+                    )
                 if settings.provider == 'openai':
                     # How the OpenAI key is doing, for key_sync to tell the web.
                     from malbut_agent_server.factory import openai_key_for
@@ -171,6 +179,7 @@ def create_communication_node(
                     self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
+                    **({'prefetch_enabled': True} if settings.speech_prefetch_enabled else {}),
                     **({'scene_source': self._scene} if self._scene is not None else {}),
                     **({'missions': self.speech_missions}
                        if self.speech_missions is not None else {}),
@@ -253,7 +262,7 @@ def create_communication_node(
             self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
         def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False,
-                request_id='', audio_id='', playback_id=''):
+                request_id='', audio_id='', playback_id='', prepared_id='', generation_id=''):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
@@ -267,6 +276,9 @@ def create_communication_node(
                 if audio_id:
                     text = CATALOG[audio_id]
             options = {'audio_id': audio_id} if audio_id else {}
+            if (self._preparation is not None and prepared_id and generation_id
+                    and not audio_id and not interim and request_type == SpeechRequest.DIALOGUE):
+                options.update(prepared_id=prepared_id, generation_id=generation_id)
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type, interim=interim,
                 playback_id=playback_id or str(uuid4()), request_id=request_id, **options,
@@ -486,9 +498,26 @@ def create_communication_node(
                 'event': 'fall_check_voice', 'kind': kind, 'utterance_id': utterance_id,
             }, ensure_ascii=False))
 
+        def _drain_preparations(self):
+            if self._preparation is not None:
+                for event in self.dialogue.drain_preparations():
+                    if self._closing and event.operation != 'cancel':
+                        continue
+                    try:
+                        self._preparation.publish(self._preparation_type(
+                            operation=(self._preparation_type.PREPARE if event.operation == 'prepare'
+                                       else self._preparation_type.CANCEL),
+                            request_id=event.request_id, generation_id=event.generation_id,
+                            prepared_id=event.prepared_id, text=event.text,
+                        ))
+                    except Exception:
+                        # This optional cache hint cannot block final speech.
+                        self.get_logger().warning('speech_preparation_publish_skipped')
+
         def _drain_dialogue(self):
             if self._closing:
                 return
+            self._drain_preparations()
             self.weather_query.drain()
             if self.dialogue.startup_error:
                 self.get_logger().error('speech_dialogue startup failed')
@@ -500,6 +529,8 @@ def create_communication_node(
                     continue
                 if (self._patrol_chat is not None
                         and not self._patrol_chat.allows_reply(response.get('utterance_id'))):
+                    if self._preparation is not None:
+                        self.dialogue.discard_reply(response)
                     if response.get('utterance_id') == self._awaiting_reply:
                         self._awaiting_reply = None
                     continue
@@ -515,7 +546,8 @@ def create_communication_node(
                             request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
                                         if (response.get('kind') == 'acknowledgement'
                                             and not prerecorded_audio)
-                                        else response.get('utterance_id', ''))))
+                                        else response.get('utterance_id', '')),
+                            **getattr(response, '_prepared_hint', {})))
                     if published is not None:
                         acknowledge(published['text'])
                 if published is not None:
@@ -526,6 +558,8 @@ def create_communication_node(
                               if getattr(response, '_companion_session', None) else published)
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **logged,
+                        **({'prefetch': dict(response._prefetch.metrics)}
+                           if getattr(response, '_prefetch', None) is not None else {}),
                     }, ensure_ascii=False))
 
         def _mission_event(self, event):
@@ -550,6 +584,9 @@ def create_communication_node(
         def begin_shutdown(self):
             """Reject new work and release classification responses as unknown."""
             self._closing = True
+            if self._preparation is not None and self.dialogue is not None:
+                self.dialogue.cancel_preparations()
+                self._drain_preparations()
             if self.situation is not None:
                 self.situation.close()
             for waiters in self._addressee_waiters.values():
