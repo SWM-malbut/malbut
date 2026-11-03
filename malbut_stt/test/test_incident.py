@@ -279,6 +279,7 @@ def test_vad_decision_and_model_exception_are_unchanged(capture):
 def test_pipeline_records_filtered_original_text_and_actual_vad(capture):
     r = capture()
     published = []
+    input_statuses = []
     voice = b'\x01\x00' * 320
 
     def publish(uid, text):
@@ -289,6 +290,7 @@ def test_pipeline_records_filtered_original_text_and_actual_vad(capture):
         recorder_factory=lambda: None, wake=SimpleNamespace(), transcriber=SimpleNamespace(),
         is_speech=lambda f, rate: f == voice, diagnostics=r,
         publish_transcript=publish,
+        publish_input_status=lambda *status: input_statuses.append(status),
         publish_control=lambda *args: None, publish_interruption=lambda *args: None,
         report=lambda event: None)
     try:
@@ -297,7 +299,8 @@ def test_pipeline_records_filtered_original_text_and_actual_vad(capture):
         uid = pipeline.session.utterance_id
         pipeline._accept_result('command', pipeline._generation, uid, PHRASE, None)
         assert published == []
-        assert pipeline._reply_request_id is None
+        assert input_statuses == [('', uid, 'started'), ('', uid, 'filtered')]
+        assert pipeline._reply_request_id == uid and pipeline._followup_pending
     finally:
         pipeline.close()
         r.close()
