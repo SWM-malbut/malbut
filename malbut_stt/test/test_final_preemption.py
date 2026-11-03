@@ -30,7 +30,8 @@ def wait_for(predicate, pipeline=None):
 def make_pipeline():
     created = []
 
-    def make(*, decode=None, cancel=None, start=True, on_trace=None, stream=None):
+    def make(*, decode=None, cancel=None, start=True, on_trace=None, stream=None,
+             endpoint_preempt_s=None):
         state = SimpleNamespace(calls=[], reports=[], traces=[], transcripts=[], releases=[])
 
         def transcribe(pcm, rate, **options):
@@ -57,6 +58,7 @@ def make_pipeline():
             settings=CaptureSettings(silence_timeout_s=2, min_speech_s=.02,
                                      max_utterance_s=None),
             endpoint_predecode_s=.4, endpoint_min_silence_s=.6,
+            endpoint_preempt_s=endpoint_preempt_s,
             clock=lambda: 0.,
         )
         state.pipeline = pipeline
@@ -173,7 +175,9 @@ def test_running_obsolete_preview_is_cancelled_and_final_keeps_all_pcm(make_pipe
     assert pipeline._partial_cost_s is None
 
 
-def test_current_endpoint_finishes_without_preemption_or_duplicate_final(make_pipeline):
+@pytest.mark.parametrize('endpoint_preempt_s', [None, .8])
+def test_current_endpoint_finishes_without_preemption_or_duplicate_final(
+        make_pipeline, endpoint_preempt_s):
     entered, release = Event(), Event()
     cancellations = []
 
@@ -182,11 +186,14 @@ def test_current_endpoint_finishes_without_preemption_or_duplicate_final(make_pi
         assert release.wait(2)
         return FINAL_TEXT
 
-    state = make_pipeline(decode=decode, cancel=lambda: cancellations.append(True))
+    state = make_pipeline(decode=decode, cancel=lambda: cancellations.append(True),
+                          endpoint_preempt_s=endpoint_preempt_s)
     state.releases.append(release)
     pipeline = state.pipeline
     key = queue_preview(pipeline, 'endpoint')
     assert entered.wait(1)
+    pipeline.feed(QUIET * 20)
+    pipeline.poll()  # .8 s silence must leave a current endpoint alone.
     finish(pipeline, 'endpoint', current=True)
     pipeline.poll()
     assert cancellations == [] and pipeline._endpoint_final == key
@@ -375,3 +382,170 @@ def test_completed_preview_is_not_cancelled_or_rolled_back(make_pipeline):
     allow_result.set()
     wait_for(lambda: state.transcripts, pipeline)
     assert state.transcripts[0][1] == FINAL_TEXT and committed == ['safe prefix']
+
+
+def test_stable_silence_replaces_queued_partial_with_fresh_endpoint_but_keeps_fallback(
+        make_pipeline):
+    incomplete = '마지막 말을 다 한 다음에'
+    state = make_pipeline(start=False, decode=lambda *_args, **_kw: incomplete,
+                          endpoint_preempt_s=.8)
+    pipeline = state.pipeline
+    key = queue_preview(pipeline, 'partial')
+    pipeline.feed(QUIET * 39)
+    pipeline.poll()
+    assert not any(event == 'job_preempted' for event, _ in state.traces)
+    pipeline.feed(QUIET)
+    pipeline.poll()
+    assert pipeline._capture_id == key[1] and not pipeline._busy
+    for _ in range(3):
+        pipeline.poll()
+    assert state.reports.count('preview_preempted:kind=partial') == 1
+    start_worker(pipeline)
+    wait_for(lambda: pipeline._endpoint_result is not None, pipeline)
+    assert not state.transcripts  # An incomplete sentence still needs 2 s.
+    assert len(state.calls) == 1
+    assert state.calls[0][0] == VOICE * 100 + QUIET * 40
+    assert state.calls[0][1]['speech_end_s'] == pytest.approx(2.)
+    assert state.calls[0][1]['final'] is False
+    assert pipeline._partial_cost_s is None
+    pipeline.feed(QUIET * 59)
+    pipeline.poll()
+    assert not state.transcripts and pipeline._capture_id == key[1]
+    pipeline.feed(QUIET)
+    pipeline.poll()
+    assert state.transcripts == [(key[1], incomplete)] and len(state.calls) == 1
+    assert [fields['reason'] for event, fields in state.traces
+            if event == 'job_preempted'] == ['endpoint_priority']
+
+
+def test_early_preemption_retries_native_reset_then_leaves_current_endpoint_running(
+        make_pipeline):
+    before_reset, allow_reset, in_native = Event(), Event(), Event()
+    endpoint_entered, finish_endpoint, cancelled = Event(), Event(), Event()
+    calls, cancellation_calls = [], []
+
+    def cancel():
+        cancellation_calls.append(True)
+        cancelled.set()
+
+    def decode(_pcm, **options):
+        calls.append(options)
+        if len(calls) == 1:
+            before_reset.set()
+            assert allow_reset.wait(2)
+            cancelled.clear()
+            in_native.set()
+            assert cancelled.wait(2)
+            raise RuntimeError('cancelled stale partial')
+        cancelled.clear()
+        endpoint_entered.set()
+        assert finish_endpoint.wait(2)
+        assert not cancelled.is_set(), 'partial cancellation leaked into the endpoint'
+        return FINAL_TEXT
+
+    state = make_pipeline(decode=decode, cancel=cancel, endpoint_preempt_s=.8)
+    state.releases.extend([allow_reset, cancelled, finish_endpoint])
+    pipeline = state.pipeline
+    key = queue_preview(pipeline, 'partial')
+    assert before_reset.wait(1)
+    pipeline.feed(QUIET * 40)
+    pipeline.poll()
+    assert len(cancellation_calls) == 1
+    allow_reset.set()
+    assert in_native.wait(1) and not cancelled.is_set()
+    pipeline.poll()
+    wait_for(endpoint_entered.is_set, pipeline)
+    assert len(cancellation_calls) >= 2
+    count_at_endpoint = len(cancellation_calls)
+    for _ in range(5):
+        pipeline.poll()
+    pipeline.feed(QUIET * 60)  # Final capture waits for this current endpoint.
+    pipeline.poll()
+    assert len(cancellation_calls) == count_at_endpoint
+    assert state.reports.count('preview_preempted:kind=partial') == 1
+    assert pipeline._endpoint_final == key
+    finish_endpoint.set()
+    wait_for(lambda: state.transcripts, pipeline)
+    assert state.transcripts == [(key[1], FINAL_TEXT)] and len(calls) == 2
+    assert all(options['final'] is False for options in calls)
+    assert 'partial_failed' not in state.reports and pipeline._partial_cost_s is None
+
+
+def test_buffered_resumed_speech_is_consumed_before_silence_preemption(make_pipeline):
+    state = make_pipeline(start=False, endpoint_preempt_s=.8)
+    pipeline = state.pipeline
+    first = queue_preview(pipeline, 'partial')
+    pipeline.feed(QUIET * 40)
+    pipeline.audio.put((pipeline._audio_generation, 0., VOICE, False))
+    pipeline.poll()
+    assert not any(event == 'job_preempted' for event, _ in state.traces)
+    assert pipeline.command_stream.collector.revision > first[2]
+    pipeline.feed(QUIET * 40)
+    pipeline.poll()
+    assert state.reports.count('preview_preempted:kind=partial') == 1
+    start_worker(pipeline)
+    wait_for(lambda: state.transcripts, pipeline)
+    assert state.transcripts == [(first[1], FINAL_TEXT)]
+    assert state.calls[0][0] == VOICE * 100 + QUIET * 40 + VOICE + QUIET * 40
+
+
+def test_resuming_after_preemption_invalidates_snapshot_and_preserves_entire_utterance(
+        make_pipeline):
+    entered, release = Event(), Event()
+    calls = []
+
+    def decode(pcm, **_):
+        calls.append(pcm)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(2)
+            return '다시 말하기 전의 결과'
+        return FINAL_TEXT
+
+    state = make_pipeline(decode=decode, endpoint_preempt_s=.8)
+    state.releases.append(release)  # Backend without cancel finishes serially.
+    pipeline = state.pipeline
+    key = queue_preview(pipeline, 'partial')
+    assert entered.wait(1)
+    pipeline.feed(QUIET * 40)
+    pipeline.poll()
+    pipeline.feed(VOICE * 20)
+    release.set()
+    wait_for(lambda: pipeline._endpoint_job is None, pipeline)
+    assert pipeline._endpoint_candidate is None and not state.transcripts
+    pipeline.feed(QUIET * 40)
+    wait_for(lambda: state.transcripts, pipeline)
+    assert state.transcripts == [(key[1], FINAL_TEXT)] and len(calls) == 2
+    assert calls[-1] == VOICE * 100 + QUIET * 40 + VOICE * 20 + QUIET * 20
+    assert 'partial_failed' not in state.reports
+
+
+def test_final_capture_does_not_repeat_early_preemption_request(make_pipeline):
+    entered, release = Event(), Event()
+
+    def decode(_pcm, *, final, **_):
+        if not final:
+            entered.set()
+            assert release.wait(2)
+        return FINAL_TEXT
+
+    state = make_pipeline(decode=decode, endpoint_preempt_s=.8)
+    state.releases.append(release)
+    pipeline = state.pipeline
+    key = queue_preview(pipeline, 'partial')
+    assert entered.wait(1)
+    pipeline.feed(QUIET * 40)
+    pipeline.poll()
+    pipeline.feed(QUIET * 60)
+    pipeline.poll()
+    assert state.reports.count('preview_preempted:kind=partial') == 1
+    release.set()
+    wait_for(lambda: state.transcripts, pipeline)
+    assert state.transcripts == [(key[1], FINAL_TEXT)]
+    assert len(state.calls) == 2 and state.calls[-1][1]['final'] is True
+
+
+@pytest.mark.parametrize('value', [True, '0.8', -.1, .19, 1.01, float('inf'), float('nan')])
+def test_invalid_endpoint_preemption_floor_rejected(make_pipeline, value):
+    with pytest.raises(ValueError, match='endpoint_preempt_s'):
+        make_pipeline(endpoint_preempt_s=value)

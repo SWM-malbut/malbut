@@ -85,6 +85,7 @@ class DialoguePipeline:
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  endpoint_min_silence_s: float = 1.0,
+                 endpoint_preempt_s: float | None = 0.8,
                  partial_interval_s: float | None = 2.0, on_partial=None,
                  adaptive_partials=True,
                  on_endpoint=None, publish_input_status=None, diagnostics=None,
@@ -166,6 +167,15 @@ class DialoguePipeline:
                 or not 0.2 <= endpoint_min_silence_s <= 1.0):
             raise ValueError('endpoint_min_silence_s must be between 0.2 and 1.0 seconds')
         self.endpoint_min_silence_s = endpoint_min_silence_s
+        if endpoint_preempt_s is not None and (
+                type(endpoint_preempt_s) not in (int, float)
+                or not math.isfinite(endpoint_preempt_s)
+                or not 0.2 <= endpoint_preempt_s <= 1.0):
+            raise ValueError('endpoint_preempt_s must be None or between 0.2 and 1.0 seconds')
+        # Scheduling only: complete-sentence and fallback silence rules above
+        # remain unchanged. None retains final-capture-only preemption.
+        self._endpoint_preempt_s = endpoint_preempt_s
+        self._endpoint_priority_revision = None
         if endpoint_predecode_s is not None and (
             type(endpoint_predecode_s) not in (int, float)
             or not math.isfinite(endpoint_predecode_s)
@@ -202,6 +212,7 @@ class DialoguePipeline:
         self._inference_lock = Lock()
         self._active_inference = None
         self._preempted_preview = None
+        self._last_preempted_preview = None
         self.stopping = Event()
         self.overflow = Event()
         self.capture_ready = Event()
@@ -554,14 +565,40 @@ class DialoguePipeline:
                 or (owner == final_key and not self._endpoint_is_partial)):
             return  # The current endpoint can still supply the final result.
         kind = 'partial' if self._endpoint_is_partial else 'endpoint'
+        self._request_preview_preemption(owner, kind, reason='final_capture')
+
+    def _request_preview_preemption(self, owner, kind, *, reason):
         target = (kind, owner[0], owner[1:])
+        if self._last_preempted_preview == target:
+            return  # A later final capture must not report the same request twice.
+        self._last_preempted_preview = target
         with self._inference_lock:
             self._preempted_preview = target
             self._cancel_preempted_preview_locked()
-        self._trace_job('job_preempted', *target, reason='final_capture')
+        self._trace_job('job_preempted', *target, reason=reason)
         # One content-free owner-thread marker; this records the request,
         # not proof that the backend actually aborted a native decode.
         self.report('preview_preempted:kind=' + kind)
+
+    def _prioritize_endpoint(self):
+        """Give stable silence one fresh decode without deciding the turn ended."""
+        collector = self.command_stream.collector
+        owner = self._endpoint_job
+        if (self._endpoint_preempt_s is None or self._busy or self._discard_capture
+                or not self.session.active or self._capture_id is None
+                or owner is None or not self._endpoint_is_partial
+                or owner[:2] != (self._generation, self._capture_id)
+                or collector.silent_frames * .02 < self._endpoint_preempt_s
+                or not self.command_stream.endpoint_is_current(collector.revision)):
+            return
+        revision = (self._generation, self._capture_id, collector.revision)
+        if self._endpoint_priority_revision == revision:
+            return
+        self._endpoint_priority_revision = revision
+        # The earlier .4 s snapshot may omit weak trailing speech. Use the
+        # currently observed PCM, then revalidate its revision before enqueue.
+        self._endpoint_candidate = (self._capture_id, collector.snapshot('endpoint_check'))
+        self._request_preview_preemption(owner, 'partial', reason='endpoint_priority')
 
     def _infer(self):
         while not self.stopping.is_set():
@@ -808,6 +845,9 @@ class DialoguePipeline:
                 if result[1] == self._generation:
                     self._busy = False
                 self._accept_result(*result)
+        # Buffered resumed speech and any completed result are processed first.
+        # Do not cancel on an obsolete silence snapshot still in the input queue.
+        self._prioritize_endpoint()
         self._submit_endpoint()
         self._finish_ready_endpoint()
         if self.session.tick():
@@ -1207,7 +1247,7 @@ class DialoguePipeline:
             return
         if error_name == 'PreviewSuperseded':
             self._trace_job('result_rejected', kind, generation, token,
-                            reason='final_capture_preempted')
+                            reason='preview_preempted')
             return
         if self._endpoint_final == key:
             self._endpoint_final = None
