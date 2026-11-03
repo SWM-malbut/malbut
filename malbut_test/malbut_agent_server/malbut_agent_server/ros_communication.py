@@ -290,12 +290,13 @@ def create_communication_node(
                     return
                 self._seen_input_ids.append(uid)
                 self._input_utterance_id = None if unavailable else uid
-            elif (message.state == SpeechInputStatus.FAILED
+            elif (message.state in (SpeechInputStatus.FAILED, SpeechInputStatus.FILTERED)
                   and uid == self._input_utterance_id):
                 self._input_utterance_id = None
                 if not unavailable:
-                    self.say('잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.',
-                             interim=False, request_id=uid)
+                    text = ('다시 말씀해 주실래요?' if message.state == SpeechInputStatus.FILTERED
+                            else '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.')
+                    self.say(text, interim=False, request_id=uid)
 
         def _receive_speech(self, message):
             if self._closing:
