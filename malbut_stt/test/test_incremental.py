@@ -77,16 +77,147 @@ def test_final_changed_overlap_falls_back_instead_of_joining_incompatible_text()
     assert stream.last_metrics['trimmed_s'] == stream.last_metrics['committed_s'] == 0
 
 
-def test_changed_segment_partition_recovers_even_when_its_words_are_unchanged():
+@pytest.mark.parametrize('audio_start_s', [0.0, 15.5, 19.5])
+def test_merged_overlap_reuses_exact_text_without_releasing_more_pcm(audio_start_s):
     suffix = segments(14, first=10, offset=19.5)
     combined = [SimpleNamespace(text=''.join(segment.text for segment in suffix),
                                 start=suffix[0].start, end=suffix[-1].end)]
+    model = Model(segments(12), segments(12), combined)
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    prefix = tuple(stream._committed[:-1])
+    assert stream.transcribe(pcm(28 - audio_start_s), 16000, final=True,
+                             audio_start_s=audio_start_s,
+                             speech_end_s=27.5) == expected(14)
+    assert len(model.calls) == 3  # No duplicate full decode for a merged segment.
+    assert stream.last_metrics['reused_resegmented_overlap'] is True
+    assert stream.last_metrics['fallback_full'] is False
+    assert stream.retained_start_s == 19.5
+    assert tuple(stream._committed) == prefix
+    # The old overlap ends inside this merged segment. Keep the whole segment
+    # revisable; do not fabricate a timestamp at its matching text boundary.
+    assert len(stream._previous) == 1
+    assert stream._previous[0].start == pytest.approx(20.2)
+    assert stream._previous[0].end == 27.5
+    assert len(model.calls[-1][0]) == 8.5 * 16000
+    assert model.calls[-1][0][-1] == 1234 / 32768
+
+
+def test_split_overlap_reuses_exact_text_and_new_timestamps_need_second_agreement():
+    suffix = segments(14, first=10, offset=19.5)
+    split = [SimpleNamespace(text=' 단어10', start=.7, end=2.),
+             SimpleNamespace(text=' 단어11', start=2.7, end=4.), suffix[-1]]
+    model = Model(segments(12), segments(12), split, split)
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.transcribe(pcm(28), 16000, speech_end_s=27.5) == expected(14)
+    assert stream.last_metrics['reused_resegmented_overlap'] is True
+    assert stream.last_metrics['committed_s'] == 19.5
+    assert stream.retained_start_s == 19.5
+    assert stream.transcribe(pcm(30), 16000, speech_end_s=27.5) == expected(14)
+    assert stream.last_metrics['reused_resegmented_overlap'] is False
+    assert stream.last_metrics['committed_s'] == 27.5
+
+
+@pytest.mark.parametrize('failure', ['changed_word', 'missing_tail', 'invalid_time',
+                                     'shifted_start', 'overlapping_times', 'spacing',
+                                     'word_extension', 'no_speech_end_hint'])
+def test_resegmentation_still_recovers_when_exact_text_or_coverage_is_unsafe(failure):
+    suffix = segments(14, first=10, offset=19.5)
+    combined = [SimpleNamespace(text=''.join(segment.text for segment in suffix),
+                                start=suffix[0].start, end=suffix[-1].end)]
+    if failure == 'changed_word':
+        combined[0].text = combined[0].text.replace('단어10', '수정')
+    elif failure == 'word_extension':
+        combined[0].text = combined[0].text.replace('단어11', '단어110')
+    elif failure == 'missing_tail':
+        combined[0].end = 6.0
+    elif failure == 'invalid_time':
+        combined[0].end = 99
+    elif failure == 'shifted_start':
+        combined[0].start = 2.0
+    elif failure == 'overlapping_times':
+        combined = [SimpleNamespace(text=' 단어10', start=.7, end=3.5),
+                    SimpleNamespace(text=' 단어11 단어12 단어13', start=2.7, end=8.)]
+    elif failure == 'spacing':
+        combined[0].text = combined[0].text.replace('단어10 단어11', '단어10  단어11')
     model = Model(segments(12), segments(12), combined, segments(14))
     stream = IncrementalWhisperStream(model)
     stream.transcribe(pcm(24), 16000)
     stream.transcribe(pcm(26), 16000)
-    assert stream.transcribe(pcm(28), 16000, final=True) == expected(14)
+    speech_end_s = None if failure == 'no_speech_end_hint' else 27.5
+    assert stream.transcribe(pcm(28), 16000, final=True,
+                             speech_end_s=speech_end_s) == expected(14)
+    assert len(model.calls) == 4
     assert stream.last_metrics['fallback_full'] is True
+    assert stream.last_metrics['reused_resegmented_overlap'] is False
+
+
+def test_resegmented_repeated_words_are_preserved_instead_of_deduplicated():
+    repeated = {index: '다시' for index in range(14)}
+    suffix = segments(14, first=10, offset=19.5, edits=repeated)
+    merged = [SimpleNamespace(text=''.join(s.text for s in suffix),
+                              start=suffix[0].start, end=suffix[-1].end)]
+    model = Model(segments(12, edits=repeated), segments(12, edits=repeated), merged)
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.transcribe(pcm(28), 16000, final=True,
+                             speech_end_s=27.5).split() == ['다시'] * 14
+    assert len(model.calls) == 3
+    assert stream.retained_start_s == 19.5
+
+
+def test_native_timestamp_drift_never_releases_inside_a_newly_committed_segment():
+    # Real robot baseline: an older committed end stays at 12.00 while the
+    # next agreed segment starts at 11.70. Both hypotheses passed the 0.8 s
+    # agreement tolerance; releasing at 12 then poisoned every later call.
+    def hypothesis(second_end, third_start=None, third_end=None, tail=False):
+        result = [SimpleNamespace(text=' 첫 문장.', start=0., end=4.02),
+                  SimpleNamespace(text=' 소리가 반복돼요.', start=4.02, end=second_end)]
+        if third_start is not None:
+            result.append(SimpleNamespace(text=' 운율을 설명해요.',
+                                          start=third_start, end=third_end))
+        if tail:
+            result.append(SimpleNamespace(text=' 두 문장으로 답해주세요.', start=16.9, end=25.36))
+        return result
+
+    model = Model(hypothesis(11.8), hypothesis(12.),
+                  hypothesis(11.76, 11.76, 17.04),
+                  hypothesis(11.7, 11.7, 16.9),
+                  hypothesis(11.7, 11.7, 16.9, tail=True))
+    stream = IncrementalWhisperStream(model)
+    for duration, speech_end in ((12.06, 11.66), (13.88, 12.),
+                                 (17.26, 16.86), (21.36, 16.9)):
+        stream.transcribe(pcm(duration), 16000, speech_end_s=speech_end)
+    assert [(s.start, s.end) for s in stream._committed][-2:] == [(4.02, 12.), (11.7, 16.9)]
+    assert stream.retained_start_s == 0.0
+    assert stream.transcribe(pcm(25.36), 16000, audio_start_s=stream.retained_start_s,
+                             speech_end_s=25.36, final=True) == (
+                                 '첫 문장. 소리가 반복돼요. 운율을 설명해요. 두 문장으로 답해주세요.')
+    assert len(model.calls) == 5
+    assert len(model.calls[-1][0]) == round(25.36 * 16000)
+    assert model.calls[-1][0][-1] == 1234 / 32768
+
+
+def test_trim_can_choose_earlier_safe_boundary_and_keeps_newest_segment_complete():
+    whole = [SimpleNamespace(text=' 첫째', start=0., end=10.),
+             SimpleNamespace(text=' 둘째', start=10., end=20.),
+             SimpleNamespace(text=' 셋째', start=19.7, end=30.),
+             SimpleNamespace(text=' 넷째', start=29.7, end=40.)]
+    suffix = [SimpleNamespace(text=s.text, start=s.start - 10., end=s.end - 10.)
+              for s in whole[1:]]
+    model = Model(whole, whole, suffix)
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(42), 16000, speech_end_s=40.)
+    stream.transcribe(pcm(44), 16000, speech_end_s=40.)
+    assert stream.retained_start_s == 10.0  # 30 and 20 are both unsafe.
+    assert [s.text for s in stream._committed] == [s.text for s in whole]
+    assert stream.transcribe(pcm(36), 16000, audio_start_s=10., speech_end_s=40.,
+                             final=True) == '첫째 둘째 셋째 넷째'
+    assert model.calls[-1][0][-1] == 1234 / 32768
 
 
 def test_repetition_after_the_overlap_is_not_deduplicated():
