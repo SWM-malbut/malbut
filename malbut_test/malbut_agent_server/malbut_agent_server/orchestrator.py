@@ -564,9 +564,20 @@ class AgentOrchestrator:
         if self.context_compactor is not None:
             self.context_compactor.close()
         try:
-            self.conversation_store.close()
+            from malbut_agent_server.providers.base import close_providers
+
+            close_providers(
+                self.provider,
+                getattr(self.memory_source_reviewer, 'provider', None),
+                getattr(self.automatic_memory_extractor, 'provider', None),
+                getattr(getattr(self, 'speech_addressee', None), 'provider', None),
+                getattr(self, 'companion_provider', None),
+            )
         finally:
-            self.memory_store.close()
+            try:
+                self.conversation_store.close()
+            finally:
+                self.memory_store.close()
 
     def _memory_guard(self, user_id, request_id):
         """Bind a response to its durable user-specific memory version."""

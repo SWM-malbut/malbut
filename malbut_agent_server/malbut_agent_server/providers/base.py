@@ -17,6 +17,25 @@ class ProviderError(RuntimeError):
     """Raised when a provider cannot return a valid normalized result."""
 
 
+def close_providers(*providers):
+    """Close distinct owned providers, including after another close fails."""
+    seen = set()
+    failure = None
+    for provider in providers:
+        if id(provider) in seen:
+            continue
+        seen.add(id(provider))
+        close = getattr(provider, 'close', None)
+        if callable(close):
+            try:
+                close()
+            except Exception as error:
+                if failure is None:
+                    failure = error
+    if failure is not None:
+        raise failure
+
+
 def accepts_memory_context(provider: object) -> bool:
     """Check opt-in and the actual method before passing a new keyword."""
     if not getattr(provider, 'supports_memory', False):

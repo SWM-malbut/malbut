@@ -3,10 +3,12 @@
 import copy
 import base64
 import hashlib
+import http.client
 import json
 import time
 import urllib.error
 import urllib.request
+import weakref
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -40,6 +42,9 @@ from malbut_agent_server.prompting import (
     system_instructions_for_tools,
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
+from malbut_agent_server.providers.http_pool import (
+    HTTPConnectionPool, uses_environment_proxy,
+)
 from malbut_agent_server.providers.reliable import (
     classify_exception,
     NormalizedProviderError,
@@ -206,7 +211,17 @@ class OpenAIResponsesProvider(AgentProvider):
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
         self._validate_base_url()
-        self.transport = transport or self._urllib_transport
+        self._http_pool = HTTPConnectionPool() if transport is None else None
+        self._transport_finalizer = (
+            weakref.finalize(self, self._http_pool.close)
+            if self._http_pool is not None else None
+        )
+        self.transport = transport if transport is not None else self._pooled_transport
+
+    def close(self) -> None:
+        """Release owned idle connections; injected transports stay caller-owned."""
+        if self._transport_finalizer is not None:
+            self._transport_finalizer()
 
     @property
     def _api_key(self) -> str:
@@ -794,6 +809,39 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ProviderError(
                 'OpenAI request failed due to a network error'
             ) from error
+        return OpenAIResponsesProvider._decode_response_body(response_body)
+
+    def _pooled_transport(self, url, headers, payload, timeout_seconds):
+        try:
+            self._http_pool.check_open()
+            if uses_environment_proxy(url):
+                return self._urllib_transport(url, headers, payload, timeout_seconds)
+            response_body = self._http_pool.post(
+                url, headers,
+                json.dumps(payload, ensure_ascii=True, separators=(',', ':')).encode('utf-8'),
+                timeout_seconds, MAX_PROVIDER_RESPONSE_BYTES,
+            )
+        except urllib.error.HTTPError as error:
+            try:
+                if error.code == 429 and _insufficient_quota(error):
+                    raise NormalizedProviderError(ProviderFailureCode.QUOTA) from error
+                raise ProviderError(
+                    f'OpenAI request failed with HTTP status {error.code}'
+                ) from error
+            finally:
+                error.close()
+        except http.client.HTTPException as error:
+            raise ProviderError('OpenAI request failed due to a network error') from (
+                urllib.error.URLError(error)
+            )
+        except OSError as error:
+            # A disconnected keep-alive socket may fail after the server read
+            # the POST. Leave retry decisions to the existing reliability layer.
+            raise ProviderError('OpenAI request failed due to a network error') from error
+        return self._decode_response_body(response_body)
+
+    @staticmethod
+    def _decode_response_body(response_body):
         if len(response_body) > MAX_PROVIDER_RESPONSE_BYTES:
             raise ProviderError(
                 'OpenAI response exceeded the size limit'
