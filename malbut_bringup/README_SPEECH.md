@@ -424,3 +424,53 @@ ros2 launch malbut_bringup speech.launch.py \
 끝난 뒤 “내 말을 알아듣고 앞에서 한 이야기를 반영한다고 느꼈나요?”에 대한 답과
 그렇게 느낀 구체적 순간을 기록한다. 실패가 관측되지 않았다면 지연·실패 안내 검증은
 별도 현장 확인으로 남긴다. 세 사람의 실제 기록과 네 기준을 모두 확인한 뒤 완료를 판정한다.
+
+
+## Jetson 음성 CPU 우선순위와 GPU 상한
+
+`config/jetson-speech/`는 이번 Jetson(`ubuntu`, UID 1000)에서 선택한 운영 설정이다.
+일반 설치·빌드가 이를 자동 적용하지 않는다. GPU 상한은 지원 목록을 확인한 뒤
+612 MHz로 설정하며, GPU 최저 클럭·CPU 클럭·20 W 전력 모드·열 보호 설정은 바꾸지 않는다.
+`malbut-gpu-cap.service`는 nvpmodel 적용 후 이 상한을 설정한다. `jetson_clocks`로
+모든 클럭을 고정하는 서비스는 이 설정을 위해 활성화하지 않는다.
+
+AEC worker는 자체 프로세스의 스레드 생성 전에 일반 스케줄러의 nice 값을 -5로
+요청한다. 마이크·reference·DSP·IPC feeder 스레드가 이 값을 상속하고, 부모 STT의
+Whisper 및 Agent/TTS 프로세스의 nice 값은 바뀌지 않는다. 권한이 없으면 현재
+우선순위로 계속 실행하되 `AEC scheduling WARNING`을 출력한다. 적용 여부는
+`AEC scheduling INFO`의 `effective_nice`와 실제 worker의 `/proc/<PID>/task`로 확인한다.
+실시간 스케줄러, CPU affinity, CAP_SYS_NICE는 사용하지 않는다.
+
+PAM과 사용자 서비스의 `RLIMIT_NICE` 상한을 raw 25(요청 가능한 nice 최저값 -5)로
+허용한다. **이 권한 범위는 로봇 계정의 로그인·사용자 서비스 전체**이며 기본 nice 값은
+0이다. 실제 -5 요청은 AEC child에서만 한다. 다른 계정·UID를 쓰는 장치에서는 아래
+계정과 unit 이름을 그 장치에 맞춰야 한다.
+
+```bash
+# 저장소의 malbut_bringup 디렉터리에서, ubuntu / UID 1000 로봇에 적용
+sudo install -m 755 config/jetson-speech/malbut-gpu-cap /usr/local/sbin/malbut-gpu-cap
+sudo install -m 644 config/jetson-speech/malbut-gpu-cap.service /etc/systemd/system/
+sudo install -m 644 config/jetson-speech/90-malbut-aec-nice.conf /etc/security/limits.d/
+sudo install -d /etc/systemd/system/user@1000.service.d
+sudo install -m 644 config/jetson-speech/aec-nice-limit.conf /etc/systemd/system/user@1000.service.d/
+sudo systemctl daemon-reload
+sudo systemctl enable --now malbut-gpu-cap.service
+```
+
+새 로그인과 다음 사용자 manager 시작부터 우선순위 권한이 상속된다. 기존 프로세스의
+limit은 daemon-reload로 바뀌지 않는다. 실행 중 적용은 소유권을 검증한 관리 launch의
+`prlimit --nice=25:25`와 AEC/STT 재시작이 필요하다. 사용자 manager 전체를 재시작하면
+다른 서비스도 종료되므로 음성 변경만을 위해 재시작하지 않는다.
+
+AEC 시작 시에는 calibration/model 학습이 끝나도 바로 준비 완료를 알리지 않는다.
+쌓인 mic/reference를 순서대로 처리하고, 200 ms 이내의 첫 live PCM이 준비된 뒤
+`ready`와 그 PCM을 연속 전달한다. 초기 catch-up은 5초, 전체 시작은 기존 25초로
+제한한다. 준비 후에는 프레임을 추가로 버리거나 시간을 다시 찍지 않으며, 기존
+400 ms 적체 검사와 half-duplex 전환 승인 절차가 유지된다.
+
+구간 계측이 필요하면 STT 실행 환경에 `MALBUT_AEC_TRACE_PATH`를 절대 경로로 지정한다.
+Pulse 지연 추정·worker 대기열·DSP wall/thread CPU·부모 전달 시간을 기록하며 PCM은
+저장하지 않는다. 기본 1 Hz 및 지연 구간의 제한된 추가 표본이므로 파일의 최대값을
+전체 프레임의 최대값으로 해석하지 않는다. 계측은 프로세스별 행/바이트 상한이 있고
+정상 운영에서는 환경 변수를 해제한다. 입력 timestamp는 Pulse 기반 추정값이지
+실제 ADC 시각이나 음향 출력 시작 시각이 아니다.

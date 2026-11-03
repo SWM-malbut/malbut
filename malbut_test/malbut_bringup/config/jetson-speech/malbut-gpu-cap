@@ -1,0 +1,18 @@
+#!/usr/bin/python3
+"""Apply the selected supported GPU ceiling without changing other clocks."""
+import json
+from pathlib import Path
+
+gpu = Path('/sys/devices/platform/17000000.gpu/devfreq/17000000.gpu')
+target = 612000000
+available = {int(value) for value in (gpu / 'available_frequencies').read_text().split()}
+minimum = int((gpu / 'min_freq').read_text())
+if target not in available or minimum > target:
+    raise SystemExit('Requested GPU ceiling is unavailable or below the current minimum')
+before = int((gpu / 'max_freq').read_text())
+(gpu / 'max_freq').write_text(str(target))
+actual = int((gpu / 'max_freq').read_text())
+if actual != target or int((gpu / 'min_freq').read_text()) != minimum:
+    raise SystemExit('GPU ceiling verification failed')
+print(json.dumps({'gpu_max_hz_before': before, 'gpu_max_hz': actual,
+                  'gpu_min_hz_unchanged': minimum}))

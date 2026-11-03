@@ -10,6 +10,8 @@ from queue import Empty
 from threading import Event, Lock
 from time import monotonic
 
+from .timing import TimingTrace, queue_depth, unpack_message
+
 
 class EchoCancelledRecorder:
     sample_rate = 16000
@@ -29,6 +31,10 @@ class EchoCancelledRecorder:
         self._stop = None
         self._worker_lock = Lock()
         self._fallback_lock = Lock()
+        self._trace = TimingTrace('parent_raw' if 'raw_source' in config else 'parent_aec')
+        self.last_timing = None
+        self.failure_timing = None
+        self._last_read_end = None
 
     def start(self):
         from .worker import run
@@ -43,7 +49,7 @@ class EchoCancelledRecorder:
             deadline = monotonic() + self.startup_timeout_s
             while monotonic() < deadline and not self._closed.is_set():
                 try:
-                    kind, payload, _ = self._queue.get(timeout=0.1)
+                    kind, payload, _, _ = unpack_message(self._queue.get(timeout=0.1))
                 except Empty:
                     if not self._process.is_alive():
                         raise RuntimeError('AEC worker exited during startup')
@@ -60,6 +66,11 @@ class EchoCancelledRecorder:
     def _fail(self, error):
         self.aec_ready = False  # Never expose raw PCM before the owner's gate closes.
         self.failure = type(error).__name__ + ': ' + str(error)
+        self.failure_timing = None if self.last_timing is None else dict(self.last_timing)
+        self._trace.record('parent_failure', dict(self.failure_timing or {},
+            exception_type=type(error).__name__,
+            failure_reason='capture_backlog' if str(error) == 'AEC capture backlog'
+            else 'recorder_failure'), force=True)
         self._stop_worker()
 
     def acknowledge_half_duplex(self):
@@ -71,10 +82,29 @@ class EchoCancelledRecorder:
             return [0] * 512
         if self.aec_ready:
             try:
-                kind, payload, captured_at = self._queue.get(timeout=0.5)
+                read_begin = monotonic() if self._trace.enabled else None
+                kind, payload, captured_at, timing = unpack_message(self._queue.get(timeout=0.5))
                 if kind != 'audio':
                     raise RuntimeError(str(payload))
-                if monotonic() - captured_at > 0.4:
+                checked_at = monotonic()
+                age = checked_at - captured_at
+                if self._trace.enabled:
+                    self.last_timing = dict(timing or {}, captured_at_s=captured_at,
+                        parent_read_begin_s=read_begin, parent_received_s=checked_at,
+                        parent_get_s=checked_at-read_begin, parent_age_s=age,
+                        parent_read_gap_s=None if self._last_read_end is None
+                        else read_begin-self._last_read_end,
+                        output_queue_depth=queue_depth(self._queue),
+                        metadata_present=timing is not None)
+                    if timing is not None and 'worker_publish_begin_s' in timing:
+                        self.last_timing['publish_to_parent_s'] = (
+                            checked_at - timing['worker_publish_begin_s'])
+                    if timing is not None and 'timestamp_anchor_s' in timing:
+                        self.last_timing['after_pulse_anchor_s'] = (
+                            checked_at - timing['timestamp_anchor_s'])
+                    self._last_read_end = checked_at
+                    self._trace.record('parent_chunk', self.last_timing, slow=age > 0.2)
+                if age > 0.4:
                     raise RuntimeError('AEC capture backlog')
                 from malbut_stt.audio import CapturePCM
                 return CapturePCM(*payload)
@@ -128,6 +158,7 @@ class EchoCancelledRecorder:
             self._queue.close()
             self._queue.cancel_join_thread()
             self._queue = None
+        self._trace.close()
 
 
 class IsolatedMicrophoneRecorder:
