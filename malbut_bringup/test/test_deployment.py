@@ -1,5 +1,6 @@
 """Check the Git-clone build entrypoint without compiling or running a robot."""
 
+from argparse import ArgumentParser
 import json
 import os
 from pathlib import Path
@@ -50,7 +51,12 @@ def _cloud_build_fixture(robot, tmp_path, bin_dir):
 
 
 @pytest.mark.parametrize('layout', ['malbut/malbut_test', 'malbut'])
-def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
+@pytest.mark.parametrize('scheduling_args', [
+    ['--parallel-workers', '1'], ['--parallel-workers=1'],
+    ['--executor', 'sequential'], ['--executor=sequential'],
+    ['--executor', 'parallel', '--parallel-workers', '2'],
+])
+def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout, scheduling_args):
     """Leave manufacturer/generated setup and the original packages untouched."""
     workspace = tmp_path / 'robot workspace'
     source = workspace / 'src'
@@ -73,7 +79,9 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
            'MALBUT_BUILD_FALL_POSE': '1',
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BUILD_ARGUMENTS': str(recorded)}
-    result = subprocess.run(['bash', str(script), '--parallel-workers', '1'],
+    build_args = [*scheduling_args, '--cmake-args', '-DBUILD_TESTING=OFF',
+                  '-DONLY_MAIN_BUILD=ON']
+    result = subprocess.run(['bash', str(script), *build_args],
                             env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     cloud_arguments, arguments = [json.loads(line)
@@ -82,8 +90,28 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
         'homecam_media_agent'
     assert str(robot / 'malbut_interfaces') in cloud_arguments
     assert str(robot / 'homecam_agent/homecam_detector') in cloud_arguments
-    assert '-DHOMECAM_ENABLE_KVS=ON' in cloud_arguments
-    assert '-DHOMECAM_ENABLE_GSTREAMER=ON' in cloud_arguments
+    # Match colcon's argparse semantics: a repeated --cmake-args replaces the
+    # earlier list, even when the required flags are still present in argv.
+    parser = ArgumentParser()
+    parser.add_argument('--cmake-args', nargs='*', type=str.lstrip)
+    parser.add_argument('--executor')
+    parser.add_argument('--parallel-workers', type=int)
+    parsed = []
+    for invocation in (cloud_arguments, arguments):
+        options, _ = parser.parse_known_args([
+            ' ' + arg if arg.startswith('-D') else arg for arg in invocation])
+        parsed.append(options)
+    cloud_options, robot_options = parsed
+    assert (cloud_options.executor, cloud_options.parallel_workers) == \
+        (robot_options.executor, robot_options.parallel_workers)
+    sdk_root = workspace / '.deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1'
+    assert cloud_options.cmake_args == [
+        '-DBUILD_TESTING=OFF', '-DHOMECAM_ENABLE_KVS=ON',
+        '-DHOMECAM_ENABLE_GSTREAMER=ON', '-DHOMECAM_ENABLE_CURL=ON',
+        f'-DKVS_WEBRTC_SDK_ROOT={sdk_root}',
+        f'-DHOMECAM_KVS_CA_CERT_PATH={sdk_root}/certs/cert.pem',
+    ]
+    assert robot_options.cmake_args == ['-DBUILD_TESTING=OFF', '-DONLY_MAIN_BUILD=ON']
     assert cloud_arguments[cloud_arguments.index('--install-base') + 1] == \
         'install/malbut_test'
     assert Path(env['SDK_CALLS']).read_text().strip() == str(
@@ -95,8 +123,26 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     assert arguments[end + 1] == 'build/malbut_test'
     assert arguments[arguments.index('--install-base') + 1] == 'install/malbut_test'
     assert arguments[arguments.index('--packages-up-to') + 1] == 'malbut_bringup'
-    assert arguments[-2:] == ['--parallel-workers', '1']
+    assert arguments[-len(build_args):] == build_args
     assert 'local_setup.zsh' in result.stdout
+
+
+@pytest.mark.parametrize('arguments', [
+    ['--executor'], ['--parallel-workers'],
+    ['--executor='], ['--parallel-workers='],
+    ['--executor', '--cmake-args'],
+])
+def test_missing_scheduling_value_stops_before_build_preparation(tmp_path, arguments):
+    robot = tmp_path / 'workspace/src/malbut'
+    robot.mkdir(parents=True)
+    script = robot / 'build.sh'
+    shutil.copyfile(ROOT / 'build.sh', script)
+    result = subprocess.run(['bash', str(script), *arguments],
+                            env={**os.environ, 'ROS_DISTRO': 'humble'},
+                            text=True, capture_output=True)
+    assert result.returncode == 2
+    assert 'Missing value for' in result.stderr
+    assert 'Missing bundled package' not in result.stderr
 
 
 def test_missing_media_dependencies_stop_before_sdk_or_ros_build(tmp_path):
@@ -120,7 +166,11 @@ def test_missing_media_dependencies_stop_before_sdk_or_ros_build(tmp_path):
     assert not Path(env['SDK_CALLS']).exists()
 
 
-def test_sdk_is_downloaded_once_and_reuses_incremental_build(tmp_path):
+@pytest.mark.parametrize('cpu_count, explicit_jobs, expected_jobs', [
+    ('1', None, '1'), ('3', None, '3'), ('6', '2', '2'),
+])
+def test_sdk_is_downloaded_once_and_reuses_incremental_build(
+        tmp_path, cpu_count, explicit_jobs, expected_jobs):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     git = bin_dir / 'git'
@@ -141,12 +191,18 @@ def test_sdk_is_downloaded_once_and_reuses_incremental_build(tmp_path):
         '#!/usr/bin/python3\nimport json, os, sys\n'
         'with open(os.environ["CMAKE_COMMANDS"], "a") as log:\n'
         '    log.write(json.dumps([os.environ.get("CMAKE_POLICY_VERSION_MINIMUM"),'
-        ' sys.argv[1:]]) + "\\n")\n')
+        ' os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL"), sys.argv[1:]]) + "\\n")\n')
     cmake.chmod(0o755)
+    nproc = bin_dir / 'nproc'
+    nproc.write_text(f'#!/bin/sh\nprintf "%s\\n" {cpu_count}\n')
+    nproc.chmod(0o755)
     sdk = tmp_path / 'sdk path'
     env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'SDK_COMMANDS': str(tmp_path / 'git-commands'),
            'CMAKE_COMMANDS': str(tmp_path / 'cmake-commands')}
+    env.pop('CMAKE_BUILD_PARALLEL_LEVEL', None)
+    if explicit_jobs is not None:
+        env['CMAKE_BUILD_PARALLEL_LEVEL'] = explicit_jobs
     for _ in range(2):
         result = subprocess.run(
             ['bash', str(ROOT / 'homecam_agent/scripts/build_kvs_webrtc_sdk.sh'),
@@ -157,9 +213,30 @@ def test_sdk_is_downloaded_once_and_reuses_incremental_build(tmp_path):
     cmake_calls = [json.loads(line)
                    for line in Path(env['CMAKE_COMMANDS']).read_text().splitlines()]
     assert len(cmake_calls) == 4
-    assert all(policy == '3.5' for policy, _ in cmake_calls)
-    assert cmake_calls[1][1] == ['--build', str(sdk / 'build'), '--parallel']
+    assert all(policy == '3.5' and jobs == expected_jobs for policy, jobs, _ in cmake_calls)
+    # PARALLEL_BUILD=ON injects bare --parallel into configure-time dependency
+    # builds, which overrides the numeric inherited CMake environment setting.
+    assert '-DPARALLEL_BUILD=OFF' in cmake_calls[0][2]
+    assert cmake_calls[1][2] == ['--build', str(sdk / 'build'), '--parallel', expected_jobs]
     assert cmake_calls[3] == cmake_calls[1]
+
+
+@pytest.mark.parametrize('jobs', ['', '0', '-1', 'three', '1 2', '2;touch bad'])
+def test_sdk_invalid_parallel_level_stops_before_checkout(tmp_path, jobs):
+    sdk = tmp_path / 'sdk'
+    result = subprocess.run(
+        ['bash', str(ROOT / 'homecam_agent/scripts/build_kvs_webrtc_sdk.sh'), str(sdk)],
+        env={**os.environ, 'CMAKE_BUILD_PARALLEL_LEVEL': jobs},
+        text=True, capture_output=True)
+    assert result.returncode == 2
+    assert 'must be a positive integer' in result.stderr
+    assert not sdk.exists()
+
+
+def test_robot_cloud_build_helpers_match_source():
+    for name in ('build_robot_cloud.sh', 'build_kvs_webrtc_sdk.sh'):
+        relative = Path('homecam_agent/scripts') / name
+        assert (ROOT / relative).read_bytes() == (ROOT.parent / relative).read_bytes()
 
 
 def test_robot_copy_retains_colcon_ignore():

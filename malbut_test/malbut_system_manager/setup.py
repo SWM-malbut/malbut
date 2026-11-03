@@ -33,6 +33,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'sound_turn = malbut_system_manager.sound_turn:main',
             'managed_bringup = malbut_system_manager.recovery:main',
             'system_manager = '
             'malbut_system_manager.system_manager_node:main',

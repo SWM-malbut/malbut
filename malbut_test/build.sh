@@ -18,6 +18,35 @@ if [[ "${ROS_DISTRO:-}" != humble ]]; then
   exit 1
 fi
 
+# Apply package scheduling to both colcon builds. Forwarding every argument
+# would let a second --cmake-args replace the cloud build's required media flags.
+cloud_build_args=()
+collect_cloud_build_args() {
+  while (( $# )); do
+    case "$1" in
+      --executor|--parallel-workers)
+        if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+          echo "Missing value for $1." >&2
+          exit 2
+        fi
+        cloud_build_args+=("$1" "$2")
+        shift 2
+        ;;
+      --executor=*|--parallel-workers=*)
+        if [[ -z "${1#*=}" ]]; then
+          echo "Missing value for ${1%%=*}." >&2
+          exit 2
+        fi
+        cloud_build_args+=("$1")
+        shift
+        ;;
+      --) break ;;
+      *) shift ;;
+    esac
+  done
+}
+collect_cloud_build_args "$@"
+
 # Explicit roots bypass only this copy's COLCON_IGNORE, without discovering
 # the original/simulation packages or rebuilding manufacturer source packages.
 package_paths=(
@@ -176,7 +205,7 @@ case "${MALBUT_BUILD_FALL_POSE:-1}" in
 esac
 # The deployment copy includes cloud media. Its helper prepares/reuses the SDK
 # without installing OS packages; setup.sh owns OS dependency installation.
-bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"
+bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh" "${cloud_build_args[@]}"
 colcon_executable="$(command -v colcon)"
 cd -- "$workspace_dir"
 # Keep factory build/install hooks intact and avoid upstream's optional uv sync.

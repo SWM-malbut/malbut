@@ -133,7 +133,6 @@ class DialoguePipeline:
         self._diagnostic_error_reported = False
         self.clock = clock
         self._event_time = None
-        self.wake_audio_window = None
         self.on_wake = on_wake
         self.on_endpoint = on_endpoint
         self.on_failure = on_failure
@@ -1030,10 +1029,6 @@ class DialoguePipeline:
                             voiced_s, endpoint_pcm)
 
     def _complete_capture(self, kind, event):
-        if kind == 'wake':
-            audio_at = self.clock() if self._event_time is None else self._event_time
-            self.wake_audio_window = (audio_at - len(event.pcm) / 32000,
-                                      audio_at - event.silence_s)
         uid = self._capture_id
         key = (self._generation, uid, event.revision)
         self._capture_id = None

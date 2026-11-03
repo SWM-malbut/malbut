@@ -10,6 +10,16 @@ if [[ $# -ne 1 || -z "$1" ]]; then
   exit 2
 fi
 
+# Bound configure-time dependency builds as well as the final SDK build.
+# nproc respects taskset affinity; an explicit CMake limit takes precedence.
+# Keep PARALLEL_BUILD off below: the SDK's bare --parallel overrides this limit.
+build_jobs="${CMAKE_BUILD_PARALLEL_LEVEL-$(nproc)}"
+if [[ ! "$build_jobs" =~ ^[1-9][0-9]*$ ]]; then
+  echo 'CMAKE_BUILD_PARALLEL_LEVEL must be a positive integer.' >&2
+  exit 2
+fi
+export CMAKE_BUILD_PARALLEL_LEVEL="$build_jobs"
+
 sdk_root="$(realpath -m -- "$1")"
 if [[ "$sdk_root" != /* || "$sdk_root" == "/" ]]; then
   echo "SDK target must be a specific absolute path, not /" >&2
@@ -58,8 +68,8 @@ cmake \
   -DBUILD_TEST=OFF \
   -DBUILD_BENCHMARK=OFF \
   -DBUILD_DEPENDENCIES=ON \
-  -DPARALLEL_BUILD=ON \
+  -DPARALLEL_BUILD=OFF \
   -DCMAKE_BUILD_TYPE=Release \
   "-DKVS_CA_CERT_PATH=$sdk_ca_cert"
-cmake --build "$sdk_root/build" --parallel
+cmake --build "$sdk_root/build" --parallel "$build_jobs"
 echo "Pinned AWS KVS WebRTC SDK is ready: $sdk_root"

@@ -49,15 +49,3 @@ def test_adoption_cannot_resurrect_finished_input_or_replace_another_owner(harne
     pipeline.stop_session('fall-check')
     pipeline.session.activate()
     assert not pipeline.start_session('patrol-chat-called-test', preserve_input=True)
-
-
-def test_direction_window_uses_capture_time_not_asr_completion(harness):
-    from types import SimpleNamespace
-    pipeline = harness.create()
-    pipeline._event_time = 11.
-    pipeline._complete_capture('wake', SimpleNamespace(
-        revision=1, pcm=bytes(64000), voiced_s=1., silence_s=.5))
-    assert pipeline.wake_audio_window == (9., 10.5)
-    pipeline.clock = lambda: 20.
-    pipeline._accept_result('wake', pipeline._generation, None, '제이크', None)
-    assert pipeline.wake_audio_window == (9., 10.5)

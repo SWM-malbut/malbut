@@ -104,6 +104,13 @@ Git 저장소는 별도 위치(예: `~/malbut`)에서 받고 그 안의 `malbut_
 아래 **소스 명령 경로에만** `/malbut_test`를 추가한다. 설치 경로는 동일하다.
 Bringup이 제조사 실행에 필요한 `need_compile=False`를 자체 설정한다.
 
+소스를 갱신하기 전에 해당 Bringup과 이를 소유한 cloud 실행을 종료한다.
+`--symlink-install` 설치이므로 `rsync --delete`로 소스를 바꾸면 빌드 완료 전에도
+실행 중인 Python·설정 파일이 바뀐다. 복사 대상은 이 배포본 전용 디렉터리여야 한다.
+복사할 브랜치와 커밋도 확인한다. `git switch main`은 main 배포용이며, 아직 병합되지
+않은 기능을 시험하던 소스는 main 내용으로 교체된다. 기능 브랜치는 최신 main의
+다른 변경까지 포함한다고 보장되지 않는다.
+
 최초 준비와 의존성 변경 때는 `setup.sh`를 실행한다. 필요한 OS 개발 패키지와
 홈캠 의존성을 설치하고, 명시한 로봇 패키지 경로만 `rosdep`으로 준비한다.
 `homecam_media_agent`와 로컬 `homecam_detector`도 함께 탐색한다.
@@ -130,8 +137,21 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 
 위 경로 밖의 원본·제조사·시뮬레이션 패키지는 빌드 대상으로 잡지 않는다.
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
-메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙여 colcon 동시 빌드를 줄일 수 있다.
-STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인해 자동으로 병렬 빌드한다.
+`--executor sequential` 또는 `--parallel-workers 1`은 홈캠과 최종 ROS 빌드 양쪽에
+적용된다. 이는 패키지 간 동시 빌드 제한이며, 패키지 내부 컴파일 작업 수와는 다르다.
+STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인한다.
+KVS SDK도 기본 `nproc`를 사용하며, `CMAKE_BUILD_PARALLEL_LEVEL`이 지정되면 그 양의
+정수 값을 의존성 빌드와 최종 빌드에 적용한다. CPU 0~2에서 작업 수까지 제한하려면:
+
+```zsh
+taskset -c 0,1,2 env CMAKE_BUILD_PARALLEL_LEVEL=3 MAKEFLAGS='-j3 -l3' \
+  bash ~/ros2_ws/src/malbut/build.sh \
+  --executor sequential \
+  --cmake-args -DBUILD_TESTING=OFF
+```
+
+줄 끝의 `\` 뒤에는 공백 없이 바로 줄바꿈해야 한다. 명령을 `(...)` 서브셸로 실행했다면
+빌드 후 실행 터미널에서 `source ~/ros2_ws/install/malbut_test/local_setup.zsh`를 다시 한다.
 CUDA 없는 CI나 센서 전용 빌드는
 `MALBUT_BUILD_SPEECH=0 MALBUT_BUILD_FALL_POSE=0 bash src/malbut/build.sh`로
 음성·낙상 환경 준비를 생략할 수 있다. 해당 기능 없이 실행하려면
