@@ -62,8 +62,15 @@ class IncrementalWhisperStream:
     overlap re-decodes available audio, preserving the already released prefix.
     """
 
-    def __init__(self, model):
+    def __init__(self, model, *, min_trim_advance_s: float = 4.0):
+        # This controls how often a safe boundary is used, not whether one is
+        # safe. Keep the previous 8 s setting available for controlled replays.
+        if (type(min_trim_advance_s) not in (int, float)
+                or not math.isfinite(min_trim_advance_s) or min_trim_advance_s <= 0
+                or round(min_trim_advance_s * 16000) < 1):
+            raise ValueError('min_trim_advance_s must be finite and at least one sample')
         self.model = model
+        self._min_trim_advance_samples = round(min_trim_advance_s * 16000)
         self._committed = []
         self._previous = []
         self._offset_samples = 0
@@ -264,7 +271,7 @@ class IncrementalWhisperStream:
             newest_start = round(self._committed[-1].start * 16000)
             for segment in reversed(self._committed[:-1]):
                 boundary = round(segment.end * 16000)
-                if (boundary >= self._offset_samples + 8 * 16000
+                if (boundary >= self._offset_samples + self._min_trim_advance_samples
                         and boundary <= newest_start
                         and not any(round(kept.start * 16000) < boundary
                                     < round(kept.end * 16000) for kept in self._committed)):

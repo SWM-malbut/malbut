@@ -188,7 +188,7 @@ def test_native_timestamp_drift_never_releases_inside_a_newly_committed_segment(
                   hypothesis(11.76, 11.76, 17.04),
                   hypothesis(11.7, 11.7, 16.9),
                   hypothesis(11.7, 11.7, 16.9, tail=True))
-    stream = IncrementalWhisperStream(model)
+    stream = IncrementalWhisperStream(model, min_trim_advance_s=8.)
     for duration, speech_end in ((12.06, 11.66), (13.88, 12.),
                                  (17.26, 16.86), (21.36, 16.9)):
         stream.transcribe(pcm(duration), 16000, speech_end_s=speech_end)
@@ -218,6 +218,48 @@ def test_trim_can_choose_earlier_safe_boundary_and_keeps_newest_segment_complete
     assert stream.transcribe(pcm(36), 16000, audio_start_s=10., speech_end_s=40.,
                              final=True) == '첫째 둘째 셋째 넷째'
     assert model.calls[-1][0][-1] == 1234 / 32768
+
+
+@pytest.mark.parametrize('minimum, expected_start', [(4., 5.), (8., 0.)])
+def test_four_second_advance_releases_only_safe_agreed_prefix(minimum, expected_start):
+    # Robot trace: 8.1 lies inside the next agreed segment [8, 12]. The
+    # earlier 5 s boundary is safe, but the former 8 s minimum blocked it.
+    whole = [SimpleNamespace(text=' 첫째', start=0., end=5.),
+             SimpleNamespace(text=' 둘째', start=5., end=8.1),
+             SimpleNamespace(text=' 셋째', start=8., end=12.)]
+    suffix = [SimpleNamespace(text=s.text, start=s.start - expected_start,
+                              end=s.end - expected_start)
+              for s in whole if s.end > expected_start]
+    suffix.append(SimpleNamespace(text=' 마지막', start=13. - expected_start,
+                                  end=15. - expected_start))
+    model = Model(whole, whole, suffix)
+    stream = IncrementalWhisperStream(model, min_trim_advance_s=minimum)
+    stream.transcribe(pcm(14), 16000, speech_end_s=12.)
+    assert stream.retained_start_s == 0  # One hypothesis never releases PCM.
+    stream.transcribe(pcm(14), 16000, speech_end_s=12.)
+    assert stream.retained_start_s == expected_start
+    assert [(s.start, s.end) for s in stream._committed] == [(0., 5.), (5., 8.1), (8., 12.)]
+    assert stream.transcribe(pcm(17. - expected_start), 16000,
+                             audio_start_s=expected_start, speech_end_s=15.,
+                             final=True) == '첫째 둘째 셋째 마지막'
+    assert len(model.calls) == 3 and model.calls[-1][0][-1] == 1234 / 32768
+    assert len(model.calls[-1][0]) == round((17. - expected_start) * 16000)
+
+
+@pytest.mark.parametrize('minimum', [True, None, '4', 0., -1., float('nan'),
+                                    float('inf'), 0.000001])
+def test_invalid_trim_advance_rejected(minimum):
+    with pytest.raises(ValueError, match='min_trim_advance_s'):
+        IncrementalWhisperStream(Model(), min_trim_advance_s=minimum)
+
+
+def test_stream_factory_exposes_trim_ablation_without_another_model():
+    backend = LocalWhisperTranscriber.__new__(LocalWhisperTranscriber)
+    backend.model = Model()
+    default, previous = backend.create_stream(), backend.create_stream(min_trim_advance_s=8.)
+    assert default.model is previous.model is backend.model
+    assert default._min_trim_advance_samples == 4 * 16000
+    assert previous._min_trim_advance_samples == 8 * 16000
 
 
 def test_repetition_after_the_overlap_is_not_deduplicated():
