@@ -130,7 +130,6 @@ class Settings:
     openai_base_url: str = OFFICIAL_OPENAI_BASE_URL
     openai_reasoning_effort: str = 'low'
     openai_max_output_tokens: int = 1024
-    speech_prefetch_enabled: bool = False
     auth_token: str = ''
     tool_mode: str = 'proposal'
     rai_sidecar_python: str = ''
@@ -144,6 +143,7 @@ class Settings:
     conversation_token_budget: int = 16384
     openai_summary_model: str = DEFAULT_OPENAI_SUMMARY_MODEL
     openai_summary_reasoning_effort: str = 'low'
+    speech_prefetch_enabled: bool = False
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""

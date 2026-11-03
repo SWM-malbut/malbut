@@ -307,19 +307,29 @@ def _http_error(status, body):
      ('quota', 'insufficient_quota')),
     (429, {'error': {'code': 'rate_limit_exceeded'}}, None),
 ])
+@pytest.mark.parametrize('transport_kind', ['pooled', 'urllib'])
 def test_http_failures_are_classified_from_the_real_transport(
-        tmp_path, monkeypatch, status, body, health):
+        tmp_path, monkeypatch, status, body, health, transport_kind):
     key = managed(tmp_path)
-    provider = adapter(key, None)
+    provider = adapter(key, OpenAIResponsesProvider._urllib_transport
+                       if transport_kind == 'urllib' else None)
 
     class Opener:
         def open(self, request, timeout):
             raise _http_error(status, body)
 
     monkeypatch.setattr(urllib.request, 'build_opener', lambda *handlers: Opener())
-    with pytest.raises(Exception):
-        complete(provider)
-    assert key.health == health
+    monkeypatch.setattr(urllib.request, 'getproxies', lambda: {})
+    if transport_kind == 'pooled':
+        def fail_post(*args, **kwargs):
+            raise _http_error(status, body)
+        monkeypatch.setattr(provider._http_pool, 'post', fail_post)
+    try:
+        with pytest.raises(Exception):
+            complete(provider)
+        assert key.health == health
+    finally:
+        provider.close()
 
 
 class _Scripted(AgentProvider):
