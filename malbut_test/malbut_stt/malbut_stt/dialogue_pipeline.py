@@ -1214,6 +1214,18 @@ class DialoguePipeline:
             if self.diagnostics is not None:
                 self.diagnostics.event('recognition_rejected', utterance_id=uid,
                                        text=text, reason=reason)
+            if not self.session.session_id and self._utterance_playback_id is None:
+                # Ask again without sending hallucinated text to the model.
+                # Install the reply owner before publishing its status so even
+                # immediate playback callbacks can release the retry wait.
+                self._terminate('waiting_for_retry_notice')
+                self._reply_request_id = uid
+                self._followup_pending = True
+                self._retry_notice_deadline = self.clock() + RETRY_NOTICE_TIMEOUT_SECONDS
+                self._tail_stream = None
+                self._input_status('filtered', uid)
+                self.report('transcript_filtered:' + reason)
+                return
             if self.session.session_id:
                 self._input_status('failed', uid)
             # Treat this as no request. Resume any paused answer without sending
@@ -1375,7 +1387,8 @@ class DialoguePipeline:
                 self._terminate('reply_finished' if followup else 'waiting_for_wake')
             if followup:
                 self.session.activate()
-                self._followup_deadline = self.clock() + self.followup_timeout_s
+                self._followup_deadline = self.clock() + (
+                    self.followup_timeout_s or self.command_stream.settings.start_timeout_s)
                 self.report('waiting_for_followup')
 
     def on_addressee(self, utterance_id, playback_id, decision):

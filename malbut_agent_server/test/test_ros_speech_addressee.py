@@ -24,6 +24,7 @@ class SpeechRequest(SimpleNamespace):
 class SpeechInputStatus(SimpleNamespace):
     STARTED = 'started'
     FAILED = 'failed'
+    FILTERED = 'filtered'
 
 
 class Future:
@@ -243,56 +244,63 @@ def test_recognition_failure_finishes_its_own_request_during_an_earlier_answer(n
     assert node.dialogue.requests == []
 
 
-def test_recognition_failure_speaks_once_without_model_turn_and_next_input_works(node):
+@pytest.mark.parametrize('state,text', [
+    ('failed', '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'),
+    ('filtered', '다시 말씀해 주실래요?'),
+])
+def test_recognition_failure_speaks_once_without_model_turn_and_next_input_works(node, state, text):
     input_status(node, 'missed', 'started')
-    input_status(node, 'missed', 'failed')
-    input_status(node, 'missed', 'failed')
+    input_status(node, 'missed', state)
+    input_status(node, 'missed', state)
     input_status(node, 'missed', 'started')
-    input_status(node, 'missed', 'failed')
+    input_status(node, 'missed', state)
     messages = node.sent[ros_communication.RESPONSE_TOPIC]
     assert len(messages) == 1
     assert messages[0].request_id == 'missed'
-    assert messages[0].text == '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'
+    assert messages[0].text == text
     assert messages[0].request_type == SpeechRequest.DIALOGUE
     assert messages[0].interim is False
     assert node.dialogue.requests == []
     assert node._receipts.lookup('missed', '미인식 원문') is None
     input_status(node, 'next', 'started')
     node._receive_speech(request(uid='next', text='다시 안녕'))
-    input_status(node, 'next', 'failed')
+    input_status(node, 'next', state)
     input_status(node, 'next', 'started')
-    input_status(node, 'next', 'failed')
+    input_status(node, 'next', state)
     assert node.dialogue.requests == [('next', '다시 안녕')]
     assert len(messages) == 1
 
 
-def test_recognition_failure_ignores_stale_id_and_transcript_before_started(node):
-    input_status(node, 'missing-start', 'failed')
+@pytest.mark.parametrize('state', ['failed', 'filtered'])
+def test_recognition_failure_ignores_stale_id_and_transcript_before_started(node, state):
+    input_status(node, 'missing-start', state)
     input_status(node, 'old', 'started')
     input_status(node, 'latest', 'started')
     input_status(node, 'old', 'started')
-    input_status(node, 'old', 'failed')
+    input_status(node, 'old', state)
     assert node.sent[ros_communication.RESPONSE_TOPIC] == []
-    input_status(node, 'latest', 'failed')
+    input_status(node, 'latest', state)
     node._receive_speech(request(uid='already-transcribed', text='안녕'))
     input_status(node, 'already-transcribed', 'started')
-    input_status(node, 'already-transcribed', 'failed')
+    input_status(node, 'already-transcribed', state)
     assert len(node.sent[ros_communication.RESPONSE_TOPIC]) == 1
 
 
 @pytest.mark.parametrize('uid', ['', ' ', 'x' * 257])
-def test_recognition_failure_ignores_invalid_ordinary_ids(node, uid):
+@pytest.mark.parametrize('state', ['failed', 'filtered'])
+def test_recognition_failure_ignores_invalid_ordinary_ids(node, uid, state):
     input_status(node, uid, 'started')
-    input_status(node, uid, 'failed')
+    input_status(node, uid, state)
     assert node.sent[ros_communication.RESPONSE_TOPIC] == []
 
 
 @pytest.mark.parametrize('blocked', ['capacity', 'startup', 'proactive'])
-def test_recognition_failure_is_suppressed_when_ordinary_dialogue_is_unavailable(node, blocked):
+@pytest.mark.parametrize('state', ['failed', 'filtered'])
+def test_recognition_failure_is_suppressed_when_ordinary_dialogue_is_unavailable(node, blocked, state):
     input_status(node, 'ordinary', 'started')
     input_status(node, 'proactive', 'started', 'incident-1')
-    input_status(node, 'proactive', 'failed', 'incident-1')
-    input_status(node, '', 'failed', 'incident-1')
+    input_status(node, 'proactive', state, 'incident-1')
+    input_status(node, '', state, 'incident-1')
     if blocked == 'capacity':
         node.dialogue.accept = False
     elif blocked == 'startup':
@@ -300,13 +308,13 @@ def test_recognition_failure_is_suppressed_when_ordinary_dialogue_is_unavailable
     else:
         node.situation.active = True
         node._begin_situation()
-    input_status(node, 'ordinary', 'failed')
+    input_status(node, 'ordinary', state)
     assert node.sent[ros_communication.RESPONSE_TOPIC] == []
     node.dialogue.accept = True
     node.dialogue.startup_error = None
     node.situation.active = False
     node.dialogue.resume()
-    input_status(node, 'ordinary', 'failed')
+    input_status(node, 'ordinary', state)
     assert node.sent[ros_communication.RESPONSE_TOPIC] == []
 
 
