@@ -70,3 +70,20 @@ def test_tts_graph_failure_does_not_escape_into_manager_callbacks():
     assert not speech.playbacks
     assert speech.retired['speech'] == 'failed'
     assert not speech._send_control(Mock()).result()
+
+
+def test_prepared_hint_passes_through_only_with_normal_final_admission():
+    speech = _speech()
+    request = SpeechRequest(playback_id='speech', request_id='turn', text='hello',
+                            prepared_id='prepared', generation_id='generation')
+    speech.receive(request)
+    speech.requests.publish.assert_called_once_with(request)
+    forwarded = speech.requests.publish.call_args.args[0]
+    assert (forwarded.prepared_id, forwarded.generation_id) == ('prepared', 'generation')
+    assert speech.statuses.publish.call_args.args[0].state == 'accepted'
+    # The hint grants no special permission when normal admission is closed.
+    blocked = _speech()
+    blocked.closed = True
+    blocked.receive(request)
+    blocked.requests.publish.assert_not_called()
+    assert blocked.retired['speech'] == 'failed'

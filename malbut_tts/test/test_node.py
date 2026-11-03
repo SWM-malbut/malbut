@@ -109,12 +109,45 @@ def fake_ros(monkeypatch):
                         ModuleType('malbut_interfaces'))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
         SpeechRequest=type('SpeechRequest', (), {}),
+        SpeechPreparation=type('SpeechPreparation', (), {}),
         SpeechPlaybackStatus=lambda **kwargs: SimpleNamespace(**kwargs),
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ControlSpeechPlayback=type('ControlSpeechPlayback', (), {}),
     ))
     return entities
+
+
+def test_optional_preparation_topic_is_silent_and_final_hint_is_forwarded(fake_ros):
+    fake_ros.parameters['piper_prefetch_enabled'] = True
+    node = tts_node.create_tts_node(FakeRuntime)
+    prepared = []
+    submitted = []
+    node._runtime.prepare = lambda *args, **kwargs: prepared.append((args, kwargs))
+    node._runtime.submit = lambda *args, **kwargs: submitted.append((args, kwargs))
+    subscriptions = {topic: callback for _, topic, callback, _ in fake_ros.subscriptions}
+    common = dict(request_id='turn', generation_id='generation', prepared_id='prepared')
+    subscriptions[tts_node.PREPARATION_TOPIC](SimpleNamespace(
+        operation=0, text='첫 문장. 다', **common))
+    subscriptions[tts_node.PREPARATION_TOPIC](SimpleNamespace(operation=1, text='', **common))
+    subscriptions[tts_node.PREPARATION_TOPIC](SimpleNamespace(operation=9, text='', **common))
+    assert prepared == [(('첫 문장. 다',), {**common, 'cancel': False}),
+                        (('',), {**common, 'cancel': True})]
+    assert fake_ros.published == [] and submitted == []
+    subscriptions[tts_node.RESPONSE_TOPIC](SimpleNamespace(
+        text='첫 문장. 다음 문장.', request_type=0, interim=False, **common))
+    assert submitted == [(('첫 문장. 다음 문장.', 0), {**common, 'interim': False})]
+    node.destroy_node()
+
+
+def test_default_off_has_no_preparation_subscription_and_ignores_hint(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    assert [s[1] for s in fake_ros.subscriptions] == [tts_node.RESPONSE_TOPIC]
+    fake_ros.subscriptions[0][2](SimpleNamespace(
+        text='그대로 합성', request_type=0, interim=False,
+        prepared_id='unused', generation_id='unused'))
+    assert node._runtime.submitted == [('그대로 합성', 0, False)]
+    node.destroy_node()
 
 
 def test_request_kind_and_verbatim_text_reach_runtime(fake_ros):
