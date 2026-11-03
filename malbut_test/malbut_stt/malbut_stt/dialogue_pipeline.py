@@ -6,7 +6,7 @@ from collections import OrderedDict, deque
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from queue import Empty, Full, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic, perf_counter
 
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
@@ -21,6 +21,10 @@ from malbut_stt.wake import parse_wake_phrase
 MAX_RETIRED_SESSION_IDS = 256
 MICROPHONE_TIMEOUT_SECONDS = 5.0
 RETRY_NOTICE_TIMEOUT_SECONDS = 45.0
+
+
+class _PreviewSuperseded(RuntimeError):
+    """Final capture no longer needs this particular preview."""
 
 
 class _SpeechPCM(bytes):
@@ -192,6 +196,12 @@ class DialoguePipeline:
         self.audio = Queue(maxsize=64)
         self.jobs = Queue(maxsize=1)
         self.results = Queue(maxsize=1)
+        # Only the ASR worker enters inference. Cancellation shares this lock
+        # with its ownership transitions so a late signal cannot hit the next
+        # (final) job. A pending key also covers dequeue -> worker-entry races.
+        self._inference_lock = Lock()
+        self._active_inference = None
+        self._preempted_preview = None
         self.stopping = Event()
         self.overflow = Event()
         self.capture_ready = Event()
@@ -519,6 +529,40 @@ class DialoguePipeline:
             raise
         self._trace_job('job_enqueued', *job[:3])
 
+    def _cancel_preempted_preview_locked(self):
+        active = self._active_inference
+        if active is None or active[0] != self._preempted_preview:
+            return
+        cancel = active[1]
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception as error:
+                # A backend without working cancellation retains the existing
+                # serial path. Do not turn this optimization into a lost turn.
+                self._active_inference = (active[0], None)
+                self._trace_job('job_cancel_failed', *active[0],
+                                error=type(error).__name__)
+
+    def _cancel_preempted_preview(self):
+        with self._inference_lock:
+            self._cancel_preempted_preview_locked()
+
+    def _preempt_obsolete_preview(self, final_key):
+        owner = self._endpoint_job
+        if (owner is None or owner[:2] != final_key[:2]
+                or (owner == final_key and not self._endpoint_is_partial)):
+            return  # The current endpoint can still supply the final result.
+        kind = 'partial' if self._endpoint_is_partial else 'endpoint'
+        target = (kind, owner[0], owner[1:])
+        with self._inference_lock:
+            self._preempted_preview = target
+            self._cancel_preempted_preview_locked()
+        self._trace_job('job_preempted', *target, reason='final_capture')
+        # One content-free owner-thread marker; this records the request,
+        # not proof that the backend actually aborted a native decode.
+        self.report('preview_preempted:kind=' + kind)
+
     def _infer(self):
         while not self.stopping.is_set():
             try:
@@ -529,6 +573,12 @@ class DialoguePipeline:
             if self.stopping.is_set():
                 self._trace_job('job_discarded', kind, generation, uid, reason='shutdown')
                 break
+            job_key = (kind, generation, uid)
+            engine = (self.wake if kind == 'wake' else
+                      getattr(pcm, 'transcriber', None) or self.transcriber)
+            with self._inference_lock:
+                self._active_inference = (job_key, getattr(engine, 'cancel', None))
+                preempted = self._preempted_preview == job_key
             text, error_name = None, None
             turn_complete = None
             retained_start_s = 0.0
@@ -549,6 +599,8 @@ class DialoguePipeline:
                     # Still return through results so endpoint ownership is released.
                     if generation != self._generation:
                         raise RuntimeError('stale inference job')
+                    if preempted:
+                        raise _PreviewSuperseded()
                     if kind == 'endpoint' and self.smart_turn is not None:
                         try:
                             prediction = self.smart_turn.check(pcm.endpoint_pcm)
@@ -564,6 +616,9 @@ class DialoguePipeline:
                             if self.diagnostics is not None:
                                 self.diagnostics.event('smart_turn_error',
                                                        error=type(error).__name__)
+                    with self._inference_lock:
+                        if self._preempted_preview == job_key:
+                            raise _PreviewSuperseded()
                     if isinstance(pcm, _StreamInput):
                         window = ({'audio_start_s': pcm.audio_start_s}
                                   if pcm.audio_start_s else {})
@@ -572,8 +627,6 @@ class DialoguePipeline:
                             speech_end_s=pcm.speech_end_s, **window)
                         retained_start_s = getattr(pcm.stream, 'retained_start_s', 0.0)
                     else:
-                        engine = (self.wake if kind == 'wake' else
-                                  getattr(pcm, 'transcriber', None) or self.transcriber)
                         text = engine.transcribe(pcm, 16000)
                     wake_command = kind == 'wake' and bool(parse_wake_phrase(text))
                     if wake_command and self.validate_wake_command is not None:
@@ -596,6 +649,17 @@ class DialoguePipeline:
                         error_detail = str(error)[:2048]
                 finally:
                     decode_seconds = max(0.0, perf_counter() - decode_started)
+                    with self._inference_lock:
+                        preempted = self._preempted_preview == job_key
+                        self._active_inference = None
+                        if preempted:
+                            self._preempted_preview = None
+                    if preempted:
+                        # A completed stream may retain its safely committed
+                        # prefix. Its obsolete text and cancelled runtime are
+                        # neither a final answer nor an adaptive cost sample.
+                        text, error_name = None, 'PreviewSuperseded'
+                        error_detail, decode_seconds = None, None
                     pcm = None
                     if self.diagnostics is not None:
                         self.diagnostics.event('inference_result', text=text,
@@ -696,6 +760,10 @@ class DialoguePipeline:
         """Advance deadlines and consume bounded work without blocking ROS callbacks."""
         if self.stopping.is_set():
             return
+        # Native backends can reset cancellation at each decode entry, and an
+        # incremental job can perform a second decode. Repeat only while that
+        # same obsolete job owns inference; never signal a later final job.
+        self._cancel_preempted_preview()
         self._check_aec_health()
         self._expire_web_talk()
         if self.capture_error is None and self._capture_timed_out():
@@ -1039,6 +1107,7 @@ class DialoguePipeline:
             audio_at = self.clock() if self._event_time is None else self._event_time
             self._timing('endpoint', uid,
                          estimated_speech_end_s=audio_at - event.silence_s)
+            self._preempt_obsolete_preview(key)
             self._play_endpoint_chime()
             if (self._endpoint_result is not None and self._endpoint_result[0] == key
                     and self._usable_text(*self._endpoint_result[1:])):
@@ -1071,6 +1140,9 @@ class DialoguePipeline:
                     return
                 if self._endpoint_job == (stale[1], *stale[2]):
                     self._endpoint_job = None
+                with self._inference_lock:
+                    if self._preempted_preview == stale[:3]:
+                        self._preempted_preview = None
         payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s,
                                          audio_start_s=event.audio_start_s,
                                          voiced_s=event.voiced_s)
@@ -1122,6 +1194,9 @@ class DialoguePipeline:
         uid, revision = token
         kind = 'partial' if partial else 'endpoint'
         key = (generation, uid, revision)
+        with self._inference_lock:
+            if self._preempted_preview == (kind, generation, token):
+                self._preempted_preview = None
         if self._endpoint_job == key:
             self._endpoint_job = None
             elapsed = max(0.0, self.clock() - self._endpoint_requested_at)
@@ -1129,6 +1204,10 @@ class DialoguePipeline:
             self.report(f'endpoint_checked:wait_s={elapsed:.3f}')
         if generation != self._generation:
             self._trace_job('result_rejected', kind, generation, token, reason='stale_generation')
+            return
+        if error_name == 'PreviewSuperseded':
+            self._trace_job('result_rejected', kind, generation, token,
+                            reason='final_capture_preempted')
             return
         if self._endpoint_final == key:
             self._endpoint_final = None
