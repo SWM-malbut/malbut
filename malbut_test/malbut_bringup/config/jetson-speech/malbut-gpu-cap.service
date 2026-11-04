@@ -1,0 +1,13 @@
+[Unit]
+Description=Malbut selected GPU frequency ceiling (612 MHz)
+Wants=nvpmodel.service
+After=nvpmodel.service malbut-performance.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/malbut-gpu-cap
+RemainAfterExit=yes
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=multi-user.target
