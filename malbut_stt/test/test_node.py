@@ -540,7 +540,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert defaults['cpp_use_gpu'] is True
     assert defaults['cpp_threads'] == 6
     assert defaults['endpoint_predecode_s'] == 0.4
-    assert defaults['endpoint_min_silence_s'] == 0.6
+    assert defaults['endpoint_min_silence_s'] == 1.8
     assert defaults['input_has_aec'] is False
     assert defaults['playback_control_timeout_s'] == 5.0
     assert 'api_timeout_s' not in defaults
@@ -561,7 +561,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert runtime.pipeline_args['settings'].max_utterance_s is None
     assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.4
-    assert runtime.pipeline_args['endpoint_min_silence_s'] == 0.6
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
     assert runtime.calls['spin_timeout'] == 0.02
     assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
@@ -1088,7 +1088,7 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
     ('endpoint_predecode_s', 1.01), ('endpoint_predecode_s', True),
     ('endpoint_predecode_s', float('nan')), ('endpoint_predecode_s', float('inf')),
     ('endpoint_predecode_s', None),
-    ('endpoint_min_silence_s', .19), ('endpoint_min_silence_s', 1.01),
+    ('endpoint_min_silence_s', .19), ('endpoint_min_silence_s', 2.01),
     ('endpoint_min_silence_s', True), ('endpoint_min_silence_s', None),
     ('endpoint_min_silence_s', float('nan')), ('endpoint_min_silence_s', float('inf')),
     ('followup_timeout_s', -1), ('followup_timeout_s', True),
