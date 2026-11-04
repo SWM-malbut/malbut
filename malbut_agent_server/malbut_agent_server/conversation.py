@@ -1385,6 +1385,7 @@ class SQLiteConversationStore:
         response: Dict[str, Any],
         confirmation_draft: Optional['ConfirmationDraft'] = None,
         commit_callback: Optional[Callable] = None,
+        before_commit: Optional[Callable] = None,
     ) -> Tuple[ConversationSession, ConversationTurn]:
         """Atomically commit one response and optional confirmation."""
         normalized_assistant = self._assistant_text(
@@ -1509,6 +1510,11 @@ class SQLiteConversationStore:
                     token.conversation_id,
                 )
                 turn_row = self._select_turn_locked(token)
+                if before_commit is not None:
+                    # All final text/policy/session checks have succeeded. The
+                    # write transaction fences other writers during the short
+                    # ROS handoff; only then make this result durable.
+                    before_commit()
                 record_trace(self._connection, 'turn_committed', token.user_id,
                              request_id=token.request_id,
                              conversation_id=token.conversation_id, turn_id=token.turn_id,

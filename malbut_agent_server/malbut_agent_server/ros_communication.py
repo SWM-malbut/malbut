@@ -179,6 +179,7 @@ def create_communication_node(
                     self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
+                    publish_before_save=settings.speech_publish_before_save,
                     **({'prefetch_enabled': True} if settings.speech_prefetch_enabled else {}),
                     **({'scene_source': self._scene} if self._scene is not None else {}),
                     **({'missions': self.speech_missions}
@@ -523,7 +524,7 @@ def create_communication_node(
                 self.get_logger().error('speech_dialogue startup failed')
                 raise RuntimeError('speech_dialogue_startup_failed')
             self._start_speech_inputs()
-            for response in self.dialogue.drain():
+            for response in self.dialogue.drain(validate=False):
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
                     continue

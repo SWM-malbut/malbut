@@ -244,6 +244,7 @@ def test_node_rechecks_deletion_between_drain_and_say(tmp_path, monkeypatch):
         speech_db_path=str(tmp_path / 'receipts.sqlite3'),
         dialogue_settings=Settings(
             user_id='speaker', database_path=factory.path,
+            speech_publish_before_save=False,
         ),
         dialogue_factory=factory,
     )
@@ -251,8 +252,8 @@ def test_node_rechecks_deletion_between_drain_and_say(tmp_path, monkeypatch):
         _queue_reply(node.dialogue)
         drain = node.dialogue.drain
 
-        def delete_after_drain():
-            replies = drain()
+        def delete_after_drain(**kwargs):
+            replies = drain(**kwargs)
             assert replies[0]['text'] == OLD_REPLY
             factory.delete_from_another_connection()
             return replies
@@ -260,7 +261,7 @@ def test_node_rechecks_deletion_between_drain_and_say(tmp_path, monkeypatch):
         node.dialogue.drain = delete_after_drain
         node._drain_dialogue()
         assert spoken == [MEMORY_CHANGED_RESPONSE]
-        assert factory.guard_calls == 2
+        assert factory.guard_calls == 1
         event = json.loads(logs[-1])
         assert event['event'] == 'dialogue_response_published'
         assert event['text'] == MEMORY_CHANGED_RESPONSE

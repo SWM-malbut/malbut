@@ -183,6 +183,10 @@ class StoryMemoryService:
 
     def validate_readset(self, user, policy_revision, readset, request_id=None):
         """Fence corrections to the claims actually read, not unrelated writes."""
+        with self.store.validation_snapshot():
+            return self._validate_readset(user, policy_revision, readset, request_id)
+
+    def _validate_readset(self, user, policy_revision, readset, request_id=None):
         if (not isinstance(readset, (list, tuple)) or len(readset) > 20
                 or not self.validate(user, policy_revision)):
             return False
@@ -204,8 +208,7 @@ class StoryMemoryService:
             # list_stories reads valid source-backed stories in one snapshot.
             existing = {story['story_id']: {self._entry_hash(entry)
                                            for entry in story.get('current', [])}
-                        for story in self.store.list_stories(user)
-                        if story['story_id'] in required}
+                        for story in self.store.list_stories(user, story_ids=required)}
             for identifier, hashes in required.items():
                 if hashes <= existing.get(identifier, set()):
                     continue

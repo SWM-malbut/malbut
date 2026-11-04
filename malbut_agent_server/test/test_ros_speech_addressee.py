@@ -101,7 +101,7 @@ def node(monkeypatch, tmp_path, request):
         suspended = False
         has_pending = False
 
-        def __init__(self, *_args):
+        def __init__(self, *_args, **_kwargs):
             self.requests = []
             self.results = []
 
@@ -123,7 +123,7 @@ def node(monkeypatch, tmp_path, request):
         def resume(self):
             self.suspended = False
 
-        def drain(self):
+        def drain(self, *, validate=True):
             result, self.results = self.results, []
             return result
 
