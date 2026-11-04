@@ -91,13 +91,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         max_utterance_s = parameter('max_utterance_s', 0.0)
         max_buffer_s = parameter('max_buffer_s', 60.0)
         endpoint_predecode_s = parameter('endpoint_predecode_s', 0.4)
-        endpoint_min_silence_s = parameter('endpoint_min_silence_s', 1.8)
-        turn_detection = parameter('turn_detection', 'legacy')
+        turn_detection = parameter('turn_detection', 'adaptive')
+        endpoint_min_silence_s = parameter(
+            'endpoint_min_silence_s', 0.8 if turn_detection == 'adaptive' else 1.8)
         turn_model_directory = parameter('turn_model_directory', str(
             Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
             / 'malbut_speech/models'))
-        if turn_detection not in ('legacy', 'hybrid', 'reachy_start'):
-            raise ValueError('turn_detection must be legacy or hybrid or reachy_start')
+        if turn_detection not in ('legacy', 'hybrid', 'reachy_start', 'adaptive'):
+            raise ValueError('turn_detection must be legacy or hybrid or reachy_start or adaptive')
         if (type(max_utterance_s) not in (float, int)
                 or not isfinite(max_utterance_s) or max_utterance_s < 0):
             raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
@@ -178,8 +179,26 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'initializing_turn_detection'
         from malbut_stt.turn_detection import load_guards
-        start_qualifier, smart_turn = load_guards(turn_detection, turn_model_directory)
-        if turn_detection == 'hybrid':
+        try:
+            start_qualifier, smart_turn = load_guards(turn_detection, turn_model_directory)
+        except Exception as error:
+            if turn_detection != 'adaptive':
+                raise
+            # The new default must not prevent listening on installations that
+            # have not provisioned the optional, pinned local model/runtime.
+            # Do not apply the shorter hold using lexical evidence alone.
+            turn_detection = 'legacy'
+            start_qualifier, smart_turn = None, None
+            endpoint_min_silence_s = max(1.8, endpoint_min_silence_s)
+            node.get_logger().warning(
+                'stt_turn_detection:adaptive_unavailable:' + type(error).__name__
+                + ',fallback=legacy,min_silence_s=' + str(endpoint_min_silence_s))
+        if turn_detection == 'adaptive':
+            node.get_logger().info(
+                f'stt_turn_detection:adaptive,vad=silero,smart_turn=completion,'
+                f'min_silence_s={endpoint_min_silence_s},'
+                f'fallback_s={settings.silence_timeout_s}')
+        elif turn_detection == 'hybrid':
             node.get_logger().info(
                 'stt_turn_detection:hybrid,vad=silero,smart_turn=early_endpoint_guard')
         elif turn_detection == 'reachy_start':
@@ -503,6 +522,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 (lambda pcm: silero_gate.require_speech(pcm, diagnostics))
                 if silero_gate is not None else None),
             start_qualifier=start_qualifier, smart_turn=smart_turn,
+            adaptive_endpoint=turn_detection == 'adaptive',
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),

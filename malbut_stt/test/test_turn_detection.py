@@ -78,14 +78,15 @@ def test_legacy_does_not_need_models(tmp_path):
         load_guards('mistyped',tmp_path)
 
 
-def test_hybrid_loads_smart_without_a_second_onset_filter(monkeypatch, tmp_path):
+@pytest.mark.parametrize('mode', ['hybrid', 'adaptive'])
+def test_semantic_modes_load_smart_without_a_second_onset_filter(monkeypatch, tmp_path, mode):
     from malbut_stt import turn_detection
     smart = object()
     monkeypatch.setattr(turn_detection, 'SmartTurnGuard', lambda _: smart)
     def forbidden(*_):
         raise AssertionError('capture Silero already owns onset detection')
     monkeypatch.setattr(turn_detection, 'ReachyStartFilter', forbidden)
-    assert load_guards('hybrid', tmp_path) == (None, smart)
+    assert load_guards(mode, tmp_path) == (None, smart)
 
 
 def test_reachy_start_loads_only_silero_and_never_smart(monkeypatch, tmp_path):
