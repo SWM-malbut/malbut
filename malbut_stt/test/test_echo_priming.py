@@ -39,13 +39,20 @@ def test_invalid_startup_clock_cannot_advertise_ready(timestamp):
     assert not gate.ready
 
 
-@pytest.mark.parametrize('model_delay,history_delay,step_s,recover', [
-    (0., 0., .001, True),
-    (1., 2., .01, True),
-    (1., 2., .04, False),
+@pytest.mark.parametrize('model_delay,history_delay,step_s,recover,calibration_errors,ref_lead', [
+    (0., 0., .001, True, (), 0),
+    (1., 2., .01, True, (), 0),
+    (1., 2., .04, False, (), 0),
+    (0., 0., .001, True, (ValueError,), 0),
+    (1., 2., .01, True, (ValueError,), 2),
+    (1., 2., .04, False, (ValueError,), 0),
+    (0., 0., .001, False, (ValueError, ValueError), 0),
+    (0., 0., .001, False, (RuntimeError,), 0),
+    (0., 0., .001, False, (ValueError, RuntimeError), 0),
 ])
 def test_real_worker_defers_ready_and_preserves_ordered_dsp(
-        monkeypatch, tmp_path, model_delay, history_delay, step_s, recover):
+        monkeypatch, tmp_path, model_delay, history_delay, step_s, recover,
+        calibration_errors, ref_lead):
     """Run the real worker loop with deterministic capture/native boundaries.
 
     Capture continues on its 32 ms clock while model initialization/training
@@ -60,6 +67,8 @@ def test_real_worker_defers_ready_and_preserves_ordered_dsp(
     traces = []
     stopped = [False]
     delayed_live = [False]
+    calibration_calls = []
+    stream_events = []
 
     class Trace:
         enabled = False
@@ -97,11 +106,17 @@ def test_real_worker_defers_ready_and_preserves_ordered_dsp(
         def __init__(self, **kwargs):
             pass
         def get(self, **kwargs):
-            index, source = divmod(self.cursor, 2)
+            if self.cursor < ref_lead:
+                name, index = 'ref', self.cursor
+            else:
+                index, source = divmod(self.cursor - ref_lead, 2)
+                name = 'ref' if source == 0 else 'mic'
+                if name == 'ref':
+                    index += ref_lead
             self.cursor += 1
             timestamp = 100. + index * .032
             now[0] = max(now[0], timestamp)
-            return ('ref' if source == 0 else 'mic', index,
+            return (name, index,
                     np.full(512, index, dtype=np.float32), timestamp)
 
     class Output:
@@ -122,25 +137,38 @@ def test_real_worker_defers_ready_and_preserves_ordered_dsp(
 
     class Stream:
         def __init__(self, **kwargs):
-            pass
+            self.kind = 'warm' if 'callback' in kwargs else 'stimulus'
+            stream_events.append(('open', self.kind))
         def start(self):
-            pass
+            stream_events.append(('start', self.kind))
         def write(self, samples):
             now[0] += len(samples) / 16000
         def abort(self):
-            pass
+            stream_events.append(('abort', self.kind))
         def close(self):
-            pass
+            stream_events.append(('close', self.kind))
         def __enter__(self):
             return self
         def __exit__(self, *args):
-            pass
+            self.close()
 
     calibration = dict(lag_samples=1024, reference_lead_s=.04,
                        reference_delay_s=.064, microphone_gain=1.)
+    def calibrate(mic, ref, anchor_difference):
+        # Uneven event delivery must not give the retry two different origins.
+        mic_indices = [int(mic[i]) for i in range(0, len(mic), 512)]
+        ref_indices = [int(ref[i]) for i in range(0, len(ref), 512)]
+        assert mic_indices[0] == ref_indices[0]
+        assert mic_indices == list(range(mic_indices[0], mic_indices[-1] + 1))
+        assert ref_indices == list(range(ref_indices[0], ref_indices[-1] + 1))
+        assert anchor_difference == pytest.approx(0.)
+        calibration_calls.append((mic_indices, ref_indices))
+        if len(calibration_calls) <= len(calibration_errors):
+            raise calibration_errors[len(calibration_calls)-1]('calibration test failure')
+        return dict(calibration)
     monkeypatch.setitem(sys.modules, 'sounddevice', SimpleNamespace(OutputStream=Stream))
     monkeypatch.setitem(sys.modules, 'malbut_stt.echo.processor', SimpleNamespace(
-        EchoProcessor=Processor, calibrate=lambda *args: dict(calibration)))
+        EchoProcessor=Processor, calibrate=calibrate))
     monkeypatch.setattr(worker, 'Queue', Events)
     monkeypatch.setattr(worker, 'Thread', Thread)
     monkeypatch.setattr(worker.subprocess, 'check_output', lambda args, **kw:
@@ -160,7 +188,25 @@ def test_real_worker_defers_ready_and_preserves_ordered_dsp(
     worker.run(dict(source='mic', sink='speaker', models=str(tmp_path),
                     calibration_audio=str(audio)), Output(),
                SimpleNamespace(is_set=lambda: stopped[0]))
-    assert processed == list(range(processed[-1] + 1))
+    retried = bool(calibration_errors and calibration_errors[0] is ValueError)
+    assert len(calibration_calls) == (2 if retried else 1)
+    assert stream_events.count(('open', 'warm')) == 1
+    assert stream_events.count(('start', 'warm')) == 1
+    assert stream_events.count(('abort', 'warm')) == 1
+    assert stream_events.count(('close', 'warm')) == 1
+    assert stream_events.count(('open', 'stimulus')) == len(calibration_calls)
+    assert stream_events.count(('close', 'stimulus')) == len(calibration_calls)
+    if retried:
+        first_mic, first_ref = calibration_calls[0]
+        assert calibration_calls[1][0][0] == max(first_mic[-1], first_ref[-1]) + 1
+    calibration_failed = len(calibration_errors) >= len(calibration_calls)
+    if calibration_failed:
+        assert processed == []
+        assert [m[0] for _, m in messages] == ['error']
+        assert 'calibration test failure' in messages[0][1][1]
+        return
+    training_start = calibration_calls[-1][0][0]
+    assert processed == list(range(training_start, processed[-1] + 1))
     if recover:
         assert [m[0] for _, m in messages] == ['ready', 'audio', 'audio']
         ready_at, ready = messages[0]
