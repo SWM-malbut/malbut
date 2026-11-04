@@ -82,6 +82,7 @@ class StoryRuntimeStore:
         self.memory = memory_store
         self._clock = clock
         self._recovery_versions = {}
+        self._source_cache = None
         if memory_store._connection is not conversation_store._connection:
             memory_store.bind_connection(conversation_store._connection,
                                          conversation_store._lock)
@@ -112,6 +113,22 @@ class StoryRuntimeStore:
         if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
             raise StoryMemoryError('invalid clock')
         return float(value)
+
+    @contextmanager
+    def validation_snapshot(self):
+        """Reuse source checks only within one locked SQLite snapshot.
+
+        Never retain successful validation across transactions: another process
+        can correct or erase source text without touching this Python object.
+        Writes on this connection also invalidate the snapshot's memo.
+        """
+        with self._transaction() as conn:
+            previous = self._source_cache
+            self._source_cache = (conn.total_changes, {})
+            try:
+                yield
+            finally:
+                self._source_cache = previous
 
     def _initialize(self):
         definitions = (
@@ -448,6 +465,17 @@ class StoryRuntimeStore:
                                                   'WHERE enabled=1 AND external_consent=1')]
 
     def _resolve(self, conn, user, ref):
+        cache = self._source_cache
+        if cache is None:
+            return self._resolve_uncached(conn, user, ref)
+        if cache[0] != conn.total_changes:
+            cache = self._source_cache = (conn.total_changes, {})
+        key = (user, ref)
+        if key not in cache[1]:
+            cache[1][key] = self._resolve_uncached(conn, user, ref)
+        return cache[1][key]
+
+    def _resolve_uncached(self, conn, user, ref):
         source = read_source(conn, user, ref)
         if source is None:
             return None
@@ -940,11 +968,23 @@ class StoryRuntimeStore:
                 result.append(story)
             return result
 
-    def list_stories(self, user):
+    def list_stories(self, user, *, story_ids=None):
         user = _id(user, 'user_id')
+        identifiers = None if story_ids is None else sorted({
+            _id(value, 'story_id') for value in story_ids
+        })
+        if identifiers == []:
+            return []
+        if identifiers is not None and len(identifiers) > 20:
+            raise StoryMemoryError('too many story identifiers')
+        query = 'SELECT * FROM story_runtime_stories WHERE user_id=?'
+        parameters = [user]
+        if identifiers is not None:
+            query += ' AND story_id IN (' + ','.join('?' for _ in identifiers) + ')'
+            parameters.extend(identifiers)
+        query += ' ORDER BY updated_at DESC,story_id'
         with self._transaction() as conn:
-            return [self._story_dict(row) for row in conn.execute(
-                'SELECT * FROM story_runtime_stories WHERE user_id=? ORDER BY updated_at DESC,story_id', (user,))
+            return [self._story_dict(row) for row in conn.execute(query, parameters)
                     if self._story_valid(conn, user, row)]
 
     def evidence(self, user, story_id):
@@ -1037,9 +1077,14 @@ class StoryRuntimeStore:
                     if source is not None and source.text in displayed:
                         ids.add(row['story_id'])
                         break
-            for row in conn.execute('SELECT request_id,stories_json FROM story_runtime_replies '
-                                    'WHERE user_id=?', (user,)):
-                if row['request_id'] in ancestor_requests or row['request_id'] == request_id:
+            requests = sorted(ancestor_requests | {request_id})
+            for start in range(0, len(requests), 500):
+                batch = requests[start:start + 500]
+                for row in conn.execute(
+                    'SELECT stories_json FROM story_runtime_replies WHERE user_id=? '
+                    'AND request_id IN (' + ','.join('?' for _ in batch) + ')',
+                    [user, *batch],
+                ):
                     ids.update(json.loads(row['stories_json']))
             if ids:
                 revision = self._policy(conn, user)['revision']

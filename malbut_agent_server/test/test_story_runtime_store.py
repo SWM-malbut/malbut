@@ -137,6 +137,61 @@ def _claim_three_turns(runtime):
     return tokens, job
 
 
+def test_targeted_validation_does_not_resolve_unrelated_story_sources(runtime, monkeypatch):
+    runtime.allow()
+    _, _, first = runtime.saved()
+    _, job = runtime.claim_turn('요가 수업을 듣고 싶어.')
+    assert runtime.store.commit(job, [runtime.update(job, title='요가')])
+    resolved = []
+    original = runtime.store._resolve_uncached
+
+    def resolve(conn, user, ref):
+        resolved.append(ref.turn_id)
+        return original(conn, user, ref)
+
+    monkeypatch.setattr(runtime.store, '_resolve_uncached', resolve)
+    selected = runtime.store.list_stories('alice', story_ids=[first['story_id']])
+    assert [story['story_id'] for story in selected] == [first['story_id']]
+    assert resolved and set(resolved) == {'turn-1'}
+
+
+def test_source_memo_is_scoped_and_external_correction_is_seen(runtime, monkeypatch):
+    import sqlite3
+    runtime.allow()
+    token, _, story = runtime.saved()
+    calls = []
+    original = runtime.store._resolve_uncached
+
+    def resolve(conn, user, ref):
+        calls.append(ref)
+        return original(conn, user, ref)
+
+    monkeypatch.setattr(runtime.store, '_resolve_uncached', resolve)
+    with runtime.store.validation_snapshot():
+        assert runtime.store.list_stories('alice')
+        initial = len(calls)
+        assert runtime.store.list_stories('alice')
+        assert len(calls) == initial
+    with sqlite3.connect(runtime.path) as other:
+        other.execute('UPDATE conversation_turns SET user_content=? WHERE request_id=?',
+                      ('수정된 원문', token.request_id))
+    with runtime.store.validation_snapshot():
+        assert runtime.store.list_stories('alice', story_ids=[story['story_id']]) == []
+    assert len(calls) > initial
+
+
+def test_source_memo_is_invalidated_by_writes_in_same_transaction(runtime):
+    runtime.allow()
+    token, _, _ = runtime.saved()
+    with runtime.store.validation_snapshot():
+        assert runtime.store.list_stories('alice')
+        runtime.conversations._connection.execute(
+            'UPDATE conversation_turns SET user_content=? WHERE request_id=?',
+            ('수정된 원문', token.request_id),
+        )
+        assert runtime.store.list_stories('alice') == []
+
+
 def test_default_off_does_not_queue_or_disclose_completed_sources(runtime):
     token = runtime.complete()
     policy = runtime.store.policy('alice')
