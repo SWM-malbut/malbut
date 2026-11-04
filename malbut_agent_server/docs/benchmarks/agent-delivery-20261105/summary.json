@@ -1,0 +1,93 @@
+{
+  "live_trial_count_per_setting": 3,
+  "method": "Same three text inputs, real robot agent/Manager/Piper. STT bypassed. API and history/background work vary; live deltas are observational, not isolated causal speedup. TTS measured until PLAYING status, not physical sound.",
+  "live": {
+    "baseline": {
+      "agent_s": 8.861999909083048,
+      "provider_call_s": 3.02592,
+      "agent_other_s": 5.836079909083049,
+      "tts_s": 1.4489867687225342,
+      "text_to_playing_s": 10.310986677805582
+    },
+    "candidate": {
+      "agent_s": 4.9948967297871905,
+      "provider_call_s": 2.9777210000000003,
+      "agent_other_s": 2.0171757297871906,
+      "tts_s": 1.3881045977274578,
+      "text_to_playing_s": 6.383001327514648
+    }
+  },
+  "guard_benchmark": {
+    "baseline": {
+      "count": 27,
+      "mean_s": 0.14857547529626808,
+      "mean_queries": 3179.4444444444443,
+      "valid": 27
+    },
+    "candidate": {
+      "count": 27,
+      "mean_s": 0.0957434614074036,
+      "mean_queries": 1579.5555555555557,
+      "valid": 27
+    }
+  },
+  "date": "2026-11-05",
+  "source_versions": {
+    "baseline": "f7da593",
+    "candidate_deployed": "dd21b20bcc3e5b7ed7fcf2880c85434bca135233",
+    "mr_base": "2decb94a9194bdb8351f972cee5cdb75cfd1e5de",
+    "note": "Only the Agent change was cherry-picked onto main. Baseline Agent source equals MR base Agent source; candidate runtime modules are byte-identical to deployed modules."
+  },
+  "definitions": {
+    "agent_s": "SpeechTranscript publication to final SpeechRequest observation by one ROS probe.",
+    "provider_call_s": "Persisted provider latency including adapter work/network/retries; not pure model inference.",
+    "agent_other_s": "agent_s minus provider_call_s; derived residual, not direct function profiling.",
+    "tts_s": "Final SpeechRequest observation to first PLAYING status; includes Manager, transport and synthesis.",
+    "text_to_playing_s": "SpeechTranscript publication to first PLAYING status; not physical speaker onset.",
+    "guard_sql_count": "SQLite trace callback statement count, including transaction statements."
+  },
+  "limitations": [
+    "STT bypassed and not measured; this is a text-boundary real robot test.",
+    "Three sequential baseline trials then three candidate trials, not randomized. Provider, history, background work and load can vary.",
+    "Two candidate setup attempts with no Agent acceptance, inference or playback were excluded; discovery was fixed before the three completed trials.",
+    "Live deltas combine query changes and delivery ordering; they do not isolate either optimization.",
+    "Guard benchmark reused the same cloned SQLite snapshot: nine recorded bindings repeated three times per setting. Valid cases stayed valid; invalidation safety is checked by regression tests.",
+    "Guard sample IDs are anonymous and consistent across conditions. Original conversations and database snapshots are not included."
+  ],
+  "checks": {
+    "early_delivery_log_count": 3,
+    "completed_saved_trials": 6,
+    "pending_after_trials": 0,
+    "one_response_and_finished_playback_per_trial": true,
+    "deployed_modules_match": true,
+    "regression": {
+      "passed": 954,
+      "skipped": 5,
+      "subtests_passed": 71,
+      "seconds": 63.92
+    },
+    "mr_deployment_sync": {
+      "passed": 4
+    },
+    "mr_runtime_config": {
+      "passed": 7
+    }
+  },
+  "runtime_settings": {
+    "tts": "basic Piper KSS",
+    "tts_threads": 6,
+    "tts_speed": 1.0,
+    "speaker_percent": 60,
+    "gpu_cap_mhz": 612
+  },
+  "candidate_module_sha256": {
+    "malbut_agent_server/malbut_agent_server/config.py": "0205f6ab1f1c51a57279522b861eeed7a18c878a969631fc07d1ca4b3561a335",
+    "malbut_agent_server/malbut_agent_server/conversation.py": "cc730b76f74f1756797fb1dc4e6a9e1fcdfa4678026693c9efb8c5ecc6733478",
+    "malbut_agent_server/malbut_agent_server/orchestrator.py": "df3729918b9e1e07d7feba8981140a0d53814c9383968b09213a5647a89fb3e5",
+    "malbut_agent_server/malbut_agent_server/ros_communication.py": "9f52661939186adbe898a28ebc40fd30679266f7ca054dd22b7da63cf3bc8130",
+    "malbut_agent_server/malbut_agent_server/speech_delivery.py": "c70c4bc83f0300b82c353deb0de6eb25f2553e43ebbd8fa1c96a27061877cda3",
+    "malbut_agent_server/malbut_agent_server/speech_dialogue.py": "bb70020cfe3225e064a4197cef81927ff9d9e3674cb7ccaebe1dee8a5546e066",
+    "malbut_agent_server/malbut_agent_server/story_memory_service.py": "f868cbc2ff59a4a62d21841408317214e5102a497a4fb08cc688b519176221f5",
+    "malbut_agent_server/malbut_agent_server/story_runtime_store.py": "2fe57c8f0c65545678b27036dac2f94ef5d4c6f738e521396e58fb816b53c9f0"
+  }
+}

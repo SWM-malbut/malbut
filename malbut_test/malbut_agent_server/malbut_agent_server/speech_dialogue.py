@@ -66,6 +66,7 @@ class _DialogueReply(dict):
         self._on_publish = None
         self._prefetch = None
         self._prepared_hint = {}
+        self._delivery_ticket = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,7 @@ class DialogueWorker:
     def __init__(
         self, runtime_factory: Callable, user_id: str, capacity: int = 10,
         *, missions=None, scene_source=None, prefetch_enabled=False,
+        publish_before_save=False,
     ):
         """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
@@ -143,6 +145,9 @@ class DialogueWorker:
         if type(prefetch_enabled) is not bool:
             raise TypeError('prefetch_enabled must be a boolean')
         self._prefetch_enabled = prefetch_enabled
+        if type(publish_before_save) is not bool:
+            raise TypeError('publish_before_save must be a boolean')
+        self._publish_before_save = publish_before_save
         self._preparations = deque()
         self._prefetch_turns = {}
         self._prefetch_epoch = 0
@@ -308,23 +313,31 @@ class DialogueWorker:
                 turn.cancel()
             self._prefetch_turns.pop(turn.request_id, None)
 
-    def drain(self) -> list[dict]:
+    def drain(self, *, validate=True) -> list[dict]:
         """Recheck ready replies and release their admission capacity."""
         with self._condition:
             results = list(self._results)
             self._results.clear()
             self._outstanding -= sum(item['kind'] not in {'progress', 'acknowledgement'}
+                                     and getattr(item, '_delivery_ticket', None) is None
                                      for item in results)
             results = [item for item in results
                        if item['kind'] not in {'progress', 'acknowledgement'}
                        or item._progress.can_publish(item['text'])]
+        # Never acquire the DB lock while holding the queue lock: the worker
+        # may be handing off a validated reply while holding its transaction.
+        if validate:
             for reply in results:
                 self._refresh_reply(reply)
-            return results
+        return results
 
     def publish_reply(self, reply: dict, publish: Callable) -> Optional[dict]:
         """Check again immediately before publishing while stores are open."""
+        self._refresh_reply(reply)
         with self._condition:
+            ticket = getattr(reply, '_delivery_ticket', None)
+            if ticket is not None and ticket['state'] != 'waiting':
+                return None
             if (self._closing or self._stopped or self._suspended
                     or getattr(reply, '_generation', self._generation)
                     != self._generation):
@@ -334,7 +347,6 @@ class DialogueWorker:
                 return None
             if reply.get('kind') in {'progress', 'acknowledgement'}:
                 return dict(reply) if reply._progress.publish(publish, reply['text']) else None
-            self._refresh_reply(reply)
             dispatch = getattr(reply, '_mission_callback', None)
             if dispatch is not None:
                 # Consume before calling transport, even if publication fails.
@@ -351,9 +363,14 @@ class DialogueWorker:
                     prefetch.cancel()
             published = False
             try:
+                if ticket is not None:
+                    reply['text'] = ticket['progress'].final_text(reply['text'])
                 published = publish(reply['text'])
             finally:
                 self._release_prefetch(reply, published=published)
+                if ticket is not None:
+                    ticket['state'] = 'published' if published else 'cancelled'
+                    self._condition.notify_all()
             if published:
                 activate = reply._on_publish
                 reply._on_publish = None
@@ -503,6 +520,7 @@ class DialogueWorker:
                     self._answer_companion(runtime, utterance_id, text, progress, generation)
                     continue
                 prefetch = None
+                delivery = {'published': False}
                 try:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
@@ -574,7 +592,17 @@ class DialogueWorker:
                                     and g == self._generation and epoch == self._prefetch_epoch),
                             )
                             self._prefetch_turns[request_id] = prefetch
-                    result = self._handle_with_progress(runtime, request, progress, prefetch)
+                    def deliver(result):
+                        published = self._deliver_before_save(
+                            result, utterance_id, conversation_id, generation, progress, prefetch,
+                        )
+                        delivery['published'] = published
+                        return published
+
+                    result = self._handle_with_progress(
+                        runtime, request, progress, prefetch,
+                        deliver if self._publish_before_save else None,
+                    )
                     decision = result.decision
                     if (navigation_binding is not None
                             and result.raw_decision.tool_name == 'request_navigation'
@@ -626,11 +654,19 @@ class DialogueWorker:
                         MEMORY_CHANGED_RESPONSE, 'error',
                     )
                 except Exception:
+                    if delivery['published']:
+                        import logging
+                        logging.getLogger(__name__).exception(
+                            'speech_result_save_failed utterance_id=%s', utterance_id,
+                        )
                     reply = self._reply(
                         utterance_id, conversation_id, ERROR_RESPONSE, 'error',
                     )
                 finally:
-                    if prefetch is not None:
+                    if delivery['published']:
+                        # A storage failure must not send a second spoken answer.
+                        reply = None
+                    if prefetch is not None and not delivery['published']:
                         if reply is None or reply['kind'] != 'answer':
                             prefetch.cancel()
                             with self._condition:
@@ -642,7 +678,9 @@ class DialogueWorker:
                     self._active_progress = None
                     self._running = False
                     if not self._closing:
-                        if reply is None or generation != self._generation:
+                        if delivery['published']:
+                            self._outstanding -= 1
+                        elif reply is None or generation != self._generation:
                             if reply is not None:
                                 self._release_prefetch(reply)
                             self._outstanding -= 1
@@ -809,11 +847,55 @@ class DialogueWorker:
             self._results.append(reply)
 
     @staticmethod
-    def _handle_with_progress(runtime, request, progress, prefetch=None):
+    def _handle_with_progress(runtime, request, progress, prefetch=None, delivery=None):
         from malbut_agent_server.speech_prefetch import prefetch_scope
+        from malbut_agent_server.speech_delivery import delivery_scope
 
-        with request_scope(progress=progress), prefetch_scope(prefetch):
+        with request_scope(progress=progress), prefetch_scope(prefetch), delivery_scope(delivery):
             return runtime.handle(request)
+
+    def _deliver_before_save(self, result, utterance_id, conversation_id,
+                             generation, progress, prefetch):
+        """Let the ROS thread publish within the worker's validation transaction.
+
+        No DB guard runs on the ROS thread for this ticket: the worker has just
+        checked final memory and holds SQLite's writer lock until we return.
+        A bounded wait and atomic ticket expiry avoid deadlock with other ROS
+        callbacks using the database. Late tickets can never publish twice.
+        """
+        deadline = time.monotonic() + 0.25
+        if not self._condition.acquire(timeout=0.25):
+            return False
+        try:
+            if (self._closing or self._suspended or generation != self._generation):
+                return False
+            text = result.decision.message
+            from malbut_agent_server.mission_audio import CATALOG
+            if ((result.decision.type == 'refusal' and result.decision.reason in {
+                    'safety:unknown_tool', 'safety:tool_unavailable',
+            }) or result.decision.reason in {'unsupported_capability', 'unavailable_capability'}):
+                text = CATALOG['operation.unsupported']
+            reply = self._reply(utterance_id, conversation_id, text, 'answer')
+            reply['delivery_before_save'] = True
+            ticket = reply._delivery_ticket = {'state': 'waiting', 'progress': progress}
+            reply._generation = generation
+            reply._prefetch = prefetch
+            self._results.append(reply)
+            self._condition.wait_for(
+                lambda: ticket['state'] != 'waiting' or self._closing
+                or self._suspended or generation != self._generation,
+                timeout=max(0, deadline - time.monotonic()),
+            )
+            if ticket['state'] == 'published':
+                progress.finish()
+                return True
+            ticket['state'] = 'cancelled'
+            # The ROS thread may already have drained it. The cancelled ticket
+            # also guards that copy, so only the normal post-save reply remains.
+            self._results = deque(item for item in self._results if item is not reply)
+            return False
+        finally:
+            self._condition.release()
 
     def begin_companion(self, session):
         """Expose the encounter to the app before the first spoken reply."""

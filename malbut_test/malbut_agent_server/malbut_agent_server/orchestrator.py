@@ -189,6 +189,7 @@ class OrchestrationResult:
         repr=False,
         compare=False,
     )
+    speech_published: bool = field(default=False, repr=False, compare=False)
 
     def to_dict(
         self,
@@ -807,6 +808,33 @@ class AgentOrchestrator:
                         request, token, memory_snapshot, result, connection,
                     )
 
+                from malbut_agent_server.speech_delivery import (
+                    deliver_before_save, delivery_available,
+                )
+
+                def deliver_committing_reply():
+                    # Memory management/configuration and action receipts must
+                    # never claim success before persistence. commit_memory may
+                    # also replace a model's unsupported completion claim.
+                    if (result.raw_decision.type == 'tool_call'
+                            or result.decision.type not in {'message', 'clarification', 'refusal'}
+                            or result.decision.reason == 'personal_memory'
+                            or result.decision.clarification_for == 'mapping_name'
+                            or result.safety.code == 'navigation_confirmation_required'
+                            or result.provider_result.memory_proposal is not None
+                            or memory_snapshot.pending is not None
+                            or memory_snapshot.source.get('settings_edit')
+                            or explicit_memory_management(request.utterance)
+                            or confirmation_factory is not None):
+                        return
+                    self.personal_memory.assert_fresh(request.user_id, request.request_id)
+                    self._assert_story_binding(request.user_id, request.request_id,
+                                               result.story_binding)
+                    result.speech_published = deliver_before_save(result)
+
+                if delivery_available():
+                    completion_arguments['before_commit'] = deliver_committing_reply
+
                 with self.conversation_store._lock:
                     # Policy/erasure writes use this same lock. Keep validation
                     # and the completed response commit in one protected window.
@@ -840,7 +868,8 @@ class AgentOrchestrator:
                         # The completed reply already owns durable raw sources.
                         # Recovery fills an enqueue gap without replaying inference.
                         self.story_memory.note_enqueue_failure(request.user_id)
-                result.memory_validator()
+                if not result.speech_published:
+                    result.memory_validator()
                 return result
             except Exception as error:
                 if not committed:
