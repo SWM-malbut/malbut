@@ -2,6 +2,7 @@
 
 import ast
 from io import BytesIO
+import logging
 from pathlib import Path
 import sys
 
@@ -29,6 +30,16 @@ from malbut_agent_server.tools import TOOL_SPECS
 
 
 SENSITIVE = 'secret-runtime-canary-SWM25-131'
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging_after_sidecar():
+    """Keep the isolated sidecar's logging policy out of other unit tests."""
+    previous_disable = logging.root.manager.disable
+    try:
+        yield
+    finally:
+        logging.disable(previous_disable)
 
 
 @pytest.fixture(autouse=True)

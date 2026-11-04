@@ -270,8 +270,8 @@ def test_ros_does_not_publish_answer_deleted_after_queue_drain(ros_memory):
     drain = ros_memory.agent.dialogue.drain
     deleted = []
 
-    def delete_after_drain():
-        replies = drain()
+    def delete_after_drain(*, validate=True):
+        replies = drain(validate=validate)
         if replies and not deleted:
             assert replies[0]['text'] == RECALL_REPLY
             store = SQLiteMemoryStore(ros_memory.path)
