@@ -144,6 +144,9 @@ def run(config, output, stop):
             thread.start()
         offsets = {n: deque(maxlen=32) for n in ('mic', 'ref')}
         recorded = {n: [] for n in ('mic', 'ref')}
+        recorded_start = 0
+        latest_index = {n: -1 for n in ('mic', 'ref')}
+        calibration_attempt = 1
         reference = {}
         reference_timing = {}
         origin = monotonic()
@@ -183,6 +186,7 @@ def run(config, output, stop):
                 raise RuntimeError('AEC microphone/reference timed out')
             if name == 'error':
                 raise RuntimeError(index)
+            latest_index[name] = index
             offsets[name].append(timestamp - index * 0.032)
             if name == 'ref':
                 reference[index] = x
@@ -191,8 +195,20 @@ def run(config, output, stop):
                     reference_timing[index] = dict(timing, captured_at_s=timestamp)
                     reference_timing.pop(index - 125, None)
             if processor is None:
+                # A retry starts both arrays at one global capture index. The
+                # slower stream may still deliver frames from the first try.
+                # Keep its clock/reference updates above, but exclude those
+                # frames from the new fit; never renumber either live stream.
+                if index < recorded_start:
+                    continue
+                if index != recorded_start + len(recorded[name]):
+                    raise RuntimeError('AEC calibration capture sequence gap')
                 recorded[name].append(x)
-                if monotonic() - origin > 3 and min(map(len, recorded.values())) >= 75 and playback_started is None:
+                first_warm = (monotonic() - origin > 3
+                              and min(map(len, recorded.values())) >= 75)
+                retry_warm = (calibration_attempt == 2
+                              and min(map(len, recorded.values())) >= 1)
+                if playback_started is None and (first_warm or retry_warm):
                     playback_started = monotonic()
                     Thread(target=play_calibration, daemon=True).start()
                 if (playback_started is None or not playback_done.is_set()
@@ -200,9 +216,33 @@ def run(config, output, stop):
                     continue
                 anchors = {n: float(np.median(v)) for n, v in offsets.items()}
                 mic, ref = (np.concatenate(recorded[n]) for n in ('mic', 'ref'))
-                if trace.enabled:
-                    calibration_begin = monotonic()
-                calibration = calibrate(mic, ref, anchors['mic'] - anchors['ref'])
+                calibration_begin = monotonic()
+                try:
+                    calibration = calibrate(mic, ref, anchors['mic'] - anchors['ref'])
+                except ValueError:
+                    if calibration_attempt != 1:
+                        raise
+                    # Some capture paths settle during the first stimulus.
+                    # Reuse the open captures and warm output for one new fit,
+                    # under exactly the same reliability checks. The existing
+                    # one-second playback tail is already the retry gap.
+                    recorded_start = max(latest_index.values()) + 1
+                    recorded = {n: [] for n in ('mic', 'ref')}
+                    calibration_attempt = 2
+                    playback_started = None
+                    playback_done.clear()
+                    trace.record('calibration_retry', dict(
+                        calibration_attempt_index=1,
+                        next_recording_start_seq=recorded_start,
+                        calibration_fit_s=monotonic()-calibration_begin,
+                        exception_type='ValueError'), force=True)
+                    del mic, ref
+                    continue
+                trace.record('calibration_accepted', dict(
+                    calibration_attempt_index=calibration_attempt,
+                    recording_start_seq=recorded_start,
+                    mic_end_seq=latest_index['mic'], ref_end_seq=latest_index['ref'],
+                    calibration_fit_s=monotonic()-calibration_begin), force=True)
                 if trace.enabled:
                     model_begin = monotonic()
                 processor = EchoProcessor(gain=calibration['microphone_gain'], neural_models=models,
