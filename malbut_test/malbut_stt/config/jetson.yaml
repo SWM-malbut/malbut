@@ -10,8 +10,9 @@ malbut_stt:
     max_buffer_s: 60.0  # Retained PCM/backlog only; acknowledged prefixes are released.
     stt_decode_timeout_s: 30.0
     silence_timeout_s: 2.0
+    turn_detection: adaptive  # Local Smart Turn v3.2; unavailable model keeps legacy 1.8 s.
     endpoint_predecode_s: 0.4
-    endpoint_min_silence_s: 0.6
+    endpoint_min_silence_s: 0.8  # Complete: 0.8 s grace; incomplete/unknown: 2.0 s.
     followup_timeout_s: 10.0  # Wait for the next utterance after the final reply finishes.
     input_has_aec: false  # External AEC only; pulse_reference verifies its own readiness.
     aec_backend: none  # Optional pulse_reference needs explicit device/model/audio paths.

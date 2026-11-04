@@ -45,6 +45,43 @@ def test_reachy_start_keeps_silero_capture_and_existing_endpoint_settings(runtim
     assert runtime.pipeline_args['endpoint_predecode_s'] == .4
 
 
+def test_default_adaptive_mode_uses_acoustic_completion_and_eight_tenths(runtime, monkeypatch):
+    smart = object()
+    calls = []
+    def load(mode, directory):
+        calls.append(mode)
+        return None, smart
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', load)
+    assert main([]) == 0
+    assert calls == ['adaptive']
+    assert runtime.pipeline_args['smart_turn'] is smart
+    assert runtime.pipeline_args['adaptive_endpoint'] is True
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == .8
+    assert runtime.pipeline_args['endpoint_predecode_s'] == .4
+    assert runtime.pipeline_args['settings'].silence_timeout_s == 2.
+
+
+@pytest.mark.parametrize('error', [FileNotFoundError, ImportError, ValueError, RuntimeError])
+def test_unavailable_adaptive_model_preserves_listening_and_longer_hold(
+        runtime, monkeypatch, error):
+    def load(*_):
+        raise error('private model details')
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', load)
+    assert main([]) == 0
+    assert runtime.pipeline_args['smart_turn'] is None
+    assert runtime.pipeline_args['adaptive_endpoint'] is False
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
+    assert ('warning', 'stt_turn_detection:adaptive_unavailable:' + error.__name__
+            + ',fallback=legacy,min_silence_s=1.8') in runtime.logs
+
+
+def test_explicit_legacy_mode_retains_existing_hold(runtime):
+    runtime.parameters['turn_detection'] = 'legacy'
+    assert main([]) == 0
+    assert runtime.pipeline_args['adaptive_endpoint'] is False
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
+
+
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
@@ -540,7 +577,8 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert defaults['cpp_use_gpu'] is True
     assert defaults['cpp_threads'] == 6
     assert defaults['endpoint_predecode_s'] == 0.4
-    assert defaults['endpoint_min_silence_s'] == 0.6
+    assert defaults['turn_detection'] == 'adaptive'
+    assert defaults['endpoint_min_silence_s'] == .8
     assert defaults['input_has_aec'] is False
     assert defaults['playback_control_timeout_s'] == 5.0
     assert 'api_timeout_s' not in defaults
@@ -561,7 +599,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert runtime.pipeline_args['settings'].max_utterance_s is None
     assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.4
-    assert runtime.pipeline_args['endpoint_min_silence_s'] == 0.6
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
     assert runtime.calls['spin_timeout'] == 0.02
     assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
@@ -1088,7 +1126,7 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
     ('endpoint_predecode_s', 1.01), ('endpoint_predecode_s', True),
     ('endpoint_predecode_s', float('nan')), ('endpoint_predecode_s', float('inf')),
     ('endpoint_predecode_s', None),
-    ('endpoint_min_silence_s', .19), ('endpoint_min_silence_s', 1.01),
+    ('endpoint_min_silence_s', .19), ('endpoint_min_silence_s', 2.01),
     ('endpoint_min_silence_s', True), ('endpoint_min_silence_s', None),
     ('endpoint_min_silence_s', float('nan')), ('endpoint_min_silence_s', float('inf')),
     ('followup_timeout_s', -1), ('followup_timeout_s', True),
@@ -1330,6 +1368,7 @@ def test_recovery_pcm_is_only_requested_for_overlap_recovery(runtime, monkeypatc
 
 @pytest.mark.parametrize('minimum', [0.2, 0.8, 1.0])
 def test_explicit_endpoint_silence_floor_reaches_pipeline(runtime, minimum):
+    runtime.parameters['turn_detection'] = 'legacy'
     runtime.parameters['endpoint_min_silence_s'] = minimum
     assert main() == 0
     assert runtime.pipeline_args['endpoint_min_silence_s'] == minimum

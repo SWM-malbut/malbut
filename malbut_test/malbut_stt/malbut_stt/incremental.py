@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import math
+from time import monotonic_ns
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,13 @@ def _resegmented_overlap(retained, decoded):
     return False
 
 
+def _tail_gap_exceeds(gap, maximum):
+    # Subtracting absolute segment times can put exactly 0.8 s a few ULPs
+    # above its boundary. One nanosecond is far below one 16 kHz sample;
+    # this corrects representation noise, not actual missing speech.
+    return gap > maximum and not math.isclose(gap, maximum, rel_tol=0.0, abs_tol=1e-9)
+
+
 class IncrementalWhisperStream:
     """Keep agreed text and decode an overlapping suffix of the original audio.
 
@@ -90,24 +98,49 @@ class IncrementalWhisperStream:
         audio = np.frombuffer(pcm, dtype='<i2',
                               offset=(offset_samples - audio_start_samples) * 2)
         audio = audio.astype(np.float32) / 32768.0
-        segments, _ = self.model.transcribe(
-            audio, language='ko', beam_size=1, condition_on_previous_text=False,
-            initial_prompt=None,
-        )
-        decoded = []
-        for segment in segments:
-            if not segment.text.strip():
-                continue
-            start, end = offset + segment.start, offset + segment.end
-            # Native decoder timestamps avoid expensive CPU word alignment.
-            valid = (math.isfinite(start + end) and offset <= start <= end
-                     and end <= duration + 0.04)
-            # Native timestamps may overshoot a truncated live snapshot. Keep
-            # its text revisable, but never use such a boundary to trim audio.
-            decoded.append(_Segment(
-                min(start, duration) if valid else offset,
-                min(end, duration) if valid else duration, segment.text, valid,
-            ))
+        # Observe the model API including lazy iteration/wrappers, not isolated
+        # native encoder time. No PCM or transcript is copied into these metrics.
+        started = monotonic_ns()
+        call = dict(input_start_s=offset, input_end_s=duration,
+                    input_window_s=audio.size / 16000, started_mono_ns=started,
+                    outcome='completed', error_type=None)
+        decoded, native = [], None
+        try:
+            segments, info = self.model.transcribe(
+                audio, language='ko', beam_size=1, condition_on_previous_text=False,
+                initial_prompt=None,
+            )
+            native = getattr(info, 'native_decode', None)
+            for segment in segments:
+                if not segment.text.strip():
+                    continue
+                start, end = offset + segment.start, offset + segment.end
+                # Native decoder timestamps avoid expensive CPU word alignment.
+                valid = (math.isfinite(start + end) and offset <= start <= end
+                         and end <= duration + 0.04)
+                # Native timestamps may overshoot a truncated live snapshot. Keep
+                # its text revisable, but never use such a boundary to trim audio.
+                decoded.append(_Segment(
+                    min(start, duration) if valid else offset,
+                    min(end, duration) if valid else duration, segment.text, valid,
+                ))
+        except Exception as error:
+            call.update(outcome='error', error_type=type(error).__name__)
+            native = getattr(error, 'native_decode', None)
+            raise
+        finally:
+            ended = monotonic_ns()
+            code = native.get('return_code') if isinstance(native, dict) else None
+            code = code if type(code) is int else None
+            call.update(finished_mono_ns=ended,
+                        model_elapsed_s=max(0, ended - started) / 1e9,
+                        segment_count=len(decoded), native_return_code=code,
+                        cancelled=code == -100, deadline_exceeded=code == -101)
+            calls = self.last_metrics.setdefault('decode_calls', [])
+            if len(calls) < 4:
+                calls.append(call)
+            else:
+                self.last_metrics['decode_calls_truncated'] = True
         return decoded
 
     def transcribe(self, pcm: bytes, sample_rate: int, *, final: bool = False,
@@ -124,6 +157,7 @@ class IncrementalWhisperStream:
         the retained PCM window's absolute start within this utterance. No PCM
         is retained in the stream; committed text survives released windows.
         """
+        self.last_metrics = {}  # Invalid input cannot expose a previous call's trace.
         if sample_rate != 16000:
             raise ValueError('local Whisper transcription requires 16kHz PCM')
         if len(pcm) % 2:
@@ -153,6 +187,7 @@ class IncrementalWhisperStream:
             'tail_gap_s': None, 'fallback_reason': None,
             'reused_tail_coverage_end_s': None,
             'reused_resegmented_overlap': False,
+            'decode_calls': [], 'decode_calls_truncated': False,
         }
         if not any(pcm):
             self._untrimmed_coverage = None
@@ -172,7 +207,7 @@ class IncrementalWhisperStream:
             end = max(segment.end for segment in result)
             gap = max(0.0, (duration if speech_end_s is None else speech_end_s) - end)
             self.last_metrics['tail_gap_s'] = gap
-            return gap > (3.0 if speech_end_s is None else 0.8)
+            return _tail_gap_exceeds(gap, 3.0 if speech_end_s is None else 0.8)
 
         uncovered_tail = missing_tail(decoded)
         invalid_timing = any(not segment.timing_valid for segment in decoded)
@@ -227,7 +262,7 @@ class IncrementalWhisperStream:
             if (not self._offset_samples and not audio_start_samples
                     and not self._committed and not invalid_timing and proof is not None
                     and len(pcm) // 2 >= proof[2] and current_text == proof[0]
-                    and speech_end_s - proof[1] <= 0.8):
+                    and not _tail_gap_exceeds(speech_end_s - proof[1], 0.8)):
                 # A fresh full decode can keep its text while native times regress.
                 # Reuse only actual prior coverage, without committing, trimming,
                 # or letting repeated accepted regressions extend that coverage.

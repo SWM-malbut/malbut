@@ -2,7 +2,8 @@
 
 Production capture uses SileroStreamVad. The optional reachy_start mode adds
 Reachy's native-window onset qualifier, without Smart Turn or an endpoint hold.
-Smart Turn may veto a lexical early endpoint; it never extends the fallback.
+Hybrid mode lets Smart Turn veto a lexical early endpoint. Adaptive mode uses
+its acoustic completion decision directly; neither extends the silence fallback.
 """
 
 from dataclasses import dataclass
@@ -123,7 +124,7 @@ def load_guards(mode, model_directory):
     if mode == 'reachy_start':
         directory = Path(model_directory).expanduser()
         return ReachyStartFilter(directory/'silero-v6.2.3.onnx'), None
-    if mode != 'hybrid':
-        raise ValueError('turn_detection must be legacy or hybrid or reachy_start')
+    if mode not in ('hybrid', 'adaptive'):
+        raise ValueError('turn_detection must be legacy or hybrid or reachy_start or adaptive')
     directory = Path(model_directory).expanduser()
     return None, SmartTurnGuard(directory/SMART_TURN_FILENAME)

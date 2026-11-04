@@ -3,6 +3,7 @@
 import math
 import json
 from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from queue import Empty, Full, Queue
@@ -69,6 +70,7 @@ class _StreamInput:
 class DialoguePipeline:
     """Run one capture thread and one ASR worker; poll and callbacks share one owner.
 
+    Adaptive endpoints add one CPU classifier worker alongside ASR.
     One utterance may await inference or addressee classification. Additional
     utterances are explicitly discarded through their endpoint while it is busy.
     An accepted ordinary request normally blocks capture until its final reply
@@ -92,6 +94,7 @@ class DialoguePipeline:
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
                  short_speech_guard=False, followup_timeout_s=10.0,
                  validate_wake_command=None, start_qualifier=None, smart_turn=None,
+                 adaptive_endpoint=False,
                  wake_is_speech=None, barge_in_ducking=False, barge_in_mode='legacy',
                  interruption_transcriber=None, barge_in_pre_roll_s=2.0):
         if type(barge_in_ducking) is not bool:
@@ -121,6 +124,11 @@ class DialoguePipeline:
         self.short_speech_guard = short_speech_guard
         self.followup_timeout_s = followup_timeout_s
         self.validate_wake_command = validate_wake_command
+        if type(adaptive_endpoint) is not bool:
+            raise ValueError('adaptive_endpoint must be a boolean')
+        if adaptive_endpoint and smart_turn is None:
+            raise ValueError('adaptive_endpoint requires Smart Turn')
+        self.adaptive_endpoint = adaptive_endpoint
         self.smart_turn = smart_turn
         self._smart_turn_result = None
         self.recorder_factory = recorder_factory
@@ -164,8 +172,8 @@ class DialoguePipeline:
                 min(barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s)))
         if (type(endpoint_min_silence_s) not in (int, float)
                 or not math.isfinite(endpoint_min_silence_s)
-                or not 0.2 <= endpoint_min_silence_s <= 1.0):
-            raise ValueError('endpoint_min_silence_s must be between 0.2 and 1.0 seconds')
+                or not 0.2 <= endpoint_min_silence_s <= 2.0):
+            raise ValueError('endpoint_min_silence_s must be between 0.2 and 2.0 seconds')
         self.endpoint_min_silence_s = endpoint_min_silence_s
         if endpoint_preempt_s is not None and (
                 type(endpoint_preempt_s) not in (int, float)
@@ -600,7 +608,47 @@ class DialoguePipeline:
         self._endpoint_candidate = (self._capture_id, collector.snapshot('endpoint_check'))
         self._request_preview_preemption(owner, 'partial', reason='endpoint_priority')
 
+    def _preempt_resumed_endpoint(self):
+        """Stop an old pause's decode after observed speech made it obsolete."""
+        collector = self.command_stream.collector
+        owner = self._endpoint_job
+        if (self._endpoint_preempt_s is None or self._busy or self._discard_capture
+                or not self.session.active or self._capture_id is None
+                or not collector.started or owner is None or self._endpoint_is_partial
+                or owner[:2] != (self._generation, self._capture_id)
+                or owner == self._endpoint_final or owner[2] >= collector.revision):
+            return
+        # VAD revisions advance only on newly observed speech. Keep every PCM
+        # frame and let the normal endpoint rules decide when that speech ends.
+        # Job-key ownership confines cancellation to this stale decode, even if
+        # the backend resets its cancellation flag before another native call.
+        self._request_preview_preemption(owner, 'endpoint', reason='speech_resumed')
+
+    def _turn_prediction(self, predict):
+        try:
+            prediction = predict()
+            if self.diagnostics is not None:
+                self.diagnostics.event(
+                    'smart_turn_checked', complete=prediction.complete,
+                    probability=prediction.probability,
+                    inference_ms=prediction.inference_ms)
+            return prediction.complete
+        except Exception as error:
+            # Semantic failure must not lose ASR or shorten its fallback.
+            if self.diagnostics is not None:
+                self.diagnostics.event('smart_turn_error', error=type(error).__name__)
+            return None
+
     def _infer(self):
+        if self.adaptive_endpoint:
+            # Only one endpoint is in flight. Keep the small CPU classifier
+            # beside Whisper so its cost does not delay the start of ASR.
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix='stt-turn') as pool:
+                self._infer_loop(pool)
+        else:
+            self._infer_loop()
+
+    def _infer_loop(self, turn_pool=None):
         while not self.stopping.is_set():
             try:
                 kind, generation, uid, pcm = self.jobs.get(timeout=0.05)
@@ -618,6 +666,7 @@ class DialoguePipeline:
                 preempted = self._preempted_preview == job_key
             text, error_name = None, None
             turn_complete = None
+            turn_future = None
             retained_start_s = 0.0
             context = (self.diagnostics.context(
                 kind=kind, generation=generation, session_id=self.session.session_id,
@@ -630,6 +679,7 @@ class DialoguePipeline:
             ) if self.diagnostics is not None else nullcontext())
             with context:
                 error_detail = None
+                stream_called = False
                 decode_started = perf_counter()
                 try:
                     # A reset can cancel a preview before the worker picks it up.
@@ -639,26 +689,18 @@ class DialoguePipeline:
                     if preempted:
                         raise _PreviewSuperseded()
                     if kind == 'endpoint' and self.smart_turn is not None:
-                        try:
-                            prediction = self.smart_turn.check(pcm.endpoint_pcm)
-                            turn_complete = prediction.complete
-                            if self.diagnostics is not None:
-                                self.diagnostics.event(
-                                    'smart_turn_checked', complete=turn_complete,
-                                    probability=prediction.probability,
-                                    inference_ms=prediction.inference_ms)
-                        except Exception as error:
-                            # A semantic guard failure cannot lose the ordinary
-                            # transcription or override the 2 s silence fallback.
-                            if self.diagnostics is not None:
-                                self.diagnostics.event('smart_turn_error',
-                                                       error=type(error).__name__)
+                        if turn_pool is not None:
+                            turn_future = turn_pool.submit(self.smart_turn.check, pcm.endpoint_pcm)
+                        else:
+                            turn_complete = self._turn_prediction(
+                                lambda: self.smart_turn.check(pcm.endpoint_pcm))
                     with self._inference_lock:
                         if self._preempted_preview == job_key:
                             raise _PreviewSuperseded()
                     if isinstance(pcm, _StreamInput):
                         window = ({'audio_start_s': pcm.audio_start_s}
                                   if pcm.audio_start_s else {})
+                        stream_called = True
                         text = pcm.stream.transcribe(
                             pcm.pcm, 16000, final=pcm.final,
                             speech_end_s=pcm.speech_end_s, **window)
@@ -685,6 +727,10 @@ class DialoguePipeline:
                     if self.diagnostics is not None:
                         error_detail = str(error)[:2048]
                 finally:
+                    if turn_future is not None:
+                        # Record diagnostics on the ASR thread with its original
+                        # request context; the owner still rejects stale revisions.
+                        turn_complete = self._turn_prediction(turn_future.result)
                     decode_seconds = max(0.0, perf_counter() - decode_started)
                     with self._inference_lock:
                         preempted = self._preempted_preview == job_key
@@ -697,10 +743,16 @@ class DialoguePipeline:
                         # neither a final answer nor an adaptive cost sample.
                         text, error_name = None, 'PreviewSuperseded'
                         error_detail, decode_seconds = None, None
+                    stream_metrics = (getattr(pcm.stream, 'last_metrics', None)
+                                      if stream_called else None)
+                    self._trace_job('inference_measured', kind, generation, uid,
+                                    decode_seconds=decode_seconds, error=error_name,
+                                    stream_metrics=stream_metrics)
                     pcm = None
                     if self.diagnostics is not None:
                         self.diagnostics.event('inference_result', text=text,
-                                               error=error_name, error_detail=error_detail)
+                                               error=error_name, error_detail=error_detail,
+                                               stream_metrics=stream_metrics)
             result = (kind, generation, uid, text, error_name, retained_start_s)
             if kind == 'partial':
                 result += (turn_complete, decode_seconds)
@@ -847,6 +899,7 @@ class DialoguePipeline:
                 self._accept_result(*result)
         # Buffered resumed speech and any completed result are processed first.
         # Do not cancel on an obsolete silence snapshot still in the input queue.
+        self._preempt_resumed_endpoint()
         self._prioritize_endpoint()
         self._submit_endpoint()
         self._finish_ready_endpoint()
@@ -1148,11 +1201,11 @@ class DialoguePipeline:
             self._timing('endpoint', uid,
                          estimated_speech_end_s=audio_at - event.silence_s)
             self._preempt_obsolete_preview(key)
-            self._play_endpoint_chime()
             if (self._endpoint_result is not None and self._endpoint_result[0] == key
                     and self._usable_text(*self._endpoint_result[1:])):
                 _, text, error = self._endpoint_result
                 self._endpoint_result = None
+                self._play_endpoint_chime()
                 self._busy = False
                 self._trace_job('endpoint_reused', 'endpoint', key[0], (uid, event.revision),
                                 reason='cached_result')
@@ -1165,6 +1218,7 @@ class DialoguePipeline:
                 self._final_input = self._inference_input(
                     event.pcm, final=True, silence_s=event.silence_s,
                     audio_start_s=event.audio_start_s, voiced_s=event.voiced_s)
+                self._play_endpoint_chime()
                 return
         # A resumed utterance can finish before its obsolete candidate is taken
         # by the worker. Replace only that queued candidate with the final audio.
@@ -1188,6 +1242,10 @@ class DialoguePipeline:
                                          voiced_s=event.voiced_s)
                    if kind == 'command' else _SpeechPCM(event.pcm, event.voiced_s))
         self._enqueue_job((kind, self._generation, uid, payload))
+        if kind == 'command':
+            # Decode while the acknowledgement drains. Only poll() accepts
+            # results, so publication still follows the chime and echo gate.
+            self._play_endpoint_chime()
 
     def _fail_command(self, reason):
         """End an ordinary failed turn locally, without an Agent retry notice."""
@@ -1311,10 +1369,16 @@ class DialoguePipeline:
             self._trace_job('endpoint_cache_discarded', 'endpoint', generation, (uid, revision),
                             reason='capture_or_revision_changed')
             return
+        # Adaptive mode trusts the acoustic model, including short answers that
+        # have no Korean sentence ending. False/missing predictions keep the
+        # full fallback. Hybrid mode retains its additional lexical guard.
+        complete = (self._smart_turn_result == ((generation, uid, revision), True)
+                    if self.adaptive_endpoint else
+                    is_complete_korean_utterance(text) and (
+                        self.smart_turn is None or self._smart_turn_result == (
+                            (generation, uid, revision), True)))
         if (self.command_stream.collector.silent_frames * 0.02 >= self.endpoint_min_silence_s
-                and self._usable_text(text, error_name) and is_complete_korean_utterance(text)
-                and (self.smart_turn is None or self._smart_turn_result == (
-                    (generation, uid, revision), True))):
+                and self._usable_text(text, error_name) and complete):
             event = self.command_stream.finish_endpoint(revision)
             if event is not None:
                 self._complete_capture('command', event)
