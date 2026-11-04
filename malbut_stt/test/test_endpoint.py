@@ -175,7 +175,7 @@ def test_fast_endpoint_still_waits_for_inference_and_ignores_boilerplate(run):
     assert not any(report.startswith('endpoint_finalized:') for report in run.reports)
 
 
-@pytest.mark.parametrize('minimum', [True, None, '0.6', .19, 1.01, float('inf'), float('nan')])
+@pytest.mark.parametrize('minimum', [True, None, '0.6', .19, 2.01, float('inf'), float('nan')])
 def test_invalid_minimum_silence_is_rejected(minimum):
     with pytest.raises(ValueError, match='endpoint_min_silence_s'):
         DialoguePipeline(

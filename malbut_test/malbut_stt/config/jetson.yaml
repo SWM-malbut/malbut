@@ -11,7 +11,7 @@ malbut_stt:
     stt_decode_timeout_s: 30.0
     silence_timeout_s: 2.0
     endpoint_predecode_s: 0.4
-    endpoint_min_silence_s: 0.6
+    endpoint_min_silence_s: 1.8  # Preserve pauses while ASR runs speculatively.
     followup_timeout_s: 10.0  # Wait for the next utterance after the final reply finishes.
     input_has_aec: false  # External AEC only; pulse_reference verifies its own readiness.
     aec_backend: none  # Optional pulse_reference needs explicit device/model/audio paths.
