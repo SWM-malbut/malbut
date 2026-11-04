@@ -164,8 +164,8 @@ class DialoguePipeline:
                 min(barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s)))
         if (type(endpoint_min_silence_s) not in (int, float)
                 or not math.isfinite(endpoint_min_silence_s)
-                or not 0.2 <= endpoint_min_silence_s <= 1.0):
-            raise ValueError('endpoint_min_silence_s must be between 0.2 and 1.0 seconds')
+                or not 0.2 <= endpoint_min_silence_s <= 2.0):
+            raise ValueError('endpoint_min_silence_s must be between 0.2 and 2.0 seconds')
         self.endpoint_min_silence_s = endpoint_min_silence_s
         if endpoint_preempt_s is not None and (
                 type(endpoint_preempt_s) not in (int, float)
@@ -600,6 +600,22 @@ class DialoguePipeline:
         self._endpoint_candidate = (self._capture_id, collector.snapshot('endpoint_check'))
         self._request_preview_preemption(owner, 'partial', reason='endpoint_priority')
 
+    def _preempt_resumed_endpoint(self):
+        """Stop an old pause's decode after observed speech made it obsolete."""
+        collector = self.command_stream.collector
+        owner = self._endpoint_job
+        if (self._endpoint_preempt_s is None or self._busy or self._discard_capture
+                or not self.session.active or self._capture_id is None
+                or not collector.started or owner is None or self._endpoint_is_partial
+                or owner[:2] != (self._generation, self._capture_id)
+                or owner == self._endpoint_final or owner[2] >= collector.revision):
+            return
+        # VAD revisions advance only on newly observed speech. Keep every PCM
+        # frame and let the normal endpoint rules decide when that speech ends.
+        # Job-key ownership confines cancellation to this stale decode, even if
+        # the backend resets its cancellation flag before another native call.
+        self._request_preview_preemption(owner, 'endpoint', reason='speech_resumed')
+
     def _infer(self):
         while not self.stopping.is_set():
             try:
@@ -630,6 +646,7 @@ class DialoguePipeline:
             ) if self.diagnostics is not None else nullcontext())
             with context:
                 error_detail = None
+                stream_called = False
                 decode_started = perf_counter()
                 try:
                     # A reset can cancel a preview before the worker picks it up.
@@ -659,6 +676,7 @@ class DialoguePipeline:
                     if isinstance(pcm, _StreamInput):
                         window = ({'audio_start_s': pcm.audio_start_s}
                                   if pcm.audio_start_s else {})
+                        stream_called = True
                         text = pcm.stream.transcribe(
                             pcm.pcm, 16000, final=pcm.final,
                             speech_end_s=pcm.speech_end_s, **window)
@@ -697,10 +715,16 @@ class DialoguePipeline:
                         # neither a final answer nor an adaptive cost sample.
                         text, error_name = None, 'PreviewSuperseded'
                         error_detail, decode_seconds = None, None
+                    stream_metrics = (getattr(pcm.stream, 'last_metrics', None)
+                                      if stream_called else None)
+                    self._trace_job('inference_measured', kind, generation, uid,
+                                    decode_seconds=decode_seconds, error=error_name,
+                                    stream_metrics=stream_metrics)
                     pcm = None
                     if self.diagnostics is not None:
                         self.diagnostics.event('inference_result', text=text,
-                                               error=error_name, error_detail=error_detail)
+                                               error=error_name, error_detail=error_detail,
+                                               stream_metrics=stream_metrics)
             result = (kind, generation, uid, text, error_name, retained_start_s)
             if kind == 'partial':
                 result += (turn_complete, decode_seconds)
@@ -847,6 +871,7 @@ class DialoguePipeline:
                 self._accept_result(*result)
         # Buffered resumed speech and any completed result are processed first.
         # Do not cancel on an obsolete silence snapshot still in the input queue.
+        self._preempt_resumed_endpoint()
         self._prioritize_endpoint()
         self._submit_endpoint()
         self._finish_ready_endpoint()
@@ -1148,11 +1173,11 @@ class DialoguePipeline:
             self._timing('endpoint', uid,
                          estimated_speech_end_s=audio_at - event.silence_s)
             self._preempt_obsolete_preview(key)
-            self._play_endpoint_chime()
             if (self._endpoint_result is not None and self._endpoint_result[0] == key
                     and self._usable_text(*self._endpoint_result[1:])):
                 _, text, error = self._endpoint_result
                 self._endpoint_result = None
+                self._play_endpoint_chime()
                 self._busy = False
                 self._trace_job('endpoint_reused', 'endpoint', key[0], (uid, event.revision),
                                 reason='cached_result')
@@ -1165,6 +1190,7 @@ class DialoguePipeline:
                 self._final_input = self._inference_input(
                     event.pcm, final=True, silence_s=event.silence_s,
                     audio_start_s=event.audio_start_s, voiced_s=event.voiced_s)
+                self._play_endpoint_chime()
                 return
         # A resumed utterance can finish before its obsolete candidate is taken
         # by the worker. Replace only that queued candidate with the final audio.
@@ -1188,6 +1214,10 @@ class DialoguePipeline:
                                          voiced_s=event.voiced_s)
                    if kind == 'command' else _SpeechPCM(event.pcm, event.voiced_s))
         self._enqueue_job((kind, self._generation, uid, payload))
+        if kind == 'command':
+            # Decode while the acknowledgement drains. Only poll() accepts
+            # results, so publication still follows the chime and echo gate.
+            self._play_endpoint_chime()
 
     def _fail_command(self, reason):
         """End an ordinary failed turn locally, without an Agent retry notice."""
