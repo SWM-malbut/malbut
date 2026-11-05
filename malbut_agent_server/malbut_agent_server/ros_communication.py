@@ -312,6 +312,8 @@ def create_communication_node(
                     return
                 self._seen_input_ids.append(uid)
                 self._input_utterance_id = None if unavailable else uid
+            elif message.state == SpeechInputStatus.ENDED and uid == self._input_utterance_id:
+                self._input_utterance_id = None
             elif (message.state in (SpeechInputStatus.FAILED, SpeechInputStatus.FILTERED)
                   and uid == self._input_utterance_id):
                 self._input_utterance_id = None

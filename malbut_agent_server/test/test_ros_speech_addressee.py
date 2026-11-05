@@ -25,6 +25,7 @@ class SpeechInputStatus(SimpleNamespace):
     STARTED = 'started'
     FAILED = 'failed'
     FILTERED = 'filtered'
+    ENDED = 'ended'
 
 
 class Future:

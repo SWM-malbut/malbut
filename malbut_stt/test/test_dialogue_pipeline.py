@@ -304,6 +304,73 @@ def open_followup(harness, pipeline):
     return uid
 
 
+@pytest.mark.parametrize('during_reply,aec', [(True, True), (False, True), (False, False)])
+def test_spoken_end_closes_dialogue_until_a_fresh_wake(harness, during_reply, aec):
+    statuses = []
+    pipeline = harness.create(aec=aec, barge_in_mode='reachy' if during_reply else 'legacy',
+                              publish_input_status=lambda *args: statuses.append(args))
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    request_id = harness.transcripts[0][0]
+    pipeline.on_playback_status('reply', 'playing', request_id=request_id)
+    if not during_reply:
+        pipeline.on_playback_status('reply', 'finished', request_id=request_id)
+        harness.now += 1
+    pipeline.transcriber.transcribe = lambda *_: '대화 그만하자.'
+    pipeline.feed(VOICE * 16 + QUIET * 100)
+    pump(pipeline, lambda: statuses[-1][-1] == 'ended' or len(harness.transcripts) > 1)
+    assert statuses[-1] == ('', statuses[-2][1], 'ended')
+    assert len(harness.transcripts) == 1 and not harness.failure_chimes
+    assert harness.controls.count(('reply', 'stop')) == int(during_reply)
+    pipeline.on_playback_status('reply', 'finished', request_id=request_id)
+    assert not pipeline.session.active and pipeline._reply_request_id is None
+    harness.wake_text = '날씨 알려줘'
+    pipeline.feed(VOICE * 16 + QUIET * 20)
+    pump(pipeline, lambda: 'not_wake' in harness.reports)
+    assert len(harness.transcripts) == 1
+    harness.wake_text = '제이크야, 날씨 알려줘'
+    pipeline.feed(VOICE * 16 + QUIET * 20)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+    assert harness.transcripts[-1][1] == '날씨 알려줘'
+
+
+@pytest.mark.parametrize('session_id,ended', [('patrol-chat-42', True), ('fall-42', False)])
+def test_end_command_respects_session_owner(harness, session_id, ended):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session(session_id)
+    pipeline.transcriber.transcribe = lambda *_: '이제 대화 그만하자.'
+    finish_command(pipeline)
+    pump(pipeline, lambda: bool(harness.transcripts) or statuses[-1][-1] == 'ended')
+    assert pipeline.session.active is not ended
+    assert bool(harness.transcripts) is not ended
+    if ended:
+        assert statuses[-1] == (session_id, statuses[0][1], 'ended')
+
+
+@pytest.mark.parametrize('text,ended', [
+    ('됐어', False), ('괜찮아', False), ('고마워', False),
+    ('됐어, 오늘은 여기까지', True), ('괜찮아. 다음에 얘기하자.', True),
+    ('고마워 오늘은 여기까지', True),
+])
+def test_only_a_closing_intent_ends_the_followup(harness, text, ended):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    open_followup(harness, pipeline)
+    pipeline.transcriber.transcribe = lambda *_: text
+    finish_command(pipeline)
+    pump(pipeline, lambda: statuses[-1][-1] == 'ended' or len(harness.transcripts) == 2)
+    if ended:
+        assert len(harness.transcripts) == 1
+        assert pipeline._reply_request_id is None and not pipeline.session.active
+    else:
+        uid, transcript = harness.transcripts[-1]
+        assert transcript == text
+        pipeline.on_playback_status('next-reply', 'finished', request_id=uid)
+        assert pipeline.session.active and pipeline._followup_deadline is not None
+
+
 @pytest.mark.parametrize('aec', [False, True])
 def test_followup_silence_expires_at_ten_seconds_without_failure_chime(harness, aec):
     pipeline = harness.create(aec=aec)

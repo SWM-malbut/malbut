@@ -854,11 +854,12 @@ def test_robot_deployment_honors_explicit_aec_input(runtime, input_has_aec):
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
     assert runtime.pipeline_args['input_has_aec'] is input_has_aec
+    assert runtime.pipeline_args['barge_in_mode'] == 'legacy'
     assert runtime.calls['endpoint_chimes'] == [-1]
     assert runtime.calls['failure_chimes'] == [-1]
 
 
-def test_reachy_barge_in_is_explicit_and_requires_aec(runtime):
+def test_reachy_barge_in_requires_aec(runtime):
     runtime.parameters.update(barge_in_mode='reachy', input_has_aec=False)
     assert main() == 1
     assert ('error', 'STT stopped during validating_configuration: ValueError') in runtime.logs

@@ -11,7 +11,7 @@ from threading import Event, Lock, Thread
 from time import monotonic, perf_counter
 
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
-from malbut_stt.conversation import ConversationSession
+from malbut_stt.conversation import ConversationSession, is_conversation_end
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
@@ -474,6 +474,12 @@ class DialoguePipeline:
                 self.session.session_id, uid, state)
 
     def _publish_transcript(self, utterance_id, text):
+        session_id = self.session.session_id
+        if (not session_id or session_id.startswith('patrol-chat-')) and is_conversation_end(text):
+            self._input_status('ended', utterance_id)
+            self._terminate('session_ended:user_request')
+            self.report('waiting_for_wake')
+            return
         self._timing('transcript_final', utterance_id)
         if not self.session.session_id:
             # Keep capture closed until this request's final reply actually ends.

@@ -190,13 +190,14 @@ def test_decline_and_late_answer_do_not_start_inference(robot):
     assert not r.runtime.provider.calls and len(r.speech) == 1
 
 
-def test_negative_answer_is_a_normal_reply_not_a_request_to_end(robot):
+@pytest.mark.parametrize('text', ['아니요', '됐어', '괜찮아', '고마워'])
+def test_short_reply_continues_the_patrol_conversation(robot, text):
     r = robot
     r.finish(r.approach())
     r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
-                                          utterance_id='negative', text='아니요'))
+                                          utterance_id='reply', text=text))
     r.pump(lambda: bool(r.runtime.provider.calls))
-    assert r.runtime.provider.calls[0][0].utterance == '아니요'
+    assert r.runtime.provider.calls[0][0].utterance == text
     assert r.runtime.provider.calls[0][0].scene_context['conversation_opener']['topic'] == 'plants'
 
 
@@ -330,17 +331,18 @@ def test_spoken_opt_out_persists_and_can_be_reenabled_without_llm(robot):
     assert not r.runtime.provider.calls
 
 
-@pytest.mark.parametrize('cause', ['person_left', 'input_failed'])
-def test_person_leaving_and_input_failure_close_listening(robot, cause):
+@pytest.mark.parametrize('cause', ['person_left', 'failed', 'ended'])
+def test_person_leaving_input_failure_or_user_end_close_listening(robot, cause):
     r = robot
     r.finish(r.approach())
     session = r.chat.session_id
     if cause == 'person_left':
         r.pulse(36., count=0)
     else:
-        r.inputs.publish(SpeechInputStatus(session_id=session, utterance_id='failed', state='failed'))
+        r.inputs.publish(SpeechInputStatus(session_id=session, utterance_id='turn', state=cause))
     r.pump(lambda: (session, False) in r.controls)
     assert r.chat.phase == 'idle'
+    assert len(r.speech) == 1 and not r.runtime.provider.calls
 
 
 def test_rejected_microphone_start_does_not_accept_an_answer(robot):

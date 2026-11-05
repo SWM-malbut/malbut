@@ -180,7 +180,7 @@ class RosPatrolConversation:
     def input_status(self, message):
         self.gate.activity()
         if message.session_id and message.session_id == self.session_id:
-            if message.state == 'failed':
+            if message.state in ('failed', 'ended'):
                 self.end()
             elif message.state == 'started':
                 self.deadline = self.clock() + 60
