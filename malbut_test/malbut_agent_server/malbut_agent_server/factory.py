@@ -86,6 +86,8 @@ def _openai_adapter(
         # Output has its own max_output_tokens reservation outside this cap.
         max_input_tokens=settings.conversation_token_budget * 2,
         token_counter=count_tokens,
+        api_timing_enabled=settings.openai_api_timing_enabled,
+        prompt_cache_enabled=settings.openai_prompt_cache_enabled,
     )
 
 

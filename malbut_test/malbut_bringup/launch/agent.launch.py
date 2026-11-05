@@ -73,12 +73,15 @@ def _setup(context):
             arguments.append('--fall-flow')
     # The fall rules live in this process: if it dies, fall checks would stop
     # until Bringup restarts, so it comes back like STT (Agent owner, 2026-10-17).
+    agent_config = Path.home() / '.config/malbut/agent.yaml'
+    agent_overrides = [str(agent_config)] if speech and agent_config.is_file() else []
     return [Node(
         package='malbut_agent_server', executable='agent_communication',
         prefix=prefix, output='screen', arguments=arguments,
         parameters=[{'scene_rgb_topic': value('rgb_topic'),
                      'scene_robot_frame': value('robot_frame'),
-                     'scene_images_enabled': value('speech_scene_images_enabled') == 'true'}]
+                     'scene_images_enabled': value('speech_scene_images_enabled') == 'true'},
+                    *agent_overrides]
         if speech else [],
         respawn=True, respawn_delay=5.0,
     )]

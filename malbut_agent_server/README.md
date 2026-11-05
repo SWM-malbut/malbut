@@ -590,6 +590,8 @@ Mock/RAI는 최근 N턴·문자 제한을 사용하는 기존 경로이며 전�
 | `OPENAI_ROBOT_PLANNER_MODEL` | 빈 값 | Front Router 로봇 계획 전용 model ID |
 | `OPENAI_REASONING_EFFORT` | `low` | 지원 effort 값 |
 | `OPENAI_MAX_OUTPUT_TOKENS` | 1,024 | 64~4,096 |
+| `MALBUT_AGENT_API_TIMING_ENABLED` | `true` | API 준비·스트림·파싱 시간 계측 |
+| `MALBUT_AGENT_PROMPT_CACHE_ENABLED` | `true` | 지원 모델의 대화 입력 prefix 캐시 배치 |
 
 역할별 model 값은 명시적인 Front Router가 주입된 OpenAI 구성에서만
 사용한다. 둘 다 비어 있으면 SWM25-151 이전과 동일하게 하나의 범용
@@ -985,12 +987,67 @@ ROS 일반 대화는 기본적으로 최종 기억·정책 검증 후 음성 요
 스냅샷 안의 원문 확인을 재사용한다. 캐시는 트랜잭션을 넘기지 않으며 같은 연결의
 쓰기에도 무효화된다. ROS 발행 직전 검증은 유지하고 큐 배출 때의 중복 검증은 생략한다.
 
+### API 계측과 입력 캐시
+
+OpenAI 결과의 `provider.api_timing`은 다음 시간을 밀리초로 저장한다.
+기존 `provider.latency_ms`는 재시도를 포함한 Provider 전체 시간이다.
+
+| 항목 | 의미 |
+| --- | --- |
+| `preparation_ms` | 마지막 성공 시도의 입력 구성·토큰 계산 등 전송 전 준비 |
+| `transport_ms` | 전송 시작부터 응답 전체 수신까지; 네트워크·서버 대기·생성 포함 |
+| `headers_ms` / `first_event_ms` | 전송 시작부터 HTTP 헤더 / 첫 SSE 이벤트 수신까지 |
+| `first_output_delta_ms` | 첫 비어 있지 않은 텍스트 또는 도구 인자 조각 수신까지 |
+| `completed_event_ms` | 전송 시작부터 `response.completed` 이벤트까지 |
+| `parse_ms` | 최종 응답을 결정 객체로 파싱하는 시간 |
+| `attempt_count` / `retry_delay_ms` | Provider 체인 전체 시도 횟수 / 예약한 재시도 대기 합계 |
+
+직접 연결에서는 음성 선합성을 켜지 않아도 SSE를 읽어 계측한다. 첫 출력 조각은
+JSON 문법일 수 있어 말할 문장의 완성이나 실제 소리 시작을 뜻하지 않는다.
+최종 응답과 기억 검증이 끝나야 음성을 발행하는 규칙은 유지한다. 프록시·주입
+transport나 JSON 응답에서는 관찰할 수 없는 이벤트 시간을 `null`로 남기며
+계측 때문에 요청을 다시 보내지 않는다. 순수 서버 추론 시간은 분리할 수 없다.
+성공한 최종 응답이 없는 fallback에는 이 계측값이 없을 수 있다.
+
+`provider.usage.cached_input_tokens`와 `reasoning_output_tokens`는 API가 제공할
+때만 저장한다. 기존 대화 DB의 `conversation_turns.response_json` 안
+`public.provider`에도 이 값들이 들어간다. 새 계측 필드에는 입력 원문이나
+추론 내용, API 키를 넣지 않는다.
+
+캐시 개선은 GPT-5.6 이상 대화 모델에서 고정 지침·도구 목록·이전 대화를 입력
+앞쪽에 배치하고, 고정 지침과 최근 두 대화 블록에 명시적 캐시 경계를 둔다.
+implicit 캐시와 30분 TTL을 사용한다. 이전 대화·기억은 모두 기존 user 역할의
+비신뢰 JSON 자료로 남고, 모든 필드와 내용은 매번 그대로 전달한다. 현재 기억·
+원문·정책 검증과 발행 직전 검증을 생략하지 않으며 답변을 로컬에 캐시하지 않는다.
+정정·삭제·정책 변경은 실제 입력에 반영된다. 사용자와 모델의 해시를 캐시 라우팅
+키로 쓰며 지원하지 않는 모델과 별도 기억 추출·원문 검토는 기존 배치를 유지한다.
+
+`MALBUT_AGENT_PROMPT_CACHE_ENABLED=false`로 배치 개선만 끄고 동일한 계측으로
+비교할 수 있다. [공식 캐시 계약](https://developers.openai.com/api/docs/guides/prompt-caching)을
+따르며, [실제 로봇 24회 비교 기록](docs/benchmarks/api-cache-20261105/README.md)에
+조건·원자료·해석 한계를 정리했다.
+
 ### 실험용 조용한 첫 구간 합성
 
 `MALBUT_AGENT_SPEECH_PREFETCH_ENABLED=false`가 기본값이다. 실험에서만 Agent의
 이 값을 `true`로, Piper의 `piper_prefetch_enabled`를 `true`로 함께 설정한다.
 `SpeechPreparation`과 확장된 `SpeechRequest`를 포함해 ROS 인터페이스를 다시
 빌드해야 한다. 모델·추론 설정·출력 길이·말하기 속도는 이 설정으로 바뀌지 않는다.
+
+로봇별로는 `~/.config/malbut/agent.yaml`에 다음 설정을 저장할 수 있다.
+Bringup의 Agent 모듈과 단독 speech launch가 음성 대화를 시작할 때만 읽는다.
+시작 전용 ROS 파라미터가 환경 변수의 기본값보다 우선하며 실행 중 변경은 거절한다.
+
+```yaml
+/malbut_agent_communication:
+  ros__parameters:
+    speech_prefetch_enabled: true
+```
+
+Piper의 `~/.config/malbut/tts.yaml`에도 `piper_prefetch_enabled: true`를 넣고
+Agent와 TTS를 재시작한다. 기존 모델·스레드 수·속도 설정은 유지한다.
+Agent 설정만 `false`로 시작하면 준비 요청을 보내지 않아 선합성 전후를 비교할 수 있다.
+STT나 에코 보정 설정을 바꾸는 옵션은 아니다.
 
 활성화된 ROS 대화 워커는 직접 OpenAI 연결에서 Responses SSE를 읽는다. 한
 assistant message의 최상위 `type=message`와 완결 문장 다음 비공백 문자까지

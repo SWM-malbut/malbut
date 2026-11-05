@@ -176,7 +176,7 @@ def _fake_ros(monkeypatch, spoken, logs):
             self.context = SimpleNamespace(ok=lambda: True)
             self.executor = None
 
-        def declare_parameter(self, name, default):
+        def declare_parameter(self, name, default, descriptor=None):
             # These fixtures exercise ordinary dialogue without the detector adapter.
             return SimpleNamespace(value=False if name == "patrol_conversation_enabled" else default)
 
@@ -206,6 +206,7 @@ def _fake_ros(monkeypatch, spoken, logs):
     monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
         ReentrantCallbackGroup=object,
     ))
+    monkeypatch.setitem(sys.modules, 'rcl_interfaces.msg', SimpleNamespace(ParameterDescriptor=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rclpy.task', SimpleNamespace(Future=object))
     monkeypatch.setitem(sys.modules, 'rclpy.qos', SimpleNamespace(
         DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),

@@ -110,6 +110,20 @@ def test_robot_tts_config_overrides_only_tts(speech, tmp_path, monkeypatch):
             assert config not in evaluate_parameters(context, node._Node__parameters)
 
 
+def test_robot_agent_config_overrides_only_agent(speech, tmp_path):
+    config = tmp_path / '.config/malbut/agent.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('/**:\n  ros__parameters:\n    speech_prefetch_enabled: true\n')
+    context = _context(speech)
+    actions = speech._setup(context)
+    agent = next(node for node in actions
+                 if isinstance(node, Node) and node.node_executable == 'agent_communication')
+    assert evaluate_parameters(context, agent._Node__parameters)[-1] == config
+    for node in actions:
+        if isinstance(node, Node) and node is not agent:
+            assert config not in evaluate_parameters(context, node._Node__parameters)
+
+
 def test_explicit_missing_tts_config_fails_before_starting(speech, tmp_path):
     context = _context(speech, tts_config=str(tmp_path / 'missing.yaml'))
     with pytest.raises(RuntimeError, match='TTS configuration does not exist'):

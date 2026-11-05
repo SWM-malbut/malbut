@@ -70,7 +70,7 @@ def node(monkeypatch, tmp_path, request):
             self.executor = None
             self.default_callback_group = object()
 
-        def declare_parameter(self, name, default):
+        def declare_parameter(self, name, default, descriptor=None):
             # These fixtures exercise ordinary dialogue without the detector adapter.
             return SimpleNamespace(value=False if name == "patrol_conversation_enabled" else default)
 
@@ -134,6 +134,7 @@ def node(monkeypatch, tmp_path, request):
         def close(self):
             pass
 
+    monkeypatch.setitem(sys.modules, 'rcl_interfaces.msg', SimpleNamespace(ParameterDescriptor=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(Node=Node))
     monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
         ReentrantCallbackGroup=type('ReentrantCallbackGroup', (), {}),

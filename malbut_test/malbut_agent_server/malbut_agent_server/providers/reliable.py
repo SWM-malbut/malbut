@@ -517,6 +517,7 @@ class ReliableProvider(AgentProvider):
         deadline: float,
         memory_context: Optional[dict] = None,
         weather_context: Optional[dict] = None,
+        attempt_metrics: Optional[dict] = None,
     ) -> Tuple[Optional[ProviderResult], ProviderFailure]:
         context_arguments = (
             {'memory_context': memory_context}
@@ -535,6 +536,8 @@ class ReliableProvider(AgentProvider):
                 break
             caught_error: Optional[BaseException] = None
             try:
+                if attempt_metrics is not None:
+                    attempt_metrics['attempt_count'] += 1
                 result = provider.complete(
                     request,
                     memories,
@@ -586,6 +589,8 @@ class ReliableProvider(AgentProvider):
                 break
             if not claim_retry(MODEL_RETRY_NOTICE):
                 break
+            if attempt_metrics is not None:
+                attempt_metrics['retry_delay_ms'] += delay * 1000
             self._sleep(delay)
         return None, failure
 
@@ -605,6 +610,7 @@ class ReliableProvider(AgentProvider):
         started_at = self._clock()
         deadline = started_at + self._total_timeout_seconds
         attempted = False
+        attempt_metrics = {'attempt_count': 0, 'retry_delay_ms': 0.0}
         for index, provider in enumerate(self._providers):
             if (
                 deadline - self._clock()
@@ -626,6 +632,7 @@ class ReliableProvider(AgentProvider):
                 deadline,
                 memory_context,
                 weather_context,
+                attempt_metrics,
             )
             if result is not None:
                 self._record_success(index)
@@ -633,7 +640,10 @@ class ReliableProvider(AgentProvider):
                     0.0,
                     (self._clock() - started_at) * 1000.0,
                 )
-                return replace(result, latency_ms=elapsed_ms)
+                timing = result.api_timing
+                if timing is not None:
+                    timing = replace(timing, **attempt_metrics)
+                return replace(result, latency_ms=elapsed_ms, api_timing=timing)
             self._record_failure(index, failure)
             # Every fallback model uses the same key: trying it cannot help.
             if failure.code in _KEY_FAILURES:

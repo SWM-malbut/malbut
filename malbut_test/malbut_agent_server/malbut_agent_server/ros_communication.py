@@ -99,6 +99,15 @@ def create_communication_node(
             # The last utterance STT waits on until its reply has played.
             self._awaiting_reply = None
             try:
+                from rcl_interfaces.msg import ParameterDescriptor
+
+                # Startup-only override, matching Piper's per-robot YAML setting.
+                prefetch_enabled = self.declare_parameter(
+                    'speech_prefetch_enabled', settings.speech_prefetch_enabled,
+                    ParameterDescriptor(read_only=True),
+                ).value
+                if type(prefetch_enabled) is not bool:
+                    raise ValueError('speech_prefetch_enabled must be a boolean')
                 qos = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST, depth=10,
                     reliability=ReliabilityPolicy.RELIABLE,
@@ -108,7 +117,7 @@ def create_communication_node(
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
-                if settings.speech_prefetch_enabled:
+                if prefetch_enabled:
                     from malbut_interfaces.msg import SpeechPreparation
 
                     self._preparation_type = SpeechPreparation
@@ -180,7 +189,7 @@ def create_communication_node(
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
                     publish_before_save=settings.speech_publish_before_save,
-                    **({'prefetch_enabled': True} if settings.speech_prefetch_enabled else {}),
+                    **({'prefetch_enabled': True} if prefetch_enabled else {}),
                     **({'scene_source': self._scene} if self._scene is not None else {}),
                     **({'missions': self.speech_missions}
                        if self.speech_missions is not None else {}),

@@ -733,6 +733,20 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
                 == modules['fall']['fall_bridge_runtime_id'])
 
 
+@pytest.mark.parametrize('speech', [True, False])
+def test_agent_local_parameters_apply_only_when_speech_runs(launch_module, speech):
+    config = Path.home() / '.config/malbut/agent.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('/**:\n  ros__parameters:\n    speech_prefetch_enabled: true\n')
+    module = _load('agent')
+    ids = {f'fall_{peer}_runtime_id': peer + '-id' for peer in ('manager', 'bridge', 'vlm')}
+    context = _context(module, speech_python_executable=sys.executable,
+                       agent_speech=str(speech).lower(), agent_fall_rules='true', **ids)
+    node, = _nodes(module._setup(context), 'agent_communication')
+    parameters = evaluate_parameters(context, node._Node__parameters)
+    assert (config in parameters) is speech
+
+
 @pytest.mark.parametrize('started,speech,rules', [
     ({'fall': '', 'speech': ''}, True, True),
     ({'fall': ''}, False, True),

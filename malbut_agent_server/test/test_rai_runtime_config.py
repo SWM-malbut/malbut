@@ -111,6 +111,8 @@ def test_rai_fields_append_after_legacy_positional_contract() -> None:
         'openai_summary_reasoning_effort',
         'speech_prefetch_enabled',
         'speech_publish_before_save',
+        'openai_api_timing_enabled',
+        'openai_prompt_cache_enabled',
     )
 
 

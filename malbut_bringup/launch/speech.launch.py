@@ -59,6 +59,8 @@ def _setup(context):
     if tts_config_arg and not tts_config.is_file():
         raise RuntimeError(f'TTS configuration does not exist: {tts_config}')
     tts_overrides = [str(tts_config)] if tts_config.is_file() else []
+    agent_config = Path.home() / '.config/malbut/agent.yaml'
+    agent_overrides = [str(agent_config)] if agent_config.is_file() else []
     stt_config = Path.home() / '.config/malbut/stt.yaml'
     stt_overrides = [str(stt_config)] if stt_config.is_file() else []
     audio_env = pulse_reference_environment(stt_config) if stt_overrides else {}
@@ -125,7 +127,7 @@ def _setup(context):
             mission_arguments.append('--enable-manager-commands')
         agents = [Node(
             package='malbut_agent_server', executable='agent_communication',
-            parameters=[scene_parameters],
+            parameters=[scene_parameters, *agent_overrides],
             prefix=prefix, output='screen', arguments=[
                 '--provider', agent_provider, '--user-id', agent_user_id,
                 '--conversation-db', agent_conversation_db,

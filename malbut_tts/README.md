@@ -52,7 +52,7 @@ backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하
 이 단계에서는 스피커를 열거나 재생 상태를 발행하지 않는다.
 2 MiB는 캐시 payload 한도이며 native 합성 배열과 재생 복사를 포함한 프로세스
 전체 메모리 한도는 아니다.
-Agent의 최종 검증과 commit을 마친 기존 `SpeechRequest` 한 건이
+Agent의 최종 기억·정책 검증을 통과한 기존 `SpeechRequest` 한 건이
 `prepared_id`, `generation_id`를 전달하면 요청/세대/토큰, 정확 원문 prefix,
 최종 전체 텍스트를 정규화한 첫 구간과 합성 설정이 모두 같은 경우에만
 한 번 재사용한다. 나머지 구간은 중복 없이 이어서 합성한다.
