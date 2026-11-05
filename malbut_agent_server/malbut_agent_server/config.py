@@ -145,6 +145,8 @@ class Settings:
     openai_summary_reasoning_effort: str = 'low'
     speech_prefetch_enabled: bool = False
     speech_publish_before_save: bool = True
+    openai_api_timing_enabled: bool = True
+    openai_prompt_cache_enabled: bool = True
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -404,6 +406,8 @@ class Settings:
             ),
             speech_prefetch_enabled=_env_bool(source, 'MALBUT_AGENT_SPEECH_PREFETCH_ENABLED'),
             speech_publish_before_save=_env_bool(source, 'MALBUT_AGENT_SPEECH_PUBLISH_BEFORE_SAVE', default=True),
+            openai_api_timing_enabled=_env_bool(source, 'MALBUT_AGENT_API_TIMING_ENABLED', default=True),
+            openai_prompt_cache_enabled=_env_bool(source, 'MALBUT_AGENT_PROMPT_CACHE_ENABLED', default=True),
             auth_token=source.get(
                 'MALBUT_AGENT_AUTH_TOKEN',
                 '',

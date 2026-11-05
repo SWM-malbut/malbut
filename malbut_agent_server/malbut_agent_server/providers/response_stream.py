@@ -103,8 +103,9 @@ def message_candidate(text):
 class ResponseEvents:
     """Accept one assistant text source; all tools and ambiguous sources disable hints."""
 
-    def __init__(self, turn):
+    def __init__(self, turn=None, observer=None):
         self.turn = turn
+        self.observer = observer
         self.response_id = None
         self.item = None
         self.part = None
@@ -116,7 +117,8 @@ class ResponseEvents:
     def _block(self):
         self.blocked = True
         self.text = ''
-        self.turn.fail_attempt()
+        if self.turn is not None:
+            self.turn.fail_attempt()
 
     def feed(self, event):
         if not isinstance(event, dict):
@@ -129,6 +131,11 @@ class ResponseEvents:
                 raise ProviderError('OpenAI response stream ordering is invalid')
             self.sequence = sequence
         kind = event.get('type')
+        if self.observer is not None:
+            self.observer('first_event')
+            if (kind in {'response.output_text.delta', 'response.function_call_arguments.delta'}
+                    and isinstance(event.get('delta'), str) and event['delta']):
+                self.observer('first_output_delta')
         if kind in {'error', 'response.failed', 'response.incomplete'}:
             raise ProviderError('OpenAI response stream failed')
         if kind == 'response.created':
@@ -172,12 +179,13 @@ class ResponseEvents:
                     or self.part != source or not isinstance(delta, str)):
                 self._block()
             else:
-                self.turn.mark('provider_first_delta')
+                if self.turn is not None:
+                    self.turn.mark('provider_first_delta')
                 if len(self.text) + len(delta) > 65536:
                     self._block()
                 else:
                     self.text += delta
-                    if self.response_id is not None:
+                    if self.response_id is not None and self.turn is not None:
                         candidate = message_candidate(self.text)
                         if candidate is not None:
                             self.turn.prepare(candidate)
@@ -187,10 +195,13 @@ class ResponseEvents:
                     or (self.response_id is not None and response.get('id') != self.response_id)):
                 raise ProviderError('OpenAI response stream completion is invalid')
             self.completed = response
-            self.turn.mark('provider_stream_completed')
+            if self.turn is not None:
+                self.turn.mark('provider_stream_completed')
+            if self.observer is not None:
+                self.observer('completed_event')
 
 
-def read_response_stream(response, max_bytes, turn):
+def read_response_stream(response, max_bytes, turn=None, observer=None):
     """Consume the entire bounded body, preserving keep-alive only after EOF."""
     content_type = response.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
     if content_type != 'text/event-stream':
@@ -206,7 +217,7 @@ def read_response_stream(response, max_bytes, turn):
         if not isinstance(decoded, dict):
             raise ProviderError('OpenAI response must be an object')
         return decoded
-    parser = ResponseEvents(turn)
+    parser = ResponseEvents(turn, observer)
     used, data = 0, []
 
     def dispatch():

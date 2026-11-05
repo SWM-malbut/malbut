@@ -1,0 +1,4 @@
+case,question,answer,agent_ms,tts_start_ms,input_to_playing_ms,response_count,db_status_at_response,saved_status,attempt_count,completed_event_ms,first_event_ms,first_output_delta_ms,headers_ms,parse_ms,preparation_ms,retry_delay_ms,transport_ms,cached_input_tokens,input_tokens,output_tokens,reasoning_output_tokens,total_tokens
+1,안녕. 짧게 한 문장으로 인사해줘.,안녕하세요! 오늘도 반가워요.,6071.668,522.207,6593.875,1,pending,completed,1,2339.464,1176.844,1914.932,1175.779,0.193,1012.468,0.0,2386.65,11094,12548,73,22,12621
+2,산책이 기분 전환에 도움이 되는 이유를 한 문장으로 말해줘.,"산책은 햇볕과 신선한 공기를 쐬며 몸을 움직이고, 주변 환경을 바꿔 스트레스를 줄이는 데 도움이 됩니다.",3262.267,1938.107,5200.374,1,pending,completed,1,2086.505,893.723,1399.143,892.971,0.273,108.895,0.0,2137.354,11094,12146,106,26,12252
+3,계획이 틀어졌을 때 마음을 가다듬는 방법을 한 문장으로 말해줘.,"계획이 틀어졌을 때는 잠시 숨을 고르고, 바꿀 수 있는 다음 한 가지에 집중해 보세요.",5290.058,1659.101,6949.159,1,pending,completed,1,1859.918,964.156,1262.178,963.236,0.226,135.09,0.0,1882.237,11331,13054,71,0,13125

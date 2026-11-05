@@ -1,0 +1,78 @@
+{
+  "all_rounds": {
+    "baseline": {
+      "trials": 12,
+      "mean": {
+        "agent_ms": 3078.8225,
+        "provider_ms": 2126.134583,
+        "transport_ms": 2084.605083,
+        "first_output_delta_ms": 1478.618833,
+        "preparation_ms": 40.716083,
+        "parse_ms": 0.219417,
+        "input_tokens": 11762.166667,
+        "cached_input_tokens": 10169.5,
+        "output_tokens": 77.25,
+        "reasoning_output_tokens": 9.166667
+      },
+      "median_transport_ms": 1937.9315,
+      "weighted_cache_fraction": 0.8645941082283592,
+      "memory_valid": 12
+    },
+    "cache": {
+      "trials": 12,
+      "mean": {
+        "agent_ms": 2809.917833,
+        "provider_ms": 1861.45875,
+        "transport_ms": 1820.842417,
+        "first_output_delta_ms": 1262.245333,
+        "preparation_ms": 39.649417,
+        "parse_ms": 0.2375,
+        "input_tokens": 11761.5,
+        "cached_input_tokens": 10240.583333,
+        "output_tokens": 69.75,
+        "reasoning_output_tokens": 4.916667
+      },
+      "median_transport_ms": 1765.8975,
+      "weighted_cache_fraction": 0.8706868454987318,
+      "memory_valid": 12
+    }
+  },
+  "rounds_2_to_4": {
+    "baseline": {
+      "trials": 9,
+      "mean": {
+        "agent_ms": 2786.529222,
+        "provider_ms": 1862.051556,
+        "transport_ms": 1821.276556,
+        "first_output_delta_ms": 1247.166333,
+        "preparation_ms": 39.986556,
+        "parse_ms": 0.215556,
+        "input_tokens": 11762,
+        "cached_input_tokens": 11094,
+        "output_tokens": 79.777778,
+        "reasoning_output_tokens": 10.555556
+      },
+      "median_transport_ms": 1863.13,
+      "weighted_cache_fraction": 0.943206937595647,
+      "memory_valid": 9
+    },
+    "cache": {
+      "trials": 9,
+      "mean": {
+        "agent_ms": 2664.729556,
+        "provider_ms": 1728.589444,
+        "transport_ms": 1688.343556,
+        "first_output_delta_ms": 1125.572111,
+        "preparation_ms": 39.245444,
+        "parse_ms": 0.226778,
+        "input_tokens": 11761.666667,
+        "cached_input_tokens": 11165,
+        "output_tokens": 68.888889,
+        "reasoning_output_tokens": 4.444444
+      },
+      "median_transport_ms": 1730.714,
+      "weighted_cache_fraction": 0.9492702281422701,
+      "memory_valid": 9
+    }
+  }
+}

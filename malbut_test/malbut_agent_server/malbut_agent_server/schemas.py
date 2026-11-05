@@ -429,6 +429,8 @@ class ProviderUsage:
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    cached_input_tokens: Optional[int] = None
+    reasoning_output_tokens: Optional[int] = None
 
     def validate(self) -> None:
         """Reject negative, boolean, or inconsistent token counters."""
@@ -436,6 +438,8 @@ class ProviderUsage:
             'input_tokens',
             'output_tokens',
             'total_tokens',
+            'cached_input_tokens',
+            'reasoning_output_tokens',
         ):
             value = getattr(self, field_name)
             if value is None:
@@ -462,11 +466,50 @@ class ProviderUsage:
     def to_dict(self) -> Dict[str, Optional[int]]:
         """Return JSON-safe token counters."""
         self.validate()
-        return {
+        result = {
             'input_tokens': self.input_tokens,
             'output_tokens': self.output_tokens,
             'total_tokens': self.total_tokens,
         }
+        for name in ('cached_input_tokens', 'reasoning_output_tokens'):
+            if getattr(self, name) is not None:
+                result[name] = getattr(self, name)
+        return result
+
+
+@dataclass(frozen=True)
+class ProviderAPITiming:
+    """Client wall times for the final API attempt, without request content.
+
+    Event offsets start immediately before transport. A JSON response has no
+    observable first output delta. ReliableProvider adds aggregate attempt and
+    scheduled retry-delay counters; its latency_ms still spans all attempts.
+    """
+
+    preparation_ms: float = 0.0
+    transport_ms: float = 0.0
+    parse_ms: float = 0.0
+    headers_ms: Optional[float] = None
+    first_event_ms: Optional[float] = None
+    first_output_delta_ms: Optional[float] = None
+    completed_event_ms: Optional[float] = None
+    attempt_count: int = 1
+    retry_delay_ms: float = 0.0
+
+    def to_dict(self):
+        result = {}
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            if name == 'attempt_count':
+                if type(value) is not int or value < 1:
+                    raise ValidationError('API attempt count is invalid')
+            elif value is not None:
+                if (type(value) not in (int, float) or not math.isfinite(value)
+                        or value < 0):
+                    raise ValidationError('API timing is invalid')
+                value = round(value, 3)
+            result[name] = value
+        return result
 
 
 @dataclass(frozen=True)
@@ -677,6 +720,7 @@ class ProviderResult:
     context_metrics: Optional[ContextMetrics] = None
     memory_proposal: Optional[Dict[str, Any]] = None
     memory_supported: bool = False
+    api_timing: Optional[ProviderAPITiming] = None
 
     def validate(self) -> None:
         """Validate content-free provider metadata and its decision."""
@@ -714,6 +758,8 @@ class ProviderResult:
                 'provider result latency_ms is invalid'
             )
         self.usage.validate()
+        if self.api_timing is not None:
+            self.api_timing.to_dict()
         if self.response_id is not None:
             if (
                 not isinstance(self.response_id, str)
@@ -740,7 +786,7 @@ class ProviderResult:
     def to_dict(self) -> Dict[str, Any]:
         """Return provider metadata without credentials or raw prompts."""
         self.validate()
-        return {
+        result = {
             'provider': self.provider,
             'model': self.model,
             'latency_ms': round(self.latency_ms, 3),
@@ -753,3 +799,6 @@ class ProviderResult:
                 else None
             ),
         }
+        if self.api_timing is not None:
+            result['api_timing'] = self.api_timing.to_dict()
+        return result

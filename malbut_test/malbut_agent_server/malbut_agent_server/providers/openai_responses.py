@@ -57,6 +57,7 @@ from malbut_agent_server.schemas import (
     SpeechAgentRequest,
     ProviderResult,
     ProviderUsage,
+    ProviderAPITiming,
 )
 from malbut_agent_server.tools import ToolSpec
 from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS, mapping_name_binding
@@ -159,6 +160,8 @@ class OpenAIResponsesProvider(AgentProvider):
         semantic_context: bool = False,
         max_input_tokens: int = 32768,
         token_counter: Optional[Callable[[Any], int]] = None,
+        api_timing_enabled: bool = False,
+        prompt_cache_enabled: bool = False,
     ) -> None:
         """Initialize a lazy adapter without performing a network call.
 
@@ -210,6 +213,10 @@ class OpenAIResponsesProvider(AgentProvider):
         self.semantic_context = semantic_context
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
+        if type(api_timing_enabled) is not bool or type(prompt_cache_enabled) is not bool:
+            raise ValueError('API timing and prompt cache options must be boolean')
+        self.api_timing_enabled = api_timing_enabled
+        self.prompt_cache_enabled = prompt_cache_enabled
         self._validate_base_url()
         self._http_pool = HTTPConnectionPool() if transport is None else None
         self._transport_finalizer = (
@@ -263,6 +270,7 @@ class OpenAIResponsesProvider(AgentProvider):
         weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
+        prepare_started = time.perf_counter()
         api_key = self._api_key
         if not api_key:
             self._report_key('missing', 'missing_api_key')
@@ -308,14 +316,21 @@ class OpenAIResponsesProvider(AgentProvider):
         if prefetch is not None and not prefetch.begin_attempt():
             prefetch = None
         started = time.perf_counter()
+        preparation_ms = (started - prepare_started) * 1000
+        events = {}
+
+        def observe(name):
+            events.setdefault(name + '_ms', (time.perf_counter() - started) * 1000)
+
         try:
             url = f'{self.base_url}/responses'
-            if (prefetch is not None and self._http_pool is not None
+            if ((prefetch is not None or self.api_timing_enabled) and self._http_pool is not None
                     and self.transport == self._pooled_transport
                     and not uses_environment_proxy(url)):
                 response = self._pooled_transport(
                     url, headers, dict(payload, stream=True), self.timeout_seconds,
                     stream_turn=prefetch,
+                    observer=observe if self.api_timing_enabled else None,
                 )
             else:
                 response = self.transport(url, headers, payload, self.timeout_seconds)
@@ -330,6 +345,7 @@ class OpenAIResponsesProvider(AgentProvider):
             raise
         self._report_key('ok')
         latency_ms = (time.perf_counter() - started) * 1000
+        parse_started = time.perf_counter()
         memory_enabled = (
             memory_context is not None and memory_mode != 'answer_only'
         )
@@ -356,6 +372,10 @@ class OpenAIResponsesProvider(AgentProvider):
             model=str(response.get('model') or self.model),
             latency_ms=latency_ms,
             usage=self._parse_usage(response.get('usage')),
+            api_timing=(ProviderAPITiming(
+                preparation_ms=preparation_ms, transport_ms=latency_ms,
+                parse_ms=(time.perf_counter() - parse_started) * 1000, **events,
+            ) if self.api_timing_enabled else None),
             response_id=(
                 str(response['id'])
                 if isinstance(response.get('id'), str)
@@ -527,6 +547,12 @@ class OpenAIResponsesProvider(AgentProvider):
                 )
             payload['text']['format']['schema'] = schema
             payload['truncation'] = 'disabled'
+            if self.prompt_cache_enabled:
+                from malbut_agent_server.providers.prompt_cache import (
+                    arrange_cached_input, supports_breakpoints,
+                )
+                if supports_breakpoints(self.model):
+                    arrange_cached_input(payload, request.user_id)
             counter = self.token_counter
             if counter is None:
                 from malbut_agent_server.context_compaction import count_tokens
@@ -557,11 +583,14 @@ class OpenAIResponsesProvider(AgentProvider):
         if include_image:
             # Count only the text/schema above, not the Base64 representation.
             # low-detail is <=512x512; reserve 512 image tokens conservatively.
-            payload['input'] = [{'role': 'user', 'content': [
-                {'type': 'input_text', 'text': payload['input']},
+            if isinstance(payload['input'], str):
+                payload['input'] = [{'role': 'user', 'content': [
+                    {'type': 'input_text', 'text': payload['input']},
+                ]}]
+            payload['input'][-1]['content'].append(
                 {'type': 'input_image', 'detail': 'low',
                  'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image.jpeg).decode('ascii')},
-            ]}]
+            )
         return payload
 
     @staticmethod
@@ -770,10 +799,17 @@ class OpenAIResponsesProvider(AgentProvider):
                 return raw
             return None
 
+        def detail(group, name):
+            values = value.get(group)
+            raw = values.get(name) if isinstance(values, dict) else None
+            return raw if type(raw) is int and raw >= 0 else None
+
         return ProviderUsage(
             input_tokens=optional_int('input_tokens'),
             output_tokens=optional_int('output_tokens'),
             total_tokens=optional_int('total_tokens'),
+            cached_input_tokens=detail('input_tokens_details', 'cached_tokens'),
+            reasoning_output_tokens=detail('output_tokens_details', 'reasoning_tokens'),
         )
 
     @staticmethod
@@ -828,19 +864,24 @@ class OpenAIResponsesProvider(AgentProvider):
             ) from error
         return OpenAIResponsesProvider._decode_response_body(response_body)
 
-    def _pooled_transport(self, url, headers, payload, timeout_seconds, *, stream_turn=None):
+    def _pooled_transport(self, url, headers, payload, timeout_seconds, *, stream_turn=None,
+                          observer=None):
         try:
             self._http_pool.check_open()
             if uses_environment_proxy(url):
-                if stream_turn is not None:
+                if stream_turn is not None or observer is not None:
                     payload = dict(payload)
                     payload.pop('stream', None)
                 return self._urllib_transport(url, headers, payload, timeout_seconds)
             reader = None
-            if stream_turn is not None:
+            streaming = stream_turn is not None or observer is not None
+            if streaming:
                 from malbut_agent_server.providers.response_stream import read_response_stream
 
-                reader = lambda response, limit: read_response_stream(response, limit, stream_turn)
+                def reader(response, limit):
+                    if observer is not None:
+                        observer('headers')
+                    return read_response_stream(response, limit, stream_turn, observer)
             response_body = self._http_pool.post(
                 url, headers,
                 json.dumps(payload, ensure_ascii=True, separators=(',', ':')).encode('utf-8'),
@@ -863,7 +904,7 @@ class OpenAIResponsesProvider(AgentProvider):
             # A disconnected keep-alive socket may fail after the server read
             # the POST. Leave retry decisions to the existing reliability layer.
             raise ProviderError('OpenAI request failed due to a network error') from error
-        return response_body if stream_turn is not None else self._decode_response_body(response_body)
+        return response_body if streaming else self._decode_response_body(response_body)
 
     @staticmethod
     def _decode_response_body(response_body):
