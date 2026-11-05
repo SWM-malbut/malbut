@@ -307,7 +307,7 @@ def open_followup(harness, pipeline):
 @pytest.mark.parametrize('during_reply,aec', [(True, True), (False, True), (False, False)])
 def test_spoken_end_closes_dialogue_until_a_fresh_wake(harness, during_reply, aec):
     statuses = []
-    pipeline = harness.create(aec=aec, barge_in_mode='reachy' if aec else 'legacy',
+    pipeline = harness.create(aec=aec, barge_in_mode='reachy' if during_reply else 'legacy',
                               publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
     finish_command(pipeline)

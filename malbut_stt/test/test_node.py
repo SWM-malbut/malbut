@@ -854,7 +854,7 @@ def test_robot_deployment_honors_explicit_aec_input(runtime, input_has_aec):
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
     assert runtime.pipeline_args['input_has_aec'] is input_has_aec
-    assert runtime.pipeline_args['barge_in_mode'] == ('reachy' if input_has_aec else 'legacy')
+    assert runtime.pipeline_args['barge_in_mode'] == 'legacy'
     assert runtime.calls['endpoint_chimes'] == [-1]
     assert runtime.calls['failure_chimes'] == [-1]
 
