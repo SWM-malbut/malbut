@@ -1,6 +1,25 @@
 """Own dialogue and playback transitions independently of audio and ROS."""
 
+import re
+import unicodedata
 from uuid import uuid4
+
+from malbut_stt.wake import parse_wake_phrase
+
+
+_END_COMMAND = re.compile(
+    r'(?:우리)?(?:이제[,，]?)?(?:'
+    r'(?:대화|이야기|얘기)(?:를|는)?(?:그만(?:하자|할래요?|해|해요|해줘|해주세요)?|'
+    r'끝내(?:자|줘|주세요)|종료(?:해|해줘|해주세요)?|여기까지(?:하자|해요))'
+    r'|그만하자|오늘은여기까지하자)'
+)
+
+
+def is_conversation_end(text):
+    """Match a whole spoken command, including an optional call to Jake."""
+    command = parse_wake_phrase(text) or text
+    command = ''.join(unicodedata.normalize('NFC', command).split()).rstrip('.!?…。！？~')
+    return _END_COMMAND.fullmatch(command) is not None
 
 
 class ConversationSession:

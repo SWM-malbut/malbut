@@ -330,17 +330,18 @@ def test_spoken_opt_out_persists_and_can_be_reenabled_without_llm(robot):
     assert not r.runtime.provider.calls
 
 
-@pytest.mark.parametrize('cause', ['person_left', 'input_failed'])
-def test_person_leaving_and_input_failure_close_listening(robot, cause):
+@pytest.mark.parametrize('cause', ['person_left', 'failed', 'ended'])
+def test_person_leaving_input_failure_or_user_end_close_listening(robot, cause):
     r = robot
     r.finish(r.approach())
     session = r.chat.session_id
     if cause == 'person_left':
         r.pulse(36., count=0)
     else:
-        r.inputs.publish(SpeechInputStatus(session_id=session, utterance_id='failed', state='failed'))
+        r.inputs.publish(SpeechInputStatus(session_id=session, utterance_id='turn', state=cause))
     r.pump(lambda: (session, False) in r.controls)
     assert r.chat.phase == 'idle'
+    assert len(r.speech) == 1 and not r.runtime.provider.calls
 
 
 def test_rejected_microphone_start_does_not_accept_an_answer(robot):

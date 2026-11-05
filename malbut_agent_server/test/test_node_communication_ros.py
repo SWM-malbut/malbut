@@ -514,6 +514,21 @@ def test_proactive_chat_defaults_off_but_user_dialogue_still_replies(communicati
     assert provider.calls[0].utterance == '오늘 하루는 어땠어?'
 
 
+def test_user_end_releases_only_the_matching_input_without_a_reply(communication):
+    provider = _DialogueProvider()
+    graph = communication(with_manager=False, provider=provider)
+    publisher = graph.sender.create_publisher(
+        SpeechInputStatus, '/malbut/speech/input_status', 10)
+    _wait_until(lambda: publisher.get_subscription_count() == 2)
+    for uid, state in [('old', SpeechInputStatus.STARTED), ('current', SpeechInputStatus.STARTED),
+                       ('old', SpeechInputStatus.ENDED)]:
+        publisher.publish(SpeechInputStatus(utterance_id=uid, state=state))
+    _wait_until(lambda: graph.agent._input_utterance_id == 'current')
+    publisher.publish(SpeechInputStatus(utterance_id='current', state=SpeechInputStatus.ENDED))
+    _wait_until(lambda: graph.agent._input_utterance_id is None)
+    assert not graph.speech and not provider.calls
+
+
 def test_ordinary_recognition_failure_guidance_and_followup_use_existing_topics(communication):
     provider = _DialogueProvider()
     graph = communication(with_manager=False, provider=provider)

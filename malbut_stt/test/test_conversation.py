@@ -5,7 +5,23 @@ from uuid import UUID
 
 import pytest
 
-from malbut_stt.conversation import ConversationSession
+from malbut_stt.conversation import ConversationSession, is_conversation_end
+
+
+@pytest.mark.parametrize('text', [
+    '대화 그만하자', '대화를 그만해 주세요!', '제이크야, 이제 대화 끝내자.',
+    '우리 얘기는 여기까지 하자', '대화 종료', '이제 그만하자.', '이제, 대화 그만할래요.',
+])
+def test_direct_conversation_end_commands(text):
+    assert is_conversation_end(text)
+
+
+@pytest.mark.parametrize('text', [
+    '대화 그만하지 마', '대화 그만하자고 했어', '“대화 그만하자”가 영어로 뭐야?',
+    '음악 그만해 줘', '따라오는 거 그만하자', '대화 종료 방법 알려줘',
+])
+def test_other_requests_continue_the_conversation(text):
+    assert not is_conversation_end(text)
 
 
 @pytest.fixture

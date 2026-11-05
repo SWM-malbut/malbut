@@ -81,7 +81,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 raise ValueError('AEC and fallback require the same explicit PulseAudio routes')
             input_has_aec = True
         barge_in_ducking = parameter('barge_in_ducking', False)
-        barge_in_mode = parameter('barge_in_mode', 'legacy')
+        barge_in_mode = parameter('barge_in_mode', 'reachy' if input_has_aec else 'legacy')
         interruption_asr = parameter('interruption_asr', 'local')
         interruption_asr_timeout = parameter('interruption_asr_timeout_s', 5.0)
         barge_in_pre_roll_s = parameter('barge_in_pre_roll_s', 2.0)
