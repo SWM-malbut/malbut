@@ -169,8 +169,7 @@ class EncounterGate:
 def ends_conversation(text):
     """Do not turn a refusal or departure into another question."""
     normalized = re.sub(r'[\s.!?~。！？]', '', text)
-    return normalized in {'됐어', '됐어요',
-                          '나중에', '다음에', '지금바빠', '지금바빠요', '그만', '그만해',
+    return normalized in {'나중에', '다음에', '지금바빠', '지금바빠요', '그만', '그만해',
                           '그만말해', '말걸지마', '말걸지마세요', '대화그만', '조용히해줘'}
 
 

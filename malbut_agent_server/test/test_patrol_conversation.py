@@ -171,7 +171,8 @@ def test_spontaneous_topics_require_explicit_opt_in(tmp_path):
 
 @pytest.mark.parametrize('text,ended', [('나중에', True), ('아니요.', False), ('괜찮아요', False), ('아니', False),
                                        ('말 걸지 마세요', True), ('요즘 바빠서 운동을 못 했어', False),
-                                       ('응', False)])
+                                       ('응', False), ('됐어', False), ('됐어요', False),
+                                       ('고마워', False), ('괜찮아', False)])
 def test_respect_declines_without_misreading_an_ordinary_answer(text, ended):
     assert ends_conversation(text) is ended
 

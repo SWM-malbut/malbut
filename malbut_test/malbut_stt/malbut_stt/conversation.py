@@ -7,19 +7,86 @@ from uuid import uuid4
 from malbut_stt.wake import parse_wake_phrase
 
 
-_END_COMMAND = re.compile(
-    r'(?:우리)?(?:이제[,，]?)?(?:'
-    r'(?:대화|이야기|얘기)(?:를|는)?(?:그만(?:하자|할래요?|해|해요|해줘|해주세요)?|'
-    r'끝내(?:자|줘|주세요)|종료(?:해|해줘|해주세요)?|여기까지(?:하자|해요))'
-    r'|그만하자|오늘은여기까지하자)'
+_TALK = r'(?:연속대화|대화모드|대화|이야기|얘기)'
+_PARTICLE = r'[은는을를]?'
+_DO = (r'(?:하자|하죠|하세|합시다|하시죠|하세요|할까(?:요)?|할래(?:요)?|할게(?:요)?|'
+       r'하겠습니다|하고싶(?:어(?:요)?|습니다)|해(?:요|줘(?:요)?|주세요|줄래(?:요)?|도돼(?:요)?)?)')
+_REQUEST = r'(?:요|줘(?:요)?|주세요|줄래(?:요)?)?'
+_FINISH = (rf'(?:끝내{_REQUEST}|끝내자|끝낼(?:게|래|까)(?:요)?|끝냅시다|'
+           rf'마쳐{_REQUEST}|마치자|마치죠|마칩시다|마칠(?:게|래|까)(?:요)?|마치겠습니다|'
+           rf'끝내고싶(?:어(?:요)?|습니다)|마무리{_DO}|(?:종료|중단|중지)(?:{_DO})?|멈춰{_REQUEST}|멈추자)')
+_DISLIKE = r'싫(?:어(?:요)?|습니다)'
+_DONT_WANT = r'싶지않(?:아(?:요)?|습니다)'
+_LATER = r'(?:나중에|다음에|이따(?:가)?|내일|시간될때|필요하면|필요할때)(?:다시|또|마저)?'
+_NEXT_TALK = rf'{_LATER}(?:{_TALK}|말)(?:나누자|나눠요|{_DO})'
+_NO_MORE = r'(?:없어(?:요)?|없습니다|없네(?:요)?)'
+_ENOUGH = r'(?:됐어(?:요)?|됐습니다|충분해(?:요)?|충분합니다)'
+_DONT = rf'(?:마(?:세요|요)?|말(?:자|아요)|말아{_REQUEST})'
+# Whole clauses only. A bare "그만" or "멈춰" can also cancel a robot mission.
+_END_FORMS = (
+    # Finish the conversation or close continuous listening.
+    rf'{_TALK}{_PARTICLE}(?:좀|이제|이만|여기서)?(?:그만(?:{_DO})?|{_FINISH}|끝)',
+    rf'(?:연속대화|대화모드){_PARTICLE}(?:꺼{_REQUEST}|끄자)',
+    rf'대화창{_PARTICLE}닫아{_REQUEST}',
+    rf'그만(?:좀)?(?:{_TALK}(?:{_DO})?|(?:말|대답|질문){_DO})',
+    rf'(?:말|질문){_PARTICLE}(?:좀)?(?:그만(?:{_DO})?|멈춰{_REQUEST})',
+    r'그만(?:하자|합시다|할(?:게|래|까)(?:요)?|하고싶어(?:요)?)',
+    r'끝내자|마치자|마칩시다|마무리하자',
+    # Stop here, or indicate that the conversation has run its course.
+    rf'(?:{_TALK}{_PARTICLE})?여기까지만?(?:야|예요|입니다|{_DO}|{_FINISH})?',
+    rf'(?:{_TALK}{_PARTICLE})?(?:여기서|이쯤(?:에서)?)(?:{_DO}|{_FINISH})',
+    rf'(?:이제|이만|오늘은)그만|(?:오늘은|이제)이만{_DO}|이만{_FINISH}',
+    rf'(?:질문|답변){_PARTICLE}여기까지만?(?:{_DO})?',
+    rf'(?:그만하면|이만하면|이정도면|그정도면){_ENOUGH}',
+    r'(?:오늘은|그럼|그러면)이만|(?:이만|여기서)끊(?:자|을게(?:요)?|겠습니다)',
+    # Decline further speech, questions or replies.
+    rf'(?:{_TALK}|말){_PARTICLE}(?:하기{_DISLIKE}|하고{_DONT_WANT}|안할래(?:요)?|하지{_DONT})',
+    rf'아무말도하고{_DONT_WANT}|듣(?:기{_DISLIKE}|고{_DONT_WANT})|그만듣고싶어(?:요)?',
+    r'그만들을래요?|더안들어도돼요?',
+    r'충분히들었어(?:요)?',
+    rf'(?:할말|물어볼(?:게|거|것)|궁금한(?:게|건|거|것))(?:이|은|는)?{_NO_MORE}',
+    r'궁금한(?:건|거|것은)다물어봤어(?:요)?',
+    rf'(?:(?:아무말도|말|대꾸|대답|답변|질문)하|묻|물어보|말시키)지{_DONT}',
+    r'(?:말|답|대답|답변)(?:은|는)?(?:안해도돼(?:요)?|하지않아도돼(?:요)?|됐어(?:요)?)',
+    rf'(?:답|답변|대답)(?:은|이)?필요{_NO_MORE}',
+    rf'조용히(?:좀)?(?:해|있어){_REQUEST}|(?:입좀?다물어|닥쳐){_REQUEST}',
+    rf'혼자있고싶(?:어(?:요)?|습니다)|혼자있게해{_REQUEST}|(?:지금은|잠깐)말걸지{_DONT}',
+    # Defer talking or explicitly say the next contact will be later.
+    _NEXT_TALK, rf'(?:{_TALK}{_PARTICLE}|얘긴){_LATER}{_DO}', rf'(?:여기까지만?|그만)하고{_NEXT_TALK}',
+    r'(?:나중에|다음에|이따가)(?:다시)?(?:하자|합시다|해요)',
+    rf'{_LATER}(?:보자|봐(?:요)?|뵐게요|부를게(?:요)?|올게(?:요)?|말걸게(?:요)?)',
+    rf'(?:다시)?부를때까지기다려{_REQUEST}|호출어대기(?:모드)?로돌아가{_REQUEST}',
+    # Leave, rest or say goodbye. A bare greeting or thank-you is not a farewell.
+    r'(?:가볼게|갈게|들어갈게|들어가볼게|자러갈게|쉴게|잘게)(?:요)?|가봐야겠(?:어(?:요)?|다)|자야겠다',
+    r'쉬고싶(?:어(?:요)?|습니다)|쉬러갈게(?:요)?',
+    r'잘(?:가|자|있어)(?:요)?|안녕히(?:가|계|주무)(?:세요|십시오)|좋은밤(?:되세요|보내세요)',
+    r'바이바이|굿나잇',
 )
+_COURTESY = (r'(?:응|네|그래요?|아니요?|알겠(?:어(?:요)?|습니다)|알았어요?|고마워요?|고마웠어요?|'
+             r'고맙습니다|감사합니다|감사해요?|수고했어요?|수고하셨습니다|잘들었어요?|'
+             rf'괜찮아요?|{_ENOUGH}|제이크(?:야)?)')
+_LEAD = (r'(?:그럼|그러면|그냥|이제는?|이만|오늘은?|지금은?|우리|나는?|난|저는?|먼저|좀|잠깐|'
+         r'더이상|더는?|피곤해서|바빠서)')
+_END_CLAUSE = re.compile(
+    rf'(?:{_COURTESY}|{_LEAD}){{0,5}}(?:' + '|'.join(_END_FORMS) + rf')(?:{_COURTESY})?')
+_ASIDE = re.compile(rf'(?:{_COURTESY}|{_LEAD}){{1,5}}')
+_STATE_QUESTION = re.compile(r'(?:없어|싶어|싫어|싶지않아|들었어|충분해)(?:요)?$')
 
 
 def is_conversation_end(text):
-    """Match a whole spoken command, including an optional call to Jake."""
+    """Require a closing intent and leave quotes, new requests and negations intact."""
     command = parse_wake_phrase(text) or text
-    command = ''.join(unicodedata.normalize('NFC', command).split()).rstrip('.!?…。！？~')
-    return _END_COMMAND.fullmatch(command) is not None
+    compact = ''.join(unicodedata.normalize('NFC', command).split())
+    found_end = False
+    for clause, punctuation in re.findall(r'([^,，.!?…。！？~]+)([,，.!?…。！？~]*)', compact):
+        if _END_CLAUSE.fullmatch(clause):
+            # "더 할 말 없어?" invites the robot to speak. "여기까지 할까요?" closes.
+            if ('?' in punctuation or '？' in punctuation) and _STATE_QUESTION.search(clause):
+                return False
+            found_end = True
+        elif not _ASIDE.fullmatch(clause):
+            return False
+    return found_end
 
 
 class ConversationSession:

@@ -190,13 +190,14 @@ def test_decline_and_late_answer_do_not_start_inference(robot):
     assert not r.runtime.provider.calls and len(r.speech) == 1
 
 
-def test_negative_answer_is_a_normal_reply_not_a_request_to_end(robot):
+@pytest.mark.parametrize('text', ['아니요', '됐어', '괜찮아', '고마워'])
+def test_short_reply_continues_the_patrol_conversation(robot, text):
     r = robot
     r.finish(r.approach())
     r.transcripts.publish(SpeechTranscript(session_id=r.chat.session_id,
-                                          utterance_id='negative', text='아니요'))
+                                          utterance_id='reply', text=text))
     r.pump(lambda: bool(r.runtime.provider.calls))
-    assert r.runtime.provider.calls[0][0].utterance == '아니요'
+    assert r.runtime.provider.calls[0][0].utterance == text
     assert r.runtime.provider.calls[0][0].scene_context['conversation_opener']['topic'] == 'plants'
 
 
