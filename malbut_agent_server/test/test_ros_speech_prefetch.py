@@ -22,15 +22,18 @@ def ros_prefetch(tmp_path, monkeypatch, request):
     monkeypatch.setenv('ROS_DOMAIN_ID', '194')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     monkeypatch.setattr('malbut_agent_server.speech_scene.RosSpeechScene', lambda *_: None)
-    enabled = getattr(request, 'param', True)
-    rclpy.init(args=[])
+    option = getattr(request, 'param', True)
+    overridden = isinstance(option, tuple)
+    enabled = option[1] if overridden else option
+    rclpy.init(args=(['--ros-args', '-p', f'speech_prefetch_enabled:={str(enabled).lower()}']
+                    if overridden else []))
     executor = SingleThreadedExecutor()
     provider = PreviewProvider(blocked=True)
     agent = observer = None
     try:
         agent = create_communication_node(
             speech_db_path=str(tmp_path / 'receipts.sqlite3'),
-            dialogue_settings=Settings(speech_prefetch_enabled=enabled),
+            dialogue_settings=Settings(speech_prefetch_enabled=not enabled if overridden else enabled),
             dialogue_factory=RuntimeFactory(provider),
         )
         observer = Node('speech_prefetch_test_observer')
@@ -62,10 +65,12 @@ def ros_prefetch(tmp_path, monkeypatch, request):
             rclpy.shutdown()
 
 
-@pytest.mark.parametrize('ros_prefetch', [True, False], indirect=True)
+@pytest.mark.parametrize('ros_prefetch', [True, False, ('override', True), ('override', False)], indirect=True)
 def test_typed_quiet_prepare_then_one_existing_final_request(ros_prefetch):
     agent, provider, prepares, finals, spin_until = ros_prefetch
     enabled = agent._preparation is not None
+    assert agent.get_parameter('speech_prefetch_enabled').value is enabled
+    assert agent.describe_parameter('speech_prefetch_enabled').read_only
     assert agent.dialogue.submit('synthetic-utterance', '안녕')
     spin_until(lambda: bool(prepares) if enabled else provider.prepared.is_set())
     assert finals == []

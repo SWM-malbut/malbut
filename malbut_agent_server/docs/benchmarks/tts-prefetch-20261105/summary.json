@@ -1,0 +1,104 @@
+{
+  "off": {
+    "trials": 9,
+    "mean": {
+      "input_to_audio_s": 6.573405248444437,
+      "input_to_playing_s": 6.428379470776741,
+      "agent_s": 5.071998940998229,
+      "response_to_audio_s": 1.5014063074462076,
+      "api_s": 2.5890031111111114
+    },
+    "median_input_to_audio_s": 6.248868107999442,
+    "per_case": {
+      "1": {
+        "input_to_audio_s": 5.280568248999771,
+        "response_to_audio_s": 0.9181439753350181
+      },
+      "2": {
+        "input_to_audio_s": 6.92931565966622,
+        "response_to_audio_s": 1.8107809053350745
+      },
+      "3": {
+        "input_to_audio_s": 7.510331836667319,
+        "response_to_audio_s": 1.7752940416685306
+      }
+    },
+    "cpu_to_audio": {
+      "host_weighted_percent": 76.33543497261397,
+      "tts_node": {
+        "weighted_percent_one_core": 31.6276011960261,
+        "mean_cpu_seconds": 2.0733333333333333,
+        "peak_percent_one_core": 223.7887656826196
+      },
+      "agent_communication": {
+        "weighted_percent_one_core": 50.20415581062664,
+        "mean_cpu_seconds": 3.291111111111111,
+        "peak_percent_one_core": 89.59860987329908
+      }
+    },
+    "cpu_to_finished": {
+      "host_weighted_percent": 74.99693101325494,
+      "tts_node": {
+        "weighted_percent_one_core": 31.55430932022925,
+        "mean_cpu_seconds": 5.267777777777778,
+        "peak_percent_one_core": 223.7887656826196
+      },
+      "agent_communication": {
+        "weighted_percent_one_core": 37.67748261164686,
+        "mean_cpu_seconds": 6.29,
+        "peak_percent_one_core": 89.59860987329908
+      }
+    }
+  },
+  "on": {
+    "trials": 9,
+    "mean": {
+      "input_to_audio_s": 5.890829518110776,
+      "input_to_playing_s": 5.736633686445,
+      "agent_s": 5.372044811556407,
+      "response_to_audio_s": 0.5187847065543691,
+      "api_s": 2.4476667777777776
+    },
+    "median_input_to_audio_s": 5.928441531999852,
+    "per_case": {
+      "1": {
+        "input_to_audio_s": 6.010932471331519,
+        "response_to_audio_s": 0.2962738679998438
+      },
+      "2": {
+        "input_to_audio_s": 5.52812984866614,
+        "response_to_audio_s": 0.8923553399969629
+      },
+      "3": {
+        "input_to_audio_s": 6.133426234334668,
+        "response_to_audio_s": 0.3677249116663006
+      }
+    },
+    "cpu_to_audio": {
+      "host_weighted_percent": 76.53798901052917,
+      "tts_node": {
+        "weighted_percent_one_core": 35.181659800449026,
+        "mean_cpu_seconds": 2.062222222222222,
+        "peak_percent_one_core": 213.63540067194643
+      },
+      "agent_communication": {
+        "weighted_percent_one_core": 52.298598808964904,
+        "mean_cpu_seconds": 3.0655555555555556,
+        "peak_percent_one_core": 89.61624397589542
+      }
+    },
+    "cpu_to_finished": {
+      "host_weighted_percent": 75.56247636959085,
+      "tts_node": {
+        "weighted_percent_one_core": 32.34569425531452,
+        "mean_cpu_seconds": 5.096666666666667,
+        "peak_percent_one_core": 213.63540067194643
+      },
+      "agent_communication": {
+        "weighted_percent_one_core": 38.981250892386896,
+        "mean_cpu_seconds": 6.142222222222222,
+        "peak_percent_one_core": 89.61624397589542
+      }
+    }
+  }
+}

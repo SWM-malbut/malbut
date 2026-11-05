@@ -1034,6 +1034,21 @@ implicit 캐시와 30분 TTL을 사용한다. 이전 대화·기억은 모두 �
 `SpeechPreparation`과 확장된 `SpeechRequest`를 포함해 ROS 인터페이스를 다시
 빌드해야 한다. 모델·추론 설정·출력 길이·말하기 속도는 이 설정으로 바뀌지 않는다.
 
+로봇별로는 `~/.config/malbut/agent.yaml`에 다음 설정을 저장할 수 있다.
+Bringup의 Agent 모듈과 단독 speech launch가 음성 대화를 시작할 때만 읽는다.
+시작 전용 ROS 파라미터가 환경 변수의 기본값보다 우선하며 실행 중 변경은 거절한다.
+
+```yaml
+/malbut_agent_communication:
+  ros__parameters:
+    speech_prefetch_enabled: true
+```
+
+Piper의 `~/.config/malbut/tts.yaml`에도 `piper_prefetch_enabled: true`를 넣고
+Agent와 TTS를 재시작한다. 기존 모델·스레드 수·속도 설정은 유지한다.
+Agent 설정만 `false`로 시작하면 준비 요청을 보내지 않아 선합성 전후를 비교할 수 있다.
+STT나 에코 보정 설정을 바꾸는 옵션은 아니다.
+
 활성화된 ROS 대화 워커는 직접 OpenAI 연결에서 Responses SSE를 읽는다. 한
 assistant message의 최상위 `type=message`와 완결 문장 다음 비공백 문자까지
 확인되면 정확한 원문 prefix를 `/malbut/tts/prepare`로 보낸다. 이는 무음 캐시
