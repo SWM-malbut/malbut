@@ -199,3 +199,20 @@ def test_vendor_enable_does_not_override_manager_idle(wrapper):
     assert node.enable_cb(SimpleNamespace(data=True), SimpleNamespace()).success
     assert node._sub is not None
     node.type_to_model['YOLO'].assert_called_once()
+
+
+@pytest.mark.parametrize('kind', ['World', 'YOLOE'])
+def test_open_vocabulary_classes_can_be_set_before_first_processing(wrapper, monkeypatch, kind):
+    """Keep the class-selection endpoint available even while weights are deferred."""
+    node, model = _lifecycle_instance(wrapper)
+    node.model_type = kind
+    node.type_to_model = {kind: node.type_to_model['YOLO']}
+    node.get_parameter = lambda _: SimpleNamespace(value=False)
+    monkeypatch.setattr(wrapper.LifecycleNode, 'on_activate', lambda *_: None)
+    assert node.on_activate(None) == wrapper.TransitionCallbackReturn.SUCCESS
+    node.type_to_model[kind].assert_not_called()
+    assert node.create_service.call_args_list[-1].args[1] == 'set_classes'
+    node.set_classes_cb(SimpleNamespace(classes=['person']), object())
+    assert node.yolo is model
+    model.set_classes.assert_called_once_with(['person'])
+    assert node._sub is None

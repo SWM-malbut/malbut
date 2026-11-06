@@ -49,6 +49,8 @@ class TimedYoloNode(YoloNode):
     def on_activate(self, state):
         """Activate ROS endpoints; defer weights until processing is requested."""
         self._enable_srv = self.create_service(SetBool, 'enable', self.enable_cb)
+        if self.model_type in ('World', 'YOLOE'):
+            self._ensure_class_service()
         LifecycleNode.on_activate(self, state)
         self._activated = True
         try:
@@ -72,12 +74,16 @@ class TimedYoloNode(YoloNode):
                 self.get_logger().warning(f'Error while fuse: {error}')
         if self._classes is not None:
             model.set_classes(self._classes)
-        if hasattr(model, 'set_classes') and self._set_classes_srv is None:
+        if hasattr(model, 'set_classes'):
+            self._ensure_class_service()
+        self.yolo = model
+
+    def _ensure_class_service(self):
+        if self._set_classes_srv is None:
             from yolo_msgs.srv import SetClasses
 
             self._set_classes_srv = self.create_service(
                 SetClasses, 'set_classes', self.set_classes_cb)
-        self.yolo = model
 
     def _release_model(self):
         if hasattr(self, 'yolo'):
