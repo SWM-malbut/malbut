@@ -8,6 +8,7 @@
     imgsz_width: 640
     half: true
     enable: true
+    idle_model_timeout_s: 60.0  # Release weights after inactivity; load on next demand.
     fuse_model: false
     image_reliability: 2  # sensor-data BEST_EFFORT, queue depth 1 upstream
     opencv_num_threads: 4

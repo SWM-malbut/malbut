@@ -341,3 +341,19 @@ TEST(HeartbeatContract, RejectsMalformedWrongTypeAndDuplicateDesiredState)
       R"({"desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true,"unexpected":false}})",
       &desired, &error));
 }
+
+TEST(MediaConfig, VideoEncodingRequiresConsumerButNeverOverridesCameraPrivacy)
+{
+  MediaConfig config;
+  EXPECT_FALSE(homecam_media_agent::video_encoding_needed(config, false, false));
+  EXPECT_TRUE(homecam_media_agent::video_encoding_needed(config, true, false));
+  EXPECT_FALSE(homecam_media_agent::video_encoding_needed(config, false, true));
+  config.monitoring_enabled = true;
+  EXPECT_TRUE(homecam_media_agent::video_encoding_needed(config, false, true));
+  EXPECT_FALSE(homecam_media_agent::video_encoding_needed(config, false, false));
+  config.encode_without_consumer = true;
+  EXPECT_TRUE(homecam_media_agent::video_encoding_needed(config, false, false));
+  config.camera_enabled = false;
+  EXPECT_FALSE(homecam_media_agent::video_encoding_needed(config, true, true));
+  EXPECT_FALSE(homecam_media_agent::video_encoding_needed(config, false, false));
+}

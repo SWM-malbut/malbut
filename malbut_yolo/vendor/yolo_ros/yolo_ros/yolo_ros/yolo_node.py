@@ -14,6 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
+from __future__ import annotations
+
 from typing import List, Dict
 from cv_bridge import CvBridge
 
@@ -26,12 +28,13 @@ from rclpy.lifecycle import LifecycleNode
 from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.lifecycle import LifecycleState
 
-import torch
-from ultralytics import YOLO, YOLOWorld, YOLOE
-from ultralytics.engine.results import Results
-from ultralytics.engine.results import Boxes
-from ultralytics.engine.results import Masks
-from ultralytics.engine.results import Keypoints
+# Malbut integration: do not import the inference runtime until first demand.
+# Keep this factory lazy for idle Bringup nodes; inference/parser code is unchanged.
+def _model_factory(kind):
+    def load(path):
+        import ultralytics
+        return getattr(ultralytics, kind)(path)
+    return load
 
 from std_srvs.srv import SetBool
 from sensor_msgs.msg import Image
@@ -81,7 +84,8 @@ class YoloNode(LifecycleNode):
         self.declare_parameter("agnostic_nms", False)
         self.declare_parameter("retina_masks", False)
 
-        self.type_to_model = {"YOLO": YOLO, "World": YOLOWorld, "YOLOE": YOLOE}
+        self.type_to_model = {name: _model_factory(kind) for name, kind in (
+            ("YOLO", "YOLO"), ("World", "YOLOWorld"), ("YOLOE", "YOLOE"))}
 
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """
@@ -170,7 +174,7 @@ class YoloNode(LifecycleNode):
 
         # YOLOE does not support fusing
         if self.fuse_model and (
-            isinstance(self.yolo, YOLO) or isinstance(self.yolo, YOLOWorld)
+            self.model_type in ("YOLO", "World")
         ):
             try:
                 self.get_logger().info("Trying to fuse model...")
@@ -210,6 +214,7 @@ class YoloNode(LifecycleNode):
         del self.yolo
         if "cuda" in self.device:
             self.get_logger().info("Clearing CUDA cache")
+            import torch
             torch.cuda.empty_cache()
 
         self.destroy_service(self._enable_srv)

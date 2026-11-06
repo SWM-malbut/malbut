@@ -344,7 +344,7 @@ def test_processing_cycles_keep_server_alive_and_idle_buffers_empty(patrol_runti
     assert processing.wait_for_service(timeout_sec=TIMEOUT_S)
     selected, release = Event(), Event()
     subscription = manager._image_subscription
-    take = manager.executor._take_subscription
+    take = manager._sensor_inputs.executor._take_subscription
 
     def paused_take(entity):
         if entity is subscription and not selected.is_set():
@@ -354,14 +354,16 @@ def test_processing_cycles_keep_server_alive_and_idle_buffers_empty(patrol_runti
 
     # Reproduce the robot's interleaving: an executor worker selected the RGB
     # subscription before the processing service requests its destruction.
-    monkeypatch.setattr(manager.executor, '_take_subscription', paused_take)
+    monkeypatch.setattr(manager._sensor_inputs.executor, '_take_subscription', paused_take)
     try:
         assert selected.wait(TIMEOUT_S)
         assert _result(processing.call_async(SetBool.Request(data=False))).success
         release.set()
         for _ in range(30):
             assert _result(processing.call_async(SetBool.Request(data=False))).success
-            time.sleep(.06)
+            _wait_until(lambda: manager._image_subscription is None)
+            assert manager._depth_subscription is None
+            assert manager._scan_subscription is None
             assert manager.image is None and manager.costmap is not None
             assert not manager.rgb_images and not manager.depth_images
             assert not manager.lidar_scans

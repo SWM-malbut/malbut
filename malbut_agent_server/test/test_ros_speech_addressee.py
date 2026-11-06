@@ -85,6 +85,9 @@ def node(monkeypatch, tmp_path, request):
         def create_service(self, service_type, name, callback, *, callback_group):
             services[name] = (service_type, callback, callback_group)
 
+        def create_guard_condition(self, callback):
+            return SimpleNamespace(trigger=lambda: None)
+
         def create_timer(self, *_args):
             return None
 

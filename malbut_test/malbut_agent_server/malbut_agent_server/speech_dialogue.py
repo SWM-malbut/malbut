@@ -132,7 +132,7 @@ class DialogueWorker:
     def __init__(
         self, runtime_factory: Callable, user_id: str, capacity: int = 10,
         *, missions=None, scene_source=None, prefetch_enabled=False,
-        publish_before_save=False,
+        publish_before_save=False, on_output=None,
     ):
         """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
@@ -140,6 +140,7 @@ class DialogueWorker:
         if type(capacity) is not int or capacity < 1:
             raise ValueError('capacity must be a positive integer')
         self._factory = runtime_factory
+        self._on_output = on_output
         self._missions = missions
         self._scene_source = scene_source
         if type(prefetch_enabled) is not bool:
@@ -173,6 +174,18 @@ class DialogueWorker:
         self._running = False
         self._thread = Thread(target=self._run, name='malbut-speech-dialogue')
         self._thread.start()
+
+    def _notify_reader(self):
+        # Optional ROS wakeup only; the owning thread still publishes and saves.
+        if self._on_output is not None:
+            try:
+                self._on_output()
+            except Exception:
+                pass  # A slow fallback drain also covers shutdown/wakeup races.
+
+    def _emit(self, reply):
+        self._results.append(reply)
+        self._notify_reader()
 
     @property
     def ready(self) -> bool:
@@ -241,7 +254,7 @@ class DialogueWorker:
                         if not self.has_capacity():
                             return False
                         self._outstanding += 1
-                        self._results.append(self._addressee_reply(
+                        self._emit(self._addressee_reply(
                             utterance_id, playback_id, previous['decision'],
                         ))
                     return True
@@ -287,6 +300,7 @@ class DialogueWorker:
                     return False
                 self._preparations.popleft()
             self._preparations.append(event)
+            self._notify_reader()
             return True
 
     def drain_preparations(self):
@@ -463,21 +477,23 @@ class DialogueWorker:
                 with self._condition:
                     self.patrol_memory = getattr(runtime, 'patrol_memory', None)
                     self._ready = True
+                self._notify_reader()
             except Exception as error:
                 with self._condition:
                     self._startup_error = type(error).__name__
                     self._stopped = True
+                    self._notify_reader()
                     if not self._closing:
                         while self._pending:
                             utterance_id, _text, playback_id, progress = self._pending.popleft()
                             if progress is not None:
                                 progress.finish(cancelled=True)
                             if playback_id is not None:
-                                self._results.append(self._addressee_reply(
+                                self._emit(self._addressee_reply(
                                     utterance_id, playback_id, 'unknown',
                                 ))
                             else:
-                                self._results.append(self._reply(
+                                self._emit(self._reply(
                                     utterance_id, conversation_id,
                                     ERROR_RESPONSE, 'error',
                                 ))
@@ -514,7 +530,7 @@ class DialogueWorker:
                             if entry['conflict']:
                                 reply['decision'] = 'unknown'
                             entry['decision'] = reply['decision']
-                            self._results.append(reply)
+                            self._emit(reply)
                     continue
                 if getattr(progress, 'companion_session', None) is not None:
                     self._answer_companion(runtime, utterance_id, text, progress, generation)
@@ -689,7 +705,7 @@ class DialogueWorker:
                             from malbut_agent_server.mission_audio import TEXT_IDS
                             if reply['text'] not in TEXT_IDS:
                                 reply['text'] = progress.final_text(reply['text'])
-                            self._results.append(reply)
+                            self._emit(reply)
         finally:
             with self._condition:
                 self._stopped = True
@@ -844,7 +860,7 @@ class DialogueWorker:
             reply = self._reply(utterance_id, None, text, kind)
             reply._progress = progress
             reply._generation = self._generation
-            self._results.append(reply)
+            self._emit(reply)
 
     @staticmethod
     def _handle_with_progress(runtime, request, progress, prefetch=None, delivery=None):
@@ -880,7 +896,7 @@ class DialogueWorker:
             ticket = reply._delivery_ticket = {'state': 'waiting', 'progress': progress}
             reply._generation = generation
             reply._prefetch = prefetch
-            self._results.append(reply)
+            self._emit(reply)
             self._condition.wait_for(
                 lambda: ticket['state'] != 'waiting' or self._closing
                 or self._suspended or generation != self._generation,
@@ -934,7 +950,7 @@ class DialogueWorker:
                             raise MemoryChangedError('companion identity or memory changed')
                     reply._memory_validator = validate
                     reply._generation = generation
-                    self._results.append(reply)
+                    self._emit(reply)
 
     @staticmethod
     def _addressee_reply(utterance_id, playback_id, decision):

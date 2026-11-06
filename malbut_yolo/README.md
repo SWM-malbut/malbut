@@ -51,7 +51,12 @@ TensorRT `.engine`은 upstream의 `.to(device)` 경로가 지원하지 않으므
 카메라 topic·프레임은 원본 그대로 유지하고 새 입력을 처리한다. 별도 Hz 제한은 없다.
 
 YOLO·ReID는 Bringup 상시 노드이며 시스템 관리자 Manifest를 만들지 않는다.
-upstream lifecycle/enable 서비스는 그대로 있지만 현재 관리자 관리 대상은 아니다.
+upstream lifecycle/enable 서비스는 유지한다. Bringup의 `start_enabled:=false`에서는
+추론 라이브러리와 가중치를 읽지 않고, `~/set_processing` 활성화 요청에서 처음 로드한다.
+비활성화 후 `idle_model_timeout_s`(기본 60초)가 지나면 가중치와 CUDA 캐시를
+해제한다. 짧은 중단에서는 재사용하고, 다시 로드할 때 명시한 클래스 설정을 복원한다.
+첫 활성화와 장시간 중단 후 활성화에는 모델 로드 지연이 추가된다. PyTorch 등
+라이브러리와 CUDA 컨텍스트의 상주 메모리까지 모두 해제하는 방식은 아니다.
 `/perception/yolo_processing_trace`는 추론 직전/후 Linux monotonic 시간이며,
 tracking localizer가 3D 발행 시점과 합쳐 기존 E2E 평가에 전달한다.
 센서 헤더 시각은 식별 키이고, 시뮬레이션 시각으로 연산 지연을 계산하지 않는다.
@@ -62,3 +67,6 @@ tracking localizer가 3D 발행 시점과 합쳐 기존 E2E 평가에 전달한�
 
 upstream yolo_ros 라이선스는 GPL-3.0, Ultralytics는 AGPL-3.0/상용 라이선스다.
 배포 시 각 라이선스 조건을 확인해야 한다.
+
+vendored `yolo_ros/yolo_node.py`에는 추론 라이브러리 import 지연만 적용한다.
+모델 종류, 추론과 박스·마스크·키포인트 변환은 기존 구현을 사용한다.

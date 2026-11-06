@@ -624,7 +624,7 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         _wait_until(provider.started.is_set)
         drain = graph.agent.dialogue.drain
         if pending_phase == 'completed_unread':
-            monkeypatch.setattr(graph.agent.dialogue, 'drain', lambda: [])
+            monkeypatch.setattr(graph.agent.dialogue, 'drain', lambda **_kwargs: [])
             provider.release.set()
             _wait_until(lambda: bool(graph.agent.dialogue._results))
         for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
@@ -829,3 +829,14 @@ def test_fixed_errors_and_aliases_select_audio_only_when_enabled(communication, 
         assert message.audio_id == selected
         assert message.text == (CATALOG[selected] if selected else text)
         assert message.request_id == f'notice-{index}'
+
+
+def test_dialogue_reply_arrives_even_with_fallback_polling_disabled(communication):
+    """A completed worker turn wakes ROS directly, including delivery receipts."""
+    graph = communication(with_manager=False, provider=_DialogueProvider())
+    for timer in graph.agent.timers:
+        if timer.timer_period_ns == 1_000_000_000:
+            timer.cancel()
+    _publish_transcript(graph, 'event-driven-reply', '안녕')
+    _wait_until(lambda: graph.speech == ['대화 연결 확인 응답'])
+    assert graph.receipts == ['received']
