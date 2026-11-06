@@ -69,7 +69,9 @@ def test_missing_jtop_is_optional(monkeypatch):
     sampler.close()
 
 
-def test_launch_logs_share_exact_samples_and_gpu_uses_process_identity(tmp_path):
+def test_launch_logs_share_exact_samples_and_gpu_uses_process_identity(tmp_path, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr('malbut_resource_monitor.resources.time.monotonic', lambda: clock[0])
     proc = tmp_path / 'proc'
     proc_entry(proc, 42)
     proc_entry(proc, 43, launch=None)
@@ -84,10 +86,11 @@ def test_launch_logs_share_exact_samples_and_gpu_uses_process_identity(tmp_path)
     process = json.loads((store.path / 'processes/perception.jsonl').read_text().splitlines()[0])
     assert launch == process
     assert launch['gpu_memory_mib'] == 12 and launch['gpu_percent'] is None
-    # Fork/exec may expose the marker on a later sample; retry unknown membership.
+    # Fork/exec may expose the marker later; refresh it within the metadata interval.
     proc_entry(proc, 43, launch='fall')
     # Reused PID must not receive the cached GPU sample or old launch.
     proc_entry(proc, 42, start=456, launch='robot')
+    clock[0] += sampler.metadata_refresh_s
     sampler.sample({'42-123': {'gpu_memory_mib': 12}})
     assert catalog['43-123']['launch'] == 'fall'
     assert catalog['42-456']['launch'] == 'robot'

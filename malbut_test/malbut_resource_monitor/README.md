@@ -120,6 +120,10 @@ jtop과 CPU 표본은 별도 시점의 관측이므로 정확히 동시 측정�
 실행 파일·entrypoint·명시된 ROS 노드명은 메타데이터에 저장하지만
 전체 명령 인자와 환경변수는 저장하지 않습니다.
 
+PID·시작 tick·CPU·RSS는 매 표본에서 확인합니다. 명령·실행 경로·분류·launch 표시는
+기본 5초 동안 재사용하고, 새 PID·PID 재사용·프로세스 comm 변경은 즉시 다시 확인합니다.
+같은 PID와 comm을 유지한 exec의 분류 변경은 최대 5초 뒤 반영될 수 있습니다.
+
 | 보기 | 소속을 정하는 방법 |
 | --- | --- |
 | 기능별 | 실행 파일·ROS 이름 기반 표시 분류 |
@@ -159,6 +163,9 @@ planner·controller별 사용량을 임의로 나누지는 않습니다.
 | `collection_duration_ms` · `schedule_lateness_ms` | 수집 소요·예정 주기 대비 지연 |
 
 자원 주기는 기본 1초지만 계산에는 실제 경과시간을 사용합니다.
+JSONL 쓰기와 메타데이터 변경은 표본마다 모아 flush합니다. 정상 종료 때도 flush하며,
+강제 종료되면 아직 flush하지 않은 최신 주기의 기록은 유실될 수 있습니다.
+기능별·launch별 동일 표본은 한 번 직렬화해 두 로그에 기록합니다.
 늦어진 주기를 가짜 표본이나 밀린 샘플의 연속 기록으로 채우지 않습니다.
 ROS 시각과 monotonic·wall 시각을 서로 빼서 지연시간을 만들지 않습니다.
 
@@ -264,6 +271,17 @@ Action 상태는 `RELIABLE / TRANSIENT_LOCAL / depth=1`로 관측합니다.
 Topic 수신 Hz는 수집기에서 실제 받은 비율이지 publisher의 발행률이나 네트워크 전송률 자체가 아닙니다.
 구독되지 않은 Topic은 값이 없고, 구독된 측정 구간에 수신이 없으면 0 Hz입니다.
 추가 구독에는 DDS 전달·CPU 비용이 있어 원본 대형 PointCloud2는 기본 목록에서 제외했습니다.
+
+기본 `light` 모드에서는 목록에 있는 Image·CompressedImage·PointCloud·PointCloud2·
+OccupancyGrid·Costmap·OccupancyGridUpdate도 구독하지 않습니다. 발행자 존재만 5초마다
+확인하며, 해당 채널은 `observation_mode: metadata_only`와 **수신률 미측정**으로 표시합니다.
+Hz·수신 바이트·수신 개수는 `null`입니다. 발행자 존재는 센서가 정상 송신한다는 증거가 아닙니다.
+스캔·TF·제어/상태 메시지와 Action·미션·음성 이벤트 관측은 유지합니다.
+새 Topic 발견은 최대 약 5초 뒤 반영되지만 이미 구독한 Topic은 계속 수신합니다.
+
+영상 수신률을 진단할 때는 수집기 `--topic-mode full` 또는 Bringup
+`resource_topic_mode:=full`로 기존 전체 수신 방식을 선택합니다. 이 모드는 이미지 데이터를
+수신하므로 추가 CPU·메모리 전달 비용이 생깁니다. 이미지 내용은 로그에 저장하지 않습니다.
 
 수집기·tegrastats의 비용은 측정기 그룹과 수집 소요를 함께 봅니다.
 추가 구독으로 publisher에 생긴 비용까지 별도로 분리해 측정하는 것은 아닙니다.

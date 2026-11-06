@@ -216,7 +216,7 @@
   option($('kind'),'stt-trace','STT 실행 추적');
   for(const id of ['kind','start','end'])if(typeof restored?.values?.[id]==='string')$(id).value=restored.values[id];
   if(!$('kind').value)$('kind').value='system';
-  const pageInfo={system:['전체 자원','로봇 컴퓨터 전체의 CPU·RAM·GPU와 온도·전력을 확인합니다.'],launch:['launch별 자원','각 launch에서 시작된 프로세스를 비교합니다. 공통 Nav2·센서는 robot.launch.py 소속입니다.'],process:['기능별 자원','실행 파일·노드 이름으로 분류한 기능 그룹을 비교합니다.'],topic:['토픽 수신 지표','수집기가 받은 메시지의 빈도와 크기입니다. 발행률·네트워크 전송량과 다를 수 있습니다.'],speech:['음성 대화','STT 인식 문장, TTS 요청 문장과 재생 상태를 확인합니다.'],action:['실행 기록','Action 상태 토픽으로 관측한 시작·진행·종료 기록입니다.'],catalog:['프로세스 / 원본','프로세스 이름·실행 경로·launch 소속과 원본 로그를 확인합니다.']};
+  const pageInfo={system:['전체 자원','로봇 컴퓨터 전체의 CPU·RAM·GPU와 온도·전력을 확인합니다.'],launch:['launch별 자원','각 launch에서 시작된 프로세스를 비교합니다. 공통 Nav2·센서는 robot.launch.py 소속입니다.'],process:['기능별 자원','실행 파일·노드 이름으로 분류한 기능 그룹을 비교합니다.'],topic:['토픽 수신 지표','수집기가 받은 메시지의 빈도와 크기입니다. 경량 모드의 영상·지도는 수신률 미측정이며, 빈 값은 0이 아닙니다. 발행률·네트워크 전송량과 다를 수 있습니다.'],speech:['음성 대화','STT 인식 문장, TTS 요청 문장과 재생 상태를 확인합니다.'],action:['실행 기록','Action 상태 토픽으로 관측한 시작·진행·종료 기록입니다.'],catalog:['프로세스 / 원본','프로세스 이름·실행 경로·launch 소속과 원본 로그를 확인합니다.']};
   pageInfo['stt-trace']=['STT 실행 추적','문제 발화가 만들어지고 Agent로 전달된 경로와 전후 프로그램 로그를 확인합니다.'];
   const incidentView=new IncidentView(get,refresh);
   pageInfo.memory=['대화·장기기억','실제 SQLite의 대화·기억·작업 상태와 모델 입력 추적을 함께 확인합니다. 자원 수집 회차와 독립적으로 조회합니다.'];
@@ -285,7 +285,7 @@
   const groupLabels={perception:'인식 · YOLO / OSNet / 위치변환',follow_person:'사람 추적',patrol:'순찰',autoslam:'AutoSLAM',localization:'SLAM / 위치보정',nav2_shared:'Nav2 공유 프로세스',manager:'시스템 관리자',speech:'음성 / Agent',web_media:'웹 / 영상',fall:'낙상',observer:'측정기 자체 부하',other_robot:'기타 로봇 프로세스'};
   const launchLabels={robot:'공통 기반',tracking:'사람 추적 · 인식',patrol:'순찰',autoslam:'AutoSLAM',manual:'수동 이동',relocalization:'위치 보정',speech:'음성',fall:'낙상',homecam:'홈캠',observer:'측정기',unassigned:'소속 미기록'};
   function launchLabel(name){return !name||name==='unassigned'?'소속 미기록':name==='observer'?'측정기':`${name}.launch.py · ${launchLabels[name]||name}`}
-  function channelLabel(value){return value.kind==='launch'?launchLabel(value.label):groupLabels[value.label]||value.label}
+  function channelLabel(value){if(value.observation_mode==='metadata_only')return value.label+' · 수신률 미측정';return value.kind==='launch'?launchLabel(value.label):groupLabels[value.label]||value.label}
   const nodeLabels={yolo_node:'YOLO 감지',tracking_node:'영상 객체 추적',debug_node:'인식 디버그 영상',detect_3d_node:'객체 3D 변환',person_localizer:'사람 위치 추정',person_reidentifier:'OSNet 사람 식별',person_follower:'사람 추적',lidar_foreground_preprocessor:'LiDAR 추적 전처리',patrol_manager:'순찰',autoslam:'AutoSLAM',map_saver_server:'지도 저장',relocalization:'위치 보정',zone_filter:'주행 구역 필터',sync_slam_toolbox_node:'SLAM',async_slam_toolbox_node:'SLAM',system_manager:'시스템 관리자',manual_control:'수동 이동',stt:'음성 인식 STT',stt_node:'음성 인식 STT',tts_node:'음성 출력 TTS',tts_receiver:'음성 출력 TTS',agent_communication:'대화 Agent',speech_runtime:'음성 런타임',homecam_media_agent_node:'홈캠 영상·음성',robot_cloud_sync:'웹 연결',fall_coordinator:'낙상 처리',resource_recorder:'성능 수집기',resource_viewer:'성능 뷰어',tegrastats:'Jetson 자원 측정',nav2_container:'Nav2 공유 프로세스'};
   const basename=path=>(path||'').split('/').pop();
   function processInfo(id){

@@ -7,6 +7,74 @@ import time
 import pytest
 
 
+@pytest.mark.parametrize('mode', ['light', 'full'])
+def test_bulk_topics_are_optional_and_skipped_is_not_zero(tmp_path, monkeypatch, mode):
+    rclpy = pytest.importorskip('rclpy')
+    pytest.importorskip('malbut_interfaces.msg')
+    from nav_msgs.msg import OccupancyGrid
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image, PointCloud2
+    from std_msgs.msg import String
+    from malbut_resource_monitor.ros_observer import Observer, channel_name
+    from malbut_resource_monitor.store import Store
+
+    monkeypatch.setenv('ROS_DOMAIN_ID', '196')
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    rclpy.init()
+    store = Store(tmp_path, 1, os.getpid(), buffered=True)
+    producer = Node('resource_bulk_test', enable_rosout=False)
+    specs = {'/resource_test/rgb': Image, '/resource_test/depth': Image,
+             '/resource_test/map': OccupancyGrid, '/resource_test/points': PointCloud2}
+    publishers = {name: producer.create_publisher(cls, name, 1) for name, cls in specs.items()}
+    small = '/resource_test/small'
+    small_pub = producer.create_publisher(String, small, 10)
+    observer = Observer(store, [*specs, small, '/resource_test/missing'], topic_mode=mode)
+    try:
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if (small_pub.get_subscription_count() == 1 and all(
+                    name in observer.observation_modes for name in specs) and all(
+                    pub.get_subscription_count() == int(mode == 'full')
+                    for pub in publishers.values())):
+                break
+            time.sleep(0.05)
+        assert small_pub.get_subscription_count() == 1
+        for name, pub in publishers.items():
+            assert name in observer.observation_modes
+            assert pub.get_subscription_count() == int(mode == 'full')
+        for _ in range(5):
+            for name, cls in specs.items():
+                publishers[name].publish(cls())
+            small_pub.publish(String(data='status'))
+            time.sleep(0.1)
+        observer.sample()
+        store.flush()
+
+        def latest(name):
+            return json.loads((store.path / (channel_name('topics', name) + '.jsonl'))
+                              .read_text().splitlines()[-1])
+
+        for name in specs:
+            row = latest(name)
+            if mode == 'light':
+                assert row['observation_mode'] == 'metadata_only'
+                assert not row['subscribed'] and row['publishers'] == 1
+                assert all(row[key] is None for key in
+                           ('received_hz', 'received_bytes_per_s', 'received_total',
+                            'last_message_age_s', 'window_s'))
+            else:
+                assert row['observation_mode'] == 'received'
+                assert row['subscribed'] and row['received_hz'] > 0
+        assert latest(small)['received_total'] > 0
+        assert latest('/resource_test/missing')['received_total'] is None
+        assert observer.error is None
+    finally:
+        observer.close()
+        producer.destroy_node()
+        rclpy.shutdown()
+        store.close('test')
+
+
 def test_passive_ros_hz_and_action_transitions(tmp_path, monkeypatch):
     rclpy = pytest.importorskip('rclpy')
     pytest.importorskip('malbut_interfaces.msg')

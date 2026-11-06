@@ -15,6 +15,15 @@ ACTION_NAMES = (
     '/compute_path_to_pose', '/spin', '/backup', '/drive_on_heading',
 )
 
+# Count small control/status messages continuously. Receiving a serialized
+# camera/map payload just to count its bytes still incurs DDS/copy work.
+BULK_TYPES = frozenset({
+    'sensor_msgs/msg/Image', 'sensor_msgs/msg/CompressedImage',
+    'sensor_msgs/msg/PointCloud', 'sensor_msgs/msg/PointCloud2',
+    'nav_msgs/msg/OccupancyGrid', 'nav2_msgs/msg/Costmap',
+    'map_msgs/msg/OccupancyGridUpdate',
+})
+
 
 def channel_name(kind, name):
     # Namespace slashes and underscores must not collapse different topics.
@@ -69,7 +78,9 @@ class SpeechEvents:
 
 
 class Observer:
-    def __init__(self, store, topics):
+    def __init__(self, store, topics, *, topic_mode='light'):
+        if topic_mode not in ('light', 'full'):
+            raise ValueError('topic_mode must be light or full')
         import rclpy
         from action_msgs.msg import GoalStatusArray
         from rclpy.executors import SingleThreadedExecutor
@@ -82,6 +93,8 @@ class Observer:
         self.executor = SingleThreadedExecutor()
         self.executor.add_node(self.node)
         self.topics = set(topics)
+        self.topic_mode = topic_mode
+        self.observation_modes = {}
         self.subscriptions, self.status_subscriptions = {}, {}
         self.counters, self.publishers = {}, {}
         self.lock = threading.Lock()
@@ -102,7 +115,7 @@ class Observer:
             self._action(endpoint + '/_action/status')
         self._phases()
         self.discover()
-        self.node.create_timer(2.0, self.discover)
+        self.node.create_timer(5.0, self.discover)
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
 
@@ -182,9 +195,22 @@ class Observer:
         for topic in self.topics:
             with self.lock:
                 self.publishers[topic] = self.node.count_publishers(topic)
-            if topic in self.subscriptions or topic not in available:
+            types = available.get(topic, [])
+            bulk = self.topic_mode == 'light' and bool(BULK_TYPES.intersection(types))
+            if bulk:
+                # Also handle a publisher changing to a bulk type at runtime.
+                subscription = self.subscriptions.pop(topic, None)
+                if subscription is not None:
+                    self.node.destroy_subscription(subscription)
+                with self.lock:
+                    self.counters.pop(topic, None)
+                    self.observation_modes[topic] = 'metadata_only'
+                self.store.register(channel_name('topics', topic), kind='topic', label=topic,
+                                    ros_type=types[0], observation_mode='metadata_only',
+                                    observation_reason='bulk_payload_disabled')
                 continue
-            types = available[topic]
+            if topic in self.subscriptions or not types:
+                continue
             if len(types) != 1 or types[0] in self.failed_types:
                 continue
             try:
@@ -197,15 +223,19 @@ class Observer:
                 self.counters[topic] = {
                     'count': 0, 'bytes': 0, 'total': 0, 'last': None,
                     'since': time.monotonic()}
+                self.observation_modes[topic] = 'received'
             self.store.register(channel_name('topics', topic), kind='topic', label=topic,
-                                ros_type=types[0], qos='best_effort/volatile/keep_last(1)')
+                                ros_type=types[0], qos='best_effort/volatile/keep_last(1)',
+                                observation_mode='received', observation_reason=None)
             self.subscriptions[topic] = self.node.create_subscription(
                 message_type, topic, lambda data, topic=topic: self._count(topic, data),
                 self.data_qos, raw=True)
 
     def _count(self, topic, data):
         with self.lock:
-            entry = self.counters[topic]
+            entry = self.counters.get(topic)
+            if entry is None:
+                return
             entry['count'] += 1
             entry['total'] += 1
             entry['bytes'] += len(data)
@@ -221,10 +251,11 @@ class Observer:
                 snapshots.append((topic, {
                     'received_hz': entry['count'] / window if window else None,
                     'received_bytes_per_s': entry['bytes'] / window if window else None,
-                    'received_total': entry['total'] if entry else 0,
+                    'received_total': entry['total'] if entry else None,
                     'last_message_age_s': now - entry['last'] if entry and entry['last'] else None,
                     'window_s': window, 'subscribed': entry is not None,
                     'publishers': self.publishers.get(topic, 0),
+                    'observation_mode': self.observation_modes.get(topic, 'unavailable'),
                 }))
                 if entry:
                     entry['count'] = entry['bytes'] = 0
