@@ -42,6 +42,7 @@ from malbut_patrol.route import ReturnRoutePlanner
 from malbut_patrol.recovery import BreadcrumbTrail, angle_difference, path_segments
 from malbut_patrol.maneuver import ManeuverSpace
 from malbut_patrol.spatial_capture import stamp_seconds
+from malbut_patrol.sensor_inputs import SensorInputs
 
 
 class PatrolInterrupted(RuntimeError):
@@ -270,14 +271,12 @@ class PatrolManager(Node):
         self._updates_subscription = self.create_subscription(
             OccupancyGridUpdate, self.settings['costmap_topic'] + '_updates',
             self._receive_costmap_update, 10, callback_group=self.group)
-        self._image_subscription = self.create_subscription(
-            Image, self.settings['camera_image_topic'], self._receive_image,
-            qos_profile_sensor_data, callback_group=self.group)
+        self._image_subscription = None
         self.create_subscription(CameraInfo, self.settings['camera_info_topic'],
                                  self._receive_info, qos_profile_sensor_data,
                                  callback_group=self.group)
-        self._depth_subscription = self._subscribe_depth()
-        self._scan_subscription = self._subscribe_scan()
+        self._depth_subscription = None
+        self._scan_subscription = None
         self.navigation = ActionClient(self, NavigateToPose,
                                        self.settings['nav2_action_name'],
                                        callback_group=self.group)
@@ -294,7 +293,17 @@ class PatrolManager(Node):
             goal_callback=self._goal, cancel_callback=self._cancel,
             callback_group=self.group)
         self._publish_status('idle', 'Waiting for a patrol goal')
-        self._processing_enabled = True
+        self._processing_enabled = False
+        inputs = [('_image_subscription', Image,
+                   self.settings['camera_image_topic'], self._receive_image)]
+        if self.photo_recorder is not None and self.settings['depth_aligned_to_rgb']:
+            inputs.append(('_depth_subscription', Image,
+                           self.settings['depth_image_topic'], self._receive_depth))
+        if (self.settings['recovery_enabled']
+                or (self.photo_recorder is not None and self.settings['depth_aligned_to_rgb'])):
+            inputs.append(('_scan_subscription', LaserScan,
+                           self.settings['scan_topic'], self._receive_scan))
+        self._sensor_inputs = SensorInputs(self, inputs)
         self.create_service(SetBool, '~/set_processing', self._set_processing)
         self._change_processing(bool(self.settings['start_enabled']))
 
@@ -303,11 +312,9 @@ class PatrolManager(Node):
             if self._processing_enabled == enabled:
                 return
             self._processing_enabled = enabled
-            # Keep ROS entities alive for the owning executor's lifetime. A
-            # worker may already have selected a subscription when this RPC
-            # runs; destroying it here raises InvalidHandle in executor.spin().
-            # Discard idle camera/scan input. Keep the single current costmap:
-            # incremental publishers need its full grid to apply later patches.
+            # The sensor executor owns subscription mutation, between its own
+            # callbacks. Keep the current costmap for incremental Nav2 updates.
+            self._sensor_inputs.set_enabled(enabled)
             self.image = None
             self.rgb_images.clear()
             self.trail.clear()
@@ -316,21 +323,6 @@ class PatrolManager(Node):
             self.lidar_scans.clear()
             self.image_received = 0.0
             self.last_image_stamp = None
-
-    def _subscribe_scan(self):
-        if (not self.settings['recovery_enabled']
-                and (self.photo_recorder is None or not self.settings['depth_aligned_to_rgb'])):
-            return None
-        return self.create_subscription(
-            LaserScan, self.settings['scan_topic'], self._receive_scan,
-            qos_profile_sensor_data, callback_group=self.group)
-
-    def _subscribe_depth(self):
-        if self.photo_recorder is None or not self.settings['depth_aligned_to_rgb']:
-            return None
-        return self.create_subscription(
-            Image, self.settings['depth_image_topic'], self._receive_depth,
-            qos_profile_sensor_data, callback_group=self.group)
 
     def _set_processing(self, request, response):
         # Goal acceptance reserves ownership under the same lock. Do not
@@ -488,6 +480,8 @@ class PatrolManager(Node):
 
     def _ready(self):
         now = time.monotonic()
+        if getattr(getattr(self, '_sensor_inputs', None), 'error', None):
+            return 'Patrol sensor receiver failed'
         if self.map_message is None or not self.map_message.header.frame_id:
             return 'Saved /map is not available'
         if not self.map_message.data or self.map_message.info.resolution <= 0:
@@ -1398,6 +1392,8 @@ class PatrolManager(Node):
 
     def destroy_node(self):
         """Release the photo writer after the owning executor has stopped."""
+        if getattr(self, '_sensor_inputs', None) is not None:
+            self._sensor_inputs.close()
         if self.photo_recorder is not None:
             self.photo_recorder.close()
         return super().destroy_node()

@@ -23,7 +23,7 @@ class _Pending:
 class ManagerWeatherQuery:
     """Wait in the dialogue worker; submit and observe only in ROS callbacks."""
 
-    def __init__(self, manager, *, timeout_s=20.0):
+    def __init__(self, manager, *, timeout_s=20.0, on_pending=None):
         if (isinstance(timeout_s, bool) or not math.isfinite(timeout_s)
                 or timeout_s <= 0):
             raise ValueError('weather query timeout must be positive')
@@ -33,6 +33,14 @@ class ManagerWeatherQuery:
         self._pending = {}
         self._cancels = set()
         self._closed = False
+        self._on_pending = on_pending
+
+    def _notify_reader(self):
+        if self._on_pending is not None:
+            try:
+                self._on_pending()
+            except Exception:
+                pass  # The ROS fallback timer still drains pending work.
 
     def execute(self, request_id):
         """Return only the result of one matching successful Manager mission."""
@@ -58,6 +66,7 @@ class ManagerWeatherQuery:
             if key in self._pending:
                 raise RuntimeError('weather query is unavailable')
             self._pending[key] = pending
+        self._notify_reader()
         try:
             ready = pending.ready.wait(self._timeout_s)
             with self._lock:
@@ -110,6 +119,7 @@ class ManagerWeatherQuery:
         finally:
             with self._lock:
                 self._pending.pop(key, None)
+            self._notify_reader()
 
     def drain(self):
         """Submit queued calls while the ROS executor owns graph access."""

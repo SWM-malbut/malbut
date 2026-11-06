@@ -256,5 +256,6 @@ def test_deployment_wiring_only():
     deployment = Path(__file__).resolve().parents[2]
     launch = (deployment / 'malbut_bringup/launch/bringup.launch.py').read_text()
     assert "'resource_monitor', default_value='true'" in launch
-    assert "return record_first(startup, value('resource_log_root'))" in launch
+    assert "'resource_topic_mode', default_value='light'" in launch
+    assert "return record_first(startup, value('resource_log_root'), value('resource_topic_mode'))" in launch
     assert '"$robot_source_dir/malbut_resource_monitor"' in (deployment / 'build.sh').read_text()

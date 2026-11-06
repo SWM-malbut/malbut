@@ -7,12 +7,13 @@ from launch.event_handlers import OnProcessExit, OnProcessIO
 from launch_ros.actions import Node
 
 
-def record_first(actions, root):
+def record_first(actions, root, topic_mode='light'):
     recorder = Node(
         package='malbut_resource_monitor', executable='resource_recorder',
         name='resource_recorder', output='screen',
         parameters=[{'use_sim_time': False}],
-        arguments=['--root', root, '--parent-pid', str(os.getpid())],
+        arguments=['--root', root, '--parent-pid', str(os.getpid()),
+                   '--topic-mode', topic_mode],
     )
     released = False
     output = ''

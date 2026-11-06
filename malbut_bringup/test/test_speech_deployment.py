@@ -96,6 +96,8 @@ def test_robot_feature_idle_hooks_match_source():
     """Ship input pause/resume and its launch wiring together on the robot."""
     for path in (
         'malbut_yolo/malbut_yolo/yolo_node.py', 'malbut_yolo/launch/yolo.launch.py',
+        'malbut_yolo/vendor/yolo_ros/yolo_ros/yolo_ros/yolo_node.py',
+        'malbut_yolo/config/yolo.yaml',
         'malbut_reid/malbut_reid/person_reidentifier_node.py',
         'malbut_reid/launch/person_reidentification.launch.py',
         'malbut_tracking/malbut_tracking/person_localizer_node.py',
@@ -105,7 +107,8 @@ def test_robot_feature_idle_hooks_match_source():
         'malbut_tracking/launch/lidar_foreground.launch.py',
     ):
         assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
-    for path in ('malbut_patrol/patrol_manager.py', 'launch/patrol.launch.py'):
+    for path in ('malbut_patrol/patrol_manager.py', 'malbut_patrol/sensor_inputs.py',
+                 'launch/patrol.launch.py'):
         assert ((SOURCE / 'malbut_autonomy/malbut_patrol' / path).read_bytes() ==
                 (ROBOT / 'malbut_patrol' / path).read_bytes()), path
     # The deployment intentionally omits benchmarks and test dependencies.
@@ -126,10 +129,13 @@ def _without_resource_monitor(deployed):
          'from launch.actions import LogInfo,'),
         ("    startup = actions\n"
          "    if value('resource_monitor') == 'true':\n"
-         "        return record_first(startup, value('resource_log_root'))\n"
+         "        return record_first(startup, value('resource_log_root'), "
+         "value('resource_topic_mode'))\n"
          "    return startup\n", '    return actions\n'),
         ("        DeclareLaunchArgument('resource_monitor', default_value='true', "
          "choices=['true', 'false']),\n"
+         "        DeclareLaunchArgument('resource_topic_mode', default_value='light',\n"
+         "                              choices=['light', 'full']),\n"
          "        DeclareLaunchArgument('resource_log_root',\n"
          "                              default_value=str(Path.home() / "
          "'.ros/malbut/resource_logs')),\n", ''),

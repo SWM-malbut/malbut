@@ -266,3 +266,22 @@ def test_malformed_setting_reply_never_claims_saved(context):
         assert isinstance(result['error'], ValueError) and 'value' not in result
     finally:
         query.close()
+
+
+def test_tool_queue_and_timeout_wake_owner_without_polling():
+    wake = Event()
+    manager = Manager(kind='accepted')
+    query = ManagerWeatherQuery(manager, timeout_s=0.1, on_pending=wake.set)
+    result, done, thread = start(query)
+    try:
+        assert wake.wait(2)
+        assert not manager.calls
+        query.drain()
+        wake.clear()
+        finish(done, thread)
+        assert wake.wait(2)
+        query.drain()
+        assert isinstance(result['error'], TimeoutError)
+        assert manager.cancels == [('weather-query:request-1', get_ident())]
+    finally:
+        query.close()

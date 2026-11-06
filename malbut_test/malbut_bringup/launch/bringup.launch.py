@@ -132,7 +132,7 @@ def _setup(context):
             }]))
     startup = actions
     if value('resource_monitor') == 'true':
-        return record_first(startup, value('resource_log_root'))
+        return record_first(startup, value('resource_log_root'), value('resource_topic_mode'))
     return startup
 
 
@@ -140,6 +140,8 @@ def generate_launch_description():
     return LaunchDescription([
         *declarations(defaults()),
         DeclareLaunchArgument('resource_monitor', default_value='true', choices=['true', 'false']),
+        DeclareLaunchArgument('resource_topic_mode', default_value='light',
+                              choices=['light', 'full']),
         DeclareLaunchArgument('resource_log_root',
                               default_value=str(Path.home() / '.ros/malbut/resource_logs')),
         OpaqueFunction(function=_setup),

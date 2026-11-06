@@ -12,6 +12,14 @@
 namespace homecam_media_agent
 {
 
+bool video_encoding_needed(
+  const MediaConfig & config, const bool viewer_connected, const bool storage_connected)
+{
+  return config.camera_enabled &&
+         (config.encode_without_consumer || viewer_connected ||
+         (config.monitoring_enabled && storage_connected));
+}
+
 namespace
 {
 

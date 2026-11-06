@@ -25,9 +25,11 @@ struct MediaConfig
   bool monitoring_enabled{false};
   bool camera_enabled{true};
   bool microphone_enabled{true};
+  bool encode_without_consumer{false};  // Explicit local encoder diagnostics only.
 };
 
 std::vector<std::string> validate_config(const MediaConfig & config);
+bool video_encoding_needed(const MediaConfig & config, bool viewer_connected, bool storage_connected);
 bool is_allowed_backend_url(const std::string & value);
 bool is_valid_device_id(const std::string & value);
 bool is_valid_device_token(const std::string & value);

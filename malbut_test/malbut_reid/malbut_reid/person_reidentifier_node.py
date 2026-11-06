@@ -86,27 +86,30 @@ class PersonReidentifierNode(Node):
             Detection2DArray,
             self.get_parameter('detections_2d_topic').value, 10,
         )
-        self._rgb = message_filters.Subscriber(
-            self, Image, self.get_parameter('rgb_topic').value,
-            qos_profile=qos_profile_sensor_data,
-        )
+        self._rgb = None
+        self._synchronizer = None
         self._detections = message_filters.Subscriber(
             self, DetectionArray,
             self.get_parameter('yolo_detections_topic').value,
             qos_profile=qos_profile_sensor_data,
         )
-        # YOLO keeps the original RGB stamp. Exact synchronization retains that
-        # image while inference runs; it never crops a newer, unrelated frame.
-        self._synchronizer = message_filters.TimeSynchronizer(
-            [self._rgb, self._detections],
-            queue_size=self.get_parameter('sync_queue_size').value,
-        )
-        self._synchronizer.registerCallback(self._on_rgb_detections)
+        if self._encoder is None:
+            # Box/motion tracking uses the detector's original header and needs
+            # no raw RGB subscription, synchronizer queue or appearance model.
+            self._detections.registerCallback(self._on_detections)
+        else:
+            self._rgb = message_filters.Subscriber(
+                self, Image, self.get_parameter('rgb_topic').value,
+                qos_profile=qos_profile_sensor_data)
+            self._synchronizer = message_filters.TimeSynchronizer(
+                [self._rgb, self._detections],
+                queue_size=self.get_parameter('sync_queue_size').value)
+            self._synchronizer.registerCallback(self._on_rgb_detections)
         self._processing_enabled = True
         self.create_service(SetBool, '~/set_processing', self._set_processing)
         self._change_processing(bool(self.get_parameter('start_enabled').value))
         self.get_logger().info(
-            'Person tracking ready: YOLO boxes + matching RGB; '
+            'Person tracking ready: YOLO boxes without raw RGB input; '
             'OSNet and color appearance matching are disabled for this test.'
         )
 
@@ -114,9 +117,11 @@ class PersonReidentifierNode(Node):
         if enabled == self._processing_enabled:
             return
         self._processing_enabled = enabled
-        for queue in self._synchronizer.queues:
+        for queue in self._synchronizer.queues if self._synchronizer is not None else ():
             queue.clear()
         for subscriber, kind in ((self._rgb, Image), (self._detections, DetectionArray)):
+            if subscriber is None:
+                continue
             if enabled:
                 subscriber.sub = self.create_subscription(
                     kind, subscriber.topic, subscriber.callback, qos_profile_sensor_data)
@@ -180,6 +185,18 @@ class PersonReidentifierNode(Node):
         return HistogramPersonEncoder(
             minimum_width=minimum_width, minimum_height=minimum_height,
         )
+
+    def _on_detections(self, message: DetectionArray) -> None:
+        """Keep the existing box tracker and source stamp without receiving pixels."""
+        if not self._processing_enabled or self._encoder is not None:
+            return
+        try:
+            self._frame_index += 1
+            tracks = self._tracker.update(person_detections(message), None)
+            self._publisher.publish(identified_detections(message.header, tracks))
+        except (RuntimeError, ValueError) as error:
+            self.get_logger().warning(
+                f'Person tracking frame failed: {error}', throttle_duration_sec=5.0)
 
     def _on_rgb_detections(
         self, image: Image, message: DetectionArray,
