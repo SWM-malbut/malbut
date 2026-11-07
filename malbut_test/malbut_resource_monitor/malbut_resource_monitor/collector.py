@@ -22,6 +22,9 @@ def main(argv=None):
     parser.add_argument('--topics', type=Path, default=Path(__file__).with_name('topics.json'))
     parser.add_argument('--no-ros', action='store_true',
                         help='Resource-only baseline, no subscriptions')
+    parser.add_argument('--topic-mode', choices=('light', 'full'), default='light',
+                        help='light: do not receive image/point-cloud/map payloads; '
+                             'full: diagnostic receive rates for all configured topics')
     args, ros_args = parser.parse_known_args(argv)
     if not 0.2 <= args.interval <= 60:
         parser.error('interval must be between 0.2 and 60 seconds')
@@ -29,7 +32,7 @@ def main(argv=None):
     if not isinstance(topics, list) or not all(
             isinstance(t, str) and t.startswith('/') for t in topics):
         parser.error('topics must be a JSON array of absolute topic names')
-    store = Store(args.root, args.interval, args.parent_pid)
+    store = Store(args.root, args.interval, args.parent_pid, buffered=True)
     store.register('system', kind='system', label='Whole robot computer')
     store.register('observer', kind='diagnostic', label='Measurement health (not performance)')
     store.register('tegrastats', kind='raw', label='Original NVIDIA tegrastats')
@@ -54,14 +57,18 @@ def main(argv=None):
             from rclpy.signals import SignalHandlerOptions
             from .ros_observer import Observer
             rclpy.init(args=ros_args, signal_handler_options=SignalHandlerOptions.NO)
-            observer = Observer(store, topics)
+            observer = Observer(store, topics, topic_mode=args.topic_mode)
         store.update_metadata(ros_observation=not args.no_ros, topics=topics,
                               ros_domain_id=os.environ.get('ROS_DOMAIN_ID', '0'),
                               ros_distro=os.environ.get('ROS_DISTRO'),
                               gpu_process_source='jtop (optional; GPU memory only)',
+                              topic_mode=args.topic_mode,
+                              process_metadata_refresh_s=sampler.metadata_refresh_s,
+                              log_flush_interval_s=args.interval,
                               tegrastats_executable=shutil.which('tegrastats'))
         gpu_system, gpu_processes = gpu.sample()
         store.write('system', {**sampler.sample(gpu_processes), **tegra.sample(), **gpu_system})
+        store.flush()
         print('MALBUT_RESOURCE_MONITOR_READY', flush=True)
         deadline = time.monotonic() + args.interval
         while not stop.wait(max(0, deadline - time.monotonic())):
@@ -77,6 +84,7 @@ def main(argv=None):
             system['collection_duration_ms'] = (time.monotonic() - started) * 1000
             system['schedule_lateness_ms'] = max(0, (started - deadline) * 1000)
             store.write('system', system)
+            store.flush()
             deadline += args.interval
             if deadline < time.monotonic():
                 # Never catch up with a burst of stale samples. Record actual intervals.

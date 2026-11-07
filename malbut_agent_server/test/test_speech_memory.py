@@ -191,6 +191,9 @@ def _fake_ros(monkeypatch, spoken, logs):
         def create_service(self, *_args, **_kwargs):
             return None
 
+        def create_guard_condition(self, callback):
+            return SimpleNamespace(trigger=lambda: None)
+
         def create_timer(self, *_args):
             return None
 

@@ -124,3 +124,36 @@ def test_wrong_frame_is_rejected_even_when_source_timestamps_match():
     PersonReidentifierNode._on_rgb_detections(node, image, detections)
     assert features == images == output == []
     assert len(warnings) == 1
+
+
+def test_box_only_callback_tracks_without_any_rgb_and_keeps_source_header():
+    node, features, images, output, warnings = _fixture()
+    node._encoder = None
+    for second in range(1, 5):
+        _, detections = _messages(second)
+        detections.detections[0].bbox.center.position.x += second * 2
+        PersonReidentifierNode._on_detections(node, detections)
+        assert output[-1].header == detections.header
+    assert features == images == warnings == []
+    assert len(output) == 4
+    assert all(message.detections[0].id == '1' for message in output)
+    PersonReidentifierNode._on_detections(node, _messages(5, False)[1])
+    assert output[-1].detections == []
+    node._processing_enabled = False
+    PersonReidentifierNode._on_detections(node, _messages(6)[1])
+    assert len(output) == 5
+
+
+def test_box_only_idle_does_not_create_rgb_when_waking():
+    node = object.__new__(PersonReidentifierNode)
+    node._processing_enabled = True
+    node._rgb = node._synchronizer = None
+    node._detections = SimpleNamespace(sub=object(), topic='/boxes', callback=Mock())
+    node.create_subscription = Mock(return_value=object())
+    node.destroy_subscription = Mock()
+    node._change_processing(False)
+    assert node._detections.sub is None
+    node._change_processing(True)
+    node.create_subscription.assert_called_once()
+    assert node.create_subscription.call_args.args[0] is DetectionArray
+    assert node._rgb is None

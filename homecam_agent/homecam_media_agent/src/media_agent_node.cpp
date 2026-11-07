@@ -370,7 +370,7 @@ public:
     start_audio_capture();
     RCLCPP_INFO(
       get_logger(),
-      "GStreamer support is available; the encoder starts after the first image");
+      "GStreamer ready; video encoding starts when a viewer or storage peer connects");
 #else
     RCLCPP_WARN(
       get_logger(),
@@ -393,8 +393,8 @@ public:
 #elif HOMECAM_HAVE_GSTREAMER
     RCLCPP_WARN(
       get_logger(),
-      "Amazon KVS WebRTC SDK support is disabled. Frames are encoded to a "
-      "local fakesink; no remote media is sent.");
+      "Amazon KVS WebRTC SDK support is disabled. Video encoding stays idle unless "
+      "encode_without_consumer is enabled for local diagnostics.");
 #else
     RCLCPP_WARN(
       get_logger(),
@@ -498,6 +498,7 @@ private:
     declare_parameter<bool>("monitoring_enabled", false);
     declare_parameter<bool>("camera_enabled", true);
     declare_parameter<bool>("microphone_enabled", true);
+    declare_parameter<bool>("encode_without_consumer", false);
     declare_parameter<std::string>("ptt_playout_mode", "adaptive");
     declare_parameter<int>("ptt_playout_delay_ms", 300);
     declare_parameter<bool>("ptt_plc", true);
@@ -525,6 +526,7 @@ private:
     config.monitoring_enabled = get_parameter("monitoring_enabled").as_bool();
     config.camera_enabled = get_parameter("camera_enabled").as_bool();
     config.microphone_enabled = get_parameter("microphone_enabled").as_bool();
+    config.encode_without_consumer = get_parameter("encode_without_consumer").as_bool();
     return config;
   }
 
@@ -534,7 +536,7 @@ private:
     last_frame_time_ = std::chrono::steady_clock::now();
     has_frame_.store(true);
 
-    if (!config_.camera_enabled) {
+    if (!config_.camera_enabled || !video_demand_) {
       return;
     }
 
@@ -1172,6 +1174,24 @@ private:
   void maintain_gstreamer_pipelines()
   {
     const auto now = std::chrono::steady_clock::now();
+    // Never wait behind signaling HTTP/SDK work on the ROS executor. Retain
+    // the last observed peer state until that transport lock is available.
+    {
+      std::unique_lock<std::mutex> lock(transport_mutex_, std::try_to_lock);
+      if (lock.owns_lock()) {
+        viewer_connected_ = transport_->peer_connected();
+      }
+    }
+    {
+      std::unique_lock<std::mutex> lock(storage_transport_mutex_, std::try_to_lock);
+      if (lock.owns_lock()) {
+        storage_connected_ = storage_transport_->peer_connected();
+      }
+    }
+    video_demand_ = video_encoding_needed(config_, viewer_connected_, storage_connected_);
+    if (!video_demand_ && pipeline_ != nullptr) {
+      stop_pipeline();
+    }
     if (pipeline_ != nullptr && !pipeline_bus_healthy(pipeline_, "video")) {
       stop_pipeline();
       schedule_video_retry();
@@ -2057,9 +2077,10 @@ private:
   bool media_inputs_ready() const
   {
 #if HOMECAM_HAVE_KVS && HOMECAM_HAVE_GSTREAMER
+    // Signaling must precede encoding: waiting for pipeline_ here would
+    // deadlock the first viewer/storage connection with demand-driven video.
     return config_.camera_enabled &&
            camera_is_healthy() &&
-           pipeline_ != nullptr &&
            audio_capture_pipeline_ != nullptr;
 #else
     return false;
@@ -2258,7 +2279,8 @@ private:
     }
 #if HOMECAM_HAVE_GSTREAMER
     const std::string local_state =
-      pipeline_ == nullptr ? "waiting_for_camera" : "encoding_local";
+      pipeline_ != nullptr ? "encoding_local" :
+      camera_is_healthy() ? "waiting_for_consumer" : "waiting_for_camera";
 #else
     const std::string local_state = "health_only";
 #endif
@@ -2273,7 +2295,8 @@ private:
                  state == GST_STATE_PLAYING;
         };
       // Camera OFF requires the pipeline to have actually been destroyed.
-      video_ready = config_.camera_enabled ? playing(pipeline_) : pipeline_ != nullptr;
+      video_ready = config_.camera_enabled ?
+        (camera_is_healthy() && (!video_demand_ || playing(pipeline_))) : pipeline_ != nullptr;
       audio_ready = playing(audio_capture_pipeline_);
 #endif
       const bool applied = media_settings_apply_ready(status, video_ready, audio_ready);
@@ -2584,6 +2607,9 @@ private:
   }
 
   MediaConfig config_;
+  bool video_demand_{false};
+  bool viewer_connected_{false};
+  bool storage_connected_{false};
   bool heartbeat_relay_enabled_{false};
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_requests_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr heartbeat_replies_;

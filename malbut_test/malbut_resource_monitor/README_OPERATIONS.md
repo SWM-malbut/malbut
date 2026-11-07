@@ -157,6 +157,22 @@ ros2 run malbut_resource_monitor resource_recorder --no-ros --parent-pid <로봇
 ```
 
 Bringup 자동 수집 기본 `resource_monitor:=true`, 저장 위치 변경 `resource_log_root:=/경로`.
+기본 `resource_topic_mode:=light`는 RGB·깊이·점군·지도 원본을 구독하지 않는다.
+발행자 존재만 확인하며 수신률은 미측정(`null`)으로 남긴다. CPU·RAM·GPU와
+미션·Action·음성 이벤트는 계속 기록한다. 영상 수신률을 점검할 때만 아래처럼 선택한다.
+
+```bash
+# 통합 실행의 상세 측정 (기존 실행에 중복으로 띄우지 않는다):
+ros2 launch malbut_bringup bringup.launch.py resource_topic_mode:=full
+# 독립 수집기의 동일 옵션:
+ros2 run malbut_resource_monitor resource_recorder --topic-mode full --parent-pid <로봇-launch-PID>
+```
+
+프로세스 자원은 기본 1초마다 측정하고, 분류·실행 경로는 5초마다 갱신한다.
+새 PID·PID 재사용·comm 변경은 다음 자원 표본에서 즉시 반영한다.
+ROS Topic 발견·발행자 수 조회는 5초마다 한다. JSONL·메타데이터는 표본마다 묶어서
+flush하므로 UI에는 다음 표본에서 보일 수 있고, 강제 종료 때 최신 주기는 유실될 수 있다.
+
 독립 수집기를 수동 실행할 때는 Bringup에 `resource_monitor:=false`를 줘 중복 수집을 피한다.
 자동 수집은 **통합 `bringup.launch.py`**에만 연결되어 있다. 개별 launch만 실행할 때는
 위 수동 수집 명령에 해당 launch PID를 지정한다. 뷰어에서는 launch 실행/정지를 하지 않는다.
@@ -259,7 +275,7 @@ Action 수신 시각을 그 값들로 대신 표기하지 않는다. 통신 단�
 
 ```bash
 cd malbut_test/malbut_resource_monitor
-python3 -m pytest -q test/test_measurement.py test/test_gpu_launch.py
+python3 -m pytest -q test/test_measurement.py test/test_gpu_launch.py test/test_lightweight.py
 # ROS Humble + malbut_interfaces를 source한 환경에서만:
 python3 -m pytest -q test/test_ros_observer.py
 # 선택 사항: Playwright + Chromium이 설치된 개발 환경에서만 (ROS 불필요):

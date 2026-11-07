@@ -607,3 +607,30 @@ def test_bad_capacity_does_not_create_a_runtime(capacity):
     with pytest.raises(ValueError):
         DialogueWorker(lambda: called.append(True), 'speaker', capacity)
     assert called == []
+
+
+def test_output_notification_wakes_reader_on_startup_and_reply():
+    """Worker notification permits immediate draining without a polling loop."""
+    wake = threading.Event()
+    worker = DialogueWorker(RuntimeFactory(), 'speaker', on_output=wake.set)
+    try:
+        assert wake.wait(5)
+        assert worker.ready
+        wake.clear()
+        assert worker.submit('notified', 'hello')
+        assert wake.wait(5)
+        assert [reply['utterance_id'] for reply in worker.drain()] == ['notified']
+    finally:
+        worker.close()
+
+
+def test_closed_wakeup_does_not_lose_a_reply_for_fallback_drain():
+    def closed_guard():
+        raise RuntimeError('ROS guard was destroyed')
+
+    worker = DialogueWorker(RuntimeFactory(), 'speaker', on_output=closed_guard)
+    try:
+        assert worker.submit('fallback', 'hello')
+        assert collect(worker, 1)[0]['utterance_id'] == 'fallback'
+    finally:
+        worker.close()

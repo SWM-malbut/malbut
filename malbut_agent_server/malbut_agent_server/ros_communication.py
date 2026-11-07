@@ -164,8 +164,10 @@ def create_communication_node(
                             message.data),
                         state_qos,
                     )
+                self._dialogue_wake = self.create_guard_condition(self._drain_dialogue)
                 self.weather_query = ManagerWeatherQuery(
                     self.missions, timeout_s=weather_query_timeout_s,
+                    on_pending=self._dialogue_wake.trigger,
                 )
 
                 def runtime_factory():
@@ -188,6 +190,7 @@ def create_communication_node(
                     self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
+                    on_output=self._dialogue_wake.trigger,
                     publish_before_save=settings.speech_publish_before_save,
                     **({'prefetch_enabled': True} if prefetch_enabled else {}),
                     **({'scene_source': self._scene} if self._scene is not None else {}),
@@ -202,7 +205,9 @@ def create_communication_node(
                     prerecorded_audio=prerecorded_audio,
                     confirmation_answers=confirmation_answers,
                 )
-                self.create_timer(0.05, self._drain_dialogue)
+                # Replies, startup and tool requests wake the executor directly.
+                # Keep a slow fallback for a coalesced/missed notification.
+                self.create_timer(1.0, self._drain_dialogue)
                 self.create_timer(0.25, self._follow_fall_window)
                 self._start_speech_inputs()
                 # Keep spontaneous conversation opt-in while it is being stabilized.

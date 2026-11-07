@@ -16,7 +16,7 @@ def slug(value):
 
 
 class Store:
-    def __init__(self, root, interval, parent_pid):
+    def __init__(self, root, interval, parent_pid, *, buffered=False):
         self.started_ns = time.monotonic_ns()
         self.wall_ns = time.time_ns()
         name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid4().hex[:8]
@@ -24,6 +24,8 @@ class Store:
         self.path.mkdir(parents=True, mode=0o700)
         self.lock = threading.RLock()
         self.files = {}
+        self.buffered = buffered
+        self.metadata_dirty = False
         self.metadata = {
             'schema': 1, 'session': name, 'hostname': socket.gethostname(),
             'started_wall_ns': self.wall_ns, 'started_monotonic_ns': self.started_ns,
@@ -46,14 +48,28 @@ class Store:
                 'Null means unavailable; tegrastats stale data is not carried forward.',
             ],
         }
-        self._metadata()
+        self._write_metadata()
 
     def _metadata(self):
+        self.metadata_dirty = True
+        if not self.buffered:
+            self._write_metadata()
+
+    def _write_metadata(self):
         temporary = self.path / 'metadata.tmp'
         with temporary.open('w', encoding='utf-8') as stream:
             os.chmod(temporary, 0o600)
             json.dump(self.metadata, stream, ensure_ascii=False, allow_nan=False, indent=2)
         temporary.replace(self.path / 'metadata.json')
+        self.metadata_dirty = False
+
+    def flush(self):
+        """Publish one complete sample to readers; bound buffered data to one interval."""
+        with self.lock:
+            if self.metadata_dirty:
+                self._write_metadata()
+            for stream in self.files.values():
+                stream.flush()
 
     def register(self, channel, **info):
         with self.lock:
@@ -79,21 +95,32 @@ class Store:
                 'wall_ns': time.time_ns()}
 
     def write(self, channel, record):
+        self.write_many((channel,), record)
+
+    def write_many(self, channels, record):
+        """Serialize a process sample once for its function and launch views."""
         # Channel names are internal, never raw ROS names or URL paths.
-        if not re.fullmatch(r'[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)?', channel):
+        channels = tuple(dict.fromkeys(channels))
+        if any(not re.fullmatch(r'[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)?', c)
+               or any(part in ('.', '..') for part in c.split('/'))
+               for c in channels):
             raise ValueError('Invalid channel')
+        line = json.dumps({**self.stamp(), **record}, ensure_ascii=False,
+                          allow_nan=False, separators=(',', ':')) + '\n'
         with self.lock:
-            if channel not in self.files:
-                path = self.path / (channel + '.jsonl')
-                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                self.files[channel] = path.open('a', encoding='utf-8', buffering=1)
-                os.chmod(path, 0o600)
-            self.files[channel].write(json.dumps(
-                {**self.stamp(), **record}, ensure_ascii=False, allow_nan=False) + '\n')
+            for channel in channels:
+                if channel not in self.files:
+                    path = self.path / (channel + '.jsonl')
+                    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    self.files[channel] = path.open(
+                        'a', encoding='utf-8', buffering=16384 if self.buffered else 1)
+                    os.chmod(path, 0o600)
+                self.files[channel].write(line)
 
     def close(self, reason):
         with self.lock:
             self.metadata.update(finished=True, end=self.stamp(), stop_reason=reason)
             self._metadata()
+            self.flush()
             for stream in self.files.values():
                 stream.close()

@@ -159,6 +159,8 @@ def classify(argv, pid, collector_pid):
 
 
 class LinuxSampler:
+    metadata_refresh_s = 5.0
+
     def __init__(self, parent_pid, store, proc='/proc', sys='/sys'):
         self.parent_pid, self.store = parent_pid, store
         self.proc, self.sys = Path(proc), Path(sys)
@@ -166,7 +168,67 @@ class LinuxSampler:
         self.tracked = set()  # (pid, start ticks); retain reparented children, not reused PIDs
         self.hz = os.sysconf('SC_CLK_TCK')
         self.last_time = None
-        self.launches = {}
+        self.descriptors = {}
+        self.process_metadata = {}
+
+    def _describe(self, pid, start, comm, now):
+        identity = f'{pid}-{start}'
+        cached = self.descriptors.get(identity)
+        if (cached is not None and cached['comm'] == comm
+                and now - cached['read_at'] < self.metadata_refresh_s):
+            return cached
+        try:
+            argv = (self.proc / str(pid) / 'cmdline').read_bytes().decode(
+                'utf-8', errors='replace').strip('\0').split('\0')
+        except OSError:
+            argv = []
+        entrypoint = argv[0] if argv else None
+        if len(argv) > 1 and not argv[1].startswith('-') and (
+                argv[1].endswith('.py') or '/lib/' in argv[1]):
+            entrypoint = argv[1]
+        # Cache only the same non-secret fields that can be written to the log.
+        descriptor = {
+            'read_at': now, 'comm': comm, 'entrypoint': entrypoint,
+            'group': classify(argv, pid, os.getpid()),
+            'ros_node_names': [arg.partition(':=')[2] for arg in argv
+                               if arg.startswith('__node:=')],
+            'is_robot': any('/malbut' in arg or '/homecam_agent/' in arg for arg in argv[:2]),
+        }
+        self.descriptors[identity] = descriptor
+        self.process_metadata.pop(identity, None)
+        return descriptor
+
+    def _process_info(self, pid, start, descriptor):
+        identity = f'{pid}-{start}'
+        if identity in self.process_metadata:
+            return self.process_metadata[identity]
+        try:
+            # Inspect only our non-secret marker; never cache/persist the environment.
+            environment = (self.proc / str(pid) / 'environ').read_bytes().split(b'\0')
+            marker = next((item.split(b'=', 1)[1].decode() for item in environment
+                           if item.startswith(b'MALBUT_MEASUREMENT_LAUNCH=')), '')
+        except (OSError, UnicodeError):
+            marker = ''
+        group = descriptor['group']
+        launch = 'observer' if group == 'observer' else (
+            marker if re.fullmatch(r'[a-z][a-z0-9_]{0,63}', marker) else None)
+        try:
+            executable = os.readlink(self.proc / str(pid) / 'exe')
+            cwd = os.readlink(self.proc / str(pid) / 'cwd')
+        except OSError:
+            executable, cwd = None, None
+        entrypoint = descriptor['entrypoint']
+        if entrypoint and cwd and '/' in entrypoint and not entrypoint.startswith('/'):
+            entrypoint = str(Path(cwd) / entrypoint)
+        info = {
+            'pid': pid, 'start_ticks': start, 'group': group, 'executable': executable,
+            'entrypoint': entrypoint, 'ros_node_names': descriptor['ros_node_names'],
+            'launch': launch, 'launch_source': (
+                'collector' if group == 'observer' else 'environment' if launch else None),
+            'shared_process': group in ('nav2_shared', 'components_shared'),
+        }
+        self.process_metadata[identity] = info
+        return info
 
     def sample(self, gpu_processes=None):
         now = time.monotonic()
@@ -195,7 +257,7 @@ class LinuxSampler:
                 system[f'temp.{label}.{zone.name}_c'] = float(value) / 1000
             except ValueError:
                 pass
-        found = {}
+        found, names = {}, {}
         for directory in self.proc.iterdir():
             if not directory.name.isdigit():
                 continue
@@ -204,20 +266,16 @@ class LinuxSampler:
                 fields = text[text.rindex(')') + 2:].split()
                 found[int(directory.name)] = (
                     int(fields[1]), int(fields[19]), int(fields[11]) + int(fields[12]), fields[0])
+                names[int(directory.name)] = text[text.index('(') + 1:text.rindex(')')]
             except (ValueError, IndexError):
                 continue
         selected = {pid for pid, (_, start, _, _) in found.items()
                     if (pid, start) in self.tracked or pid in (self.parent_pid, os.getpid())}
         # Include Malbut services started outside this launch (e.g. cloud bridge).
-        commands = {}
-        for pid in found:
-            try:
-                argv = (self.proc / str(pid) / 'cmdline').read_bytes().decode(
-                    'utf-8', errors='replace').strip('\0').split('\0')
-            except OSError:
-                continue
-            commands[pid] = argv
-            if any('/malbut' in arg or '/homecam_agent/' in arg for arg in argv[:2]):
+        descriptions = {}
+        for pid, (_, start, _, _) in found.items():
+            descriptions[pid] = self._describe(pid, start, names[pid], now)
+            if descriptions[pid]['is_robot']:
                 selected.add(pid)
         changed = True
         while changed:
@@ -227,43 +285,12 @@ class LinuxSampler:
         current = {}
         for pid in sorted(selected):
             ppid, start, used, state = found[pid]
-            argv = commands.get(pid, [])
             identity = f'{pid}-{start}'
             previous = self.last_proc.get(identity)
             status = kilobytes(read(self.proc / str(pid) / 'status'))
-            group = classify(argv, pid, os.getpid())
-            if not self.launches.get(identity):
-                try:
-                    # Inspect only our non-secret marker; never persist the environment.
-                    environment = (self.proc / str(pid) / 'environ').read_bytes().split(b'\0')
-                    marker = next((item.split(b'=', 1)[1].decode() for item in environment
-                                   if item.startswith(b'MALBUT_MEASUREMENT_LAUNCH=')), '')
-                except (OSError, UnicodeError):
-                    marker = ''
-                self.launches[identity] = (marker if re.fullmatch(r'[a-z][a-z0-9_]{0,63}', marker)
-                                           else None)
-            launch = 'observer' if group == 'observer' else self.launches[identity]
-            try:
-                executable = os.readlink(self.proc / str(pid) / 'exe')
-                cwd = os.readlink(self.proc / str(pid) / 'cwd')
-            except OSError:
-                executable, cwd = None, None
-            # No full argv/env: credentials can be embedded in command options.
-            entrypoint = argv[0] if argv else None
-            if len(argv) > 1 and not argv[1].startswith('-') and (
-                    argv[1].endswith('.py') or '/lib/' in argv[1]):
-                entrypoint = argv[1]
-            if entrypoint and cwd and '/' in entrypoint and not entrypoint.startswith('/'):
-                entrypoint = str(Path(cwd) / entrypoint)
-            node_names = [arg.partition(':=')[2] for arg in argv
-                          if arg.startswith('__node:=')]
-            self.store.process(identity, {
-                'pid': pid, 'start_ticks': start, 'group': group, 'executable': executable,
-                'entrypoint': entrypoint, 'ros_node_names': node_names,
-                'launch': launch, 'launch_source': (
-                    'collector' if group == 'observer' else 'environment' if launch else None),
-                'shared_process': group in ('nav2_shared', 'components_shared'),
-            })
+            info = self._process_info(pid, start, descriptions[pid])
+            group, launch = info['group'], info['launch']
+            self.store.process(identity, info)
             channel = 'processes/' + group
             self.store.register(channel, kind='process', label=group)
             record = {
@@ -277,12 +304,14 @@ class LinuxSampler:
                 'gpu_memory_mib': (gpu_processes or {}).get(identity, {}).get('gpu_memory_mib'),
                 'gpu_memory_source': ('jtop' if identity in (gpu_processes or {}) else None),
             }
-            self.store.write(channel, record)
             launch_channel = 'launches/' + (launch or 'unassigned')
             self.store.register(launch_channel, kind='launch', label=launch or 'unassigned')
-            self.store.write(launch_channel, record)
+            self.store.write_many((channel, launch_channel), record)
             current[identity] = used
-        self.launches = {key: value for key, value in self.launches.items() if key in current}
+        alive = {f'{pid}-{values[1]}' for pid, values in found.items()}
+        self.descriptors = {key: value for key, value in self.descriptors.items() if key in alive}
+        self.process_metadata = {key: value for key, value in self.process_metadata.items()
+                                 if key in current}
         self.tracked = {(pid, found[pid][1]) for pid in selected}
         self.last_proc, self.last_cpu, self.last_time = current, ticks, now
         system['sample_window_s'] = dt
