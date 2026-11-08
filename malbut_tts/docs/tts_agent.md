@@ -24,18 +24,18 @@ flowchart LR
 
 ### 1.1. 채택 실행 프로필
 
-- 제품 음성 경로는 **로컬 STT → Agent → Manager → OpenAI API TTS**로 구성한다.
+- 제품 음성 경로는 **로컬 STT → Agent → Manager → 로컬 Piper KSS TTS**로 구성한다.
   - STT는 `whisper_cpp` backend로 사용자 음성을 로컬에서 전사한다.
-  - TTS는 `openai` backend로 Agent의 답변 텍스트를 음성으로 변환한다.
-- TTS package와 ROS parameter의 기본 backend는 `openai`다. backend를 생략하면
-  OpenAI를 사용하며, 로컬 `qwen-cuda`는 모델 경로와 함께 명시적으로 선택한다.
-  선택한 backend가 실패해도 다른 backend로 자동 전환하지 않는다.
-- 일반 답변 합성에는 OpenAI SDK와 유효한 OpenAI 키가 필요하다. 고정 장애 안내
-  `지금은 대화를 할 수 없어요.`는 번들 WAV로 재생하므로 API 키·SDK를 사용하지 않는다.
-- TTS가 외부로 전송하는 데이터는 Agent가 생성한 답변 텍스트다. TTS는 마이크
-  입력이나 STT의 원본 음성을 OpenAI TTS API로 전송하지 않는다.
-- OpenAI API 사용에는 네트워크와 별도 비용이 필요하며, 사용자에게 재생 음성이
-  사람의 음성이 아닌 AI 합성 음성임을 알린다.
+  - TTS는 `piper` backend와 KSS medium ONNX 모델로 로봇 CPU에서 음성을 합성한다.
+- package·ROS node·CLI·speech launch의 공통 기본 backend는 `piper`다.
+  모델 경로 생략 시 `${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx`와
+  같은 위치의 `.onnx.json`을 사용한다. 파일과 Piper 의존성은 미리 준비한다.
+- 기본 TTS는 외부 API·API 키를 사용하지 않는다. 모델 누락이나 합성 실패 시
+  다른 backend로 자동 전환하거나 모델을 자동 다운로드하지 않는다.
+- OpenAI는 `backend=openai`를 명시했을 때만 답변 텍스트를 외부로 전송한다.
+  이 선택 경로에는 OpenAI SDK·키·네트워크가 필요하며 API 비용이 발생한다.
+  `qwen-cuda` 역시 로컬 모델 경로와 함께 명시적으로 선택한다.
+- 고정 장애 안내 `지금은 대화를 할 수 없어요.`는 번들 WAV로 재생한다.
 
 ## 2. 입력
 
@@ -87,7 +87,7 @@ flowchart LR
 - 앞부분을 재생하는 동안 뒷부분의 음성 수신 또는 변환을 진행할 수 있다. 구체적인
   요청 단위와 스트리밍 방식은 backend별 규칙을 따른다.
 
-### OpenAI API TTS 요청과 스트리밍 — 채택 경로
+### OpenAI API TTS 요청과 스트리밍 — 명시적 선택 경로
 
 ```mermaid
 sequenceDiagram

@@ -118,7 +118,7 @@ flowchart LR
     MIC["마이크"] -->|"PCM"| STT["로컬 Whisper"]
     STT -->|"최종 전사 · 발화 ID"| AGENT["대화 Agent"]
     MEMORY[("대화 문맥 · 사용자 기억")] <-->|"조회 · 저장"| AGENT
-    AGENT -->|"답변 · 요청 ID"| TTS["TTS"]
+    AGENT -->|"답변 · 요청 ID"| TTS["로컬 TTS · Piper KSS"]
     TTS -->|"음성"| SPEAKER["스피커"]
     TTS -->|"재생 상태 · 재생 ID"| STT
     AGENT -->|"기능 요청"| MANAGER["System Manager"]
@@ -127,7 +127,7 @@ flowchart LR
 - 호출어와 발화 전사는 로컬 Whisper로 처리하고, 최종 전사만 Agent에 전달합니다.
 - 발화·요청·재생 ID로 인식 결과, 답변과 실제 재생 상태를 연결합니다. 답변 준비·재생 중의 입력 처리도 이 상태를 기준으로 합니다.
 - 최근 대화 원문, 이전 대화 요약, 사용자별 장기기억을 구분합니다. 기억은 동의와 정정·삭제 정책을 함께 관리합니다.
-- 기본 대화·TTS는 OpenAI 연결을 사용합니다. 로컬 전사와 외부 API로 전달되는 텍스트는 서로 다른 데이터 경계입니다.
+- 기본 대화는 OpenAI 연결을 사용하고, TTS는 Piper KSS 모델로 로봇에서 합성합니다. 로컬 전사·음성 합성과 외부 LLM에 전달되는 텍스트를 구분합니다.
 
 상세 계약은 [Agent 명세](malbut_agent_server/docs/malbut_agent.md),
 [STT 명세](malbut_stt/docs/stt_agent.md), [TTS 명세](malbut_tts/docs/tts_agent.md)에 정리되어 있습니다.
@@ -218,7 +218,7 @@ AutoSLAM은 미탐색 경계를 탐색하며 주행은 Nav2에 맡기고 지도�
 | 로봇 기준 프로필 | ROSOrin Ultimate 메카넘 차체 · Jetson Orin NX Super 8GB |
 | 입력 | Aurora930 Pro RGB-D · 2D LiDAR · Odometry / TF · 마이크 |
 | 로봇 소프트웨어 | Ubuntu 22.04 · ROS 2 Humble · Python / C++ · Nav2 · SLAM Toolbox |
-| 인식·음성 | YOLO · Re-ID · ONNX Runtime · Whisper / whisper.cpp · LLM / TTS API |
+| 인식·음성 | YOLO · Re-ID · ONNX Runtime · Whisper / whisper.cpp · Piper KSS · LLM / VLM API |
 | 웹·클라우드 | Next.js / React PWA · PostgreSQL · AWS ECS / ALB / RDS / KVS |
 | 시뮬레이션 | Gazebo Fortress · ROS 브리지 · 실내 월드 · 사람 추적 시나리오 |
 

@@ -52,7 +52,7 @@ Jetson의 `nvvidconv`, `nvv4l2h264enc`는 기존 JetPack 환경을 사용한다.
 
 ## 3. 웹 연결은 별도, 카메라는 Bringup에 포함
 
-위 환경을 source한 터미널에서 Agent·TTS의 `OPENAI_API_KEY`와 장치 설정을 export한다.
+위 환경을 source한 터미널에서 Agent의 `OPENAI_API_KEY`와 장치 설정을 export한다.
 `cloud.launch.py`와 웹에서 시작한 Bringup은 이 환경을 상속하며 `.env`를 자동으로 읽지 않는다:
 
 ```zsh
