@@ -9,8 +9,9 @@ import pytest
 
 from malbut_agent_server.companion_memory import CompanionMemory, expires_at, validate_summary
 from malbut_agent_server.companion_service import CompanionService
-from malbut_agent_server.companion_dialogue import CompanionDialogue
+from malbut_agent_server.companion_dialogue import CompanionDialogue, CompanionOutcome
 from malbut_agent_server.companion_extractor import CompanionExtractor
+from malbut_agent_server.schemas import AgentDecision
 
 
 def stamp(date):
@@ -212,6 +213,28 @@ class Provider:
         self.calls.append((request, memories, turns, tools))
         self.during()
         return SimpleNamespace(decision=SimpleNamespace(type='message', message='친구분과 산책하기로 하셨군요.'))
+
+
+@pytest.mark.parametrize('stale', [None, 'session', 'binding'])
+def test_semantic_closing_preserves_current_patrol_scope_and_skips_memory(setup, stale):
+    service, client, _, _ = setup
+    dialogue = CompanionDialogue(service)
+    dialogue.begin(SESSION)
+
+    def finish(request, memories, turns, tools):
+        if stale == 'session':
+            dialogue.begin('patrol-chat-other')
+        elif stale == 'binding':
+            client.data.update(revision=2, confirmedSessionId=None, remainingSeconds=0)
+            service.sync()
+        return SimpleNamespace(decision=AgentDecision(
+            type='message', message='다음에 봬요.', reason='end_conversation'))
+
+    outcome = dialogue.answer(SimpleNamespace(complete=finish), SESSION, 'closing', '저 먼저 들어가 볼게요', None)
+    assert outcome is (None if stale else CompanionOutcome.END_CONVERSATION)
+    assert dialogue.snapshot().turns == ()
+    wait_memory(service)
+    assert service.memory.recall('owner') == []
 
 
 def test_verified_conversation_recall_and_save_use_no_owner_history_tools_or_raw_store(setup):

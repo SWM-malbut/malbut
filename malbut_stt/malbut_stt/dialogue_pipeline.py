@@ -112,6 +112,8 @@ class DialoguePipeline:
         self._duck_renew_at = 0.0
         self._seen_openers = deque(maxlen=128)
         self._interim_playback = None
+        self._ended_requests = deque(maxlen=256)
+        self._interim_requests = deque(maxlen=256)
         if (type(chime_tail_s) not in (int, float) or not math.isfinite(chime_tail_s)
                 or not 0 <= chime_tail_s <= 3):
             raise ValueError('chime_tail_s must be finite and between zero and three seconds')
@@ -394,6 +396,30 @@ class DialoguePipeline:
             self._stop_speech('')
         return True
 
+    def end_dialogue(self, request_id):
+        """Release only the ordinary turn for which the Agent withheld a reply."""
+        # Retry notices and proactive openers also reserve the reply gate.
+        if (self.stopping.is_set() or not request_id or request_id != self._reply_request_id
+                or self.session.session_id or self._retry_notice_deadline is not None):
+            return
+        self._ended_requests.append(request_id)
+        self._terminate('session_ended:agent_request')
+        for playback_id, owner in tuple(self._interim_requests):
+            if owner == request_id:
+                self.publish_control(playback_id, 'stop')
+        self.report('waiting_for_wake')
+
+    def _track_interim(self, playback_id, request_id):
+        if not request_id or not isinstance(playback_id, str) or not playback_id.strip():
+            return
+        if request_id in self._ended_requests:
+            # The progress topic or PLAYING may arrive after the end decision.
+            self.publish_control(playback_id, 'stop')
+        elif request_id == self._reply_request_id:
+            key = (playback_id, request_id)
+            if key not in self._interim_requests:
+                self._interim_requests.append(key)
+
     def on_speech_request(self, playback_id, *, request_id='', interim=False):
         """Cancel Agent speech requested during a web talk before it is played."""
         if self.stopping.is_set():
@@ -403,6 +429,8 @@ class DialoguePipeline:
                 and playback_id.strip() and len(playback_id) <= 200):
             self._stop_speech(playback_id)
             return
+        if interim:
+            self._track_interim(playback_id, request_id)
         if (not interim and isinstance(request_id, str)
                 and request_id.startswith('conversation-opener:') and len(request_id) <= 200
                 and isinstance(playback_id, str) and playback_id.strip()):
@@ -1515,6 +1543,11 @@ class DialoguePipeline:
                 and isinstance(playback_id, str) and playback_id.strip()):
             # A request that raced the web talk start is stopped as soon as it sounds.
             self._stop_speech(playback_id)
+        if interim:
+            if state in ('playing', 'paused'):
+                self._track_interim(playback_id, request_id)
+            elif (playback_id, request_id) in self._interim_requests:
+                self._interim_requests.remove((playback_id, request_id))
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
         if self.session.playback_id != previous[0]:

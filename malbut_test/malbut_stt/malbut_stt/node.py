@@ -549,6 +549,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             SpeechPlaybackStatus, '/malbut/speech/playback_status', playback_status, qos,
         )
 
+        node.create_subscription(
+            String, '/malbut/speech/end_dialogue',
+            lambda message: pipeline.end_dialogue(message.data),
+            QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
+                       reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+
         def speech_request(message):
             if diagnostics is not None:
                 diagnostics.event('tts_request', playback_id=message.playback_id,

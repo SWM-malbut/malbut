@@ -1,11 +1,16 @@
 """Bounded, volatile small talk for a camera-visible but unidentified speaker."""
 
+from enum import Enum
 from threading import Lock
 import re
 import time
 
 from malbut_agent_server.conversation import ConversationSession, ConversationSnapshot, ConversationTurn
-from malbut_agent_server.schemas import RobotState, SpeechAgentRequest
+from malbut_agent_server.schemas import AgentDecision, RobotState, SpeechAgentRequest
+
+
+class CompanionOutcome(Enum):
+    END_CONVERSATION = 'end_conversation'
 
 
 def requests_current_view(text):
@@ -157,6 +162,8 @@ class CompanionDialogue:
             self._history_expiry = min(self._history_expiry,
                                        min((m['expires_at'] for m in memories), default=float('inf')))
             self._reply_expiry = self._history_expiry
+            if isinstance(decision, AgentDecision) and decision.ends_conversation:
+                return CompanionOutcome.END_CONVERSATION
             self._turns.append(turn)
             self._ordinal = ordinal
             # Bound retained context independently of the transcript size limit.

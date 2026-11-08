@@ -335,6 +335,55 @@ def test_spoken_end_closes_dialogue_until_a_fresh_wake(harness, during_reply, ae
     assert harness.transcripts[-1][1] == '날씨 알려줘'
 
 
+def test_agent_end_closes_only_pending_turn_and_stops_its_notices(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+
+    pipeline.on_speech_request('finished-notice', request_id=uid, interim=True)
+    pipeline.on_playback_status('finished-notice', 'playing', request_id=uid, interim=True)
+    pipeline.on_playback_status('finished-notice', 'finished', request_id=uid, interim=True)
+    pipeline.on_speech_request('queued-notice', request_id=uid, interim=True)
+    pipeline.on_playback_status('playing-notice', 'playing', request_id=uid, interim=True)
+    pipeline.on_speech_request('unrelated', request_id='another-turn', interim=True)
+    pipeline.end_dialogue('stale')
+    assert pipeline._reply_request_id == uid and not harness.controls
+
+    pipeline.end_dialogue(uid)
+    pipeline.end_dialogue(uid)
+    assert harness.controls == [('queued-notice', 'stop'), ('playing-notice', 'stop')]
+    pipeline.on_speech_request('late-notice', request_id=uid, interim=True)
+    assert harness.controls[-1] == ('late-notice', 'stop')
+    pipeline.on_playback_status('playing-notice', 'stopped', request_id=uid, interim=True)
+    pipeline.on_playback_status('late-final', 'finished', request_id=uid)
+    harness.now += 1
+    assert not pipeline.session.active and pipeline._reply_request_id is None
+    assert harness.reports.count('session_ended:agent_request') == 1
+    assert 'waiting_for_followup' not in harness.reports
+    harness.wake_text = '날씨 알려줘'
+    pipeline.feed(VOICE * 16 + QUIET * 20)
+    pump(pipeline, lambda: 'not_wake' in harness.reports)
+    assert len(harness.transcripts) == 1 and not harness.failure_chimes
+    harness.wake_text = '제이크야, 날씨 알려줘'
+    pipeline.feed(VOICE * 16 + QUIET * 20)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+    pipeline.end_dialogue(uid)
+    assert pipeline._reply_request_id == harness.transcripts[1][0]
+
+
+def test_agent_end_ignores_finished_turn_and_new_confirmation(harness):
+    pipeline = harness.create()
+    uid = open_followup(harness, pipeline)
+    pipeline.end_dialogue(uid)
+    assert pipeline.session.active and pipeline._followup_deadline is not None
+    assert pipeline.start_session('incident-1')
+    pipeline.end_dialogue(uid)
+    pipeline.end_dialogue('incident-1')
+    assert pipeline.session_is_active('incident-1')
+
+
 @pytest.mark.parametrize('session_id,ended', [('patrol-chat-42', True), ('fall-42', False)])
 def test_end_command_respects_session_owner(harness, session_id, ended):
     statuses = []
@@ -353,6 +402,13 @@ def test_end_command_respects_session_owner(harness, session_id, ended):
     ('됐어', False), ('괜찮아', False), ('고마워', False),
     ('됐어, 오늘은 여기까지', True), ('괜찮아. 다음에 얘기하자.', True),
     ('고마워 오늘은 여기까지', True),
+    ('어, 우리 이제 대화 그만하자', True),
+    ('어? 대화 그만하자. 응. 고생했어.', True),
+    ('어 대화 그만하자 응 고생했어', True),
+    ('어? 응. 고생했어.', False),
+    ('어, 대화 그만하자고 한 적 있어?', False),
+    ('어, 대화 그만하지 마.', False),
+    ('어? 대화 그만하자. 응. 고생했어. 내일 날씨는?', False),
 ])
 def test_only_a_closing_intent_ends_the_followup(harness, text, ended):
     statuses = []
@@ -363,6 +419,8 @@ def test_only_a_closing_intent_ends_the_followup(harness, text, ended):
     pump(pipeline, lambda: statuses[-1][-1] == 'ended' or len(harness.transcripts) == 2)
     if ended:
         assert len(harness.transcripts) == 1
+        assert statuses[-1] == ('', statuses[-2][1], 'ended')
+        assert harness.reports[-1] == 'waiting_for_wake'
         assert pipeline._reply_request_id is None and not pipeline.session.active
     else:
         uid, transcript = harness.transcripts[-1]

@@ -252,8 +252,8 @@ def speech_graph(tmp_path, monkeypatch):
         )
         original_publish = run.agent.dialogue.publish_reply
 
-        def record_publish(response, publish):
-            result = original_publish(response, publish)
+        def record_publish(response, publish, *, end_dialogue=None):
+            result = original_publish(response, publish, end_dialogue=end_dialogue)
             if result is not None:
                 run.responses.append(result)
             return result

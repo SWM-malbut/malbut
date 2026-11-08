@@ -264,8 +264,8 @@ def ros_weather(tmp_path, monkeypatch):
         )
         original_publish = run.agent.dialogue.publish_reply
 
-        def publish_reply(response, publish):
-            published = original_publish(response, publish)
+        def publish_reply(response, publish, *, end_dialogue=None):
+            published = original_publish(response, publish, end_dialogue=end_dialogue)
             if published is not None:
                 (run.acknowledgements if published['kind'] == 'acknowledgement'
                  else run.responses).append(published)

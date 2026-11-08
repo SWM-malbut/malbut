@@ -17,6 +17,8 @@ from malbut_interfaces.srv import (  # noqa: E402
     ClassifySpeechAddressee, ControlSpeechPlayback, ControlWebTalk,
 )
 from rclpy.node import Node  # noqa: E402
+from rclpy.qos import DurabilityPolicy, QoSProfile  # noqa: E402
+from std_msgs.msg import String  # noqa: E402
 
 from malbut_stt import node as stt_node, wake  # noqa: E402
 
@@ -28,7 +30,7 @@ def test_stt_service_round_trip_and_status_topic(
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
                             decisions=[], statuses=[], input_statuses=[], web_talk=[],
-                            web_talk_quiet=[], speech_requests=[], closed=False)
+                            web_talk_quiet=[], speech_requests=[], ended_turns=[], closed=False)
     monkeypatch.setenv('MALBUT_STT_SILERO_GATE_MODEL', '')
     monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
@@ -57,13 +59,18 @@ def test_stt_service_round_trip_and_status_topic(
             self.capture_ready = Event()
             self.sent = False
             self.deadline = monotonic() + 8.0
-            self.peer = None
+            self.peer = Node('malbut_agent_communication')
+            # Publish before the STT node creates its subscription.
+            end_turn = self.peer.create_publisher(
+                String, '/malbut/speech/end_dialogue',
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            end_turn.publish(String(data='older-turn'))
+            end_turn.publish(String(data='latest-turn'))
             self.web_future = None
             self.web_active = True
             self.speech_sent = False
 
         def start(self):
-            self.peer = Node('malbut_agent_communication')
             self.peer.create_service(ClassifySpeechAddressee,
                                      '/malbut/speech/classify_addressee', self.classify)
             self.peer.create_service(ControlSpeechPlayback,
@@ -101,6 +108,9 @@ def test_stt_service_round_trip_and_status_topic(
             state.web_talk_quiet.append(quiet)
             return True
 
+        def end_dialogue(self, request_id):
+            state.ended_turns.append(request_id)
+
         def on_speech_request(self, playback_id, **metadata):
             state.speech_requests.append(playback_id)
             self.callbacks['stop_speech'](playback_id)
@@ -109,7 +119,7 @@ def test_stt_service_round_trip_and_status_topic(
             assert monotonic() < self.deadline, 'ROS service round trip timed out'
             # Model the first valid microphone frame without opening audio hardware.
             self.capture_ready.set()
-            if (not self.sent and all(
+            if (not self.sent and state.ended_turns and all(
                     client.service_is_ready() for client in state.clients)
                     and self.peer.count_publishers('/malbut/speech/transcript') == 1
                     and self.peer.count_publishers('/malbut/speech/input_status') == 1
@@ -192,6 +202,7 @@ def test_stt_service_round_trip_and_status_topic(
     assert state.controls == [
         *[('playback-1', value) for value in ('pause', 'resume', 'stop')], ('answer-1', 'stop')]
     assert state.speech_requests == ['answer-1']
+    assert state.ended_turns == ['latest-turn']
     assert [(item.utterance_id, item.text) for item in state.transcripts] == [
         ('normal-1', '오늘 날씨 알려줘')]
     assert state.statuses and all(item == ('playback-1', 'paused', True)
