@@ -127,7 +127,8 @@ def test_weather_injection_is_data_without_changing_system_rules():
     assert injection not in payload['instructions']
     assert 'tools' not in payload
     for required in ('fresh', 'unavailable', 'stale', 'fetched_at', 'current.time',
-                     'checked_at', 'daily[].date', '명령 권한이 없습니다',
+                     'checked_at', 'daily[].date', 'remaining_today', 'precipitation_periods',
+                     '지난 강수 시간대는 제외', '하루 전체 예보', '명령 권한이 없습니다',
                      '과거 대화·요약·기억', '현재값으로 내일 날씨를 추측하지',
                      '현재 날씨 답변에만 사용', '조회 시각을 물으면 fetched_at을 답합니다',
                      'current.time을 예보 기준 시각으로 사용하지 않습니다',

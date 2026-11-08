@@ -2,6 +2,7 @@
 
 from concurrent.futures import CancelledError
 import copy
+from dataclasses import replace
 from threading import Thread
 import time
 import pytest
@@ -116,7 +117,7 @@ def test_plain_message_does_not_prefetch_weather(runtime):
 
 
 @pytest.mark.parametrize('question,expected', [
-    ('오늘 날씨 알려줘', ('오늘 예보는 흐림입니다.', '시험 지역', '최저 18도', '최고 27도', '0퍼센트')),
+    ('오늘 날씨 알려줘', ('오늘 하루 전체 예보는 흐림입니다.', '시험 지역', '최저 18도', '최고 27도', '0퍼센트', '남은 시간')),
     ('내일 날씨는 어때?', ('내일 예보는 비입니다.', '시험 지역', '최저 18도', '최고 27도', '40퍼센트', '우산')),
 ])
 def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, question, expected):
@@ -133,6 +134,24 @@ def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, que
     assert result.decision.message.startswith(headline)
     assert all(part in result.decision.message for part in details)
     assert result.provider_result.usage == ProviderUsage(10, 2, 12)
+
+
+def test_today_after_morning_rain_uses_only_remaining_hours_without_extra_model_call(runtime):
+    state = state_at()
+    today, tomorrow = state.daily
+    today = replace(today, weather_code=61, precipitation_probability_max_pct=60,
+                    hourly_weather_codes=(61,) * 2 + (3,) * 22,
+                    hourly_precipitation_probability_pct=(60,) * 2 + (30,) * 22)
+    weather = context_from_weather(replace(state, daily=(today, tomorrow)), clock=lambda: NOW)
+    provider = WeatherProvider()
+    calls = []
+    runtime.provider = provider
+    runtime.weather_executor = lambda key: calls.append(key) or weather
+    result = runtime.handle(request(text='오늘 날씨 알려줘'))
+    assert calls == ['weather-1'] and len(provider.calls) == 1
+    assert result.decision.reason == 'weather_daily_forecast'
+    assert '30퍼센트' in result.decision.message
+    assert '60퍼센트' not in result.decision.message and '우산' not in result.decision.message
 
 
 @pytest.mark.parametrize('question,change', [

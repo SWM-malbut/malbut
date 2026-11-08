@@ -67,7 +67,9 @@ def weather_state(temperature=23.5, *, location='시험 지역', latitude=37.0,
         source=SOURCE, timezone=timezone,
         temperature_c=temperature, weather_code=0,
         daily=(
-            WeatherForecast(today.isoformat(), 27.0, 18.0, 10.0, 0),
+            WeatherForecast(today.isoformat(), 27.0, 18.0, 10.0, 0,
+                            hourly_weather_codes=(0,) * 24,
+                            hourly_precipitation_probability_pct=(10.0,) * 24),
             WeatherForecast((today + timedelta(days=1)).isoformat(),
                             24.0, 17.0, 70.0, 61),
         ),
@@ -568,7 +570,7 @@ def test_weather_fetch_runs_through_manager_and_typed_action_result(
     """One model Tool choice yields one Manager Goal and one API fetch."""
     run = ros_weather
     run.start()
-    original = '  오늘 날씨가 어때?\n'
+    original = '  오늘 날씨랑 지금 기온도 알려줘.\n'
     utterance_id, reply = run.say(original)
     assert run.goals == [('get_weather', {})]
     assert run.client.calls == 1
@@ -589,6 +591,10 @@ def test_weather_fetch_runs_through_manager_and_typed_action_result(
     assert result['error_code'] == ''
     assert result['weather']['temperature_c'] == 23.5
     assert result['weather']['daily'][1]['date'] == context['daily'][1]['date']
+    assert result['weather']['daily'][0]['hourly_weather_codes'] == [0] * 24
+    assert result['weather']['daily'][0]['hourly_precipitation_probability_pct'] == [10.0] * 24
+    assert context['remaining_today']['precipitation_probability_max_pct'] == 10.0
+    assert context['remaining_today']['precipitation_periods'] == []
     assert 'context_json' not in result
     assert reply == '시험 지역 현재 기온은 23.5도예요.'
     assert run.receipts == [(utterance_id, original, 'received')]
