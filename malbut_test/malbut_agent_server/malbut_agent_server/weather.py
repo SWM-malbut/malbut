@@ -220,6 +220,16 @@ def decode_weather_result(value: dict, *, clock=time.time) -> dict:
         raise ValueError('invalid weather Action result schema') from error
 
 
+def basic_forecast_day(utterance):
+    """Recognize self-contained daily questions; other wording follows ordinary dialogue."""
+    match = re.fullmatch(
+        r'(오늘|내일)의?날씨(?:예보)?(?:는|가|를)?'
+        r'(?:알려(?:줘요?|주세요)|어때요?|어떤가요|어떻(?:니|나요))?[.!?]*',
+        ''.join(utterance.split()),
+    )
+    return match.group(1) if match else None
+
+
 def daily_forecast_reply(utterance, weather, settings):
     """Read an ordinary daily forecast after the model selected and ran get_weather."""
     if weather.get('status') != 'fresh':
@@ -229,15 +239,9 @@ def daily_forecast_reply(utterance, weather, settings):
         defaults['length'] = settings['length']
     if any(defaults.get(key) != value for key, value in settings.items()):
         return None
-    match = re.fullmatch(
-        r'(오늘|내일)의?날씨(?:예보)?(?:는|가|를)?'
-        r'(?:알려(?:줘요?|주세요)|어때요?|어떤가요|어떻(?:니|나요))?[.!?]*',
-        ''.join(utterance.split()),
-    )
-    if match is None:
+    day = basic_forecast_day(utterance)
+    if day is None:
         return None
-
-    day = match.group(1)
     offset = int(day == '내일')
     try:
         location = _text(weather['location'])

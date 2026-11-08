@@ -278,3 +278,85 @@ def test_weather_signature_requires_no_opt_in_flag():
     assert accepts_weather_context(KeywordProvider())
     assert not accepts_weather_context(PositionalOnlyProvider())
     assert not accepts_weather_context(object())
+
+
+def test_simple_spoken_forecast_asks_model_without_unrelated_tools_or_image():
+    from dataclasses import replace
+    from malbut_agent_server.conversation import ConversationTurn
+    from malbut_agent_server.schemas import SpeechAgentRequest
+    from malbut_agent_server.speech_scene import PendingTurnScene
+    from malbut_agent_server.tools import select_tool_specs
+
+    request = SpeechAgentRequest.from_dict(dict(
+        _request('오늘 날씨 알려 줘').to_dict(), available_tools=['get_weather', 'request_mapping'],
+    ))
+    photo = PendingTurnScene(lambda: pytest.fail('daily forecast requested an image'))
+    request = replace(request, turn_image=photo, scene_context={'image': {'available': False}})
+    history = [ConversationTurn('conversation', 'user', 'session', 'prior', 'prior', '',
+                                1, 1, '앞으로 내가 하는 말은 번역해 줘', '네.', {}, 1, 2)]
+    captured = []
+    def transport(_url, _headers, payload, _timeout):
+        captured.append(payload)
+        return _openai_response()  # The model can still choose normal dialogue.
+    backend = OpenAIResponsesProvider(api_key='test-key', model='gpt-5.6-luna', transport=transport)
+    settings = {'tone': '친근한 반말'}
+    result = backend.complete(request, [], history, select_tool_specs(request.available_tools),
+                              memory_context={'enabled': True, 'response_settings': settings})
+    assert result.decision.type == 'message'
+    payload, = captured
+    assert [tool['name'] for tool in payload['tools']] == ['get_weather']
+    assert payload['tool_choice'] == 'auto' and payload['reasoning']['effort'] == 'none'
+    assert '번역해 줘' in payload['input']
+    context = _data(payload['input'])
+    assert context['available_tools'] == ['get_weather']
+    assert context['memory_management_context']['response_settings'] == settings
+    assert 'scene_context_untrusted' not in context
+
+
+@pytest.mark.parametrize(('utterance', 'kwargs', 'memory'), [
+    ('오늘 날씨 알려 주지 마', {}, None),
+    ('“오늘 날씨 알려 줘”를 번역해 줘', {}, None),
+    ('오늘 날씨 알려 줘', {'mapping_name_requested': True}, None),
+    ('오늘 날씨 알려 줘', {'navigation_locations': ('거실',), 'navigation_confirmation': '거실'}, None),
+    ('오늘 날씨 알려 줘', {}, {'pending_question': {'kind': 'target'}}),
+])
+def test_specialized_turns_keep_normal_weather_selection_context(utterance, kwargs, memory):
+    from malbut_agent_server.schemas import SpeechAgentRequest
+    from malbut_agent_server.tools import select_tool_specs
+
+    request = SpeechAgentRequest.from_dict(dict(
+        _request(utterance).to_dict(), available_tools=['get_weather', 'request_mapping'], **kwargs,
+    ))
+    backend = OpenAIResponsesProvider(api_key='test-key', model='gpt-5.6-luna')
+    payload = backend.build_payload(request, [], [], select_tool_specs(request.available_tools),
+                                    memory_context=memory)
+    assert '현재 사용자 발화와 대화 문맥을 읽으세요' not in payload['instructions']
+    assert 'request_mapping' in [tool['name'] for tool in payload['tools']]
+
+
+def test_forecast_token_check_and_transport_share_scoped_payload_and_reject_other_tool():
+    from malbut_agent_server.providers.base import ProviderError
+    from malbut_agent_server.schemas import SpeechAgentRequest
+    from malbut_agent_server.tools import select_tool_specs
+
+    request = SpeechAgentRequest.from_dict(dict(
+        _request('내일 날씨는 어때?').to_dict(), available_tools=['get_weather', 'request_mapping'],
+    ))
+    counted, sent = [], []
+    def count(payload):
+        counted.append(copy.deepcopy(payload))
+        return 120
+    def transport(_url, _headers, payload, _timeout):
+        sent.append(payload)
+        return {'status': 'completed', 'output': [
+            {'type': 'function_call', 'name': 'request_mapping', 'arguments': '{}'},
+        ]}
+    backend = OpenAIResponsesProvider(api_key='test-key', model='gpt-5.6-luna', transport=transport,
+                                      semantic_context=True, token_counter=count, prompt_cache_enabled=True)
+    with pytest.raises(ProviderError, match='unoffered'):
+        backend.complete(request, [], [], select_tool_specs(request.available_tools),
+                         memory_context={'mode': 'answer_only', 'enabled': False})
+    assert counted == sent
+    assert [t['name'] for t in sent[0]['tools']] == ['get_weather']
+    blocks = sent[0]['input'][-1]['content']
+    assert all(b['type'] == 'input_text' for b in blocks)
