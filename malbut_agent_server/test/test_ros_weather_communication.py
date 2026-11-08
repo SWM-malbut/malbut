@@ -449,7 +449,7 @@ def test_saved_location_reaches_agent_through_manager_and_typed_weather_action(s
     run.location_store.set(run.location)
     run.start(auto_location=True)
     assert run.weather.get_parameter('weather_location_path').value == run.location_db_path
-    _, reply = run.say('오늘 날씨가 어때?')
+    _, reply = run.say('지금 날씨랑 현재 기온을 알려줘')
     assert run.location_queries == []
     assert run.weather_options == [run.location]
     assert run.client.calls == 1
