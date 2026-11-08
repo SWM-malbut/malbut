@@ -345,7 +345,7 @@ class DialogueWorker:
                 self._refresh_reply(reply)
         return results
 
-    def publish_reply(self, reply: dict, publish: Callable) -> Optional[dict]:
+    def publish_reply(self, reply: dict, publish: Callable, *, end_dialogue=None) -> Optional[dict]:
         """Check again immediately before publishing while stores are open."""
         self._refresh_reply(reply)
         with self._condition:
@@ -359,6 +359,8 @@ class DialogueWorker:
                 return None
             if reply.get('kind') == 'addressee':
                 return None
+            if reply['kind'] == 'end_conversation':
+                return dict(reply) if end_dialogue and end_dialogue(reply) else None
             if reply.get('kind') in {'progress', 'acknowledgement'}:
                 return dict(reply) if reply._progress.publish(publish, reply['text']) else None
             dispatch = getattr(reply, '_mission_callback', None)
@@ -647,7 +649,7 @@ class DialogueWorker:
                             message = CATALOG['operation.unsupported']
                         reply = self._reply(
                             utterance_id, conversation_id,
-                            message, 'answer',
+                            message, 'end_conversation' if decision.ends_conversation else 'answer',
                             getattr(result, 'memory_validator', None),
                         )
                         if (self._missions is not None
@@ -689,7 +691,7 @@ class DialogueWorker:
                                 self._prefetch_turns.pop(prefetch.request_id, None)
                         else:
                             reply._prefetch = prefetch
-                    progress.finish(cancelled=reply is None)
+                    progress.finish(cancelled=reply is None or reply['kind'] == 'end_conversation')
                 with self._condition:
                     self._active_progress = None
                     self._running = False
@@ -703,7 +705,7 @@ class DialogueWorker:
                         else:
                             reply._generation = generation
                             from malbut_agent_server.mission_audio import TEXT_IDS
-                            if reply['text'] not in TEXT_IDS:
+                            if reply['kind'] != 'end_conversation' and reply['text'] not in TEXT_IDS:
                                 reply['text'] = progress.final_text(reply['text'])
                             self._emit(reply)
         finally:
@@ -879,6 +881,9 @@ class DialogueWorker:
         A bounded wait and atomic ticket expiry avoid deadlock with other ROS
         callbacks using the database. Late tickets can never publish twice.
         """
+        if result.decision.ends_conversation:
+            # The committed result sends a turn control instead of a speech ticket.
+            return False
         deadline = time.monotonic() + 0.25
         if not self._condition.acquire(timeout=0.25):
             return False
@@ -925,6 +930,8 @@ class DialogueWorker:
         return self._companion.reply_allowed(session)
 
     def _answer_companion(self, runtime, utterance_id, text, progress, generation):
+        from malbut_agent_server.companion_dialogue import CompanionOutcome
+
         session = progress.companion_session
         try:
             with request_scope(progress=progress):
@@ -935,7 +942,8 @@ class DialogueWorker:
         except Exception:
             message = ERROR_RESPONSE
         receipt = self._companion.reply_receipt()
-        progress.finish(cancelled=message is None)
+        ended = message is CompanionOutcome.END_CONVERSATION
+        progress.finish(cancelled=message is None or ended)
         with self._condition:
             self._active_progress = None
             self._running = False
@@ -943,7 +951,8 @@ class DialogueWorker:
                 if message is None or generation != self._generation:
                     self._outstanding -= 1
                 else:
-                    reply = self._reply(utterance_id, session, message, 'answer')
+                    reply = self._reply(utterance_id, session, '' if ended else message,
+                                        'end_conversation' if ended else 'answer')
                     reply._companion_session = session
                     def validate():
                         if not self._companion.reply_allowed(session, receipt):

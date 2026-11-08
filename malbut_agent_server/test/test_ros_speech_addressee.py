@@ -131,13 +131,16 @@ def node(monkeypatch, tmp_path, request):
             result, self.results = self.results, []
             return result
 
-        def publish_reply(self, reply, publish):
+        def publish_reply(self, reply, publish, *, end_dialogue):
             assert reply['kind'] != 'addressee'
+            if reply['kind'] == 'end_conversation':
+                return reply if end_dialogue(reply) else None
             return reply if publish(reply['text']) else None
 
         def close(self):
             pass
 
+    monkeypatch.setitem(sys.modules, 'std_msgs.msg', SimpleNamespace(String=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rcl_interfaces.msg', SimpleNamespace(ParameterDescriptor=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(Node=Node))
     monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
@@ -145,7 +148,7 @@ def node(monkeypatch, tmp_path, request):
     ))
     monkeypatch.setitem(sys.modules, 'rclpy.task', SimpleNamespace(Future=Future))
     monkeypatch.setitem(sys.modules, 'rclpy.qos', SimpleNamespace(
-        DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),
+        DurabilityPolicy=SimpleNamespace(VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
         HistoryPolicy=SimpleNamespace(KEEP_LAST='keep-last'),
         ReliabilityPolicy=SimpleNamespace(RELIABLE='reliable'),
         QoSProfile=lambda **kwargs: kwargs,
@@ -181,6 +184,18 @@ def request(uid='uid', pid='pid', text='  원문\n'):
 def result(uid='uid', pid='pid', decision='addressed'):
     return {'kind': 'addressee', 'utterance_id': uid,
             'playback_id': pid, 'decision': decision}
+
+
+def test_semantic_close_signals_only_the_current_turn_without_speaking(node):
+    node._receive_speech(SimpleNamespace(session_id='', utterance_id='current',
+                                         text='이만 자리에서 일어날 시간이네'))
+    for uid in ('stale', 'current', 'current'):
+        node.dialogue.results = [{'kind': 'end_conversation', 'utterance_id': uid,
+                                  'text': '편안히 쉬세요.'}]
+        node._drain_dialogue()
+    assert [msg.data for msg in node.sent[ros_communication.END_DIALOGUE_TOPIC]] == ['current']
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    assert node._awaiting_reply is None
 
 
 def test_speech_requests_have_distinct_playback_ids_and_preserve_content(node):
@@ -410,7 +425,7 @@ def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
     assert [(message.text, message.request_type) for message in messages] == [
         (original, SpeechRequest.DIALOGUE),
     ]
-    assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
+    assert node.sent[ros_communication.END_DIALOGUE_TOPIC] == []
     assert messages[0].request_id == 'normal'
 
 

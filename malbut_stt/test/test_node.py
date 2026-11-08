@@ -120,6 +120,7 @@ def runtime(monkeypatch, tmp_path):
         if state.on_spin is not None:
             state.on_spin()
             return
+        state.callbacks['/malbut/speech/end_dialogue'](SimpleNamespace(data='u1'))
         state.callbacks['/malbut/speech/playback_status'](
             SimpleNamespace(playback_id='p1', state=state.messages.SpeechPlaybackStatus.PLAYING,
                             interim=True, request_id='u1'))
@@ -306,6 +307,9 @@ def runtime(monkeypatch, tmp_path):
             state.calls['addressee'] = (uid, pid, decision)
             state.decisions.append((uid, pid, decision))
             self.pending_addressee = None
+
+        def end_dialogue(self, request_id):
+            state.calls['end_dialogue'] = request_id
 
         def start_session(self, session_id):
             self.session.session_id = session_id
@@ -601,6 +605,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.4
     assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
     assert runtime.calls['spin_timeout'] == 0.02
+    assert runtime.calls['end_dialogue'] == 'u1'
     assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
     assert ('warning', 'invalid_playback_status') in runtime.logs
@@ -615,7 +620,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     ]
     assert set(runtime.calls['subscriptions']) == {
         '/malbut/speech/playback_status', '/malbut/speech/response', '/rosout',
-        '/malbut/falls/check/status',
+        '/malbut/falls/check/status', '/malbut/speech/end_dialogue',
     }
     assert runtime.calls['web_talk_quiet'] == [False]
     assert set(runtime.clients) == {
@@ -631,11 +636,17 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime, t
     assert ('info', 'playback_control_accepted:pause') in runtime.logs
     for _, qos in [runtime.calls['publishers']['/malbut/speech/transcript'],
                    *(value for topic, value in runtime.calls['subscriptions'].items()
-                     if topic != '/rosout')]:
+                     if topic not in ('/rosout', '/malbut/speech/end_dialogue'))]:
         assert vars(qos) == {
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+    _, end_qos = runtime.calls['subscriptions']['/malbut/speech/end_dialogue']
+    assert vars(end_qos) == {
+        'history': 'keep_last', 'depth': 1,
+        'reliability': 'reliable', 'durability': 'transient_local',
+    }
 
 
 def test_default_capture_saves_final_phrase_without_extra_launch_or_environment(runtime):

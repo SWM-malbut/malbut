@@ -351,6 +351,11 @@ class AgentDecision:
     expires_in_ms: int = 5000
     clarification_for: Optional[str] = None
 
+    @property
+    def ends_conversation(self) -> bool:
+        """Detect the foreground voice decision to return to wake-word listening."""
+        return self.type == 'message' and self.reason == 'end_conversation'
+
     def validate(self) -> None:
         """Validate provider output before any downstream consumer sees it."""
         if not isinstance(self.type, str):

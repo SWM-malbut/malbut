@@ -178,6 +178,40 @@ def test_silence_ends_listening_without_repeating_the_question(robot):
     assert len(r.speech) == 1 and not r.runtime.provider.calls
 
 
+def test_semantic_close_from_companion_worker_only_ends_matching_encounter(robot, monkeypatch):
+    from malbut_agent_server.schemas import AgentDecision
+    from malbut_agent_server.speech_dialogue import _DialogueReply
+
+    r = robot
+    release = Event()
+    ordinary_signals = []
+    monkeypatch.setattr(r.agent, '_dialogue_end', SimpleNamespace(publish=ordinary_signals.append))
+
+    def close(request, history):
+        assert release.wait(5)
+        return AgentDecision(type='message', message='다음에 봬요.', reason='end_conversation')
+
+    r.runtime.provider.respond = close
+    try:
+        r.finish(r.approach())
+        listening_session = r.chat.session_id
+        uid = 'semantic-goodbye'
+        r.transcripts.publish(SpeechTranscript(session_id=listening_session, utterance_id=uid,
+                                              text='남은 이야기는 우리 다음에 이어가면 좋겠네요'))
+        r.pump(lambda: r.runtime.provider.entered.is_set())
+        stale = _DialogueReply({'utterance_id': uid})
+        stale._companion_session = 'patrol-chat-previous'
+        assert not r.agent._end_voice_turn(stale)
+        assert r.chat.phase == 'responding'
+        release.set()
+        r.pump(lambda: r.chat.phase == 'idle' and (listening_session, False) in r.controls)
+        assert not r.agent._awaiting_reply
+        assert not any(message.request_id == uid for message in r.speech)
+        assert ordinary_signals == []
+    finally:
+        release.set()
+
+
 def test_decline_and_late_answer_do_not_start_inference(robot):
     r = robot
     r.finish(r.approach())

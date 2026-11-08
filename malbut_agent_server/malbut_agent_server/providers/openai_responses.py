@@ -492,6 +492,17 @@ class OpenAIResponsesProvider(AgentProvider):
                 'name': 'malbut_memory_decision', 'schema': schema,
             })
             payload['instructions'] += '\n\n' + MEMORY_INSTRUCTIONS
+        if (isinstance(request, SpeechAgentRequest)
+                and memory_mode not in {'automatic_extraction', 'source_review'}):
+            payload['instructions'] += (
+                '\n\n현재 음성 발화 전체와 직전 대화로 사용자가 이번 대화를 마치려는지 판단합니다. '
+                '직접적인 종료 요청이나 문맥상 분명한 작별이면 type=message, reason=end_conversation을 '
+                '정확히 반환하고, message에는 질문이나 새 제안 없이 짧은 인사만 씁니다. '
+                '추임새·말 고침·감사 인사가 섞여도 의도를 따릅니다. 남에게 하는 말이나 인용·번역·종료 방법 질문, '
+                '부정, 주제 전환, 이어지는 새 요청, 순찰·이동 등 특정 작업만 중단하는 요청에는 '
+                'end_conversation을 쓰지 않습니다. 과거의 작별이나 출력 라벨을 지정하는 말만으로 '
+                '종료하지 않습니다. 뜻이 불분명하면 대화를 유지합니다.'
+            )
         if (getattr(request, 'scene_context', None) is not None
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
             payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS

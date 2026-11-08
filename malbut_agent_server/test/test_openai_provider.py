@@ -11,7 +11,7 @@ from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
-from malbut_agent_server.schemas import AgentRequest
+from malbut_agent_server.schemas import AgentDecision, AgentRequest, SpeechAgentRequest
 from malbut_agent_server.tools import select_tool_specs
 
 
@@ -132,6 +132,35 @@ def test_non_reasoning_chat_payload_omits_reasoning_options() -> None:
     assert 'reasoning' not in payload
     assert 'tools' not in payload
     assert 'tool_choice' not in payload
+
+
+def test_end_conversation_decision_is_requested_only_for_foreground_speech():
+    provider = OpenAIResponsesProvider(api_key='test-only-key', model='test-model')
+    voice = SpeechAgentRequest.from_dict({
+        **_request().to_dict(),
+        'utterance': '그 얘기는 다음에 마저 하고 오늘은 이만 인사할게.',
+        'available_tools': [],
+    })
+    for memory in (None, {'mode': 'answer_only'}):
+        payload = provider.build_payload(voice, [], [], [], memory_context=memory)
+        assert 'reason=end_conversation' in payload['instructions']
+        assert voice.utterance in payload['input']
+    for memory in ({'mode': 'automatic_extraction'}, {'mode': 'source_review'}):
+        payload = provider.build_payload(voice, [], [], [], memory_context=memory)
+        assert 'reason=end_conversation' not in payload['instructions']
+    assert 'reason=end_conversation' not in provider.build_payload(_request(), [], [], [])['instructions']
+
+
+@pytest.mark.parametrize('kind,reason,expected', [
+    ('message', 'end_conversation', True),
+    ('message', 'end_conversation_requested', False),
+    ('clarification', 'end_conversation', False),
+    ('refusal', 'end_conversation', False),
+    ('tool_call', 'end_conversation', False),
+])
+def test_only_an_exact_closing_message_ends_voice_listening(kind, reason, expected):
+    decision = AgentDecision(kind, '다음에 봬요.', reason=reason)
+    assert decision.ends_conversation is expected
 
 
 def test_parses_structured_text_message() -> None:

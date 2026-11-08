@@ -40,6 +40,7 @@ from malbut_agent_server.ros_situation import (
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
+END_DIALOGUE_TOPIC = '/malbut/speech/end_dialogue'
 INPUT_STATUS_TOPIC = '/malbut/speech/input_status'
 ADDRESSEE_SERVICE = '/malbut/speech/classify_addressee'
 MAX_PENDING_ADDRESSEE_REQUESTS = 128
@@ -67,6 +68,7 @@ def create_communication_node(
         DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
     )
     from rclpy.task import Future
+    from std_msgs.msg import String
 
     from malbut_agent_server.manager_client import ManagerClient
 
@@ -117,6 +119,10 @@ def create_communication_node(
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
+                self._dialogue_end = self.create_publisher(
+                    String, END_DIALOGUE_TOPIC,
+                    QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                               durability=DurabilityPolicy.TRANSIENT_LOCAL))
                 if prefetch_enabled:
                     from malbut_interfaces.msg import SpeechPreparation
 
@@ -153,8 +159,6 @@ def create_communication_node(
                         cancel_foreground=self._foreground_cancel,
                         move_refusal=self._fall_check.move_refusal,
                     )
-                    from std_msgs.msg import String
-
                     state_qos = QoSProfile(depth=1)
                     state_qos.reliability = ReliabilityPolicy.RELIABLE
                     state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -531,6 +535,20 @@ def create_communication_node(
                         # This optional cache hint cannot block final speech.
                         self.get_logger().warning('speech_preparation_publish_skipped')
 
+        def _end_voice_turn(self, reply):
+            uid = reply['utterance_id']
+            if uid != self._awaiting_reply:
+                return False
+            companion = getattr(reply, '_companion_session', None)
+            if companion is not None:
+                chat = self._patrol_chat
+                if chat is None or chat.request_id != companion or chat.reply_id != uid:
+                    return False
+                chat.end()
+            else:
+                self._dialogue_end.publish(String(data=uid))
+            return True
+
         def _drain_dialogue(self):
             if self._closing:
                 return
@@ -564,13 +582,19 @@ def create_communication_node(
                                         if (response.get('kind') == 'acknowledgement'
                                             and not prerecorded_audio)
                                         else response.get('utterance_id', '')),
-                            **getattr(response, '_prepared_hint', {})))
-                    if published is not None:
+                            **getattr(response, '_prepared_hint', {})),
+                        end_dialogue=self._end_voice_turn)
+                    if published is not None and published['kind'] != 'end_conversation':
                         acknowledge(published['text'])
                 if published is not None:
                     if (response.get('kind') not in {'progress', 'acknowledgement'}
                             and response.get('utterance_id') == self._awaiting_reply):
                         self._awaiting_reply = None
+                    if published['kind'] == 'end_conversation':
+                        self.get_logger().info(json.dumps({
+                            'event': 'voice_dialogue_ended', 'utterance_id': published['utterance_id'],
+                        }))
+                        continue
                     logged = ({key: published[key] for key in ('utterance_id', 'kind')}
                               if getattr(response, '_companion_session', None) else published)
                     self.get_logger().info(json.dumps({

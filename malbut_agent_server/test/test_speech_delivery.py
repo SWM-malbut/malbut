@@ -21,6 +21,24 @@ def test_delivery_setting_is_explicit_and_validated():
         Settings.from_env({'MALBUT_AGENT_SPEECH_PUBLISH_BEFORE_SAVE': 'yes'})
 
 
+@pytest.mark.parametrize('early_delivery', [False, True])
+def test_semantic_close_sends_only_control_even_with_early_delivery(tmp_path, early_delivery):
+    provider = FixedProvider(lambda *_: AgentDecision(
+        type='message', message='편안히 쉬세요.', reason='end_conversation'))
+    factory = RuntimeFactory(provider, str(tmp_path / 'speech.sqlite3'))
+    worker = DialogueWorker(factory, 'speaker', publish_before_save=early_delivery)
+    try:
+        assert worker.submit('last-turn', '눈이 감기네. 우리 내일 이어서 하면 좋겠다.')
+        reply, = collect(worker, 1)
+        signals = []
+        assert worker.publish_reply(reply, lambda _: pytest.fail('unexpected final speech'),
+                                    end_dialogue=lambda r: signals.append(r['utterance_id']) or True)
+        assert signals == ['last-turn']
+        assert worker.drain() == []
+    finally:
+        worker.close()
+
+
 def test_publishes_before_durable_result_and_keeps_next_turn_order(tmp_path):
     path = str(tmp_path / 'speech.sqlite3')
     factory = RuntimeFactory(database_path=path)

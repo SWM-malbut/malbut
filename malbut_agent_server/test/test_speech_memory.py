@@ -205,6 +205,7 @@ def _fake_ros(monkeypatch, spoken, logs):
         def destroy_node(self):
             return True
 
+    monkeypatch.setitem(sys.modules, 'std_msgs.msg', SimpleNamespace(String=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(Node=Node))
     monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
         ReentrantCallbackGroup=object,
@@ -212,7 +213,7 @@ def _fake_ros(monkeypatch, spoken, logs):
     monkeypatch.setitem(sys.modules, 'rcl_interfaces.msg', SimpleNamespace(ParameterDescriptor=SimpleNamespace))
     monkeypatch.setitem(sys.modules, 'rclpy.task', SimpleNamespace(Future=object))
     monkeypatch.setitem(sys.modules, 'rclpy.qos', SimpleNamespace(
-        DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),
+        DurabilityPolicy=SimpleNamespace(VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
         HistoryPolicy=SimpleNamespace(KEEP_LAST='keep-last'),
         ReliabilityPolicy=SimpleNamespace(RELIABLE='reliable'),
         QoSProfile=lambda **kwargs: kwargs,
