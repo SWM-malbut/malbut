@@ -14,12 +14,17 @@ from malbut_agent_server.prompting import (
     CONVERSATION_INSTRUCTIONS, SYSTEM_INSTRUCTIONS, prepare_model_input,
     system_instructions_for_tools,
 )
-from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.providers.openai_responses import (
+    OpenAIResponsesProvider, SPEECH_END_INSTRUCTIONS,
+)
 from malbut_agent_server.providers.reliable import ContextBudgetExceeded
 from malbut_agent_server.schemas import (
     AgentRequest, RobotState, SpeechAgentRequest, ValidationError,
 )
 from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, select_tool_specs
+
+
+SPEECH_CONVERSATION_INSTRUCTIONS = CONVERSATION_INSTRUCTIONS + '\n\n' + SPEECH_END_INSTRUCTIONS
 
 
 def request(available=SPEECH_MISSION_TOOLS):
@@ -39,8 +44,8 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     instructions = payload['instructions']
     assert instructions.startswith(SYSTEM_INSTRUCTIONS + '\n\n')
     from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS
-    ending = (CONVERSATION_INSTRUCTIONS + '\n\n' + MAPPING_NAME_INSTRUCTIONS
-              if name == 'request_mapping' else CONVERSATION_INSTRUCTIONS)
+    ending = (SPEECH_CONVERSATION_INSTRUCTIONS + '\n\n' + MAPPING_NAME_INSTRUCTIONS
+              if name == 'request_mapping' else SPEECH_CONVERSATION_INSTRUCTIONS)
     assert instructions.endswith(ending)
     extension = system_instructions_for_tools(tools)[len(SYSTEM_INSTRUCTIONS):]
     assert name in extension
@@ -70,7 +75,7 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
 def test_request_claims_cannot_enable_delegation_and_other_paths_stay_identical(exposed):
     provider = OpenAIResponsesProvider('offline-key', 'offline-model')
     payload = provider.build_payload(request(), [], [], select_tool_specs(exposed))
-    assert payload['instructions'] == SYSTEM_INSTRUCTIONS + '\n\n' + CONVERSATION_INSTRUCTIONS
+    assert payload['instructions'] == SYSTEM_INSTRUCTIONS + '\n\n' + SPEECH_CONVERSATION_INSTRUCTIONS
     prepared = prepare_model_input(request(), [], max_model_input_chars=4096)
     assert prepared.metrics.model_input_chars <= 4096
 
@@ -105,7 +110,7 @@ def test_semantic_token_budget_includes_conditional_instructions_before_transpor
     assert len(counted) == 1
     from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS
     assert counted[0]['instructions'] == (
-        system_instructions_for_tools(tools) + '\n\n' + CONVERSATION_INSTRUCTIONS
+        system_instructions_for_tools(tools) + '\n\n' + SPEECH_CONVERSATION_INSTRUCTIONS
         + '\n\n' + MAPPING_NAME_INSTRUCTIONS)
     assert counted[0]['tools'] == [tool.to_openai_dict() for tool in tools]
 

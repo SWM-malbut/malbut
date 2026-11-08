@@ -63,6 +63,30 @@ def test_mock_follow_cancel_replay_and_cleanup_are_isolated():
     graph.close()
 
 
+def test_silent_end_returns_a_result_without_speech(monkeypatch):
+    from malbut_agent_server.providers.mock import MockProvider
+    from malbut_agent_server.schemas import AgentDecision
+    from std_msgs.msg import String
+
+    decision = AgentDecision(type='message', message='다음에 봐요.', reason='end_conversation')
+    monkeypatch.setattr(MockProvider, '_decide', lambda *args: decision)
+    output, ended = [], []
+    graph = VoiceLabGraph(output.append, 195)
+    try:
+        graph.start(manager_enabled=False, navigation_enabled=False)
+        graph.agent.create_subscription(
+            String, graph.namespace + '/speech/end_dialogue', lambda msg: ended.append(msg.data), 10)
+        until(graph, lambda: graph.agent._dialogue_end.get_subscription_count() == 1)
+        uid = graph.send('오늘은 이만할게')
+        assert graph.wait_reply(uid)['kind'] == 'end_conversation'
+        until(graph, lambda: ended == [uid])
+        assert any(event['event'] == 'reply' and event.get('kind') == 'end_conversation'
+                   and event['utterance_id'] == uid for event in output)
+        assert not graph.speech
+    finally:
+        graph.close()
+
+
 def test_close_finishes_queued_background_work_before_destroying_nodes(monkeypatch):
     graph = VoiceLabGraph(lambda event: None, 195)
     release, destroying = Event(), Event()

@@ -25,7 +25,7 @@ import yaml
 _CAPABILITIES = ('follow_person', 'patrol', 'navigate_to_pose', 'autoslam', 'relocalize')
 _REMAPS = (
     '/malbut/mission/execute', '/malbut/state', '/malbut/localization/state',
-    '/malbut/speech/transcript', '/malbut/speech/response',
+    '/malbut/speech/transcript', '/malbut/speech/response', '/malbut/speech/end_dialogue',
     '/malbut/speech/input_status', '/malbut/speech/playback_status',
     '/malbut/speech/classify_addressee', '/malbut/speech/control_session',
     '/malbut/speech/control_playback', '/malbut/agent/confirm_situation',
@@ -203,8 +203,8 @@ class VoiceLabGraph:
             )
             publish_reply = self.agent.dialogue.publish_reply
 
-            def record_reply(response, publish):
-                result = publish_reply(response, publish)
+            def record_reply(response, publish, *, end_dialogue=None):
+                result = publish_reply(response, publish, end_dialogue=end_dialogue)
                 if result is not None:
                     value = deepcopy(dict(result))
                     self.replies.append(value)
