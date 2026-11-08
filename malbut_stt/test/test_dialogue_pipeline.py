@@ -353,6 +353,13 @@ def test_end_command_respects_session_owner(harness, session_id, ended):
     ('됐어', False), ('괜찮아', False), ('고마워', False),
     ('됐어, 오늘은 여기까지', True), ('괜찮아. 다음에 얘기하자.', True),
     ('고마워 오늘은 여기까지', True),
+    ('어, 우리 이제 대화 그만하자', True),
+    ('어? 대화 그만하자. 응. 고생했어.', True),
+    ('어 대화 그만하자 응 고생했어', True),
+    ('어? 응. 고생했어.', False),
+    ('어, 대화 그만하자고 한 적 있어?', False),
+    ('어, 대화 그만하지 마.', False),
+    ('어? 대화 그만하자. 응. 고생했어. 내일 날씨는?', False),
 ])
 def test_only_a_closing_intent_ends_the_followup(harness, text, ended):
     statuses = []
@@ -363,6 +370,8 @@ def test_only_a_closing_intent_ends_the_followup(harness, text, ended):
     pump(pipeline, lambda: statuses[-1][-1] == 'ended' or len(harness.transcripts) == 2)
     if ended:
         assert len(harness.transcripts) == 1
+        assert statuses[-1] == ('', statuses[-2][1], 'ended')
+        assert harness.reports[-1] == 'waiting_for_wake'
         assert pipeline._reply_request_id is None and not pipeline.session.active
     else:
         uid, transcript = harness.transcripts[-1]
