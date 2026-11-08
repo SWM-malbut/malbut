@@ -6,7 +6,7 @@
 
 실로봇은 **최초 `setup.sh` 준비 → `build.sh` 빌드 → `cloud.launch.py` 웹 연결 → 웹의
 Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `bringup.launch.py`를 사용한다.
-`bringup.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를
+`bringup.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 로컬 Piper KSS TTS를
 기본으로 포함한다. `speech.launch.py`는 이때 사용하는 하위 launch이며 음성만 진단할 때
 별도로 실행할 수 있다. Agent의 현재 proposal-only 정책과 STT/TTS 명세는 그대로 사용한다.
 
@@ -72,13 +72,16 @@ source install/malbut_test/local_setup.zsh
    `Release`, `GGML_CUDA=ON`, `GGML_METAL=OFF`, CUDA architecture `87`로 빌드한다.
    빌드 대상은 `malbut_whisper`이고 `nproc`으로 가용 CPU 수를 확인해 병렬 빌드한다.
 2. 별도 음성 가상환경을 `--system-site-packages`로 생성하고 STT의
-   `requirements-whisper-cpp.txt`와 TTS의 `requirements-api.txt`를 그 안에 설치한다.
+   `requirements-whisper-cpp.txt`·`requirements-aec.txt`, TTS의 `requirements-piper.txt`,
+   Agent의 `requirements-openai.txt`를 그 안에 설치한다. Piper KSS 모델과
+   `.onnx.json`은 [TTS 로컬 설정](../malbut_tts/README.md#로컬-piper-설정)에 따라 미리 준비한다.
+   선택적 OpenAI TTS의 `requirements-api.txt`는 사용할 때 별도로 설치한다.
 3. 적용본의 음성·인식·주행 ROS 패키지를 함께 colcon 빌드한다.
 
 음성 환경은 YOLO·ReID 환경과 분리된다. YOLO는 NumPy 1.26.4, ReID는 1.23.5를
 사용하므로 음성의 NumPy `>=1.26,<2`를 ReID나 제조사 Python에 설치하지 않는다.
-STT의 whisper.cpp CUDA 브리지는 Python Torch를 요구하지 않는다. Agent와 TTS는
-기본 API 방식이므로 별도 GPU 모델을 적재하지 않는다.
+STT의 whisper.cpp CUDA 브리지는 Python Torch를 요구하지 않는다. Agent는 기본 API 방식이며
+TTS는 로컬 Piper KSS를 CPU에서 실행하므로 별도 GPU 모델을 적재하지 않는다.
 
 기본 경로와 변경할 환경 변수는 다음과 같다. 아래 캐시의 기준은
 `${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech`다.
@@ -109,9 +112,11 @@ Agent·STT·TTS 프로세스도 종료 후 새로 시작한다.
 
 ## 실행과 장치 선택
 
-현재 Agent의 기본 provider와 TTS backend는 `openai`이며 TTS 모델은
-`gpt-4o-mini-tts`, 목소리는 `nova`이다. 실제 대화에서는 텍스트가 유료 외부 API로
-전달되며 출력 음성은 AI가 생성한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
+현재 Agent의 기본 provider는 `openai`, TTS backend는 `piper`이다. 음성 합성은
+로컬 KSS medium ONNX 모델로 수행하고, 외부 API 연결은 Agent의 대화 생성에 사용한다.
+TTS는 `model_path` 생략 시 `${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/models/piper-kss/ko_KR-kss-medium.onnx`를
+사용하며 같은 위치의 `.onnx.json`도 필요하다. `tts.yaml`의 명시적 설정은 기본값보다
+우선한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
 실행 터미널에 미리 export한다. 키를 launch 인자나 YAML에 넣지 않는다.
 launch는 `.env` 파일을 자동 로드하지 않는다.
 웹 경로에서는 [클라우드 실행 안내](https://github.com/SWM-malbut/malbut/blob/main/malbut_test/README_CLOUD.md)에
@@ -248,7 +253,7 @@ ros2 launch malbut_bringup bringup.launch.py \
 | `speech_output_device` | `-1`; TTS와 호출 성공음이 함께 사용하는 시스템 기본 출력 |
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
-| `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
+| `speech_agent_provider` | `openai`; TTS는 별도 설정이며 기본은 로컬 Piper KSS |
 | `speech_preflight_timeout_s` | `120.0`; 실제 STT 시작 제한시간. 단독 점검에도 사용하며 재시도 대기 포함 |
 | `speech_peer_timeout_s` | `30.0`; ROS 연결 대기 제한시간 |
 
