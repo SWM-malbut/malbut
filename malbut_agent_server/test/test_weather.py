@@ -11,8 +11,9 @@ import pytest
 
 from malbut_agent_server.weather import (
     SOURCE, WeatherForecast, WeatherState,
-    context_from_weather, decode_weather_result,
+    context_from_weather, daily_forecast_reply, decode_weather_result,
 )
+from malbut_agent_server.prompting import bounded_weather_context
 
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=ZoneInfo('Asia/Seoul')).timestamp()
@@ -184,3 +185,66 @@ def test_kma_precipitation_conditions_do_not_invent_intensity(code, condition):
     context = context_from_weather(snapshot, clock=lambda: NOW)
     assert context['current']['condition'] == condition
     assert all(item['condition'] == condition for item in context['daily'])
+
+
+@pytest.mark.parametrize('codes, probabilities', [
+    ([], [0] * 24), ([0] * 24, [0] * 23), ([0] * 23, [0] * 23),
+    (None, []), ('', ''), ([True] * 24, [0] * 24),
+    ([8] * 24, [0] * 24), ([0] * 24, [101] * 24), ([0] * 24, [float('nan')] * 24),
+])
+def test_invalid_or_partial_hourly_series_is_rejected(codes, probabilities):
+    value = result_value()
+    value['weather']['daily'][0].update(hourly_weather_codes=codes,
+                                        hourly_precipitation_probability_pct=probabilities)
+    with pytest.raises(ValueError):
+        decode_weather_result(value, clock=lambda: NOW)
+
+
+def test_cached_result_drops_rain_at_hour_boundary_and_preserves_daily_forecast():
+    fetched = NOW - 60
+    value = result_value(fetched)
+    today = value['weather']['daily'][0]
+    today.update(hourly_weather_codes=[0] * 10 + [61, 61] + [3] * 12,
+                 hourly_precipitation_probability_pct=[30] * 10 + [80, 75] + [10] * 12,
+                 weather_code=61, precipitation_probability_max_pct=80)
+    before = decode_weather_result(value, clock=lambda: fetched)
+    after = decode_weather_result(value, clock=lambda: NOW)
+    assert before['remaining_today'] == {
+        'from_hour': 11, 'condition': '비', 'precipitation_periods': ['11시부터 12시까지 비'],
+        'precipitation_probability_max_pct': 75,
+    }
+    assert after['remaining_today'] == {
+        'from_hour': 12, 'condition': '흐림', 'precipitation_periods': [],
+        'precipitation_probability_max_pct': 10,
+    }
+    assert before['daily'] == after['daily']
+    assert after['daily'][0]['precipitation_probability_max_pct'] == 80
+    reply = daily_forecast_reply('오늘 날씨 알려줘', after, {})
+    assert '흐린 시간대' in reply and '10퍼센트' in reply and '우산' not in reply
+
+
+def test_observed_rain_has_its_own_time_even_when_forecast_is_dry():
+    snapshot = state_at(NOW + 1200)
+    today = replace(snapshot.daily[0], hourly_weather_codes=[0] * 24,
+                    hourly_precipitation_probability_pct=[0] * 24)
+    snapshot = replace(snapshot, weather_code=61, valid_at=NOW, daily=(today, snapshot.daily[1]))
+    context = context_from_weather(snapshot, clock=lambda: NOW + 1200)
+    reply = daily_forecast_reply('오늘 날씨 알려줘', context, {})
+    assert '12시 관측 결과는 비' in reply and '우산' in reply and '0퍼센트' in reply
+    assert '그쳤' not in reply
+    del context['current']['time']
+    assert daily_forecast_reply('오늘 날씨 알려줘', context, {}) is None
+
+
+def test_separate_wet_periods_fit_the_model_context_at_midnight():
+    now = NOW - 12 * 3600
+    snapshot = state_at(now)
+    today = replace(snapshot.daily[0], hourly_weather_codes=[61, 71] * 12,
+                    hourly_precipitation_probability_pct=[95] * 24)
+    snapshot = replace(snapshot, daily=(today, replace(today, date=snapshot.daily[1].date)))
+    context = bounded_weather_context(context_from_weather(snapshot, clock=lambda: now))
+    periods = context['remaining_today']['precipitation_periods']
+    assert len(periods) == 24
+    assert periods[:2] == ['0시부터 1시까지 비', '1시부터 2시까지 눈']
+    assert periods[-1] == '23시부터 24시까지 눈'
+    assert 'hourly_weather_codes' not in context['daily'][0]

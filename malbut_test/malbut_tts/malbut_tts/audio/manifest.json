@@ -835,8 +835,8 @@
     },
     "instructions": null,
     "model": "rhasspy/piper-voices/ko_KR-kss-medium",
-    "sha256": "a2d1a140e7c4093cfea7bc94c11da17125fce60e8b8ab380e4dc0ba1ec1ad67b",
-    "text": "네, 날씨 조회를 시작하겠습니다.",
+    "sha256": "30af5622281959105d34433b123f25451a9cb837cfa78a5f7e9b7eb0b1b592c0",
+    "text": "날씨를 확인할게요.",
     "voice": "kss"
   },
   "function.request_follow_person.starting": {

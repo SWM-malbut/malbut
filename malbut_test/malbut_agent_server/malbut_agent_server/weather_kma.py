@@ -280,14 +280,18 @@ class KmaWeatherClient:
             daily = []
             for offset in (0, 1):
                 day = midnight + timedelta(days=offset)
-                hours = [day + timedelta(hours=hour) for hour in range(24)]
-                codes = [_code(forecasts[hour, 'SKY'], forecasts[hour, 'PTY']) for hour in hours]
+                # KMA's 01:00 SKY/PTY/POP describes 00:00–01:00. The next
+                # midnight supplies the last interval belonging to this date.
+                ends = [day + timedelta(hours=hour) for hour in range(1, 25)]
+                codes = tuple(_code(forecasts[end, 'SKY'], forecasts[end, 'PTY'])
+                              for end in ends)
+                probabilities = tuple(forecasts[end, 'POP'] for end in ends)
                 daily.append(WeatherForecast(
                     day.date().isoformat(),
                     forecasts[day + timedelta(hours=15), 'TMX'],
                     forecasts[day + timedelta(hours=6), 'TMN'],
-                    max(forecasts[hour, 'POP'] for hour in hours),
-                    max(codes, key=_SEVERITY.__getitem__),
+                    max(probabilities), max(codes, key=_SEVERITY.__getitem__),
+                    codes, probabilities,
                 ))
             fetched = _timestamp(self._clock())
             valid_at = observation.timestamp()

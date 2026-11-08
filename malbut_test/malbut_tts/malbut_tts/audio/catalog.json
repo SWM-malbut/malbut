@@ -26,7 +26,7 @@
   "function.get_homecam_falls.starting": "네, 홈캠의 낙상 감지 기록을 조회하겠습니다.",
   "function.get_homecam_recordings.starting": "네, 홈캠 녹화 목록을 조회하겠습니다.",
   "function.get_homecam_status.starting": "네, 홈캠 상태를 확인하겠습니다.",
-  "function.get_weather.starting": "네, 날씨 조회를 시작하겠습니다.",
+  "function.get_weather.starting": "날씨를 확인할게요.",
   "function.request_follow_person.starting": "네, 사람 따라가기를 시작하겠습니다.",
   "function.request_manual_control.starting": "네, 수동 조작을 준비하겠습니다.",
   "function.request_mapping.starting": "네, 지도 만들기를 시작하겠습니다.",

@@ -1,10 +1,16 @@
 """Validated KMA weather data and typed Action result decoding."""
 
-from dataclasses import asdict, dataclass
+from array import array
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone as dt_timezone
+from itertools import groupby
 import math
+from operator import itemgetter
+import re
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from malbut_agent_server.conversation_preferences import DEFAULTS
 
 
 SOURCE = '기상청 초단기실황·단기예보'
@@ -80,6 +86,8 @@ class WeatherForecast:
     temperature_min_c: float
     precipitation_probability_max_pct: float
     weather_code: int
+    hourly_weather_codes: tuple = ()
+    hourly_precipitation_probability_pct: tuple = ()
 
     def __post_init__(self):
         for name in ('temperature_max_c', 'temperature_min_c',
@@ -93,6 +101,19 @@ class WeatherForecast:
         if not 0 <= _number(self.precipitation_probability_max_pct) <= 100:
             raise ValueError('invalid precipitation probability')
         _weather_code(self.weather_code)
+        codes = self.hourly_weather_codes
+        probabilities = self.hourly_precipitation_probability_pct
+        if (not isinstance(codes, (tuple, list, array))
+                or not isinstance(probabilities, (tuple, list, array))
+                or len(codes) != len(probabilities) or len(codes) not in (0, 24)):
+            raise ValueError('weather needs both complete hourly series or neither')
+        for code in codes:
+            _weather_code(code)
+        probabilities = tuple(_number(value) for value in probabilities)
+        if any(not 0 <= value <= 100 for value in probabilities):
+            raise ValueError('invalid hourly precipitation probability')
+        object.__setattr__(self, 'hourly_weather_codes', tuple(codes))
+        object.__setattr__(self, 'hourly_precipitation_probability_pct', probabilities)
 
 
 @dataclass(frozen=True)
@@ -148,11 +169,28 @@ def _from_message(message):
             tuple(WeatherForecast(item.date, item.temperature_max_c,
                                   item.temperature_min_c,
                                   item.precipitation_probability_max_pct,
-                                  item.weather_code)
+                                  item.weather_code, getattr(item, 'hourly_weather_codes', ()),
+                                  getattr(item, 'hourly_precipitation_probability_pct', ()))
                   for item in message.daily),
         )
     except (AttributeError, TypeError, OverflowError) as error:
         raise ValueError('invalid weather message') from error
+
+
+def _remaining_today(forecast, hour):
+    codes = forecast.hourly_weather_codes[hour:]
+    periods = []
+    for code, group in groupby(enumerate(codes, hour), key=itemgetter(1)):
+        if code >= 51:
+            hours = [index for index, _ in group]
+            periods.append(f'{hours[0]}시부터 {hours[-1] + 1}시까지 {CONDITIONS[code]}')
+    return {
+        'from_hour': hour,
+        'condition': CONDITIONS[max(codes)],
+        'precipitation_periods': periods,
+        'precipitation_probability_max_pct': max(
+            forecast.hourly_precipitation_probability_pct[hour:]),
+    }
 
 
 def context_from_weather(message_or_state, *, clock=time.time):
@@ -181,9 +219,14 @@ def context_from_weather(message_or_state, *, clock=time.time):
                  'temperature_c': state.temperature_c,
                  'weather_code': state.weather_code,
                  'condition': CONDITIONS[state.weather_code]},
-        daily=[{**asdict(item), 'condition': CONDITIONS[item.weather_code]}
+        daily=[{'date': item.date, 'temperature_max_c': item.temperature_max_c,
+                'temperature_min_c': item.temperature_min_c,
+                'precipitation_probability_max_pct': item.precipitation_probability_max_pct,
+                'weather_code': item.weather_code, 'condition': CONDITIONS[item.weather_code]}
                for item in state.daily],
     )
+    if state.daily[0].hourly_weather_codes:
+        result['remaining_today'] = _remaining_today(state.daily[0], checked_at.hour)
     return result
 
 
@@ -215,3 +258,100 @@ def decode_weather_result(value: dict, *, clock=time.time) -> dict:
     except (KeyError, TypeError, AttributeError, OverflowError,
             RecursionError) as error:
         raise ValueError('invalid weather Action result schema') from error
+
+
+def basic_forecast_day(utterance):
+    """Recognize self-contained daily questions; other wording follows ordinary dialogue."""
+    match = re.fullmatch(
+        r'(오늘|내일)의?날씨(?:예보)?(?:는|가|를)?'
+        r'(?:알려(?:줘요?|주세요)|어때요?|어떤가요|어떻(?:니|나요))?[.!?]*',
+        ''.join(utterance.split()),
+    )
+    return match.group(1) if match else None
+
+
+def _today_reply(weather, forecast, checked_at, location):
+    low, high = forecast.temperature_min_c, forecast.temperature_max_c
+    remaining = weather.get('remaining_today')
+    if remaining is None:
+        probability = forecast.precipitation_probability_max_pct
+        return (f'오늘 하루 전체 예보는 {CONDITIONS[forecast.weather_code]}입니다. '
+                f'{location} 기준 최저 {low:g}도, 최고 {high:g}도, '
+                f'하루 최대 강수 확률은 {probability:g}퍼센트예요. '
+                '남은 시간의 강수 여부는 확인되지 않았어요.')
+
+    periods = remaining['precipitation_periods']
+    condition = remaining['condition']
+    probability = _number(remaining['precipitation_probability_max_pct'])
+    if (remaining['from_hour'] != checked_at.hour or condition not in CONDITIONS.values()
+            or not 0 <= probability <= 100 or not isinstance(periods, list) or len(periods) > 24):
+        raise ValueError('invalid remaining-day forecast')
+    if periods:
+        headline = ', '.join(_text(period) for period in periods[:2]) + ' 예보가 있어요.'
+        if len(periods) > 2:
+            headline += ' 그 뒤에도 강수 예보가 있어요.'
+    else:
+        sky = {'맑음': '맑겠고', '대체로 맑음': '대체로 맑겠고',
+               '부분적으로 흐림': '구름이 끼는 시간대가 있겠고',
+               '흐림': '흐린 시간대가 있겠고'}.get(condition, f'{condition} 예보가 있고')
+        headline = f'오늘 남은 시간에는 {sky}, 비나 눈 예보는 없어요.'
+
+    current = weather['current']
+    code = current['weather_code']
+    _weather_code(code)
+    advise_umbrella = bool(periods) or probability >= 50
+    if code >= 51:
+        observed_at = datetime.fromisoformat(current['time'])
+        date_label = '어제' if observed_at.date() < checked_at.date() else '오늘'
+        headline = (f'{date_label} {observed_at.hour}시 관측 결과는 '
+                    f'{CONDITIONS[code]}입니다. ' + headline)
+        if observed_at.date() == checked_at.date() and observed_at.hour == checked_at.hour:
+            advise_umbrella = True
+    advice = ''
+    if advise_umbrella:
+        advice = ' 우산을 챙기세요.'
+    elif low < 15:
+        advice = ' 겉옷을 챙기세요.'
+    return (f'{headline} {location}의 오늘 최저 {low:g}도, 최고 {high:g}도이고, '
+            f'남은 시간의 최대 강수 확률은 {probability:g}퍼센트예요.{advice}')
+
+
+def daily_forecast_reply(utterance, weather, settings):
+    """Read an ordinary daily forecast after the model selected and ran get_weather."""
+    if weather.get('status') != 'fresh':
+        return None
+    defaults = dict(DEFAULTS, response_mode='natural')
+    if settings.get('length') == '짧고 간단하게':
+        defaults['length'] = settings['length']
+    if any(defaults.get(key) != value for key, value in settings.items()):
+        return None
+    day = basic_forecast_day(utterance)
+    if day is None:
+        return None
+    offset = int(day == '내일')
+    try:
+        location = _text(weather['location'])
+        checked_at = datetime.fromisoformat(weather['checked_at'])
+        requested = checked_at.date() + timedelta(days=offset)
+        record = dict(weather['daily'][offset])
+        record.pop('condition', None)
+        forecast = WeatherForecast(**record)
+        if forecast.date != requested.isoformat():
+            return None
+        if offset == 0:
+            return _today_reply(weather, forecast, checked_at, location)
+    except (IndexError, KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+    low, high = forecast.temperature_min_c, forecast.temperature_max_c
+    probability = forecast.precipitation_probability_max_pct
+    if forecast.weather_code >= 51 or probability >= 50:
+        advice = '우산을 챙기세요.'
+    elif low < 15:
+        advice = '겉옷을 챙기세요.'
+    else:
+        advice = '가볍게 입으세요.'
+    return (f'{day} 예보는 {CONDITIONS[forecast.weather_code]}입니다. '
+            f'{location} 기준 최저 {low:g}도, 최고 {high:g}도, '
+            f'최대 강수 확률은 {probability:g}퍼센트예요. '
+            f'{advice}')

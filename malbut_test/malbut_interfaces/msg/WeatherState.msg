@@ -1,4 +1,4 @@
-# Open-Meteo weather model output, not an on-site sensor observation.
+# Weather data from the named source; valid_at is the current observation time.
 builtin_interfaces/Time fetched_at
 builtin_interfaces/Time valid_at
 string location

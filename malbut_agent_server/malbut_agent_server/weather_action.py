@@ -56,6 +56,9 @@ def _message(state):
         for name in ('date', 'temperature_max_c', 'temperature_min_c',
                      'precipitation_probability_max_pct', 'weather_code'):
             setattr(item, name, getattr(forecast, name))
+        item.hourly_weather_codes = list(forecast.hourly_weather_codes)
+        item.hourly_precipitation_probability_pct = list(
+            forecast.hourly_precipitation_probability_pct)
         message.daily.append(item)
     return message
 
