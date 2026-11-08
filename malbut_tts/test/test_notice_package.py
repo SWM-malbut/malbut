@@ -30,7 +30,7 @@ def test_built_package_contains_the_real_notice(tmp_path, relative):
         assert 0 < audio.getnframes() <= 24000 * 30
     directory = tmp_path / 'malbut_tts/audio'
     catalog = json.loads((directory / 'catalog.json').read_text())
-    assert catalog['function.get_weather.starting'] == '네, 날씨 조회를 시작하겠습니다.'
+    assert catalog['function.get_weather.starting'] == '날씨를 확인할게요.'
     assert catalog['situation.fall.confirmation'] == (
         '실제로 넘어진 분이 있나요, 아니면 그냥 누워 있거나 쉬고 있는 건가요?')
     assert catalog['situation.resolved'] == '알겠어요. 상황을 확인했어요. 말씀해 주셔서 고마워요.'

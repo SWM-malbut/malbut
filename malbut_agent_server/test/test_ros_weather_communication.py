@@ -399,7 +399,7 @@ def test_weather_start_recording_arrives_before_result_once(ros_weather):
     try:
         run.spin_until(lambda: run.client.started.is_set() and len(run.start_messages) == 1)
         start = run.start_messages[0]
-        assert start.text == '네, 날씨 조회를 시작하겠습니다.'
+        assert start.text == '날씨를 확인할게요.'
         assert start.audio_id == 'function.get_weather.starting'
         assert start.interim is True
         assert start.request_type == SpeechRequest.DIALOGUE

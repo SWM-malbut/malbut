@@ -258,6 +258,7 @@ def daily_forecast_reply(utterance, weather, settings):
         advice = '겉옷을 챙기세요.'
     else:
         advice = '가볍게 입으세요.'
-    return (f'{day} {location} 예보입니다. {CONDITIONS[forecast.weather_code]}, '
-            f'최저 {low:g}도, 최고 {high:g}도, 최대 강수 확률은 {probability:g}퍼센트예요. '
+    return (f'{day} 예보는 {CONDITIONS[forecast.weather_code]}입니다. '
+            f'{location} 기준 최저 {low:g}도, 최고 {high:g}도, '
+            f'최대 강수 확률은 {probability:g}퍼센트예요. '
             f'{advice}')

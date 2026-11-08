@@ -116,8 +116,8 @@ def test_plain_message_does_not_prefetch_weather(runtime):
 
 
 @pytest.mark.parametrize('question,expected', [
-    ('오늘 날씨 알려줘', ('오늘 시험 지역', '흐림', '최저 18도', '최고 27도', '0퍼센트')),
-    ('내일 날씨는 어때?', ('내일 시험 지역', '비', '최저 18도', '최고 27도', '40퍼센트', '우산')),
+    ('오늘 날씨 알려줘', ('오늘 예보는 흐림입니다.', '시험 지역', '최저 18도', '최고 27도', '0퍼센트')),
+    ('내일 날씨는 어때?', ('내일 예보는 비입니다.', '시험 지역', '최저 18도', '최고 27도', '40퍼센트', '우산')),
 ])
 def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, question, expected):
     provider = WeatherProvider()
@@ -129,7 +129,9 @@ def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, que
     assert calls == ['weather-1'] and len(provider.calls) == 1
     assert result.raw_decision.tool_name == 'get_weather'
     assert result.decision.reason == 'weather_daily_forecast'
-    assert all(part in result.decision.message for part in expected)
+    headline, *details = expected
+    assert result.decision.message.startswith(headline)
+    assert all(part in result.decision.message for part in details)
     assert result.provider_result.usage == ProviderUsage(10, 2, 12)
 
 
