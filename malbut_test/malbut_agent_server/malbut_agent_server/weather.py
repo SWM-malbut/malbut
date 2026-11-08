@@ -3,8 +3,11 @@
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 import math
+import re
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from malbut_agent_server.conversation_preferences import DEFAULTS
 
 
 SOURCE = '기상청 초단기실황·단기예보'
@@ -215,3 +218,46 @@ def decode_weather_result(value: dict, *, clock=time.time) -> dict:
     except (KeyError, TypeError, AttributeError, OverflowError,
             RecursionError) as error:
         raise ValueError('invalid weather Action result schema') from error
+
+
+def daily_forecast_reply(utterance, weather, settings):
+    """Read an ordinary daily forecast after the model selected and ran get_weather."""
+    if weather.get('status') != 'fresh':
+        return None
+    defaults = dict(DEFAULTS, response_mode='natural')
+    if settings.get('length') == '짧고 간단하게':
+        defaults['length'] = settings['length']
+    if any(defaults.get(key) != value for key, value in settings.items()):
+        return None
+    match = re.fullmatch(
+        r'(오늘|내일)의?날씨(?:예보)?(?:는|가|를)?'
+        r'(?:알려(?:줘요?|주세요)|어때요?|어떤가요|어떻(?:니|나요))?[.!?]*',
+        ''.join(utterance.split()),
+    )
+    if match is None:
+        return None
+
+    day = match.group(1)
+    offset = int(day == '내일')
+    try:
+        location = _text(weather['location'])
+        requested = datetime.fromisoformat(weather['checked_at']).date() + timedelta(days=offset)
+        record = dict(weather['daily'][offset])
+        record.pop('condition', None)
+        forecast = WeatherForecast(**record)
+    except (IndexError, KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if forecast.date != requested.isoformat():
+        return None
+
+    low, high = forecast.temperature_min_c, forecast.temperature_max_c
+    probability = forecast.precipitation_probability_max_pct
+    if forecast.weather_code >= 51 or probability >= 50:
+        advice = '우산을 챙기세요.'
+    elif low < 15:
+        advice = '겉옷을 챙기세요.'
+    else:
+        advice = '가볍게 입으세요.'
+    return (f'{day} {location} 예보입니다. {CONDITIONS[forecast.weather_code]}, '
+            f'최저 {low:g}도, 최고 {high:g}도, 최대 강수 확률은 {probability:g}퍼센트예요. '
+            f'{advice}')
