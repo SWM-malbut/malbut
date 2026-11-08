@@ -109,7 +109,7 @@ def test_queued_start_recording_plays_before_fast_final_without_synthesis(tmp_pa
         blocker = harness.runtime.submit('earlier speech')
         first = harness.players.get(timeout=3)
         assert first.finishing.wait(3)
-        start = harness.runtime.submit('네, 날씨 조회를 시작하겠습니다.', audio_id='start',
+        start = harness.runtime.submit('날씨를 확인할게요.', audio_id='start',
                                        interim=True, request_id='ack:weather')
         final = harness.runtime.submit('맑아요.', request_id='weather')
         first.drain.set()

@@ -73,7 +73,7 @@ def test_chat_selects_weather_saves_location_fetches_and_preserves_location(tmp_
         assert saved['metadata']['decision']['reason'] == 'weather_location_saved'
         assert core.weather.store.get()['location'] == '서울특별시'
         provider.location = None
-        answer = core.chat('오늘 날씨가 어때?')
+        answer = core.chat('지금 기온이 몇 도야?')
         assert answer['text'] == 'fresh'
         assert answer['physical_authorized'] is False
         assert answer['metadata']['execution']['authorized'] is False

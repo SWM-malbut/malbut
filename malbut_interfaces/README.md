@@ -72,6 +72,14 @@ Agent의 [낙상 규칙](../malbut_agent_server/docs/fall/fall_rules.md)은 VLM 
 STT·TTS 제어 서비스는 내부 보조 호출로 유지한다. Agent는 확인 대화 시작 전에
 TTS의 `STOP_ALL`을 요청하고, 개별 질문은 재생 ID로 제어한다.
 
+## 날씨 조회
+
+Manager가 `/malbut/weather/get`으로 받은 `WeatherState.valid_at`은 현재 실황의 관측 시각이다.
+`WeatherForecast`의 일별 대표 날씨·최대 강수확률은 하루 전체 기준이다. 시간별 값이 있으면 두 배열에
+각각 24개가 담긴다. 기상청의 14시 강수형태는 13~14시 예보이므로 현지 날짜의 배열 인덱스 13에 들어간다.
+시간별 정보가 없는 일별 결과는 두 배열이 비어 있다. 이 필드를 배포할 때는 날씨 서버와 Manager가 동일한
+`malbut_interfaces` 빌드를 사용해야 한다.
+
 ## 동작 명세
 
 - [낙상 확인 계약](../malbut_agent_server/docs/fall/agent_fall_implementation.md): 요청 검증, 결과·실패·취소, 중복·오래된 결과, 음성 세션과 시간 제한.

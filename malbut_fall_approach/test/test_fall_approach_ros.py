@@ -429,9 +429,10 @@ NOT_IN_VIEW = 'the torso never came into view: backed away only'
 
 def test_a_blocked_backup_judges_from_where_it_stands(ros, camera):
     """2026-10-19: driving round to places about the spot failed in narrow rooms."""
-    _, fake, send, _, costmap = ros
+    node, fake, send, _, costmap = ros
     costmap({})
     nav = FakeNav2(fake, backup=False)
+    assert node.backer.wait_for_server(timeout_sec=5)
     camera['show'] = lambda: [person(LEGS)]
     result = view(send)
     assert (result.outcome, result.detail) == ('arrived', NOT_IN_VIEW)  # Cloud judges there.

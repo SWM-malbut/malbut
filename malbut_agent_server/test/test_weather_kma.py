@@ -46,7 +46,7 @@ def payload_for(product, base, now=NOW):
         item('PTY', 0)
     else:
         valid = base + timedelta(hours=1)
-        while valid < midnight + timedelta(days=2):
+        while valid <= midnight + timedelta(days=2):
             today = valid.date() == now.date()
             precipitation = 4 if today and valid.hour == 18 else 0
             if not today and valid.hour == 9:
@@ -162,7 +162,11 @@ def test_fetch_requests_available_products_in_parallel_and_merges_full_days(
     assert result.daily[1].temperature_max_c == 27
     assert result.daily[1].precipitation_probability_max_pct == 70
     assert result.daily[1].weather_code == 68
-    assert context_from_weather(result, clock=lambda: http.now.timestamp())['status'] == 'fresh'
+    assert result.daily[0].hourly_weather_codes[17] == 80
+    assert result.daily[1].hourly_weather_codes[8] == 68
+    remaining = context_from_weather(result, clock=lambda: http.now.timestamp())['remaining_today']
+    assert remaining['precipitation_periods'] == ['17시부터 18시까지 소나기']
+    assert remaining['precipitation_probability_max_pct'] == 60
     assert len(http.calls) == request_count
     assert http.reads == [weather_kma.MAX_RESPONSE_BYTES + 1] * request_count
     assert {timeout for _, timeout in http.calls} == {6.0}
@@ -261,6 +265,24 @@ def test_extra_official_revisions_merge_all_categories_in_base_time_order(http):
 
     http.mutate = mutate
     assert client(http.now).fetch().daily[0].precipitation_probability_max_pct == 40
+
+
+def test_midnight_rain_and_probability_belong_to_preceding_date(http):
+    def mutate(product, base, payload):
+        if product == 'getVilageFcst':
+            for row in rows(payload):
+                if row['category'] in ('PTY', 'POP'):
+                    wet = row['fcstDate'] == '20260914' and row['fcstTime'] == '0000'
+                    row['fcstValue'] = ('1' if row['category'] == 'PTY' else '80') if wet else '0'
+
+    http.mutate = mutate
+    http.now = NOW.replace(hour=23, minute=59)
+    state = client(http.now).fetch()
+    today, tomorrow = state.daily
+    assert today.weather_code == 61 and today.precipitation_probability_max_pct == 80
+    assert tomorrow.weather_code == 0 and tomorrow.precipitation_probability_max_pct == 0
+    remaining = context_from_weather(state, clock=lambda: http.now.timestamp())['remaining_today']
+    assert remaining['precipitation_periods'] == ['23시부터 24시까지 비']
 
 
 def test_missing_key_is_reported_only_on_fetch_without_http(http, monkeypatch):
@@ -427,6 +449,18 @@ def test_missing_full_day_values_fail_instead_of_using_remaining_day(
         if product == 'getVilageFcst':
             remove_rows(payload, lambda row: row['category'] == category
                         and row['fcstDate'] == '20260913' and row['fcstTime'] == hour)
+
+    http.mutate = mutate
+    with pytest.raises(KmaWeatherError, match='^INVALID_DATA$'):
+        client().fetch()
+
+
+@pytest.mark.parametrize('category', ['PTY', 'POP', 'SKY'])
+def test_missing_final_midnight_endpoint_cannot_imply_a_dry_hour(http, category):
+    def mutate(product, base, payload):
+        if product == 'getVilageFcst':
+            remove_rows(payload, lambda row: row['category'] == category
+                        and row['fcstDate'] == '20260915' and row['fcstTime'] == '0000')
 
     http.mutate = mutate
     with pytest.raises(KmaWeatherError, match='^INVALID_DATA$'):

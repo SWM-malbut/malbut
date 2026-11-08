@@ -2,6 +2,7 @@
 
 from concurrent.futures import CancelledError
 import copy
+from dataclasses import replace
 from threading import Thread
 import time
 import pytest
@@ -22,6 +23,8 @@ from malbut_agent_server.schemas import AgentDecision, AgentRequest, ProviderRes
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.tools import TOOL_SPECS, validate_tool_arguments
 from malbut_agent_server.weather_query import ManagerWeatherQuery
+from malbut_agent_server.weather import context_from_weather
+from test_weather import NOW, state_at
 
 
 class WeatherProvider(AgentProvider):
@@ -111,6 +114,74 @@ def test_plain_message_does_not_prefetch_weather(runtime):
     assert result.decision.message == '안녕하세요.'
     assert len(provider.calls) == 1 and calls == []
     assert provider.calls[0]['weather'] is None
+
+
+@pytest.mark.parametrize('question,expected', [
+    ('오늘 날씨 알려줘', ('오늘 하루 전체 예보는 흐림입니다.', '시험 지역', '최저 18도', '최고 27도', '0퍼센트', '남은 시간')),
+    ('내일 날씨는 어때?', ('내일 예보는 비입니다.', '시험 지역', '최저 18도', '최고 27도', '40퍼센트', '우산')),
+])
+def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, question, expected):
+    provider = WeatherProvider()
+    calls = []
+    weather = context_from_weather(state_at(), clock=lambda: NOW)
+    runtime.provider = provider
+    runtime.weather_executor = lambda key: calls.append(key) or weather
+    result = runtime.handle(request(text=question))
+    assert calls == ['weather-1'] and len(provider.calls) == 1
+    assert result.raw_decision.tool_name == 'get_weather'
+    assert result.decision.reason == 'weather_daily_forecast'
+    headline, *details = expected
+    assert result.decision.message.startswith(headline)
+    assert all(part in result.decision.message for part in details)
+    assert result.provider_result.usage == ProviderUsage(10, 2, 12)
+
+
+def test_today_after_morning_rain_uses_only_remaining_hours_without_extra_model_call(runtime):
+    state = state_at()
+    today, tomorrow = state.daily
+    today = replace(today, weather_code=61, precipitation_probability_max_pct=60,
+                    hourly_weather_codes=(61,) * 2 + (3,) * 22,
+                    hourly_precipitation_probability_pct=(60,) * 2 + (30,) * 22)
+    weather = context_from_weather(replace(state, daily=(today, tomorrow)), clock=lambda: NOW)
+    provider = WeatherProvider()
+    calls = []
+    runtime.provider = provider
+    runtime.weather_executor = lambda key: calls.append(key) or weather
+    result = runtime.handle(request(text='오늘 날씨 알려줘'))
+    assert calls == ['weather-1'] and len(provider.calls) == 1
+    assert result.decision.reason == 'weather_daily_forecast'
+    assert '30퍼센트' in result.decision.message
+    assert '60퍼센트' not in result.decision.message and '우산' not in result.decision.message
+
+
+@pytest.mark.parametrize('question,change', [
+    ('오늘 서울 날씨 알려줘', None),
+    ('오늘 날씨 알려줘. 우산만 말해줘', None),
+    ('오늘과 내일 날씨 알려줘', None),
+    ('내일 날씨 알려줘', 'date'),
+    ('오늘 날씨 알려줘', 'missing'),
+    ('오늘 날씨 알려줘', 'stale'),
+    ('오늘 날씨 알려줘', 'tone'),
+])
+def test_special_forecast_or_preferences_preserve_answer_model(runtime, question, change):
+    from malbut_agent_server.conversation_preferences import save_initial_settings
+
+    provider = WeatherProvider()
+    weather = context_from_weather(state_at(), clock=lambda: NOW)
+    if change == 'date':
+        weather['daily'][1]['date'] = weather['daily'][0]['date']
+    elif change == 'missing':
+        del weather['daily'][0]['temperature_min_c']
+    elif change == 'stale':
+        weather['status'] = 'stale'
+    elif change == 'tone':
+        with runtime.conversation_store._connection as conn:
+            save_initial_settings(conn, 'weather-user', {'tone': '친근한 반말'})
+    runtime.provider, runtime.weather_executor = provider, lambda _: weather
+    result = runtime.handle(request(text=question))
+    assert len(provider.calls) == 2
+    assert provider.calls[1]['weather'] == weather
+    assert result.decision.message == weather['status']
 
 
 @pytest.mark.parametrize('first,tools', [

@@ -26,7 +26,9 @@ def runtime(monkeypatch, tmp_path):
     snapshot = WeatherState(
         now + 0.25, now - 600, '시험 지역', 37, 127, SOURCE,
         'Asia/Seoul', 23, 2,
-        (WeatherForecast('2026-09-12', 25, 18, 0, 3),
+        (WeatherForecast('2026-09-12', 25, 18, 0, 3,
+                         hourly_weather_codes=(3,) * 24,
+                         hourly_precipitation_probability_pct=(0.0,) * 24),
          WeatherForecast('2026-09-13', 24, 19, 16, 51)),
     )
     state = SimpleNamespace(
@@ -226,6 +228,10 @@ def test_start_has_no_http_and_each_goal_fetches_once_with_typed_result(runtime)
         assert [item.precipitation_probability_max_pct for item in result.weather.daily] == [
             0.0, 16.0,
         ]
+        today, tomorrow = result.weather.daily
+        assert today.hourly_weather_codes == [3] * 24
+        assert today.hourly_precipitation_probability_pct == [0.0] * 24
+        assert tomorrow.hourly_weather_codes == tomorrow.hourly_precipitation_probability_pct == []
         node._worker.join(2)
 
 
