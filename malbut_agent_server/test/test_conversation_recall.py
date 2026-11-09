@@ -210,3 +210,16 @@ def test_grounded_repeat_requires_topic_overlap_and_no_compacted_summary():
     assert speech_recall_focus(question, [turn], SimpleNamespace(content='전시 약속이 변경됨.')) != 'story_repeat'
     turn.response = {}
     assert speech_recall_focus(question, [turn], None) != 'story_repeat'
+
+
+@pytest.mark.parametrize('public', [
+    None, {'memory': None}, {'memory': {'ids': [None]}}, {'memory': {'ids': [['old-id']]}},
+])
+def test_unusable_name_receipt_leaves_routing_to_the_model(public):
+    from types import SimpleNamespace
+    from malbut_agent_server.conversation_recall import previous_self_name_id
+
+    if isinstance(public, dict):
+        public = dict(public, decision={'type': 'message'})
+    prior = SimpleNamespace(user_content='내 이름이 뭐였지?', response={'public': public})
+    assert previous_self_name_id('전에 알려 준 내 이름이 뭐였더라?', [prior], None) is None

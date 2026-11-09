@@ -153,9 +153,13 @@ def previous_self_name_id(text, turns, summary):
         for turn in reversed(turns):
             if not is_self_name_question(turn.user_content):
                 continue
-            public = turn.response.get('public', {})
-            ids = public.get('memory', {}).get('ids', [])
-            if public.get('decision', {}).get('type') == 'message' and len(ids) == 1:
+            public = turn.response.get('public')
+            if not isinstance(public, dict):
+                continue
+            memory, decision = public.get('memory'), public.get('decision')
+            ids = memory.get('ids') if isinstance(memory, dict) else None
+            if (isinstance(decision, dict) and decision.get('type') == 'message'
+                    and isinstance(ids, list) and len(ids) == 1 and isinstance(ids[0], str)):
                 return ids[0]
     return None
 
