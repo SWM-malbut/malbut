@@ -281,8 +281,8 @@ class StoryOrchestrationTests(unittest.TestCase):
                         runtime.handle(req)
                 self.assertEqual(model.call_count, calls)
 
-    def test_single_call_story_answer_preserves_source_and_deletion_fence(self):
-        runtime, backend, _ = self.runtime()
+    def first_grounded_speech_answer(self):
+        runtime, backend, extractor = self.runtime()
         runtime.story_provider.on_demand_speech = True
         runtime.story_memory.enable('alice')
         source = '우리 전시 약속은 수요일이야.'
@@ -301,11 +301,88 @@ class StoryOrchestrationTests(unittest.TestCase):
             self.assertEqual(model.call_count, 1)
         binding = self.persisted(runtime, request)['story_binding']
         self.assertEqual(binding['readset'][0]['story_id'], story['story_id'])
+        # A question about the date does not change it.
+        with patch.object(extractor, 'extract', return_value=[]):
+            self.checkpoint(runtime)
+        return runtime, backend, extractor, request, story
+
+    def test_single_call_story_answer_preserves_source_and_deletion_fence(self):
+        runtime, _, _, request, story = self.first_grounded_speech_answer()
         runtime.story_memory.forget('alice', story['story_id'], timeout=5)
         with self.assertRaises(MemoryChangedError):
             runtime.assert_reply_fresh('alice', request.request_id)
         with self.assertRaises(ValidationError):
             runtime.handle(request)
+
+    def test_grounded_repeat_reads_again_once_and_fences_its_own_reply(self):
+        runtime, backend, _, first, story = self.first_grounded_speech_answer()
+        repeat = SpeechAgentRequest.from_dict(self.request(
+            runtime, '전에 우리가 잡았던 전시 약속은 무슨 요일이었지?', room='recall').to_dict())
+        with patch.object(backend, 'complete', wraps=backend.complete) as model:
+            answer = runtime.handle(repeat)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_args.args[3], [])
+        self.assertEqual(model.call_args.kwargs['memory_context']['mode'], 'answer_only')
+        self.assertEqual(answer.decision.message, story['current'][0]['text'])
+        self.assertEqual(self.persisted(runtime, repeat)['story_binding']['readset'],
+                         self.persisted(runtime, first)['story_binding']['readset'])
+        self.assertTrue(model.call_args.args[2])
+        self.assertTrue(all(not t.assistant_content and not t.response for t in model.call_args.args[2]))
+        runtime.story_memory.forget('alice', story['story_id'], timeout=5)
+        with self.assertRaises(MemoryChangedError):
+            answer.to_dict()
+        with self.assertRaises(ValidationError):
+            runtime.handle(repeat)
+
+    def test_grounded_repeat_cannot_deliver_after_consent_changes_during_model_call(self):
+        runtime, backend, _, _, _ = self.first_grounded_speech_answer()
+        repeat = SpeechAgentRequest.from_dict(self.request(
+            runtime, '전에 우리가 잡았던 전시 약속은 무슨 요일이었지?', room='recall').to_dict())
+        original = backend.complete
+
+        def revoke_during_answer(*args, **kwargs):
+            answer = original(*args, **kwargs)
+            self.assertIn('수요일', answer.decision.message)
+            runtime.story_memory.disable('alice')
+            return answer
+
+        with patch.object(backend, 'complete', side_effect=revoke_during_answer) as model:
+            with self.assertRaises(MemoryChangedError):
+                runtime.handle(repeat)
+        self.assertEqual(model.call_count, 1)
+
+    def test_grounded_repeat_during_correction_keeps_user_words_without_old_answers(self):
+        runtime, backend, extractor, _, _ = self.first_grounded_speech_answer()
+        paraphrase = '일주일의 세 번째 날이라고 말씀드렸어요.'
+        with patch.object(backend, 'complete', return_value=ProviderResult(
+                AgentDecision('message', paraphrase), 'offline', 'test', 0, memory_supported=True)):
+            self.turn(runtime, '다르게 말해 줘.', room='recall')
+        with patch.object(extractor, 'extract', return_value=[]):
+            self.checkpoint(runtime)
+
+        # Hold the other session's correction queued or running for both reads.
+        extractor.release = threading.Event()
+        self.addCleanup(extractor.release.set)
+        self.turn(runtime, '전시 약속은 목요일로 바꿨어.', room='other')
+        local_change = '전시 약속은 금요일이야.'
+        for corrected_here in (False, True):
+            with self.subTest(corrected_here=corrected_here):
+                if corrected_here:
+                    self.turn(runtime, local_change, room='recall')
+                repeat = SpeechAgentRequest.from_dict(self.request(
+                    runtime, '전에 우리가 잡았던 전시 약속은 무슨 요일이었지?', room='recall').to_dict())
+                with patch.object(backend, 'complete', wraps=backend.complete) as model:
+                    runtime.handle(repeat)
+                self.assertEqual(model.call_count, 1)
+                memory = model.call_args.kwargs['memory_context']['story_memory_untrusted']
+                self.assertEqual(memory['status'], 'updating')
+                self.assertEqual(memory['stories'], [])
+                history = model.call_args.args[2]
+                self.assertTrue(all(not t.assistant_content and not t.response for t in history))
+                self.assertNotIn('수요일', repr(history))
+                self.assertNotIn(paraphrase, repr(history))
+                self.assertEqual(local_change in [t.user_content for t in history], corrected_here)
+                self.assertNotIn('목요일', repr(history))
 
     def test_unconsented_fresh_owner_never_loads_another_owners_pet(self):
         runtime, backend = self.fact_voice_runtime(stories=True)

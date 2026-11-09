@@ -196,3 +196,17 @@ def test_historical_question_still_reads_after_unrelated_action_or_unanswered_qu
 
     correction = SimpleNamespace(user_content='수첩은 이제 빨강이야.', assistant_content='알겠어요.')
     assert speech_recall_focus(query, [patrol, correction], None) is None
+
+
+def test_grounded_repeat_requires_topic_overlap_and_no_compacted_summary():
+    question = '전에 정한 전시 약속은 무슨 요일이었지?'
+    turn = SimpleNamespace(
+        user_content='전시 약속을 우리가 전에 언제로 정했지?', assistant_content='수요일이에요.',
+        response={'story_binding': {'readset': [{'story_id': 'exhibit', 'entry_hashes': ['a' * 64]}]},
+                  'public': {'decision': {'type': 'message'}}},
+    )
+    assert speech_recall_focus(question, [turn], None) == 'story_repeat'
+    assert speech_recall_focus('전에 정한 등산 약속은 어디로 가기로 했지?', [turn], None) != 'story_repeat'
+    assert speech_recall_focus(question, [turn], SimpleNamespace(content='전시 약속이 변경됨.')) != 'story_repeat'
+    turn.response = {}
+    assert speech_recall_focus(question, [turn], None) != 'story_repeat'
