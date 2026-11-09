@@ -85,8 +85,8 @@ def event_scoped_attribute(text):
     return bool(_EVENT_SCOPE.search(''.join(unicodedata.normalize('NFKC', text).split())))
 
 
-def speech_recall_focus(text, turns, summary):
-    """Select a typed or narrative read only for an unambiguous long-term question."""
+def _standalone_speech_focus(text):
+    """Select the evidence type for a self-contained long-term question."""
     raw = unicodedata.normalize('NFKC', text).strip()
     value = re.sub(r'[\s,]+', '', raw.rstrip('.?!。！？')).casefold()
     if (not re.fullmatch('[가-힣a-z0-9]+', value) or _NOT_SINGLE_READ.search(value)
@@ -130,9 +130,28 @@ def speech_recall_focus(text, turns, summary):
             return None
         focus = 'related'
 
+    return focus
+
+
+def speech_recall_focus(text, turns, summary):
+    """Choose a read-only path; recent user corrections remain part of the answer."""
+    focus = _standalone_speech_focus(text)
+    if focus is None:
+        return None
     if focus == 'related':
         terms = {term for term in _query_terms(text) if len(term) >= 2 and term != '전에'
                  and not _QUESTION.match(term) and not _PAST_TIME.match(term)}
+        if summary is None:
+            for turn in turns:
+                user = getattr(turn, 'user_content', '')
+                receipt = getattr(turn, 'response', {})
+                # Only a persisted, story-backed answer can establish a repeat.
+                # Shared words select a fresh lookup, never the earlier answer.
+                if ((receipt.get('story_binding') or {}).get('readset')
+                        and receipt.get('public', {}).get('decision', {}).get('type') == 'message'
+                        and sum(term in user for term in terms) >= 2
+                        and _standalone_speech_focus(user) == 'related'):
+                    return 'story_repeat'
         if any(term in getattr(summary, 'content', '') for term in terms):
             return None
         for turn in turns:

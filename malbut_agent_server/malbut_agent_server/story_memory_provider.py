@@ -107,6 +107,13 @@ class StoryMemoryProvider(AgentProvider):
             elif (revision is not None or fact_lookup is not None) and not followup:
                 if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
                     focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)
+                    if focus == 'story_repeat':
+                        # Re-read the current authorized sources. A prior answer or its
+                        # later paraphrases may predate a correction in another session.
+                        # Keep the user's own statements, including newer corrections.
+                        conversation_turns = [replace(turn, assistant_content='', response={})
+                                              for turn in conversation_turns]
+                        focus = 'related'
                     if focus is not None:
                         return self._answer_recall(request, memories, conversation_turns,
                                                    conversation_summary, context, revision,
