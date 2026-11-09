@@ -10,7 +10,7 @@ from malbut_agent_server.conversation_recall import (
     event_scoped_attribute, previous_self_name_id, speech_recall_focus, speech_recall_prohibited,
 )
 from malbut_agent_server.memory_trace import observe_inputs
-from malbut_agent_server.personal_memory import requested_operation
+from malbut_agent_server.personal_memory import requested_operation, self_name_correction
 
 from malbut_agent_server.providers.base import (
     AgentProvider, ProviderError, accepts_memory_context, accepts_weather_context,
@@ -104,6 +104,12 @@ class StoryMemoryProvider(AgentProvider):
                                               if requested_operation(request.utterance, op))
                 if not restricted_operations:
                     memory_context = dict(context, mode='answer_only')
+            elif (not followup and context.get('enabled') and not context.get('pending_question')
+                  and self_name_correction(request.utterance)):
+                # The correction already identifies its slot. No lookup or
+                # robot actuation belongs to this one foreground decision.
+                first_tools = []
+                first_request = replace(request, available_tools=())
             elif (revision is not None or fact_lookup is not None) and not followup:
                 if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
                     focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)

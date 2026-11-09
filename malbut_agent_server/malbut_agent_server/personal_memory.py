@@ -199,6 +199,28 @@ def requested_operation(text, operation):
     return bool(re.search(patterns[operation], text))
 
 
+def self_name_correction(text):
+    """Match a standalone first-person edit, preserving name and word boundaries."""
+    match = re.fullmatch(
+        r'\s*(?:저장(?:해\s*둔|한|된)\s*)?(?:내|제|나의|저의)\s*(?:본명|이름)(?:을|를)?\s*'
+        r'(?:(?P<old>[가-힣]{2,6}?)(?:에서|을|를)\s*)?'
+        r'(?P<new>[가-힣]{2,6}?)(?:으로|로)\s*'
+        r'(?:(?:정정|수정|변경)해|바꿔)(?:\s*(?:줘요?|주세요))?[.!。]?\s*', text,
+    )
+    if match and not any(word in match['new'] for word in (
+        '이름', '본명', '별명', '호칭', '친구', '예전', '이전', '원래', '그대로',
+    )):
+        return match
+    return None
+
+
+def _correct_name_fact(fact, correction, text):
+    return (fact['kind'] == fact['attribute'] == 'name'
+            and fact['subject'] in {'user', 'self', '사용자', '나', '저'}
+            and fact['value'] == correction['new']
+            and fact['evidence'] in text and fact['value'] in fact['evidence'])
+
+
 def fact_matches_source(fact, source):
     """Check the declared subject and attribute against one direct phrase."""
     evidence = fact['evidence']
@@ -621,6 +643,10 @@ class PersonalMemory:
         explicit_save = requested_operation(request.utterance, 'remember')
         explicit_correct = requested_operation(request.utterance, 'correct')
         if not snapshot.state['enabled'] and not explicit_save:
+            return
+        if self_name_correction(request.utterance):
+            # This exact command is checked against the primary fact and live
+            # user-name slot at commit. A reviewer cannot widen its authority.
             return
         if proposal['operation'] == 'correct' and not explicit_correct:
             return
@@ -1198,6 +1224,16 @@ class PersonalMemory:
             ), []
         if negated_management(source['text']):
             return reply('기억을 변경하지 않았어요.'), []
+        correction = self_name_correction(source['text']) if not pending else None
+        if correction:
+            facts = proposal['facts']
+            if (not snapshot.state['enabled'] or not result.provider_result.memory_supported
+                    or result.decision.type not in {'message', 'clarification'}
+                    or operation not in {'remember', 'correct'} or len(facts) != 1
+                    or not _correct_name_fact(facts[0], correction, source['text'])):
+                return reply('정정할 본명을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
+            operation = 'correct'
+            explicit = True
         if operation in {'forget', 'correct'} and not (
             confirmed_correction
             or requested_operation(source['text'], operation)
@@ -1242,7 +1278,7 @@ class PersonalMemory:
             return None, []
         for fact in proposal['facts']:
             if not (
-                fact_matches_source(fact, source['text'])
+                correction or fact_matches_source(fact, source['text'])
                 or source_review_matches(fact, source)
             ):
                 if operation == 'remember' and not explicit:
@@ -1263,6 +1299,19 @@ class PersonalMemory:
         supplied = {r['id'] for r in snapshot.context['memories']}
         if snapshot.pending:
             supplied.update(snapshot.pending['proposal'].get('target_ids', []))
+        if correction:
+            own_names = [r for r in records if r.metadata.get('fact', {}).get('kind') == 'name'
+                         and r.metadata['fact'].get('attribute') == 'name'
+                         and r.metadata['fact'].get('subject') in {'user', 'self', '사용자', '나', '저'}]
+            if (len(own_names) != 1 or (correction['old'] is not None
+                    and own_names[0].metadata['fact']['value'] != correction['old'])
+                    or (targets and targets != [own_names[0].id])):
+                return reply('정정할 기존 본명을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
+            # The full command identifies this single slot independently of the
+            # model. Preserve its subject spelling so it remains the same slot.
+            proposal['facts'][0]['subject'] = own_names[0].metadata['fact']['subject']
+            targets = [own_names[0].id]
+            supplied.add(own_names[0].id)
         if any(key not in by_id or key not in supplied for key in targets):
             if operation == 'remember' and not explicit:
                 return None, []
@@ -1276,7 +1325,7 @@ class PersonalMemory:
         if (
             operation in {'forget', 'correct'}
             and targets
-            and not (selected_target or confirmed_correction)
+            and not (selected_target or confirmed_correction or correction)
         ):
             identified = self._identify_targets(records, source['text'])
             if set(targets) != set(identified) or len(identified) != 1:
