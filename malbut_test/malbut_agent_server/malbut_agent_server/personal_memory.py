@@ -584,7 +584,9 @@ class PersonalMemory:
                 if name_question and not stored_identity:
                     filtered = self._name_history(request.user_id, conn, memories, filtered)
                     clean_summary = None
-                    name_evidence_only = bool(memories or filtered)
+                    # Indirect questions (e.g. whether the speaker was remembered)
+                    # keep a conversational answer even when there is no evidence.
+                    name_evidence_only = bool(memories or filtered) or not is_self_name_question(request.utterance)
                     if not name_evidence_only:
                         stored_identity = 'name'
                 conn.commit()
