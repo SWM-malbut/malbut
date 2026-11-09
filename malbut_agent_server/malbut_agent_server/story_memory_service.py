@@ -209,6 +209,9 @@ class StoryMemoryService:
                 return False
             required[item['story_id']] = set(item['entry_hashes'])
         if required:
+            pending = self.store.pending_story_ids(user, request_id)
+            if pending is None or required.keys() & pending:
+                return False
             if required.keys() & self.store.failed_story_ids(user, request_id=request_id):
                 return False
             # list_stories reads valid source-backed stories in one snapshot.
@@ -262,12 +265,13 @@ class StoryMemoryService:
         stats = self.store.stats(user)
         result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
         result['failed'] = int(stats.get('failed', 0))
-        if result['pending']:
-            # A queued correction can invalidate the meaning of an old summary
-            # even before extraction completes. Do not present it as current.
-            result['status'] = 'updating'
-            return result
         blocked = self.store.failed_story_ids(user) if result['failed'] else set()
+        if result['pending']:
+            pending = self.store.pending_story_ids(user)
+            if pending is None:
+                result['status'] = 'updating'
+                return result
+            blocked.update(pending)
         stories = self.store.candidates(user, utterance, limit=3, exclude_ids=blocked)
         # A short deictic follow-up may use the latest two turns to identify the
         # topic. This affects local matching, never transmits an entire archive.
@@ -305,14 +309,14 @@ class StoryMemoryService:
         stats = self.store.stats(user)
         result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
         result['failed'] = int(stats.get('failed', 0))
-        if result['pending']:
-            result['stories'], result['evidence'], result['readset'] = [], [], []
+        blocked = self.store.failed_story_ids(user) if result['failed'] else set()
+        pending = self.store.pending_story_ids(user) if result['pending'] else set()
+        for field in ('stories', 'evidence', 'readset'):
+            result[field] = [item for item in result[field] if pending is not None
+                             and item['story_id'] not in pending and item['story_id'] not in blocked]
+        if result['pending'] and not result['stories']:
             result['status'] = 'updating'
         elif result['failed']:
-            # Recheck after gathering evidence: a job may have failed meanwhile.
-            blocked = self.store.failed_story_ids(user)
-            for field in ('stories', 'evidence', 'readset'):
-                result[field] = [item for item in result[field] if item['story_id'] not in blocked]
             result['blocked_story_count'] = len(blocked)
             result['status'] = 'partial_update_failed' if result['stories'] else 'update_failed'
         if not self.validate_readset(user, policy['revision'], result['readset']):

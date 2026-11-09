@@ -42,6 +42,18 @@ _DEICTIC_REFERENCE = re.compile(r'그(?:거|것|때|곳|날|쪽|\s)|이어서|�
 _CORRECTION = re.compile(r'정정|수정|바(?:꾸|꿔|꿨|꾼|뀌|뀐|뀔)|변경|취소|아니[야었라]|잘못|사실')
 
 
+# These standalone requests have a fixed subject and no slot for a new value.
+# Do not use the looser foreground intent matcher: speech can contain a
+# correction and a question in the same unpunctuated sentence.
+_FACT_QUESTION = re.compile(
+    r'(?:저장해둔|전에알려준|평소)?(?:내|제|우리|저희)?'
+    r'(?:이름|본명|성함|호칭|별명|애칭|닉네임|(?:강아지|고양이|반려견|반려묘)이름|'
+    r'가?좋아하는(?:음료|음식|색)|취향)'
+    r'(?:이|가|은|는)?(?:뭐(?:야|예요|에요|였지|였죠|였더라|였나요)|무엇(?:인가요|이었지)|기억나(?:요)?)'
+    r'[?.!。]?'
+)
+
+
 def _normalized(text):
     return unicodedata.normalize('NFKC', text).casefold()
 
@@ -916,6 +928,35 @@ class StoryRuntimeStore:
                                  'attempt': member['attempts'], 'error_code': code,
                                  'retry_scheduled': retry,
                                  'retry_after_seconds': 2 ** member['attempts'] if retry else None})
+
+    def pending_story_ids(self, user, request_id=None):
+        """Return possible extraction targets, or None when their scope is unknown."""
+        with self._transaction() as conn:
+            jobs = conn.execute(
+                "SELECT request_id,sources_json FROM story_runtime_jobs "
+                "WHERE user_id=? AND state IN ('queued','running')", (user,),
+            ).fetchall()
+            if len(jobs) >= MAX_PENDING:
+                # Recovery can still owe a job for a turn that did not fit.
+                return None
+            texts = []
+            for job in jobs:
+                if request_id is not None and job['request_id'] == request_id:
+                    continue
+                refs = _refs(job['sources_json'])
+                sources = {ref.role: self._resolve(conn, user, ref) for ref in refs}
+                if set(sources) != {'user', 'assistant'} or not all(sources.values()):
+                    return None
+                question = ''.join(_normalized(sources['user'].text).split())
+                if not _FACT_QUESTION.fullmatch(question):
+                    return None
+                texts.extend(source.text for source in sources.values())
+            if not texts:
+                return set()
+            # claim() matches both sides of every turn in a batch. All positive
+            # matches across pending turns cover every possible top-five batch.
+            return {row['story_id'] for row in self._candidate_rows(
+                conn, user, ' '.join(texts), limit=None)}
 
     def failed_story_ids(self, user, request_id=None):
         """Quarantine affected stories, not every story owned by a failed job's user.

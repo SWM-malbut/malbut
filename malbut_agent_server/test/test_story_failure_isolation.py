@@ -163,3 +163,69 @@ def test_comparison_includes_sources_when_change_was_only_saved_as_episode(runti
         assert '혼잡해서 지쳤어' in evidence and '한산해서 편안했어' in evidence
     finally:
         current.close()
+
+
+@pytest.mark.parametrize('question,answer,claim', [
+    ('내 이름이 뭐였지?', '나예솔님이에요.', False),
+    ('저장해 둔 내 호칭이 뭐였지?', '저장된 호칭은 모래별이에요.', True),
+])
+def test_unrelated_fact_question_does_not_hide_story_after_reopen(runtime, question, answer, claim):
+    notebook = save(runtime, '순찰 수첩 표지색은 청록색이야.', '순찰 수첩')
+    token = runtime.complete(question, room='chat', answer=answer)
+    assert runtime.store.enqueue_completed('alice', token.request_id)
+    if claim:
+        assert runtime.store.claim('alice') is not None
+    runtime.reopen()
+    current = service(runtime)
+    try:
+        result = current.context('alice', '순찰 수첩 표지색의 정확한 원문은?')
+        assert result['pending'] == 1
+        assert [story['story_id'] for story in result['stories']] == [notebook]
+        assert any('청록색' in item['text'] for item in result['evidence'])
+        assert current.validate_readset('alice', result['revision'], result['readset'])
+    finally:
+        current.close()
+
+
+def test_pending_fact_answer_holds_only_its_story_candidates(runtime):
+    save(runtime, '순찰 수첩 표지색은 청록색이야.', '순찰 수첩')
+    pottery = save(runtime, '은하 공방 시간은 오후 네 시야.', '은하 공방')
+    token = runtime.complete('내 이름이 뭐였지?', room='chat',
+                             answer='순찰 수첩에 쓴 이름은 나예솔이에요.')
+    assert runtime.store.enqueue_completed('alice', token.request_id)
+    current = service(runtime)
+    try:
+        notebook = current.context('alice', '순찰 수첩 원문')
+        assert notebook['stories'] == notebook['evidence'] == notebook['readset'] == []
+        other = current.context('alice', '은하 공방 원문')
+        assert [story['story_id'] for story in other['stories']] == [pottery]
+    finally:
+        current.close()
+
+
+@pytest.mark.parametrize('text', [
+    '내 이름이 뭐였지? 그리고 순찰 수첩 표지색은 빨간색으로 바꿨어.',
+    '그때 말했던 색은 그걸로 바꿨어.',
+    '빨강으로 바꾼 표지에는 점이 몇 개야?',
+    '내 이름이 뭐였지? 순찰 수첩 이야기는 지워 줘.',
+])
+def test_pending_correction_after_read_fences_other_replies(runtime, text):
+    save(runtime, '순찰 수첩 표지색은 청록색이야.', '순찰 수첩')
+    runtime.allow('bob')
+    bob_token = runtime.complete(text, room='chat', user='bob', answer='알겠어요.')
+    assert runtime.store.enqueue_completed('bob', bob_token.request_id)
+    current = service(runtime)
+    try:
+        before = current.context('alice', '순찰 수첩 원문')
+        assert before['readset'] and current.validate_readset(
+            'alice', before['revision'], before['readset'])
+        token = runtime.complete(text, room='chat', answer='알겠어요.')
+        assert runtime.store.enqueue_completed('alice', token.request_id)
+        assert not current.validate_readset('alice', before['revision'], before['readset'],
+                                            request_id='other-reply')
+        assert current.validate_readset('alice', before['revision'], before['readset'],
+                                        request_id=token.request_id)
+        after = current.context('alice', '순찰 수첩 원문')
+        assert after['stories'] == after['evidence'] == after['readset'] == []
+    finally:
+        current.close()
