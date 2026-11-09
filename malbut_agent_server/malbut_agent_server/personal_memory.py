@@ -574,14 +574,27 @@ class PersonalMemory:
                for record in snapshot.memories):
             raise ValidationError('memory_changed')
 
-    def recall_deferred_facts(self, token, snapshot, focus, limit):
+    def recall_deferred_facts(self, token, snapshot, focus, limit, *, previous_name_id=None):
         """Acquire this turn's fact readset in one consent-checked snapshot."""
         with self.memory._transaction() as conn:
             self._check_deferred_turn(conn, token, snapshot)
-            records, _ = self.memory.search_with_revision(
-                token.user_id, snapshot.source['text'], limit=limit, connection=conn,
-                fact_kind=None if focus == 'related' else focus,
-            )
+            if previous_name_id is None:
+                records, _ = self.memory.search_with_revision(
+                    token.user_id, snapshot.source['text'], limit=limit, connection=conn,
+                    fact_kind=None if focus == 'related' else focus,
+                )
+            else:
+                # Only a current, structured own-name slot can corroborate the
+                # old receipt. A miss leaves the snapshot untouched for routing.
+                row = conn.execute(
+                    'SELECT m.* FROM memory_fact_slots s JOIN memories m ON m.id=s.memory_id '
+                    'WHERE s.user_id=? AND m.user_id=s.user_id AND s.memory_id=? AND s.slot_key=? '
+                    'AND (m.expires_at IS NULL OR m.expires_at>?)',
+                    (token.user_id, previous_name_id, json.dumps(['name', 'user', 'name']), time.time()),
+                ).fetchone()
+                if row is None:
+                    return None
+                records = [self.memory._record(row)]
         snapshot.memories = records
         snapshot.dependencies.update(record.id for record in records)
         snapshot.context['memories'] = self._model_candidates(records)

@@ -7,7 +7,7 @@ import hashlib
 import json
 import threading
 from malbut_agent_server.conversation_recall import (
-    event_scoped_attribute, speech_recall_focus, speech_recall_prohibited,
+    event_scoped_attribute, previous_self_name_id, speech_recall_focus, speech_recall_prohibited,
 )
 from malbut_agent_server.memory_trace import observe_inputs
 from malbut_agent_server.personal_memory import requested_operation
@@ -107,17 +107,18 @@ class StoryMemoryProvider(AgentProvider):
             elif (revision is not None or fact_lookup is not None) and not followup:
                 if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
                     focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)
-                    if focus == 'story_repeat':
-                        # Re-read the current authorized sources. A prior answer or its
-                        # later paraphrases may predate a correction in another session.
-                        # Keep the user's own statements, including newer corrections.
-                        conversation_turns = [replace(turn, assistant_content='', response={})
-                                              for turn in conversation_turns]
-                        focus = 'related'
+                    previous_name_id = None
+                    if focus is None and fact_lookup is not None:
+                        previous_name_id = previous_self_name_id(
+                            request.utterance, conversation_turns, conversation_summary)
+                        if previous_name_id is not None:
+                            focus = 'name'
                     if focus is not None:
-                        return self._answer_recall(request, memories, conversation_turns,
-                                                   conversation_summary, context, revision,
-                                                   fact_lookup, focus)
+                        answer = self._answer_recall(
+                            request, memories, conversation_turns, conversation_summary, context,
+                            revision, fact_lookup, focus, previous_name_id=previous_name_id)
+                        if answer is not None:
+                            return answer
                 first_tools = [*tools, recall_tool]
                 first_request = replace(
                     request, available_tools=(*request.available_tools, recall_tool.name),
@@ -159,11 +160,24 @@ class StoryMemoryProvider(AgentProvider):
         )
 
     def _answer_recall(self, request, memories, conversation_turns, conversation_summary,
-                       context, revision, fact_lookup, focus):
+                       context, revision, fact_lookup, focus, *, previous_name_id=None):
         fact_guard = None
         answer_phase = 'requested'
+        if focus == 'story_repeat' or previous_name_id is not None:
+            # A prior assistant answer or its paraphrases may predate a correction.
+            # The user's own statements still carry corrections and temporary names.
+            conversation_turns = [replace(turn, assistant_content='', response={})
+                                  for turn in conversation_turns]
+            if focus == 'story_repeat':
+                focus = 'related'
         if fact_lookup is not None:
-            memories, candidates, fact_guard = fact_lookup(focus)
+            if previous_name_id is None:
+                memories, candidates, fact_guard = fact_lookup(focus)
+            else:
+                current = fact_lookup(focus, previous_name_id=previous_name_id)
+                if current is None:
+                    return None
+                memories, candidates, fact_guard = current
             context = dict(context, memories=candidates)
             if event_scoped_attribute(request.utterance):
                 context['event_attribute_evidence'] = (

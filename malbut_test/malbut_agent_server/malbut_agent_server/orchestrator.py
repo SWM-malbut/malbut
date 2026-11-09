@@ -962,9 +962,9 @@ class AgentOrchestrator:
                     memory_context['mode'] = 'answer_only'
                 memory_arguments['memory_context'] = memory_context
             if memory_snapshot.facts_deferred:
-                def recall_facts(focus):
+                def recall_facts(focus, *, previous_name_id=None):
                     return self.personal_memory.recall_deferred_facts(
-                        token, memory_snapshot, focus, self.memory_limit,
+                        token, memory_snapshot, focus, self.memory_limit, previous_name_id=previous_name_id,
                     )
                 memory_arguments['fact_lookup'] = recall_facts
             provider_result = self.provider.complete(

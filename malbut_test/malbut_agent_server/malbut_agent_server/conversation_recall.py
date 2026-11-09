@@ -133,6 +133,33 @@ def _standalone_speech_focus(text):
     return focus
 
 
+# This narrower grammar is for reusing a past lookup decision, not interpreting
+# a different person's, pet's, temporary or event-specific name.
+_SELF_NAME_QUESTION = re.compile(
+    r'(?:내가|제가)?(?:전에|지난번에|예전에)?(?:알려준|알려드린|말한|말했던|저장한|저장된|저장해둔)?'
+    r'(?:내|제|나의|저의)(?:진짜|정식)?(?:이름|본명|성명|성함)(?:이|은|을|를)?'
+    r'(?:뭐(?:야|예요|였지|였죠|였더라|였나요|였어요)|무엇(?:인가요|이었지|이었죠)|'
+    r'기억나(?:요)?|알려(?:줘|주세요|줄래요?))'
+)
+
+
+def previous_self_name_id(text, turns, summary):
+    """Find a prior lookup receipt for a standalone question about the speaker's own name."""
+    def is_self_name_question(utterance):
+        value = ''.join(unicodedata.normalize('NFKC', utterance).split()).rstrip('.?!。')
+        return _SELF_NAME_QUESTION.fullmatch(value)
+
+    if summary is None and is_self_name_question(text):
+        for turn in reversed(turns):
+            if not is_self_name_question(turn.user_content):
+                continue
+            public = turn.response.get('public', {})
+            ids = public.get('memory', {}).get('ids', [])
+            if public.get('decision', {}).get('type') == 'message' and len(ids) == 1:
+                return ids[0]
+    return None
+
+
 def speech_recall_focus(text, turns, summary):
     """Choose a read-only path; recent user corrections remain part of the answer."""
     focus = _standalone_speech_focus(text)

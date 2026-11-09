@@ -281,6 +281,136 @@ class StoryOrchestrationTests(unittest.TestCase):
                         runtime.handle(req)
                 self.assertEqual(model.call_count, calls)
 
+    def save_identity_fact(self, runtime, kind, subject, attribute, value, text, *, correct_ids=()):
+        request, _ = self.turn(runtime, text, room='identity-source')
+        session = runtime.conversation_store.get('alice', request.conversation_id)
+        source = {'request_id': request.request_id, 'turn_id': request.turn_id, 'text': text,
+                  'conversation_id': session.conversation_id, 'generation': session.generation,
+                  'session_instance_id': session.session_instance_id}
+        saved = runtime.memory_store.upsert_fact('alice', {
+            'kind': kind, 'subject': subject, 'attribute': attribute, 'value': value, 'evidence': text,
+        }, source, correct_ids=correct_ids)
+        return saved['records'][0]
+
+    def ask_identity(self, runtime, backend, text, *, decide=None):
+        request = SpeechAgentRequest.from_dict(self.request(runtime, text, room='identity-voice').to_dict())
+
+        def read_name(req, memories, history, tools, **kwargs):
+            if tools:
+                return self.fact_voice_decision('recall_personal_context', focus='name')
+            values = [item.metadata['fact']['value'] for item in memories]
+            return ProviderResult(AgentDecision('message', ', '.join(values) or '모르겠어요.'),
+                                  'offline', 'test', 0, memory_supported=True)
+
+        with patch.object(backend, 'complete', side_effect=decide or read_name) as model:
+            reply = runtime.handle(request)
+        return request, reply, model.call_args_list
+
+    def test_saved_name_repeat_reads_current_name_once_with_distinct_nickname_and_pet(self):
+        runtime, backend = self.fact_voice_runtime()
+        real = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')
+        self.save_identity_fact(runtime, 'nickname', 'user', 'nickname', '모래별', '내 호칭은 모래별이야.')
+        self.save_identity_fact(runtime, 'pet', '강아지', 'name', '콩눈이', '우리 강아지 이름은 콩눈이야.')
+        _, first, _ = self.ask_identity(runtime, backend, '내 이름이 뭐였지?')
+        self.assertEqual(first.memory_ids, [real.id])
+        alias = '오늘 이 방에서만 나를 단비콩이라고 불러 줘.'
+        self.turn(runtime, alias, room='identity-voice')
+        req, result, calls = self.ask_identity(runtime, backend, '전에 알려 준 내 이름이 뭐였더라?')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.decision.message, '나예솔')
+        self.assertEqual(result.memory_ids, [real.id])
+        self.assertEqual(calls[0].args[3], [])
+        self.assertEqual(calls[0].kwargs['memory_context']['mode'], 'answer_only')
+        self.assertEqual([c['id'] for c in calls[0].kwargs['memory_context']['memories']], [real.id])
+        with patch.object(backend, 'complete', side_effect=AssertionError('replay called the model')):
+            self.assertEqual(runtime.handle(req).decision_id, result.decision_id)
+        # Asking how to address the speaker now still has access to the temporary instruction.
+        _, _, recent = self.ask_identity(runtime, backend, '조금 전 이 방에서만 뭐라고 불러 달랬지?',
+                                         decide=lambda *a, **k: self.fact_voice_decision())
+        self.assertIn(alias, [turn.user_content for turn in recent[0].args[2]])
+        self.assertEqual(recent[0].args[1], [])
+
+    def test_saved_name_repeat_keeps_ambiguous_identity_requests_on_existing_route(self):
+        runtime, backend = self.fact_voice_runtime()
+        self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')
+        self.ask_identity(runtime, backend, '내 이름이 뭐였지?')
+        temporary = '오늘 이 방에서만 단비콩으로 불러 줘.'
+        self.turn(runtime, temporary, room='identity-voice')
+        for text in ('전에 알려 준 내 본명하고 아까 불러 달라고 한 호칭을 각각 말해 줘.',
+                     '전에 전시회에서 사용했던 내 이름이 뭐였지?',
+                     '전에 내 친구가 알려 준 본명이 뭐였더라?'):
+            with self.subTest(text=text):
+                _, _, calls = self.ask_identity(runtime, backend, text,
+                                                decide=lambda *a, **k: self.fact_voice_decision())
+                self.assertIn('recall_personal_context', [tool.name for tool in calls[0].args[3]])
+                self.assertIn(temporary, [t.user_content for t in calls[0].args[2]])
+
+    def test_saved_name_repeat_requires_the_speakers_name_slot_for_the_prior_fact_id(self):
+        runtime, backend = self.fact_voice_runtime()
+        other = self.save_identity_fact(runtime, 'name', '친구', 'name', '하은별', '내 친구 이름은 하은별이야.')
+        # An old answer can have read a single name record without establishing whose name it is.
+        _, first, _ = self.ask_identity(runtime, backend, '내 이름이 뭐였지?',
+                                        decide=lambda *a, **k: self.fact_voice_decision())
+        self.assertEqual(first.memory_ids, [other.id])
+        _, reply, calls = self.ask_identity(runtime, backend, '전에 알려 준 내 이름이 뭐였더라?',
+                                            decide=lambda *a, **k: self.fact_voice_decision())
+        self.assertIn('recall_personal_context', [tool.name for tool in calls[0].args[3]])
+        self.assertEqual(calls[0].args[1], [])
+        self.assertEqual(calls[0].kwargs['memory_context']['memories'], [])
+        self.assertEqual(reply.memory_ids, [])
+
+    def test_saved_name_repeat_after_other_session_correction_and_deletion(self):
+        runtime, backend = self.fact_voice_runtime()
+        old = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 이름은 나예솔이야.')
+        old_request, old_reply, _ = self.ask_identity(runtime, backend, '내 이름이 뭐였지?')
+        self.assertEqual(old_reply.decision.message, '나예솔')
+        paraphrase = '예쁜 솔이라는 두 음절이에요.'
+        with patch.object(backend, 'complete', return_value=ProviderResult(
+                AgentDecision('message', paraphrase), 'offline', 'test', 0, memory_supported=True)):
+            self.turn(runtime, '방금 답을 다르게 말해 줘.', room='identity-voice')
+        current = self.save_identity_fact(runtime, 'name', 'user', 'name', '한여울',
+                                          '내 본명을 한여울로 정정해 줘.', correct_ids=[old.id])
+        text = '전에 알려 준 내 이름이 뭐였더라?'
+        req, answer, calls = self.ask_identity(runtime, backend, text)
+        self.assertEqual(answer.decision.message, '한여울')
+        self.assertEqual(answer.memory_ids, [current.id])
+        self.assertNotIn('나예솔', repr(calls))
+        self.assertNotIn(paraphrase, repr(calls))
+        with self.assertRaises(ValidationError):
+            runtime.handle(old_request)
+        runtime.memory_store.remove_facts('alice', [current.id])
+        with self.assertRaises(MemoryChangedError):
+            answer.to_dict()
+        with self.assertRaises(ValidationError):
+            runtime.handle(req)
+        _, missing, calls = self.ask_identity(runtime, backend, text)
+        self.assertEqual(missing.memory_ids, [])
+        self.assertEqual(missing.decision.message, '모르겠어요.')
+        for revoked in ('한여울', '나예솔', paraphrase):
+            self.assertNotIn(revoked, repr(calls))
+
+    def test_saved_name_repeat_revocation_during_the_only_model_call_blocks_delivery(self):
+        runtime, backend = self.fact_voice_runtime()
+        fact = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')
+        self.ask_identity(runtime, backend, '내 이름이 뭐였지?')
+        repeat = SpeechAgentRequest.from_dict(self.request(
+            runtime, '전에 알려 준 내 이름이 뭐였더라?', room='identity-voice').to_dict())
+
+        def revoke(req, memories, history, tools, **kwargs):
+            if tools:
+                return self.fact_voice_decision('recall_personal_context', focus='name')
+            self.assertEqual([item.id for item in memories], [fact.id])
+            runtime.memory_store.set_personalization('alice', False, {
+                'request_id': 'disable', 'turn_id': 'disable', 'generation': 1,
+                'conversation_id': 'controls', 'session_instance_id': 'controls-1', 'text': '개인화를 꺼 줘.',
+            })
+            return ProviderResult(AgentDecision('message', '나예솔'), 'offline', 'test', 0, memory_supported=True)
+
+        with patch.object(backend, 'complete', side_effect=revoke) as model:
+            with self.assertRaises(MemoryChangedError):
+                runtime.handle(repeat)
+        self.assertEqual(model.call_count, 1)
+
     def first_grounded_speech_answer(self):
         runtime, backend, extractor = self.runtime()
         runtime.story_provider.on_demand_speech = True
