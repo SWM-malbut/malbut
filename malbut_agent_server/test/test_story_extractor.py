@@ -77,6 +77,26 @@ class StoryExtractorTests(unittest.TestCase):
         self.assertNotIn('긴 원문', captured[0])
         self.assertNotIn('비공개 건강', captured[0])
 
+    def test_new_only_instructions_follow_candidates_actually_sent(self):
+        instructions = []
+
+        def transport(_url, _headers, payload, _timeout):
+            instructions.append(payload['instructions'])
+            return response({'updates': []})
+
+        extractor = OpenAIStoryExtractor('key', 'model', transport=transport, max_input_chars=1024)
+        story = {'story_id': 'exhibit', 'title': '전시', 'aliases': [],
+                 'current': [entry(identifier='p1')]}
+        extractor.extract([story], [source()])
+        # The last related candidate may be dropped to fit the request budget.
+        story['aliases'] = ['전시' * 600]
+        extractor.extract([story], [source()])
+        extractor.extract([], [source()])
+        note = '이번 입력에는 연결할 기존 이야기 후보가 없다'
+        self.assertNotIn(note, instructions[0])
+        self.assertIn(note, instructions[1])
+        self.assertEqual(instructions[1], instructions[2])
+
     def test_quote_must_exist_and_repeated_quote_requires_exact_offsets(self):
         for quote in ('없는 문장', '전시'):
             with self.subTest(quote=quote), self.assertRaises(StoryExtractionError):
