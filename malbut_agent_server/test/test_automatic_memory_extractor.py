@@ -77,12 +77,15 @@ class FixtureProvider(AgentProvider):
         return self.result
 
 
-def test_answer_only_keeps_context_but_excludes_extraction_schema_and_prompt():
+@pytest.mark.parametrize('stories', [None, [], [{'title': 'untrusted-story-marker'}]])
+def test_answer_only_keeps_context_but_excludes_extraction_schema_and_prompt(stories):
     calls = []
     context = {
         'mode': 'answer_only', 'enabled': True, 'pending_question': None,
         'memories': [{'content': 'untrusted-memory-marker'}],
     }
+    if stories is not None:
+        context['story_memory_untrusted'] = {'stories': stories}
     original = copy.deepcopy(context)
 
     def transport(_url, _headers, payload, _timeout):
@@ -103,6 +106,8 @@ def test_answer_only_keeps_context_but_excludes_extraction_schema_and_prompt():
     assert MEMORY_INSTRUCTIONS not in payload['instructions']
     assert ANSWER_ONLY_INSTRUCTIONS in payload['instructions']
     assert 'untrusted-memory-marker' not in payload['instructions']
+    assert 'untrusted-story-marker' not in payload['instructions']
+    assert ('기록의 어미까지 그대로' in payload['instructions']) == bool(stories)
     data = json.loads(payload['input'].split('\n', 1)[1])
     assert data['memory_management_context'] == original
     assert data['current_user_utterance'] == request().utterance

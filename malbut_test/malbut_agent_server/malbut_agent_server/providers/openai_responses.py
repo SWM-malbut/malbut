@@ -483,6 +483,12 @@ class OpenAIResponsesProvider(AgentProvider):
         }
         if memory_mode == 'answer_only':
             payload['instructions'] += '\n\n' + ANSWER_ONLY_INSTRUCTIONS
+            if (memory_context.get('story_memory_untrusted') or {}).get('stories'):
+                payload['instructions'] += (
+                    '\n저장된 이름이나 표식을 답할 때 이름 자체의 끝 글자를 보존하고 조사·어미를 이름에 붙이지 마세요. '
+                    '기록이 이름을 따로 구분하지 않고 서술한 경우, 이름만 새로 잘라 따옴표를 붙이지 말고 '
+                    '해당 값이 있는 짧은 구절을 기록의 어미까지 그대로 전하세요.'
+                )
         elif memory_mode == 'automatic_extraction':
             proposal_schema = copy.deepcopy(MEMORY_PROPOSAL_SCHEMA)
             proposal_schema['properties']['operation']['enum'] = ['remember']
