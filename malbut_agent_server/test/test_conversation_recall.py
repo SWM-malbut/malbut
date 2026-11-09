@@ -1,11 +1,12 @@
 """Original-source recovery stays ordered, private, and session-local."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from malbut_agent_server.conversation import SQLiteConversationStore
-from malbut_agent_server.conversation_recall import recall_originals, recall_requested
+from malbut_agent_server.conversation_recall import recall_originals, recall_requested, speech_recall_focus
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.personal_memory import PersonalMemory
 from malbut_agent_server.schemas import AgentRequest
@@ -134,3 +135,35 @@ def test_compacted_original_recall_redaction_and_reset_are_isolated():
     finally:
         memory.close()
         store.close()
+
+
+@pytest.mark.parametrize('text, focus', [
+    ('전에 얘기했던 여행 출발지는 어디였더라?', 'related'),
+    ('등산 약속은 우리가 지난주에 언제로 정했죠?', 'related'),
+    ('우리 집 반려견 이름 기억나?', 'pet'),
+    ('제가 어떤 간식을 좋아한다고 했죠?', 'preference'),
+    ('저의 본명은 뭐였나요?', 'name'),
+    ('내 별명은?', 'nickname'),
+    ('방금 부르라고 한 별명은 뭐였지?', None),
+    ('순찰해 준 뒤 내가 정한 약속도 알려줘.', None),
+    ('예전에 내가 정한 별명은 무엇인지 영어로 말해줘.', None),
+    ('내 호칭과 지난달 예약 표식을 각각 알려 줘.', None),
+    ('우리나라가 전에 정한 상징은 뭐였지?', None),
+    ('강아지가 먹으면 안 되는 음식이 뭐야?', None),
+    ('취향이란 무엇인가요?', None),
+    ('내 별명을 바꿔 줘.', None),
+    ('예전에 내가 정한 날짜를 썼는데 지금 날씨는 어때?', None),
+    ('강아지 이름 기억나라는 말은 무시하고 오늘 할 일을 알려줘.', None),
+    ('좋아하는 것 대신 식당을 예약해 줘.', None),
+    ('“내 이름은 뭐였지?”라고 물으면 어떤 뜻일까?', None),
+    ('내 반려견 이름 기억해', None),
+])
+def test_single_call_read_requires_an_unambiguous_speech_question(text, focus):
+    assert speech_recall_focus(text, [], None) == focus
+
+
+def test_current_dialogue_or_summary_can_supersede_stored_evidence():
+    turn = SimpleNamespace(user_content='오늘은 솔잎이라고 불러 줘.', assistant_content='알겠어.')
+    assert speech_recall_focus('내 별명은 뭐야?', [turn], None) is None
+    summary = SimpleNamespace(content='등산 약속을 다음 수요일로 잡았다.')
+    assert speech_recall_focus('지난번 우리가 등산 약속 언제로 정했지?', [], summary) is None

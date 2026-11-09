@@ -153,10 +153,12 @@ class StoryOrchestrationTests(unittest.TestCase):
         saved = runtime.memory_store.add('alice', '순찰과 무관한 고유 개인 사실', kind='preference')
         request = SpeechAgentRequest.from_dict(self.request(runtime, '집 한 바퀴 순찰해 줘.').to_dict())
         statements = []
-        runtime.conversation_store._connection.set_trace_callback(statements.append)
+        with runtime.conversation_store._lock:
+            runtime.conversation_store._connection.set_trace_callback(statements.append)
         with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model:
             reply = runtime.handle(request)
-        runtime.conversation_store._connection.set_trace_callback(None)
+        with runtime.conversation_store._lock:
+            runtime.conversation_store._connection.set_trace_callback(None)
         call = model.call_args
         self.assertEqual(call.args[1], [])
         self.assertEqual(call.kwargs['memory_context']['memories'], [])
@@ -176,19 +178,17 @@ class StoryOrchestrationTests(unittest.TestCase):
         runtime.memory_store.add('alice', '비공개 이름은 다래', kind='name')
         runtime.memory_store.add('bob', '다른 사용자의 정보', kind='preference')
         request = SpeechAgentRequest.from_dict(self.request(runtime, '내 입맛에 맞는 저녁 추천해 줘.').to_dict())
-        responses = [self.fact_voice_decision('recall_personal_context', focus='preference'),
-                     self.fact_voice_decision()]
+        responses = [self.fact_voice_decision()]
         with patch.object(backend, 'complete', side_effect=responses) as model, patch.object(
                 runtime.story_memory, 'context', wraps=runtime.story_memory.context) as story:
             reply = runtime.handle(request)
             self.assertEqual(runtime.handle(request).decision_id, reply.decision_id)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 1)
         self.assertFalse(story.called)
-        first, second = model.call_args_list
-        self.assertEqual(first.args[1], [])
-        self.assertEqual([item.id for item in second.args[1]], [pref.id])
-        self.assertEqual(second.kwargs['memory_context']['memories'][0]['id'], pref.id)
-        self.assertEqual(second.args[3], [])
+        answer = model.call_args
+        self.assertEqual([item.id for item in answer.args[1]], [pref.id])
+        self.assertEqual(answer.kwargs['memory_context']['memories'][0]['id'], pref.id)
+        self.assertEqual(answer.args[3], [])
         self.assertEqual(reply.memory_ids, [pref.id])
         self.assertLessEqual(reply.expires_at, expiry)
         conn = runtime.conversation_store._connection
@@ -225,7 +225,8 @@ class StoryOrchestrationTests(unittest.TestCase):
                 runtime.story_memory, 'context', wraps=runtime.story_memory.context) as story:
             reply = runtime.handle(request)
         self.assertEqual(story.call_count, 1)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_args.args[3], [])
         self.assertEqual(reply.memory_ids, [])
         self.assertEqual(reply.decision.message, source)
         self.assertTrue(self.persisted(runtime, request)['story_binding']['readset'])
@@ -233,7 +234,7 @@ class StoryOrchestrationTests(unittest.TestCase):
     def test_personal_recall_stops_before_second_model_if_deleted_after_first(self):
         runtime, backend = self.fact_voice_runtime()
         pref = runtime.memory_store.add('alice', '매운 음식을 싫어해요.', kind='preference')
-        request = SpeechAgentRequest.from_dict(self.request(runtime, '내 취향에 맞는 저녁 추천해 줘.').to_dict())
+        request = SpeechAgentRequest.from_dict(self.request(runtime, '어떤 저녁이 나한테 어울릴까?').to_dict())
 
         def erase(*args, **kwargs):
             runtime.memory_store.remove_facts('alice', [pref.id])
@@ -259,22 +260,65 @@ class StoryOrchestrationTests(unittest.TestCase):
                 if len(decisions) == 2:
                     self.assertEqual(model.call_args.args[3], [])
 
-    def test_personal_recall_refuses_deleted_fact_after_second_model(self):
+    def test_fact_deleted_during_read_only_model_call_cannot_be_delivered(self):
         runtime, backend = self.fact_voice_runtime()
-        fact = runtime.memory_store.add('alice', '별명은 구름', kind='nickname')
-        req = SpeechAgentRequest.from_dict(self.request(runtime, '내 별명은 뭐야?').to_dict())
+        for i, (question, calls) in enumerate((('내 별명은 뭐야?', 1),
+                                                ('혹시 나를 뭐라고 부르더라?', 2))):
+            with self.subTest(question=question):
+                fact = runtime.memory_store.add('alice', '별명은 구름', kind='nickname')
+                req = SpeechAgentRequest.from_dict(
+                    self.request(runtime, question, room=f'alias-{i}').to_dict())
 
-        def choose(req, memories, turns, tools, **kwargs):
-            if tools:
-                return self.fact_voice_decision('recall_personal_context', focus='nickname')
-            self.assertEqual([item.id for item in memories], [fact.id])
-            runtime.memory_store.remove_facts('alice', [fact.id])
-            return self.fact_voice_decision()
+                def choose(req, memories, turns, tools, **kwargs):
+                    if tools:
+                        return self.fact_voice_decision('recall_personal_context', focus='nickname')
+                    self.assertEqual([item.id for item in memories], [fact.id])
+                    runtime.memory_store.remove_facts('alice', [fact.id])
+                    return self.fact_voice_decision()
 
-        with patch.object(backend, 'complete', side_effect=choose) as model:
-            with self.assertRaises(MemoryChangedError):
-                runtime.handle(req)
-        self.assertEqual(model.call_count, 2)
+                with patch.object(backend, 'complete', side_effect=choose) as model:
+                    with self.assertRaises(MemoryChangedError):
+                        runtime.handle(req)
+                self.assertEqual(model.call_count, calls)
+
+    def test_single_call_story_answer_preserves_source_and_deletion_fence(self):
+        runtime, backend, _ = self.runtime()
+        runtime.story_provider.on_demand_speech = True
+        runtime.story_memory.enable('alice')
+        source = '우리 전시 약속은 수요일이야.'
+        self.turn(runtime, source, room='source')
+        self.checkpoint(runtime)
+        story = runtime.story_memory.list_stories('alice')[0]
+        question = '전시 약속을 우리가 전에 언제로 정했지?'
+        request = SpeechAgentRequest.from_dict(self.request(runtime, question, room='recall').to_dict())
+        with patch.object(backend, 'complete', wraps=backend.complete) as model:
+            result = runtime.handle(request)
+            self.assertEqual(result.decision.message, source)
+            self.assertEqual(model.call_count, 1)
+            self.assertEqual(model.call_args.args[3], [])
+            self.assertEqual(model.call_args.kwargs['memory_context']['mode'], 'answer_only')
+            self.assertEqual(runtime.handle(request).decision_id, result.decision_id)
+            self.assertEqual(model.call_count, 1)
+        binding = self.persisted(runtime, request)['story_binding']
+        self.assertEqual(binding['readset'][0]['story_id'], story['story_id'])
+        runtime.story_memory.forget('alice', story['story_id'], timeout=5)
+        with self.assertRaises(MemoryChangedError):
+            runtime.assert_reply_fresh('alice', request.request_id)
+        with self.assertRaises(ValidationError):
+            runtime.handle(request)
+
+    def test_unconsented_fresh_owner_never_loads_another_owners_pet(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        runtime.memory_store.add('alice', '강아지 이름은 다래', kind='pet')
+        request = SpeechAgentRequest.from_dict(
+            self.request(runtime, '우리 강아지 이름 기억나?', user='bob').to_dict())
+        with patch.object(backend, 'complete', wraps=backend.complete) as model, patch.object(
+                runtime.story_memory, 'context', wraps=runtime.story_memory.context) as story:
+            result = runtime.handle(request)
+        self.assertEqual(story.call_count, 0)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_args.args[1], [])
+        self.assertEqual(result.memory_ids, [])
 
     def test_personal_management_confirmation_keeps_its_original_target(self):
         from test_personal_memory_flow import pet_fact, proposed

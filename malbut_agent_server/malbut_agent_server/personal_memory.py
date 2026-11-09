@@ -8,6 +8,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, replace
 
+from malbut_agent_server.conversation_recall import speech_recall_focus
 from malbut_agent_server.conversation_preferences import (
     SETTINGS_PROMPT, commit_settings, initial_settings,
     initialize_schema as initialize_preferences_schema,
@@ -472,11 +473,15 @@ class PersonalMemory:
                         not in CANCEL
                     ):
                         pending = None
-                manage = management_request(request.utterance)
+                # A complete read question may contain the same 기억/저장 stems
+                # as management commands (e.g. "우리 강아지 이름 기억나?").
+                read_question = (defer_facts and ('기억' in request.utterance or '저장' in request.utterance)
+                                 and speech_recall_focus(request.utterance, (), None) is not None)
+                manage = not read_question and management_request(request.utterance)
                 deferred = bool(defer_facts and state['enabled'] and not manage and not pending
                                 and not settings_edit and local_intent(request.utterance) is None
-                                and not any(requested_operation(request.utterance, operation)
-                                            for operation in ('remember', 'correct', 'forget')))
+                                and (read_question or not any(requested_operation(request.utterance, operation)
+                                                              for operation in ('remember', 'correct', 'forget'))))
                 memories = (
                     list(
                         self.memory.search(

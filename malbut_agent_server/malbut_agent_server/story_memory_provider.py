@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import threading
+from malbut_agent_server.conversation_recall import speech_recall_focus
 from malbut_agent_server.memory_trace import observe_inputs
 
 from malbut_agent_server.providers.base import (
@@ -94,6 +95,12 @@ class StoryMemoryProvider(AgentProvider):
                         or 'homecam_query_result_untrusted' in context)
             phase = 'result' if followup else 'deferred'
             if (revision is not None or fact_lookup is not None) and not followup:
+                if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
+                    focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)
+                    if focus is not None:
+                        return self._answer_recall(request, memories, conversation_turns,
+                                                   conversation_summary, context, revision,
+                                                   fact_lookup, focus)
                 first_tools = [*tools, recall_tool]
                 first_request = replace(
                     request, available_tools=(*request.available_tools, recall_tool.name),
@@ -109,31 +116,18 @@ class StoryMemoryProvider(AgentProvider):
         if (phase != 'deferred' or name != recall_tool.name or first.decision.type != 'tool_call'
                 or (revision is None and fact_lookup is None)):
             raise ProviderError('invalid story lookup request')
-        fact_guard = None
-        answer_phase = 'requested'
+        arguments = first.decision.arguments
         if fact_lookup is None:
-            if first.decision.arguments:
+            if arguments:
                 raise ProviderError('invalid story lookup request')
+            focus = 'related'
         else:
-            arguments = first.decision.arguments
             if set(arguments) != {'focus'} or arguments['focus'] not in (
                     'related', 'name', 'nickname', 'pet', 'preference'):
                 raise ProviderError('invalid personal recall focus')
             focus = arguments['focus']
-            memories, candidates, fact_guard = fact_lookup(focus)
-            context = dict(context, memories=candidates)
-            # An exact typed fact already answers the selected personal lookup.
-            # Missing and general facts may still need consented narrative evidence.
-            if any(record.kind == focus for record in memories):
-                answer_phase = 'facts'
-        # A story selected as evidence can support a spoken answer, never an action.
-        answer = self._complete(
-            replace(request, available_tools=()), memories, conversation_turns, [], conversation_summary,
-            dict(context, mode='answer_only'), weather_context, answer_phase, revision, fact_guard,
-        )
-        answer.validate()
-        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
-            raise ProviderError('unexpected tool or memory operation after story lookup')
+        answer = self._answer_recall(request, memories, conversation_turns, conversation_summary,
+                                     context, revision, fact_lookup, focus)
         usage = {}
         for key in ProviderUsage.__dataclass_fields__:
             a, b = getattr(first.usage, key), getattr(answer.usage, key)
@@ -143,6 +137,25 @@ class StoryMemoryProvider(AgentProvider):
             input_chars=(first.input_chars + answer.input_chars
                          if first.input_chars is not None and answer.input_chars is not None else None),
         )
+
+    def _answer_recall(self, request, memories, conversation_turns, conversation_summary,
+                       context, revision, fact_lookup, focus):
+        fact_guard = None
+        answer_phase = 'requested'
+        if fact_lookup is not None:
+            memories, candidates, fact_guard = fact_lookup(focus)
+            context = dict(context, memories=candidates)
+            if any(record.kind == focus for record in memories):
+                answer_phase = 'facts'
+        # Evidence can support an answer, never a new action or memory mutation.
+        answer = self._complete(
+            replace(request, available_tools=()), memories, conversation_turns, [], conversation_summary,
+            dict(context, mode='answer_only'), None, answer_phase, revision, fact_guard,
+        )
+        answer.validate()
+        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
+            raise ProviderError('unexpected tool or memory operation after story lookup')
+        return answer
 
     def _complete(self, request, memories, conversation_turns, tools, conversation_summary,
                   memory_context, weather_context, phase, revision, fact_guard=None):
