@@ -306,6 +306,46 @@ class StoryOrchestrationTests(unittest.TestCase):
             reply = runtime.handle(request)
         return request, reply, model.call_args_list
 
+    def test_self_name_edit_receives_only_its_live_slot_and_keeps_final_i(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        original = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')
+        self.save_identity_fact(runtime, 'nickname', 'user', 'nickname', '모래별', '내 호칭은 모래별이야.')
+        self.save_identity_fact(runtime, 'name', '친구', 'name', '하은별', '내 친구 이름은 하은별이야.')
+        text = '내 본명을 해담이로 정정해 줘.'
+
+        def correct(req, memories, history, tools, **kwargs):
+            self.assertEqual([record.id for record in memories], [original.id])
+            self.assertEqual(tools, [])
+            self.assertEqual(req.available_tools, ())
+            ctx = kwargs['memory_context']
+            self.assertEqual([record['id'] for record in ctx['memories']], [original.id])
+            self.assertEqual(ctx['self_name_correction']['new_name_verbatim'], '해담이')
+            return ProviderResult(
+                AgentDecision('clarification', '해담으로 바꿀까요?'), 'offline', 'test', 0,
+                memory_supported=True, memory_proposal={
+                    'operation': 'correct', 'target_ids': [original.id], 'query': '', 'evidence': text,
+                    'facts': [{'kind': 'name', 'subject': 'user', 'attribute': 'name', 'value': '해담',
+                               'evidence': text}],
+                },
+            )
+
+        _, result, calls = self.ask_identity(runtime, backend, text, decide=correct)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('정정했어요', result.decision.message)
+        _, result, calls = self.ask_identity(runtime, backend, '지금 저장된 내 본명이 뭐야?')
+        self.assertEqual(calls, [])
+        self.assertIn('해담이', result.decision.message)
+        self.assertNotIn(original.id, result.memory_ids)
+        runtime.memory_store.remove_facts('alice', result.memory_ids)
+        for query in ('지금 저장된 내 본명이 뭐야?', '새 대화야. 지금 저장된 내 본명이 뭐야?'):
+            _, result, calls = self.ask_identity(runtime, backend, query)
+            self.assertEqual(calls, [])
+            self.assertEqual(result.memory_ids, [])
+            self.assertEqual(result.decision.message, '현재 저장된 본명을 확인할 수 없어요.')
+        _, result, calls = self.ask_identity(runtime, backend, '새 대화야. 장기 기억에 저장된 내 호칭이 뭐야?')
+        self.assertEqual(calls, [])
+        self.assertIn('모래별', result.decision.message)
+
     def test_saved_name_repeat_reads_current_name_once_with_distinct_nickname_and_pet(self):
         runtime, backend = self.fact_voice_runtime()
         real = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')

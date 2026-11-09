@@ -214,11 +214,26 @@ def self_name_correction(text):
     return None
 
 
+def _stored_identity_question(text):
+    match = re.fullmatch(
+        r'\s*(?:새\s*대화야[.]\s*)?(?:(?:지금|현재)\s*)?(?:장기\s*기억에\s*)?'
+        r'(?:저장된|저장해\s*둔|저장한)\s*(?:내|제|나의|저의)\s*'
+        r'(?P<slot>본명|이름|호칭|별명)(?:이|가|은|는)?\s*(?:뭐야|뭐예요|뭔가요|무엇인가요)[?？.]?\s*',
+        text,
+    )
+    if match:
+        return 'name' if match['slot'] in {'본명', '이름'} else 'nickname'
+    return None
+
+
 def _correct_name_fact(fact, correction, text):
+    # A model may strip a final 이 as a spoken suffix. Here 로 is already the
+    # particle, so the preceding 이 is part of the value supplied by the user.
+    new = correction['new']
     return (fact['kind'] == fact['attribute'] == 'name'
             and fact['subject'] in {'user', 'self', '사용자', '나', '저'}
-            and fact['value'] == correction['new']
-            and fact['evidence'] in text and fact['value'] in fact['evidence'])
+            and (fact['value'] == new or (new.endswith('이') and fact['value'] == new[:-1]))
+            and fact['evidence'] in text and new in fact['evidence'])
 
 
 def fact_matches_source(fact, source):
@@ -513,20 +528,21 @@ class PersonalMemory:
                                 and not settings_edit and local_intent(request.utterance) is None
                                 and (read_question or not any(requested_operation(request.utterance, operation)
                                                               for operation in ('remember', 'correct', 'forget'))))
-                memories = (
-                    list(
-                        self.memory.search(
-                            request.user_id,
-                            request.utterance,
-                            limit=memory_limit,
-                            connection=conn,
-                        )
-                    )
-                    if state['enabled'] and not (blocked or deferred)
-                    else []
-                )
+                correction = stored_identity = None
+                if state['enabled'] and not blocked and not pending:
+                    correction = self_name_correction(request.utterance)
+                    stored_identity = _stored_identity_question(request.utterance)
+                if correction or stored_identity:
+                    deferred = False
+                    memories = self._active_identity(request.user_id, stored_identity or 'name', conn)
+                elif state['enabled'] and not (blocked or deferred):
+                    memories = list(self.memory.search(
+                        request.user_id, request.utterance, limit=memory_limit, connection=conn,
+                    ))
+                else:
+                    memories = []
                 candidates = memories
-                if manage:
+                if manage and not (correction or stored_identity):
                     candidates = list(
                         self.memory.search(
                             request.user_id,
@@ -547,6 +563,8 @@ class PersonalMemory:
             except Exception:
                 conn.rollback()
                 raise
+        if stored_identity:
+            source['stored_identity'] = stored_identity
         deps.update(record.id for record in memories)
         return MemorySnapshot(
             state,
@@ -564,11 +582,24 @@ class PersonalMemory:
                 ),
                 'memories': self._model_candidates(candidates),
                 'allowed_kinds': ['name', 'nickname', 'pet', 'preference'],
+                **({'self_name_correction': {'new_name_verbatim': correction['new']}}
+                   if correction else {}),
             },
             pending,
             source,
             deferred, blocked,
         )
+
+    def _active_identity(self, user_id, kind, conn):
+        rows = conn.execute(
+            'SELECT m.* FROM memory_fact_slots s JOIN memories m ON m.id=s.memory_id '
+            'WHERE s.user_id=? AND m.user_id=s.user_id AND m.kind=? '
+            'AND (m.expires_at IS NULL OR m.expires_at>?)',
+            (user_id, kind, time.time()),
+        )
+        records = (self.memory._record(row) for row in rows)
+        return [record for record in records if record.metadata['fact']['attribute'] == kind
+                and record.metadata['fact']['subject'] in {'user', 'self', '사용자', '나', '저'}]
 
     @staticmethod
     def _model_candidates(records):
@@ -823,6 +854,14 @@ class PersonalMemory:
             if edit['scope'] == 'invalid' or not edit['patch']:
                 return reply(SETTINGS_PROMPT, True)
             return reply('선택한 대화 취향을 초기 설정에 저장했어요. 기억 사용 동의는 바꾸지 않았어요.')
+        if snapshot.source.get('stored_identity'):
+            # A question about what is *stored* is answered by the active slot.
+            # A previous correction may still be mentioned in story or dialogue.
+            label = '본명' if snapshot.source['stored_identity'] == 'name' else '호칭'
+            if len(snapshot.memories) == 1:
+                value = snapshot.memories[0].metadata['fact']['value']
+                return reply(f'저장된 {label}은 {value}입니다.')
+            return reply(f'현재 저장된 {label}을 확인할 수 없어요.')
         if local_intent(request.utterance) is not None:
             return reply('기억 설정 요청을 확인했어요.')
         answer = compact(request.utterance).rstrip('.!?。')
@@ -1232,6 +1271,7 @@ class PersonalMemory:
                     or operation not in {'remember', 'correct'} or len(facts) != 1
                     or not _correct_name_fact(facts[0], correction, source['text'])):
                 return reply('정정할 본명을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
+            facts[0]['value'] = correction['new']
             operation = 'correct'
             explicit = True
         if operation in {'forget', 'correct'} and not (
@@ -1300,9 +1340,7 @@ class PersonalMemory:
         if snapshot.pending:
             supplied.update(snapshot.pending['proposal'].get('target_ids', []))
         if correction:
-            own_names = [r for r in records if r.metadata.get('fact', {}).get('kind') == 'name'
-                         and r.metadata['fact'].get('attribute') == 'name'
-                         and r.metadata['fact'].get('subject') in {'user', 'self', '사용자', '나', '저'}]
+            own_names = self._active_identity(token.user_id, 'name', conn)
             if (len(own_names) != 1 or (correction['old'] is not None
                     and own_names[0].metadata['fact']['value'] != correction['old'])
                     or (targets and targets != [own_names[0].id])):

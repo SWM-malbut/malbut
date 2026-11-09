@@ -120,6 +120,73 @@ def test_lexically_supported_fact_needs_no_review(setup):
     assert len(flow.memory.list_for_user('alice')) == 1
 
 
+@pytest.mark.parametrize(('text', 'new_value', 'operation'), [
+    ('내 이름을 윤가람으로 정정해 줘.', '윤가람', 'correct'),
+    ('저장해 둔 제 본명 나예솔을 윤가람으로 정정해 줘.', '윤가람', 'remember'),
+    ('내 본명을 해담이로 정정해 줘.', '해담이', 'correct'),
+    ('내 본명을 윤가람으로 정정해 줘.', '윤가람', 'correct'),
+])
+def test_self_name_edit_is_grounded_once_and_cannot_revive_after_deletion(setup, text, new_value, operation):
+    flow, reviewer = setup
+    flow.enable()
+    source = '내 이름은 나예솔이야'
+    flow.say(source, proposed('remember', source, facts=[name_fact(source, '나예솔')]))
+    flow.remember()
+    start = len(flow.provider.calls)
+    result = flow.say(text, proposed(operation, text, facts=[name_fact(text, new_value)]))
+    edit_request = flow.requests[-1]
+    assert len(flow.provider.calls) == start + 1 and not reviewer.calls
+    assert '정정했어요' in result.decision.message
+    records = flow.memory.list_for_user('alice')
+    current, = (r for r in records if r.kind == 'name')
+    assert current.metadata['fact']['value'] == new_value
+    assert '나예솔' not in [r.metadata['fact']['value'] for r in records]
+    remove = '저장한 내 이름을 삭제해 줘.'
+    flow.say(remove, proposed('forget', remove, targets=[current.id]))
+    with pytest.raises((ConversationChangedError, MemoryChangedError)):
+        flow.runtime.handle(edit_request)
+    # A fresh correction of a missing slot cannot replace the remaining pet.
+    flow.say(text, proposed('correct', text, facts=[name_fact(text, new_value)]))
+    remaining = flow.memory.list_for_user('alice')
+    assert [(r.kind, r.metadata['fact']['value']) for r in remaining] == [('pet', '두부')]
+
+
+@pytest.mark.parametrize(('text', 'value', 'kind', 'operation'), [
+    ('저장해 둔 제 본명 나예솔을 윤가람으로 정정해 줘.', '나예솔', 'name', 'correct'),
+    ('내 본명을 윤가람으로 정정해 줘.', '윤가람', 'nickname', 'remember'),
+    ('내 본명을 윤가람으로 정정해 줘.', '윤가람', 'name', 'forget'),
+    ('제 본명 다른사람을 윤가람으로 정정해 줘.', '윤가람', 'name', 'correct'),
+    ('“내 이름을 윤가람으로 정정해 줘”를 번역해 줘.', '윤가람', 'name', 'correct'),
+    ('내 이름을 윤가람으로 정정하지 마.', '윤가람', 'name', 'correct'),
+    ('친구의 본명을 윤가람으로 정정해 줘.', '윤가람', 'name', 'correct'),
+    ('내 본명을 윤가람으로 정정해 달라는 예시를 읽어 줘.', '윤가람', 'name', 'correct'),
+    ('내 본명을 윤가람으로 정정하지 말고 친구 이름을 알려 줘.', '윤가람', 'name', 'correct'),
+])
+def test_disagreement_and_other_speakers_leave_both_slots_unchanged(setup, text, value, kind, operation):
+    flow, reviewer = setup
+    flow.enable()
+    source = '내 이름은 나예솔이야'
+    flow.say(source, proposed('remember', source, facts=[name_fact(source, '나예솔')]))
+    alias = '내 별명은 모래별이야'
+    flow.say(alias, proposed('remember', alias, facts=[dict(name_fact(alias, '모래별'), kind='nickname', attribute='nickname')]))
+    before = [(r.id, r.kind, r.content) for r in flow.memory.list_for_user('alice')]
+    reviewer.accept = False
+    fact = dict(name_fact(text, value), kind=kind, attribute=kind)
+    flow.say(text, proposed(operation, text, facts=[] if operation == 'forget' else [fact]))
+    assert [(r.id, r.kind, r.content) for r in flow.memory.list_for_user('alice')] == before
+
+
+@pytest.mark.parametrize('text', [
+    '내 본명은 나예솔이 아니라 윤가람이야.', '내 이름을 친구 이름으로 바꿔 줘.',
+    '내 본명을 해 담이로 정정해 줘.', '내 이름을 별명으로 정정해 줘.',
+    '내 본명을 윤가람으로 정정해 주고 옛 이름은 지워 줘.',
+])
+def test_other_phrasings_remain_on_existing_semantic_path(text):
+    from malbut_agent_server.personal_memory import self_name_correction
+
+    assert self_name_correction(text) is None
+
+
 @pytest.mark.parametrize('evidence', [
     '옆집 강아지 이름은 두부야', '강아지 이름은 두부야',
 ])
