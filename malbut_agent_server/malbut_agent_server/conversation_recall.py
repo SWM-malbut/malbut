@@ -133,19 +133,39 @@ def _standalone_speech_focus(text):
     return focus
 
 
-# This narrower grammar is for reusing a past lookup decision, not interpreting
-# a different person's, pet's, temporary or event-specific name.
-_SELF_NAME_QUESTION = re.compile(
-    r'(?:내가|제가)?(?:전에|지난번에|예전에)?(?:알려준|알려드린|말한|말했던|저장한|저장된|저장해둔)?'
+# Anchor ownership to the name noun. A friend's, pet's or event-specific name
+# must retain its own lookup scope even when the utterance also contains "내".
+_SELF_NAME_SUBJECT = re.compile(
+    r'(?:새대화야[.])?(?:혹시)?(?:지금|현재)?(?:장기기억에)?(?:내가|제가)?'
+    r'(?:전에|지난번에|예전에)?(?:알려준|알려드린|말한|말했던|저장한|저장된|저장해둔)?'
     r'(?:내|제|나의|저의)(?:진짜|정식)?(?:이름|본명|성명|성함)(?:이|은|을|를)?'
-    r'(?:뭐(?:야|예요|였지|였죠|였더라|였나요|였어요)|무엇(?:인가요|이었지|이었죠)|'
-    r'기억나(?:요)?|알려(?:줘|주세요|줄래요?))'
+)
+_NAME_READ_VERB = r'(?:말해|알려|가르쳐)(?:줘요?|주세요|줄래요?)'
+_SELF_NAME_PREDICATE = re.compile(
+    r'(?:뭐(?:야|예요|지|죠|였지|였죠|였더라|였나요|였어요|였어)|뭔가요|'
+    r'무엇(?:인가요|이었지|이었죠)|(?:뭔지|무엇인지)' + _NAME_READ_VERB
+    + r'|기억나(?:요)?|' + _NAME_READ_VERB + r'|(?:어떻게|뭐라고)저장(?:돼|되어)있(?:어|나요|어요))'
 )
 
 
-def is_self_name_question(utterance):
+def _self_name_predicate(utterance):
     value = ''.join(unicodedata.normalize('NFKC', utterance).split()).rstrip('.?!。')
-    return _SELF_NAME_QUESTION.fullmatch(value) is not None
+    subject = _SELF_NAME_SUBJECT.match(value)
+    return value[subject.end():] if subject else None
+
+
+def is_self_name_question(utterance):
+    predicate = _self_name_predicate(utterance)
+    return predicate is not None and _SELF_NAME_PREDICATE.fullmatch(predicate) is not None
+
+
+def self_name_lookup(utterance):
+    """Scope a model-selected name lookup when the speaker explicitly owns the name."""
+    predicate = _self_name_predicate(utterance)
+    return (predicate is not None and not predicate.startswith(('으로', '로', '처럼', '보다', '말고'))
+            and not event_scoped_attribute(utterance) and not speech_recall_prohibited(utterance)
+            and not re.search(r'친구|가족|엄마|아빠|동생|언니|누나|형제|반려|강아지|고양이|'
+                              r'이름|본명|성명|성함|호칭|별명|애칭|닉네임|각각|둘다|그리고|번역|인용|예시|대신|[“”"‘’]', predicate))
 
 
 def previous_self_name_id(text, turns, summary):

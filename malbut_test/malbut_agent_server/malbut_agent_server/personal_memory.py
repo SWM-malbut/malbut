@@ -8,7 +8,9 @@ import time
 import unicodedata
 from dataclasses import dataclass, replace
 
-from malbut_agent_server.conversation_recall import is_self_name_question, speech_recall_focus, speech_recall_prohibited
+from malbut_agent_server.conversation_recall import (
+    is_self_name_question, self_name_lookup, speech_recall_focus, speech_recall_prohibited,
+)
 from malbut_agent_server.conversation_preferences import (
     SETTINGS_PROMPT, commit_settings, initial_settings,
     initialize_schema as initialize_preferences_schema,
@@ -215,24 +217,28 @@ def self_name_correction(text):
 
 
 def _self_introduction(text):
-    # Used solely to select evidence for a read. Quoted, conditional, negative
-    # and compound sentences cannot supply an identity from a previous turn.
-    return re.fullmatch(
+    """Read one name from an unbound first-person declaration."""
+    if (not direct_source(text) or re.search(
+            r'아니|아냐|몰라|비밀|뭐|뭔|기억|모르|말할|알려|바뀌|개명|'
+            r'(?:일까|일걸|이래|같아|됐어|없어)[.!。]?\s*$', text)):
+        return None
+    match = re.fullmatch(
         r'\s*(?:내|제|나의|저의|사용자(?:의)?)\s*(?:본명|이름)(?:은|는|이|가|:)?\s*'
-        r'[가-힣]{2,6}(?:이야|야|입니다|이에요|예요)?[.!。]?\s*', text,
-    ) and direct_source(text) and not re.search(r'아니|몰라|비밀|뭐야|뭔데|기억', text)
+        r'(?P<name>[가-힣]{2,6}?)(?:입니다|이에요|예요|이야|야)?[.!。]?\s*', text,
+    )
+    return match['name'] if match else None
 
 
 def _stored_identity_question(text):
+    if is_self_name_question(text) and '저장' in text:
+        return 'name'
     match = re.fullmatch(
         r'\s*(?:새\s*대화야[.]\s*)?(?:(?:지금|현재)\s*)?(?:장기\s*기억에\s*)?'
         r'(?:저장된|저장해\s*둔|저장한)\s*(?:내|제|나의|저의)\s*'
-        r'(?P<slot>본명|이름|호칭|별명)(?:이|가|은|는)?\s*(?:뭐야|뭐예요|뭔가요|무엇인가요)[?？.]?\s*',
+        r'(?:호칭|별명)(?:이|가|은|는)?\s*(?:뭐야|뭐예요|뭔가요|무엇인가요)[?？.]?\s*',
         text,
     )
-    if match:
-        return 'name' if match['slot'] in {'본명', '이름'} else 'nickname'
-    return None
+    return 'nickname' if match else None
 
 
 def _correct_name_fact(fact, correction, text):
@@ -541,7 +547,11 @@ class PersonalMemory:
                 if state['enabled'] and not blocked and not pending:
                     correction = self_name_correction(request.utterance)
                     stored_identity = _stored_identity_question(request.utterance)
-                if correction or stored_identity:
+                name_question = (state['enabled'] and not blocked and not pending
+                                 and (is_self_name_question(request.utterance) or (
+                                     self_name_lookup(request.utterance) and
+                                     speech_recall_focus(request.utterance, (), None) == 'name')))
+                if correction or stored_identity or name_question:
                     deferred = False
                     memories = self._active_identity(request.user_id, stored_identity or 'name', conn)
                 elif state['enabled'] and not (blocked or deferred):
@@ -551,7 +561,7 @@ class PersonalMemory:
                 else:
                     memories = []
                 candidates = memories
-                if manage and not (correction or stored_identity):
+                if manage and not (correction or stored_identity or name_question):
                     candidates = list(
                         self.memory.search(
                             request.user_id,
@@ -569,27 +579,11 @@ class PersonalMemory:
                     conn,
                 )
                 name_evidence_only = False
-                if (state['enabled'] and not pending and not stored_identity and not blocked
-                        and is_self_name_question(request.utterance)
-                        and not self._active_identity(request.user_id, 'name', conn)):
-                    # A deleted fact, another person's name, or an old story
-                    # cannot establish the current speaker's identity. Preserve
-                    # active legacy self-name records and surviving introductions.
-                    cutoff = conn.execute(
-                        'SELECT MAX(self_name_cutoff,legacy_cutoff) FROM memory_policy_state WHERE user_id=?',
-                        (request.user_id,),
-                    ).fetchone()[0]
-                    legacy = conn.execute(
-                        "SELECT m.* FROM memories m WHERE m.user_id=? AND m.kind='name' "
-                        'AND m.created_at>? AND (m.expires_at IS NULL OR m.expires_at>?) AND NOT EXISTS '
-                        '(SELECT 1 FROM memory_fact_slots s WHERE s.memory_id=m.id)',
-                        (request.user_id, cutoff, time.time()),
-                    )
-                    memories = candidates = [self.memory._record(row) for row in legacy
-                                             if _self_introduction(row['content'])]
-                    filtered = [replace(turn, assistant_content='', response={}) for turn in filtered
-                                if turn.created_at > cutoff and _self_introduction(turn.user_content)]
-                    clean_summary, deferred = None, False
+                if name_question and not stored_identity and len(memories) > 1:
+                    stored_identity = 'name'
+                if name_question and not stored_identity:
+                    filtered = self._name_history(request.user_id, conn, memories, filtered)
+                    clean_summary = None
                     name_evidence_only = bool(memories or filtered)
                     if not name_evidence_only:
                         stored_identity = 'name'
@@ -633,8 +627,32 @@ class PersonalMemory:
             (user_id, kind, time.time()),
         )
         records = (self.memory._record(row) for row in rows)
-        return [record for record in records if record.metadata['fact']['attribute'] == kind
-                and record.metadata['fact']['subject'] in {'user', 'self', '사용자', '나', '저'}]
+        owned = [record for record in records if record.metadata['fact']['attribute'] == kind
+                 and record.metadata['fact']['subject'] in {'user', 'self', '사용자', '나', '저'}]
+        if kind == 'name':
+            rows = conn.execute(
+                "SELECT m.* FROM memories m JOIN memory_policy_state p ON p.user_id=m.user_id "
+                "WHERE m.user_id=? AND m.kind='name' AND m.created_at>MAX(p.self_name_cutoff,p.legacy_cutoff) "
+                'AND (m.expires_at IS NULL OR m.expires_at>?) AND NOT EXISTS '
+                '(SELECT 1 FROM memory_fact_slots s WHERE s.memory_id=m.id)', (user_id, time.time()),
+            )
+            for row in rows:
+                record = self.memory._record(row)
+                if not record.metadata.get('fact') and _self_introduction(record.content):
+                    owned.append(record)
+        return owned
+
+    @staticmethod
+    def _name_history(user_id, conn, records, history):
+        # An active structured fact establishes the current name. Otherwise
+        # only direct introductions made after invalidation can supply evidence.
+        if any(record.metadata.get('fact') for record in records):
+            return []
+        cutoff = conn.execute(
+            'SELECT MAX(self_name_cutoff,legacy_cutoff) FROM memory_policy_state WHERE user_id=?', (user_id,),
+        ).fetchone()[0]
+        return [replace(turn, assistant_content='', response={}) for turn in history
+                if turn.created_at > cutoff and _self_introduction(turn.user_content)]
 
     @staticmethod
     def _model_candidates(records):
@@ -666,7 +684,9 @@ class PersonalMemory:
         """Acquire this turn's fact readset in one consent-checked snapshot."""
         with self.memory._transaction() as conn:
             self._check_deferred_turn(conn, token, snapshot)
-            if previous_name_id is None:
+            if focus == 'name' and self_name_lookup(snapshot.source['text']):
+                records = self._active_identity(token.user_id, 'name', conn)
+            elif previous_name_id is None:
                 records, _ = self.memory.search_with_revision(
                     token.user_id, snapshot.source['text'], limit=limit, connection=conn,
                     fact_kind=None if focus == 'related' else focus,
@@ -894,8 +914,12 @@ class PersonalMemory:
             # A previous correction may still be mentioned in story or dialogue.
             label = '본명' if snapshot.source['stored_identity'] == 'name' else '호칭'
             if len(snapshot.memories) == 1:
-                value = snapshot.memories[0].metadata['fact']['value']
+                record = snapshot.memories[0]
+                value = (record.metadata['fact']['value'] if record.metadata.get('fact')
+                         else _self_introduction(record.content))
                 return reply(f'저장된 {label}은 {value}입니다.')
+            if len(snapshot.memories) > 1:
+                return reply(f'저장된 {label} 후보가 여러 개예요. 어떤 {label}을 사용해야 할까요?', True)
             return reply(f'현재 저장된 {label}을 확인할 수 없어요.')
         if local_intent(request.utterance) is not None:
             return reply('기억 설정 요청을 확인했어요.')
@@ -1376,15 +1400,17 @@ class PersonalMemory:
             supplied.update(snapshot.pending['proposal'].get('target_ids', []))
         if correction:
             own_names = self._active_identity(token.user_id, 'name', conn)
-            if (len(own_names) != 1 or (correction['old'] is not None
-                    and own_names[0].metadata['fact']['value'] != correction['old'])
-                    or (targets and targets != [own_names[0].id])):
+            original = own_names[0] if len(own_names) == 1 else None
+            original_fact = original.metadata.get('fact', {}) if original else {}
+            if (original is None or (correction['old'] is not None
+                    and (original_fact.get('value') or _self_introduction(original.content)) != correction['old'])
+                    or (targets and targets != [original.id])):
                 return reply('정정할 기존 본명을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
             # The full command identifies this single slot independently of the
             # model. Preserve its subject spelling so it remains the same slot.
-            proposal['facts'][0]['subject'] = own_names[0].metadata['fact']['subject']
-            targets = [own_names[0].id]
-            supplied.add(own_names[0].id)
+            proposal['facts'][0]['subject'] = original_fact.get('subject', 'user')
+            targets = [original.id]
+            supplied.add(original.id)
         if any(key not in by_id or key not in supplied for key in targets):
             if operation == 'remember' and not explicit:
                 return None, []

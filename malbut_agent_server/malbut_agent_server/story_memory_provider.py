@@ -7,7 +7,7 @@ import hashlib
 import json
 import threading
 from malbut_agent_server.conversation_recall import (
-    event_scoped_attribute, previous_self_name_id, speech_recall_focus, speech_recall_prohibited,
+    event_scoped_attribute, previous_self_name_id, self_name_lookup, speech_recall_focus, speech_recall_prohibited,
 )
 from malbut_agent_server.memory_trace import observe_inputs
 from malbut_agent_server.personal_memory import requested_operation, self_name_correction
@@ -188,6 +188,10 @@ class StoryMemoryProvider(AgentProvider):
                     return None
                 memories, candidates, fact_guard = current
             context = dict(context, memories=candidates)
+            if focus == 'name' and self_name_lookup(request.utterance):
+                # A model-selected self-name lookup also uses only owned facts.
+                # A lookup miss must not fall through to another person's story.
+                conversation_turns, conversation_summary, revision = [], None, None
             if event_scoped_attribute(request.utterance):
                 context['event_attribute_evidence'] = (
                     '개인 사실은 보통 쓰는 기본값이며 행사 당시의 값으로 삼을 수 없습니다. '

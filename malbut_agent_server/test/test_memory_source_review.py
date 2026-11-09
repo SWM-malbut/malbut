@@ -151,6 +151,37 @@ def test_self_name_edit_is_grounded_once_and_cannot_revive_after_deletion(setup,
     assert [(r.kind, r.metadata['fact']['value']) for r in remaining] == [('pet', '두부')]
 
 
+def test_active_unbound_personal_name_is_readable_and_corrected_atomically(setup):
+    flow, reviewer = setup
+    flow.enable()
+    legacy = flow.memory.add('alice', '제 본명은 나예솔입니다.', kind='name')
+    friend = flow.memory.add('alice', '친구 이름은 윤가람이야.', kind='name')
+    read = flow.say('현재 제 이름은 어떻게 저장돼 있어?')
+    assert read.memory_ids == [legacy.id] and '나예솔' in read.decision.message
+    edit = '제 본명 나예솔을 해담이로 정정해 줘.'
+    result = flow.say(edit, proposed('correct', edit, facts=[name_fact(edit, '해담이')]))
+    assert '정정했어요' in result.decision.message and not reviewer.calls
+    records = flow.memory.list_for_user('alice')
+    current, = (r for r in records if r.id != friend.id)
+    assert len(records) == 2 and current.metadata['fact']['value'] == '해담이'
+    assert legacy.id in flow.memory.invalidated_ids('alice')
+    read = flow.say('저장된 내 본명을 말해 줘.')
+    assert read.memory_ids == [current.id] and '해담이' in read.decision.message
+
+
+def test_conflicting_legacy_self_names_require_clarification_and_preserve_ids(setup):
+    flow, _ = setup
+    flow.enable()
+    first = flow.memory.add('alice', '제 이름은 나예솔입니다.', kind='name')
+    other = flow.memory.add('alice', '제 이름은 한여울입니다.', kind='name')
+    read = flow.say('저장된 내 이름이 뭐야?')
+    assert read.decision.type == 'clarification'
+    edit = '내 이름을 해담이로 바꿔 줘.'
+    response = flow.say(edit, proposed('correct', edit, facts=[name_fact(edit, '해담이')]))
+    assert response.decision.type == 'clarification'
+    assert {r.id for r in flow.memory.list_for_user('alice')} == {first.id, other.id}
+
+
 @pytest.mark.parametrize(('text', 'value', 'kind', 'operation'), [
     ('저장해 둔 제 본명 나예솔을 윤가람으로 정정해 줘.', '나예솔', 'name', 'correct'),
     ('내 본명을 윤가람으로 정정해 줘.', '윤가람', 'nickname', 'remember'),

@@ -394,11 +394,35 @@ class StoryOrchestrationTests(unittest.TestCase):
         runtime.memory_store.remove_facts('alice', [old.id])
         self.save_identity_fact(runtime, 'name', '친구', 'name', '윤가람', '내 친구 이름은 윤가람이야.')
         self.turn(runtime, '윤가람은 친구 이름이야. 내 이름으로 저장하지 마.', room='identity-voice')
-        for text in ('내 이름이 뭐야?', '전에 알려 준 내 이름이 뭐였더라?'):
+        for text in ('내 이름이 뭐야?', '전에 알려 준 내 이름이 뭐였더라?', '내 이름은 뭐지?',
+                     '지금 내 이름이 뭐야?', '지금 저장된 내 본명을 알려줘.', '내 이름을 말해 줘.',
+                     '제 이름이 뭔지 가르쳐 주세요.', '현재 제 이름은 어떻게 저장돼 있어?'):
             _, reply, calls = self.ask_identity(runtime, backend, text)
             self.assertEqual(calls, [])
             self.assertEqual(reply.memory_ids, [])
             self.assertEqual(reply.decision.message, '현재 저장된 본명을 확인할 수 없어요.')
+
+    def test_explicit_name_owner_constrains_model_lookup_as_well_as_direct_reads(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        own = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')
+        other = self.save_identity_fact(runtime, 'name', '친구', 'name', '윤가람', '친구 이름은 윤가람이야.')
+        self.turn(runtime, '내 친구가 윤가람이야.', room='identity-voice')
+        for text in ('현재 내 이름은 뭐죠?', '현재 내 이름의 첫 글자를 알려 줘.'):
+            _, result, calls = self.ask_identity(runtime, backend, text)
+            self.assertEqual(result.memory_ids, [own.id])
+            supplied = calls[-1]
+            self.assertEqual([m.metadata['fact']['subject'] for m in supplied.args[1]], ['user'])
+            self.assertEqual(supplied.args[2:4], ([], []))
+            self.assertNotIn('윤가람', repr(supplied))
+        runtime.memory_store.remove_facts('alice', [own.id])
+        _, result, calls = self.ask_identity(runtime, backend, '현재 내 이름의 첫 글자를 알려 줘.')
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.memory_ids, [])
+        self.assertEqual(calls[-1].args[1:4], ([], [], []))
+        self.assertNotIn('story_memory_untrusted', calls[-1].kwargs['memory_context'])
+        # When the named subject is actually a friend, their record remains available.
+        _, result, _ = self.ask_identity(runtime, backend, '내 친구 이름을 알려 줘.')
+        self.assertEqual(result.memory_ids, [other.id])
 
     def test_plain_name_question_preserves_legacy_and_recent_first_person_evidence(self):
         runtime, backend = self.fact_voice_runtime(stories=True)
