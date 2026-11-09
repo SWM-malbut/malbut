@@ -170,7 +170,7 @@ def test_comparison_includes_sources_when_change_was_only_saved_as_episode(runti
     ('저장해 둔 내 호칭이 뭐였지?', '저장된 호칭은 모래별이에요.', True),
 ])
 def test_unrelated_fact_question_does_not_hide_story_after_reopen(runtime, question, answer, claim):
-    notebook = save(runtime, '순찰 수첩 표지색은 청록색이야.', '순찰 수첩')
+    notebook = save(runtime, '내 순찰 수첩 표지색은 청록색이야.', '순찰 수첩')
     token = runtime.complete(question, room='chat', answer=answer)
     assert runtime.store.enqueue_completed('alice', token.request_id)
     if claim:

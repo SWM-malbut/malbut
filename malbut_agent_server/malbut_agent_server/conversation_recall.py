@@ -130,14 +130,36 @@ def speech_recall_focus(text, turns, summary):
             return None
         focus = 'related'
 
-    if turns or summary:
+    if focus == 'related':
+        terms = {term for term in _query_terms(text) if len(term) >= 2 and term != '전에'
+                 and not _QUESTION.match(term) and not _PAST_TIME.match(term)}
+        if any(term in getattr(summary, 'content', '') for term in terms):
+            return None
+        for turn in turns:
+            user = getattr(turn, 'user_content', '')
+            answer = getattr(turn, 'assistant_content', '')
+            shared = {term for term in terms if term in user or term in answer}
+            if not shared:
+                continue
+            response = getattr(turn, 'response', {})
+            decision = response.get('public', response).get('decision', {})
+            # A tool receipt with one word in common does not answer a
+            # historical question. The exchange stays in the model's input.
+            if decision.get('type') == 'tool_call' and len(shared) == 1:
+                continue
+            # The prior question itself is not evidence of the value. Keep
+            # recent user statements and corrections eligible even on a single match.
+            if (_QUESTION.search(user) and not _NOT_SINGLE_READ.search(''.join(user.split()))
+                    and not re.search(r'이제|바[뀌뀐꿔꿨꾼]|정정|아니|[.!].+|,', user)
+                    and (len(shared) == 1 or re.search(
+                        r'확인할 수 없|찾을 수 없|기억나지 않|알 수 없|모르겠', answer))):
+                continue
+            return None
+    elif turns or summary:
         recent = ' '.join(getattr(turn, 'user_content', '') + ' ' +
                           getattr(turn, 'assistant_content', '') for turn in turns)
         recent += ' ' + getattr(summary, 'content', '')
-        if focus == 'related':
-            if any(term in recent for term in _query_terms(text) if len(term) >= 2):
-                return None
-        elif re.search(_RECENT_HINT[focus], recent):
+        if re.search(_RECENT_HINT[focus], recent):
             return None
     return focus
 

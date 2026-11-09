@@ -574,9 +574,12 @@ class StoryRuntimeStore:
                 'updated_at': row['updated_at'], 'source_time': row['source_time'],
                 'untrusted': True, 'execution_authorized': False}
 
-    def _candidate_rows(self, conn, user, query, limit, exclude_ids=()):
+    def _candidate_rows(self, conn, user, query, limit, exclude_ids=(), *, extraction=False):
         normalized_query = unicodedata.normalize('NFKC', query).casefold()
         terms = set(re.findall(r'\w+', normalized_query))
+        if extraction:
+            # First-person pronouns identify the speaker, never a shared topic.
+            terms.difference_update({'내', '제', '내가', '제가', '나는', '저는', '저희', '우리'})
         ranked = []
         for row in conn.execute('SELECT * FROM story_runtime_stories WHERE user_id=? AND active=1', (user,)):
             if row['story_id'] in exclude_ids:
@@ -648,7 +651,8 @@ class StoryRuntimeStore:
                                  'error_code': 'source_too_large', 'retry_scheduled': False,
                                  'attempt': row['attempts']})
                 return None
-            previous = self._candidate_rows(conn, user, ' '.join(item['text'] for item in sources), 5)
+            previous = self._candidate_rows(conn, user, ' '.join(item['text'] for item in sources),
+                                            5, extraction=True)
             stories = []
             source_ids = {SourceRef.from_dict(item['ref']).key: item['id'] for item in sources}
             total = sum(len(item['text']) for item in sources)
@@ -956,7 +960,7 @@ class StoryRuntimeStore:
             # claim() matches both sides of every turn in a batch. All positive
             # matches across pending turns cover every possible top-five batch.
             return {row['story_id'] for row in self._candidate_rows(
-                conn, user, ' '.join(texts), limit=None)}
+                conn, user, ' '.join(texts), limit=None, extraction=True)}
 
     def failed_story_ids(self, user, request_id=None):
         """Quarantine affected stories, not every story owned by a failed job's user.

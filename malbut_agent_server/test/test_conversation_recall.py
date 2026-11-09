@@ -183,3 +183,16 @@ def test_current_dialogue_or_summary_can_supersede_stored_evidence():
 ])
 def test_turn_specific_prohibition_is_scoped_to_storage_or_disclosure(utterance, prohibited):
     assert speech_recall_prohibited(utterance) == prohibited
+
+
+def test_historical_question_still_reads_after_unrelated_action_or_unanswered_question():
+    query = '내가 전에 순찰 수첩 표지색을 뭘로 골랐다고 했지?'
+    patrol = SimpleNamespace(user_content='집을 한 바퀴 순찰해 줘.',
+                             assistant_content='Manager에 작업 실행을 요청할게요.',
+                             response={'public': {'decision': {'type': 'tool_call'}}})
+    missing = SimpleNamespace(user_content=query, assistant_content='표지색은 확인할 수 없어요.')
+    unrelated = SimpleNamespace(user_content='저번 순찰 장소가 어디였지?', assistant_content='거실이에요.')
+    assert speech_recall_focus(query, [patrol, missing, unrelated], None) == 'related'
+
+    correction = SimpleNamespace(user_content='수첩은 이제 빨강이야.', assistant_content='알겠어요.')
+    assert speech_recall_focus(query, [patrol, correction], None) is None
