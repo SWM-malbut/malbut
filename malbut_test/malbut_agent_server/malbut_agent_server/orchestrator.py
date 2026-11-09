@@ -46,7 +46,7 @@ from malbut_agent_server.providers.base import (
     accepts_weather_context,
 )
 from malbut_agent_server.prompting import bounded_weather_context
-from malbut_agent_server.weather import daily_forecast_reply
+from malbut_agent_server.weather import current_temperature_reply, daily_forecast_reply
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import (
@@ -1282,13 +1282,14 @@ class AgentOrchestrator:
                 type='message', message=SERVICE_UNAVAILABLE_NOTICE,
                 reason='weather_unavailable', confidence=1.0,
             ), memory_proposal=None)
-        reply = daily_forecast_reply(
-            request.utterance, weather, (memory_context or {}).get('response_settings', {}),
-        )
-        if reply is not None:
-            return replace(first_result, decision=AgentDecision(
-                'message', reply, reason='weather_daily_forecast', confidence=1.0,
-            ), memory_proposal=None)
+        settings = (memory_context or {}).get('response_settings', {})
+        for render, reason in ((daily_forecast_reply, 'weather_daily_forecast'),
+                               (current_temperature_reply, 'weather_current_temperature')):
+            reply = render(request.utterance, weather, settings)
+            if reply is not None:
+                return replace(first_result, decision=AgentDecision(
+                    'message', reply, reason=reason, confidence=1.0,
+                ), memory_proposal=None)
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(
