@@ -101,6 +101,19 @@ def test_unresolvable_correction_remains_conservative(runtime):
     assert runtime.store.failed_story_ids('alice') == {pottery, hiking}
 
 
+def test_revoked_topic_match_cannot_suppress_conservative_fallback(runtime):
+    pottery = save(runtime, '은하 공방은 오후 4시야.', '은하 공방')
+    hiking = save(runtime, '솔봉 등산은 오전 8시야.', '솔봉 등산')
+    exhaust(runtime, '은하 공방은 오후 6시로 변경했어.', room='new')
+    assert runtime.store.failed_story_ids('alice') == {pottery}
+
+    conn = runtime.conversations._connection
+    with conn:
+        conn.execute('UPDATE conversation_turns SET user_content=? WHERE user_id=? AND user_content=?',
+                     ('원문 정정', 'alice', '은하 공방은 오후 4시야.'))
+    assert runtime.store.failed_story_ids('alice') == {hiking}
+
+
 def test_failed_batch_keeps_individual_turn_scopes(runtime):
     pottery = save(runtime, '은하 공방 수업은 오후 4시야.', '은하 공방')
     hiking = save(runtime, '솔봉 등산은 오전 8시야.', '솔봉 등산')

@@ -222,3 +222,27 @@ def test_fact_disable_reports_separate_story_setting_without_changing_consent(tm
             assert stories.policy('alice') == before
     finally:
         flow.close()
+
+
+def test_finished_version_does_not_mask_a_revoked_failed_version(runtime):
+    runtime.allow()
+    token, job = runtime.claim_turn()
+    fact = save_fact(runtime, token)
+    assert runtime.store.commit(job, [])
+    conn = runtime.conversations._connection
+    with conn:
+        conn.execute(
+            "INSERT INTO story_runtime_jobs "
+            "(user_id,job_id,request_id,source_digest,sources_json,state,"
+            "available_at,policy_revision,created_at) "
+            "SELECT user_id,'prior-version',request_id,'prior-digest',sources_json,"
+            "'failed',available_at,policy_revision,created_at "
+            "FROM story_runtime_jobs WHERE job_id=?", (job['job_id'],),
+        )
+    runtime.memories.remove_facts('alice', [fact.id])
+    assert runtime.store.recover('alice') == 0
+    states = dict(conn.execute(
+        'SELECT job_id,state FROM story_runtime_jobs WHERE user_id=? AND request_id=?',
+        ('alice', token.request_id),
+    ))
+    assert states == {job['job_id']: 'done', 'prior-version': 'cancelled'}

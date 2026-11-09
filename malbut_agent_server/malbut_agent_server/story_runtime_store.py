@@ -374,8 +374,9 @@ class StoryRuntimeStore:
                 result.append(ref)
         return result
 
-    def _enqueue(self, conn, user, request_id):
-        policy = self._policy(conn, user)
+    def _enqueue(self, conn, user, request_id, *, policy=None):
+        if policy is None:
+            policy = self._policy(conn, user)
         if not policy['enabled'] or not policy['external_consent']:
             return False
         row = conn.execute("SELECT rowid,* FROM conversation_turns WHERE user_id=? "
@@ -384,6 +385,16 @@ class StoryRuntimeStore:
             return False
         refs = self._raw_refs(conn, user, row)
         if not refs:
+            return False
+        digest = _digest([ref.key for ref in refs])
+        existing = conn.execute('SELECT * FROM story_runtime_jobs WHERE user_id=? '
+                                'AND request_id=? AND source_digest=?', (user, request_id, digest)).fetchone()
+        # A finished job cannot be queued or cancelled again. Check for other
+        # source versions that would still need cancellation on revocation.
+        if (existing and existing['state'] == 'done' and not conn.execute(
+                "SELECT 1 FROM story_runtime_jobs WHERE user_id=? AND request_id=? "
+                "AND state IN ('queued','running','failed') LIMIT 1", (user, request_id),
+        ).fetchone()):
             return False
         if any(self._resolve(conn, user, ref) is None for ref in refs):
             # A fact tombstone revokes retained raw text without erasing it.
@@ -403,9 +414,6 @@ class StoryRuntimeStore:
                          "WHERE user_id=? AND request_id=? AND state IN ('queued','running','failed')",
                          (user, request_id))
             return False
-        digest = _digest([ref.key for ref in refs])
-        existing = conn.execute('SELECT * FROM story_runtime_jobs WHERE user_id=? '
-                                'AND request_id=? AND source_digest=?', (user, request_id, digest)).fetchone()
         if existing:
             scope = conn.execute('SELECT grant_revision FROM story_runtime_scope WHERE user_id=? '
                                  'AND request_id=?', (user, request_id)).fetchone()
@@ -450,9 +458,16 @@ class StoryRuntimeStore:
             version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
             if self._recovery_versions.get(user) == version:
                 return 0
-            rows = conn.execute("SELECT request_id FROM conversation_turns WHERE user_id=? "
-                                "AND status='completed' ORDER BY completed_at,rowid", (user,)).fetchall()
-            queued = sum(self._enqueue(conn, user, row[0]) for row in rows)
+            # An ungranted turn older than every consent window cannot acquire
+            # a grant. Explicit history grants still qualify regardless of age.
+            earliest = min((w['opened_at'] for w in json.loads(p['windows_json'])), default=None)
+            rows = conn.execute(
+                "SELECT t.request_id FROM conversation_turns t WHERE t.user_id=? "
+                "AND t.status='completed' AND (t.created_at>=? OR EXISTS "
+                "(SELECT 1 FROM story_runtime_scope s WHERE s.user_id=t.user_id "
+                "AND s.request_id=t.request_id)) ORDER BY t.completed_at,t.rowid", (user, earliest),
+            ).fetchall()
+            queued = sum(self._enqueue(conn, user, row[0], policy=p) for row in rows)
             version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
         # Publish the checkpoint only after the transaction commits. A failed
         # commit must not hide a completion from the next recovery attempt.
@@ -899,12 +914,26 @@ class StoryRuntimeStore:
                 if request_id is None or job['request_id'] != request_id]
             if not jobs:
                 return set()
-            stories = [row for row in conn.execute(
-                'SELECT * FROM story_runtime_stories WHERE user_id=? AND active=1', (user,))
-                if self._story_valid(conn, user, row)]
-            all_ids = {row['story_id'] for row in stories}
+            stories = {row['story_id']: row for row in conn.execute(
+                'SELECT story_id, title, aliases_json, active, refs_json '
+                'FROM story_runtime_stories WHERE user_id=? AND active=1', (user,))}
+            validity = {}
+
+            def valid_ids(identifiers):
+                # All matches and fallback decisions use the same source-valid
+                # stories. Resolve only the topics a failed correction can affect.
+                result = set()
+                for identifier in identifiers:
+                    if identifier not in stories:
+                        continue
+                    if identifier not in validity:
+                        validity[identifier] = self._story_valid(conn, user, stories[identifier])
+                    if validity[identifier]:
+                        result.add(identifier)
+                return result
+
             topics = {}
-            for row in stories:
+            for row in stories.values():
                 labels = [row['title'], *json.loads(row['aliases_json'])]
                 words = set(re.findall(r'\w+', _normalized(' '.join(labels))))
                 specific = {word for word in words if len(word) >= 2} - _TOPIC_CATEGORIES
@@ -913,8 +942,8 @@ class StoryRuntimeStore:
 
             def matching(text):
                 text = _normalized(text)
-                return {identifier for identifier, words in topics.items()
-                        if any(word in text for word in words)}
+                return valid_ids(identifier for identifier, words in topics.items()
+                                 if any(word in text for word in words))
 
             blocked = set()
             # A reply's own extraction cannot retroactively cancel delivery.
@@ -922,7 +951,7 @@ class StoryRuntimeStore:
                 refs = [ref for ref in _refs(job['sources_json']) if ref.role == 'user']
                 sources = [self._resolve(conn, user, ref) for ref in refs]
                 if not sources or any(source is None for source in sources):
-                    blocked.update(all_ids)
+                    blocked.update(valid_ids(stories))
                     continue
                 text = ' '.join(source.text for source in sources)
                 direct = matching(text)
@@ -947,10 +976,10 @@ class StoryRuntimeStore:
                                              'WHERE user_id=? AND request_id=?',
                                              (user, turn['request_id'])).fetchone()
                         if reply:
-                            contextual.update(set(json.loads(reply[0])) & all_ids)
+                            contextual.update(valid_ids(json.loads(reply[0])))
                 blocked.update(contextual)
                 if not direct and not contextual:
-                    blocked.update(all_ids)
+                    blocked.update(valid_ids(stories))
             return blocked
 
     def candidates(self, user, query, limit=5, *, exclude_ids=()):
