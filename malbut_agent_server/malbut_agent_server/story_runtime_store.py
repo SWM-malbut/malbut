@@ -62,6 +62,14 @@ _PATROL_REQUEST = re.compile(
     rf'(?:(?:집(?:안)?(?:을)?)?{_PATROL_SCOPE}순찰(?:을)?(?:시작)?해'
     rf'|집(?:안)?(?:을)?{_PATROL_SCOPE}둘러봐)(?:줘|주세요|줄래(?:요)?)?[.!?。]?'
 )
+# The complement after "말고" must also be a standalone request to stay put.
+# Extra words can change a different memory, even if the reply acknowledges a stop.
+_PATROL_STOP = re.compile(
+    r'(?:(?:지금|오늘)은?|이제는?)?(?:집(?:안)?(?:을)?)?순찰(?:은|을)?'
+    r'(?:하지(?:마(?:라|세요|요)?|말아(?:줘요?|주세요|줄래요?)?|말자'
+    r'|말고,?(?:지금은?)?(?:그냥)?(?:가만히있어|기다려|대기해)(?:줘요?|주세요|줄래요?)?)'
+    r'|(?:그만|취소|중지)해(?:줘요?|주세요|줄래요?)?)[.!?。]?'
+)
 
 
 def _normalized(text):
@@ -943,6 +951,33 @@ class StoryRuntimeStore:
                                  'retry_scheduled': retry,
                                  'retry_after_seconds': 2 ** member['attempts'] if retry else None})
 
+    @staticmethod
+    def _standalone_patrol_receipt(conn, user, request_id, utterance):
+        if _PATROL_STOP.fullmatch(utterance):
+            tool = 'cancel_voice_mission'
+        elif _PATROL_REQUEST.fullmatch(utterance):
+            tool = 'request_patrol'
+        else:
+            return False
+        # Check the final, approved decision; older receipts cannot establish it.
+        receipt = conn.execute(
+            """SELECT json_extract(response_json, '$.public.decision.type'),
+                      json_extract(response_json, '$.public.decision.tool_name'),
+                      json_extract(response_json, '$.public.safety.code')
+               FROM conversation_turns
+               WHERE user_id=? AND request_id=? AND status='completed'
+               AND CASE WHEN json_valid(response_json) THEN
+                   json_extract(response_json, '$.schema_version') IN (2, 3)
+                   AND json_type(response_json, '$.public.safety.allowed')='true'
+                   AND json_type(response_json, '$.public.decision.tool_name') IS NOT NULL
+               END""", (user, request_id),
+        ).fetchone()
+        if receipt is None:
+            return False
+        decision = tuple(receipt)
+        return (decision == ('tool_call', tool, 'manager_request')
+                or (tool == 'cancel_voice_mission' and decision == ('message', None, 'not_an_action')))
+
     def pending_story_ids(self, user, request_id=None):
         """Return possible extraction targets, or None when their scope is unknown."""
         with self._transaction() as conn:
@@ -961,25 +996,10 @@ class StoryRuntimeStore:
                 sources = {ref.role: self._resolve(conn, user, ref) for ref in refs}
                 if set(sources) != {'user', 'assistant'} or not all(sources.values()):
                     return None
-                question = ''.join(_normalized(sources['user'].text).split())
-                if not _FACT_QUESTION.fullmatch(question):
-                    if not _PATROL_REQUEST.fullmatch(question):
-                        return None
-                    # Use the stored final Manager proposal. Missing, denied
-                    # and older responses leave the possible update unbounded.
-                    receipt = conn.execute(
-                        """SELECT 1 FROM conversation_turns
-                           WHERE user_id=? AND request_id=? AND status='completed'
-                           AND CASE WHEN json_valid(response_json) THEN
-                               json_extract(response_json, '$.schema_version') IN (2, 3)
-                               AND json_extract(response_json, '$.public.decision.type')='tool_call'
-                               AND json_extract(response_json, '$.public.decision.tool_name')='request_patrol'
-                               AND json_type(response_json, '$.public.safety.allowed')='true'
-                               AND json_extract(response_json, '$.public.safety.code')='manager_request'
-                           END""", (user, job['request_id']),
-                    ).fetchone()
-                    if not receipt:
-                        return None
+                utterance = ''.join(_normalized(sources['user'].text).split())
+                if not (_FACT_QUESTION.fullmatch(utterance)
+                        or self._standalone_patrol_receipt(conn, user, job['request_id'], utterance)):
+                    return None
                 texts.extend(source.text for source in sources.values())
             if not texts:
                 return set()

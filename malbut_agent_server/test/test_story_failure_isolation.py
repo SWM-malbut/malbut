@@ -231,11 +231,14 @@ def test_pending_correction_after_read_fences_other_replies(runtime, text):
         current.close()
 
 
-def queue_patrol(runtime, utterance, *, tool='request_patrol', allowed=True, version=2):
+def queue_patrol(runtime, utterance, *, tool='request_patrol', allowed=True, version=2, answer=None):
     token = runtime.begin(utterance, room='other-room').token
-    answer = 'Manager에 작업 실행을 요청할게요.'
-    public = {'decision': {'type': 'tool_call', 'tool_name': tool, 'message': answer},
-              'safety': {'allowed': allowed, 'code': 'manager_request' if allowed else 'denied'}}
+    if answer is None:
+        answer = ('Manager에 작업 실행을 요청할게요.' if tool else
+                  '알겠습니다. 순찰은 시작하지 않고 가만히 있을게요.')
+    code = 'manager_request' if tool else 'not_an_action'
+    public = {'decision': {'type': 'tool_call' if tool else 'message', 'tool_name': tool, 'message': answer},
+              'safety': {'allowed': allowed, 'code': code if allowed else 'denied'}}
     response = public if version is None else {'schema_version': version, 'public': public}
     if version == 3:
         response['safety_binding'] = {'state_evidence_id': 'observed-state',
@@ -304,3 +307,74 @@ def test_pending_patrol_needs_standalone_request_and_approved_receipt(
         assert current.validate_readset('alice', before['revision'], before['readset']) is scoped
     finally:
         current.close()
+
+
+@pytest.mark.parametrize('utterance,tool,version', [
+    ('순찰은 하지 말고 지금은 가만히 있어 줘.', None, 2),
+    ('순찰은 하지 말고 지금은 가만히 있어 줘.', 'cancel_voice_mission', 3),
+    ('순찰하지 마.', None, 2), ('오늘은 집 안 순찰을 하지 말아 주세요.', None, 3),
+    ('순찰 취소해 줘.', 'cancel_voice_mission', 2),
+])
+def test_pending_patrol_stop_keeps_bike_story_and_fences_the_patrol_story(runtime, utterance, tool, version):
+    bike = save(runtime, '자전거 모임 별표 이름은 보름잔이야.', '자전거 모임')
+    patrol = save(runtime, '순찰은 해가 지면 하기로 정했어.', '순찰 일정')
+    # Only the assistant's acknowledgement contains '시작하지' (or 'Manager에' for a cancellation).
+    concert = save(runtime, '피아노 공연은 시작하지 않는다고 Manager에 안내했어.', '피아노 공연')
+    current = service(runtime)
+    try:
+        bike_before = current.context('alice', '자전거 모임')
+        patrol_before = current.context('alice', '순찰 일정')
+        assert [b['story_id'] for b in bike_before['readset']] == [bike]
+        assert [p['story_id'] for p in patrol_before['readset']] == [patrol]
+        queue_patrol(runtime, utterance, tool=tool, version=version)
+        # Check the same sources before the worker starts and while it is extracting in another room.
+        for state in ('queued', 'running'):
+            if state == 'running':
+                job = runtime.store.claim('alice')
+                assert {s['story_id'] for s in job['stories']} == {patrol, concert}
+            assert runtime.store.pending_story_ids('alice') == {patrol, concert}
+            assert current.validate_readset('alice', bike_before['revision'], bike_before['readset'])
+            assert not current.validate_readset('alice', patrol_before['revision'], patrol_before['readset'])
+            assert [s['story_id'] for s in current.context('alice', '자전거 모임')['stories']] == [bike]
+            assert not current.context('alice', '순찰 일정')['stories']
+        # A later ambiguous correction in a different room must fence the same earlier reply.
+        correction = runtime.complete('그 표시는 새별로 바꿨어.', room='correction-room', answer='알겠어요.')
+        assert runtime.store.enqueue_completed('alice', correction.request_id)
+        assert runtime.store.pending_story_ids('alice') is None
+        assert not current.validate_readset('alice', bike_before['revision'], bike_before['readset'])
+        assert not current.context('alice', '자전거 모임')['stories']
+    finally:
+        current.close()
+
+
+@pytest.mark.parametrize('utterance,tool,allowed,version', [
+    ('순찰은 하지 말고 자전거 모임 이름은 새별로 바꿨어.', None, True, 2),
+    ('그거 하지 말고 지금은 가만히 있어 줘.', 'cancel_voice_mission', True, 3),
+    ('그날은 토요일로 바꿨어. 순찰은 하지 마.', 'cancel_voice_mission', True, 3),
+    ('순찰은 하지 말고 지금은 가만히 있어 줘.', 'request_patrol', True, 2),
+    ('순찰은 하지 말고 지금은 가만히 있어 줘.', 'cancel_voice_mission', False, 3),
+    ('순찰은 하지 말고 지금은 가만히 있어 줘.', None, True, 1),
+])
+def test_patrol_stop_with_unresolved_scope_invalidates_other_rooms_readsets(
+        runtime, utterance, tool, allowed, version):
+    save(runtime, '자전거 모임 별표 이름은 보름잔이야.', '자전거 모임')
+    current = service(runtime)
+    try:
+        before = current.context('alice', '자전거 모임')
+        assert before['readset']
+        queue_patrol(runtime, utterance, tool=tool, allowed=allowed, version=version)
+        assert runtime.store.pending_story_ids('alice') is None
+        assert not current.validate_readset('alice', before['revision'], before['readset'])
+        assert not current.context('alice', '자전거 모임')['stories']
+    finally:
+        current.close()
+
+
+@pytest.mark.parametrize('receipt', [{}, {'schema_version': 2, 'public': {
+    'decision': {'type': 'message'}, 'safety': {'allowed': True, 'code': 'not_an_action'},
+}}])
+def test_patrol_stop_without_a_complete_decision_fences_pending_sources(runtime, receipt):
+    token = runtime.begin('순찰하지 마.', room='other-room').token
+    runtime.conversations.complete_turn(token, '순찰을 시작하지 않을게요.', receipt)
+    assert runtime.store.enqueue_completed('alice', token.request_id)
+    assert runtime.store.pending_story_ids('alice') is None
