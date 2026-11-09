@@ -8,7 +8,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, replace
 
-from malbut_agent_server.conversation_recall import speech_recall_focus
+from malbut_agent_server.conversation_recall import speech_recall_focus, speech_recall_prohibited
 from malbut_agent_server.conversation_preferences import (
     SETTINGS_PROMPT, commit_settings, initial_settings,
     initialize_schema as initialize_preferences_schema,
@@ -182,8 +182,15 @@ def negated_management(text):
 
 def requested_operation(text, operation):
     """Require an operation-specific current instruction, not a model label."""
-    if not direct_source(text) or negated_management(text):
+    if not direct_source(text):
         return False
+    if negated_management(text):
+        # A read prohibition may be followed by a separate affirmative edit.
+        clauses = re.split(r'지\s*말고', text, maxsplit=1)
+        if (not speech_recall_prohibited(text) or len(clauses) != 2
+                or negated_management(clauses[1])):
+            return False
+        text = clauses[1]
     patterns = {
         'forget': r'삭제해|삭제하|잊어|잊으|지워|지우자|없애',
         'correct': r'정정해|정정하|수정해|수정하|변경해|바꿔|바꾸자|아니라|정확히는',
@@ -347,6 +354,7 @@ class MemorySnapshot:
     pending: dict | None
     source: dict
     facts_deferred: bool = False
+    recall_blocked: bool = False
 
 
 class PersonalMemory:
@@ -477,8 +485,9 @@ class PersonalMemory:
                 # as management commands (e.g. "우리 강아지 이름 기억나?").
                 read_question = (defer_facts and ('기억' in request.utterance or '저장' in request.utterance)
                                  and speech_recall_focus(request.utterance, (), None) is not None)
-                manage = not read_question and management_request(request.utterance)
-                deferred = bool(defer_facts and state['enabled'] and not manage and not pending
+                blocked = bool(defer_facts and speech_recall_prohibited(request.utterance))
+                manage = not (read_question or blocked) and management_request(request.utterance)
+                deferred = bool(defer_facts and state['enabled'] and not blocked and not manage and not pending
                                 and not settings_edit and local_intent(request.utterance) is None
                                 and (read_question or not any(requested_operation(request.utterance, operation)
                                                               for operation in ('remember', 'correct', 'forget'))))
@@ -491,7 +500,7 @@ class PersonalMemory:
                             connection=conn,
                         )
                     )
-                    if state['enabled'] and not deferred
+                    if state['enabled'] and not (blocked or deferred)
                     else []
                 )
                 candidates = memories
@@ -536,7 +545,7 @@ class PersonalMemory:
             },
             pending,
             source,
-            deferred,
+            deferred, blocked,
         )
 
     @staticmethod
@@ -1006,9 +1015,9 @@ class PersonalMemory:
         text = request.utterance
         pending = snapshot.pending
         answer = compact(text).rstrip('.!?。')
-        explicit = management_request(text) or requested_operation(
-            text, 'remember'
-        )
+        explicit = (management_request(text) or requested_operation(text, 'remember')
+                    or (snapshot.recall_blocked and any(requested_operation(text, op)
+                                                       for op in ('forget', 'correct'))))
         source = snapshot.source
         proposal = result.provider_result.memory_proposal
         control = local_intent(text)
@@ -1294,6 +1303,8 @@ class PersonalMemory:
             else:
                 identified = self._identify_targets(records, source['text'])
                 matches = [by_id[key] for key in identified]
+                if not matches and snapshot.recall_blocked and re.search(r'저장(?:된|한)\s*이름', text):
+                    matches = [record for record in records if record.kind == 'name']
                 if not matches:
                     matches = list(
                         self.memory.search(
@@ -1306,6 +1317,8 @@ class PersonalMemory:
                     if len(matches) == 1 and len(records) > 1:
                         matches = records[:10]
                 if len(matches) != 1:
+                    if matches and snapshot.recall_blocked:
+                        return reply('어떤 저장 항목인지 종류를 더 구체적으로 알려 주세요.', True), []
                     if matches:
                         proposal['target_ids'] = [item.id for item in matches]
                         self._question(conn, token, 'target', proposal, source)

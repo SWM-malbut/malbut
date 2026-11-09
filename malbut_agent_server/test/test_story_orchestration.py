@@ -320,6 +320,74 @@ class StoryOrchestrationTests(unittest.TestCase):
         self.assertEqual(model.call_args.args[1], [])
         self.assertEqual(result.memory_ids, [])
 
+    def test_read_prohibition_skips_both_stores_and_private_tools_including_on_retry(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        runtime.memory_store.add('alice', '제 이름은 비단', kind='name')
+        request = SpeechAgentRequest.from_dict(
+            self.request(runtime, '제 이름을 꺼내지 말아 주세요.').to_dict())
+        with patch.object(backend, 'complete', wraps=backend.complete) as model, patch.object(
+                runtime.memory_store, 'search_with_revision', wraps=runtime.memory_store.search_with_revision) as facts, patch.object(
+                runtime.story_memory, 'context', wraps=runtime.story_memory.context) as stories:
+            answer = runtime.handle(request)
+            self.assertEqual(runtime.handle(request).decision_id, answer.decision_id)
+        self.assertEqual(model.call_count, 1)
+        self.assertFalse(facts.called or stories.called)
+        call = model.call_args
+        self.assertEqual(call.args[1], [])
+        self.assertEqual(call.kwargs['memory_context']['memories'], [])
+        self.assertEqual(call.kwargs['memory_context']['mode'], 'answer_only')
+        self.assertFalse({'recall_story_memory', 'recall_personal_context'}.intersection(
+            tool.name for tool in call.args[3]))
+
+    def test_unoffered_recall_on_prohibited_turn_cannot_trigger_a_read(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        req = SpeechAgentRequest.from_dict(self.request(runtime, '기억은 조회하지 마.').to_dict())
+        for name in ('recall_story_memory', 'recall_personal_context'):
+            with self.subTest(name=name), patch.object(
+                    backend, 'complete', return_value=self.fact_voice_decision(name)) as model, patch.object(
+                    runtime.story_memory, 'context', side_effect=AssertionError('unrequested story')):
+                with self.assertRaises(ProviderError):
+                    runtime.handle(req)
+                self.assertEqual(model.call_count, 1)
+
+    def test_no_disclosure_plus_deletion_resolves_target_locally_without_current_fact_in_input(self):
+        from test_personal_memory_flow import proposed
+
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        fact = runtime.memory_store.add('alice', '저장 이름은 비단', kind='name')
+        keep = runtime.memory_store.add('alice', '저장 호칭은 연두', kind='nickname')
+        text = '이름은 말하지 말고 저장한 이름은 지워줘.'
+        req = SpeechAgentRequest.from_dict(self.request(runtime, text).to_dict())
+        proposal = self.fact_voice_decision()
+        proposal.memory_proposal = proposed('forget', text, query='이름')
+        with patch.object(backend, 'complete', return_value=proposal) as model:
+            result = runtime.handle(req)
+            self.assertEqual(runtime.handle(req).decision_id, result.decision_id)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_args.args[1], [])
+        self.assertNotIn('비단', str(model.call_args.kwargs['memory_context']))
+        self.assertNotIn('비단', result.decision.message)
+        identifiers = {record.id for record in runtime.memory_store.list_for_user('alice')}
+        self.assertNotIn(fact.id, identifiers)
+        self.assertIn(keep.id, identifiers)
+
+    def test_event_specific_attribute_reads_both_current_fact_and_source_story(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        current = runtime.memory_store.add('alice', '내 현재 별명은 구름', kind='nickname')
+        source = '시낭송 전시에서 처음 소개한 별명은 솔잎이야.'
+        self.turn(runtime, source, room='source')
+        self.checkpoint(runtime)
+        q = '시낭송 전시에서 썼던 내 별명은 뭐였지?'
+        request = SpeechAgentRequest.from_dict(self.request(runtime, q, room='question').to_dict())
+        with patch.object(backend, 'complete', wraps=backend.complete) as model:
+            result = runtime.handle(request)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_args.args[3], [])
+        self.assertEqual([row.id for row in model.call_args.args[1]], [current.id])
+        self.assertIn('event_attribute_evidence', model.call_args.kwargs['memory_context'])
+        self.assertEqual(result.decision.message, source)
+        self.assertTrue(self.persisted(runtime, request)['story_binding']['readset'])
+
     def test_personal_management_confirmation_keeps_its_original_target(self):
         from test_personal_memory_flow import pet_fact, proposed
 

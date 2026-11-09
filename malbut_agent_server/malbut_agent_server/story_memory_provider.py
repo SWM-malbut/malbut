@@ -6,8 +6,11 @@ import copy
 import hashlib
 import json
 import threading
-from malbut_agent_server.conversation_recall import speech_recall_focus
+from malbut_agent_server.conversation_recall import (
+    event_scoped_attribute, speech_recall_focus, speech_recall_prohibited,
+)
 from malbut_agent_server.memory_trace import observe_inputs
+from malbut_agent_server.personal_memory import requested_operation
 
 from malbut_agent_server.providers.base import (
     AgentProvider, ProviderError, accepts_memory_context, accepts_weather_context,
@@ -88,13 +91,20 @@ class StoryMemoryProvider(AgentProvider):
         phase = None
         revision = None
         first_request, first_tools = request, tools
+        restricted_operations = ()
         if deferred:
             revision = self.service.recall_revision(request.user_id)
             # An evidence answer has already selected a read-only function.
             followup = (weather_context is not None or 'patrol_observations_untrusted' in context
                         or 'homecam_query_result_untrusted' in context)
             phase = 'result' if followup else 'deferred'
-            if (revision is not None or fact_lookup is not None) and not followup:
+            if speech_recall_prohibited(request.utterance):
+                phase = 'restricted'
+                restricted_operations = tuple(op for op in ('remember', 'correct', 'forget')
+                                              if requested_operation(request.utterance, op))
+                if not restricted_operations:
+                    memory_context = dict(context, mode='answer_only')
+            elif (revision is not None or fact_lookup is not None) and not followup:
                 if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
                     focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)
                     if focus is not None:
@@ -109,6 +119,9 @@ class StoryMemoryProvider(AgentProvider):
             first_request, memories, conversation_turns, first_tools, conversation_summary,
             memory_context, weather_context, phase, revision,
         )
+        if (phase == 'restricted' and first.memory_proposal is not None
+                and first.memory_proposal.get('operation') not in restricted_operations):
+            raise ProviderError('unexpected memory operation on a restricted turn')
         name = getattr(getattr(first, 'decision', None), 'tool_name', None)
         if name not in (STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name):
             return first
@@ -145,7 +158,13 @@ class StoryMemoryProvider(AgentProvider):
         if fact_lookup is not None:
             memories, candidates, fact_guard = fact_lookup(focus)
             context = dict(context, memories=candidates)
-            if any(record.kind == focus for record in memories):
+            if event_scoped_attribute(request.utterance):
+                context['event_attribute_evidence'] = (
+                    '개인 사실은 보통 쓰는 기본값이며 행사 당시의 값으로 삼을 수 없습니다. '
+                    '질문한 바로 그 행사·장소와 값을 연결하는 대화나 이야기 근거로만 당시 값을 답하세요. '
+                    '다른 행사 기록이나 기본값만 있으면 당시 값은 확인할 수 없다고 답하세요.'
+                )
+            elif any(record.kind == focus for record in memories):
                 answer_phase = 'facts'
         # Evidence can support an answer, never a new action or memory mutation.
         answer = self._complete(

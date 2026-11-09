@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.conversation import SQLiteConversationStore
-from malbut_agent_server.conversation_recall import recall_originals, recall_requested, speech_recall_focus
+from malbut_agent_server.conversation_recall import (
+    recall_originals, recall_requested, speech_recall_focus, speech_recall_prohibited,
+)
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.personal_memory import PersonalMemory
 from malbut_agent_server.schemas import AgentRequest
@@ -167,3 +169,17 @@ def test_current_dialogue_or_summary_can_supersede_stored_evidence():
     assert speech_recall_focus('내 별명은 뭐야?', [turn], None) is None
     summary = SimpleNamespace(content='등산 약속을 다음 수요일로 잡았다.')
     assert speech_recall_focus('지난번 우리가 등산 약속 언제로 정했지?', [], summary) is None
+
+
+@pytest.mark.parametrize('utterance,prohibited', [
+    ('제 이름이 뭔지 꺼내지 말아 주세요.', True),
+    ('내가 뭘 좋아하는지 알려주지 마요.', True),
+    ('저장된 내용을 보지 말고 집을 가볍게 순찰해 주세요.', True),
+    ('기억을 조회하지 말고 저장한 이름은 지워 줘.', True),
+    ('개인 정보를 참고하지 않았으면 좋겠어.', True),
+    ('예전 일을 기억하지 못하겠어?', False),
+    ('내가 전에 그 별명을 쓰겠다고 말하지 않았어?', False),
+    ('날씨는 읽지 말아 주세요.', False),
+])
+def test_turn_specific_prohibition_is_scoped_to_storage_or_disclosure(utterance, prohibited):
+    assert speech_recall_prohibited(utterance) == prohibited

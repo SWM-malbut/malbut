@@ -62,12 +62,35 @@ _RECENT_HINT = {'name': _KIND['name'] + r'|(?:저는|나는|난)\s*[가-힣]{2,5
                 'preference': _KIND['preference'] + '|좋아해'}
 
 
+_READ_OR_DISCLOSE = re.compile(
+    r'(?:조회|검색|확인|사용|참고|언급|공개|활용|불러오|가져오|참조|기억|찾|열람|읽|꺼내|되살리|떠올리|'
+    r'알려|말|보여|들려|대답|답변|보|쓰|살펴보|들추)(?:해주|해|하|주|어주|아주|아보|어보|보)?'
+    r'(?:지(?:는|도)?(?:마|말(?:아|고|라|자|았으면)|않(?:게|도록|았으면|으면좋)|못하게)|면안|금지|없이)'
+    r'|(?:안(?:읽|쓰|보|꺼내|찾아보)(?:고|면좋|았으면)|(?:기억|저장정보)(?:은|는|을|를)?(?:빼고|제외하고|없이))'
+)
+_STORED_SUBJECT = re.compile(r'기억|저장|예전|지난|개인정보|이름|별명|호칭|애칭|입맛|취향|선호|'
+                             r'좋아하|좋아했|반려|강아지|고양이|전에(?:내가|제가|우리)|(?:내가|제가)전에|전에.*(?:얘기|말|이야기)')
+_EVENT_SCOPE = re.compile(r'당시|당일|그때|그날|시절|무렵|동안|그행사|(?:행사|모임|축제|대회|여행|전시)(?:에서|날|때)|(?:했을|갔을|하던|할)때|'
+                          r'(?:에서|때).*(?:썼|쓴|쓰던|소개|밝힌|밝혔|불렸|불리|사용|였|었|했던)')
+
+
+def speech_recall_prohibited(text):
+    """Suppress a read for this turn when the speaker forbids using or disclosing it."""
+    value = ''.join(unicodedata.normalize('NFKC', text).split()).casefold()
+    return bool(_STORED_SUBJECT.search(value) and _READ_OR_DISCLOSE.search(value))
+
+
+def event_scoped_attribute(text):
+    """A current attribute alone cannot establish what was used at a past event."""
+    return bool(_EVENT_SCOPE.search(''.join(unicodedata.normalize('NFKC', text).split())))
+
+
 def speech_recall_focus(text, turns, summary):
     """Select a typed or narrative read only for an unambiguous long-term question."""
     raw = unicodedata.normalize('NFKC', text).strip()
     value = re.sub(r'[\s,]+', '', raw.rstrip('.?!。！？')).casefold()
     if (not re.fullmatch('[가-힣a-z0-9]+', value) or _NOT_SINGLE_READ.search(value)
-            or _MULTIPLE.search(raw)
+            or _MULTIPLE.search(raw) or speech_recall_prohibited(raw)
             or (re.search(r'기억해(?:요)?$', value) and not raw.endswith('?'))):
         return None
     if not (_READ_END.search(value) or (_QUESTION.search(value) and _QUESTION_END.search(value))
@@ -126,7 +149,7 @@ def recall_originals(personal_memory, request, token, snapshot, token_budget=204
     Whole exchanges are retained; the provider handles an oversized exchange.
     """
     store = personal_memory.conversations
-    if (not store.semantic_context or snapshot.summary is None
+    if (getattr(snapshot, 'recall_blocked', False) or not store.semantic_context or snapshot.summary is None
             or not recall_requested(request.utterance)):
         return
     with store._lock:
