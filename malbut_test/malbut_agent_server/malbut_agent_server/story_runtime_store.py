@@ -7,7 +7,7 @@ Deletion is application-level redaction; it does not promise media/backup erasur
 """
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -74,6 +74,13 @@ def _source_object(ref, source, identifier):
             'completed_at': source.completed_at}
 
 
+@dataclass
+class _ValidationSnapshot:
+    changes: int
+    sources: dict = field(default_factory=dict)
+    fact_guards: dict = field(default_factory=dict)
+
+
 class StoryRuntimeStore:
     """A shared-transaction backend. user_id must come from a trusted caller."""
 
@@ -122,13 +129,18 @@ class StoryRuntimeStore:
         can correct or erase source text without touching this Python object.
         Writes on this connection also invalidate the snapshot's memo.
         """
-        with self._transaction() as conn:
-            previous = self._source_cache
-            self._source_cache = (conn.total_changes, {})
-            try:
+        with self.conversations._lock:
+            if self.conversations._connection.in_transaction:
+                # A caller-owned transaction can roll back a savepoint without
+                # changing total_changes. Only reuse a snapshot we opened.
                 yield
-            finally:
-                self._source_cache = previous
+                return
+            with self._transaction() as conn:
+                self._source_cache = _ValidationSnapshot(conn.total_changes)
+                try:
+                    yield
+                finally:
+                    self._source_cache = None
 
     def _initialize(self):
         definitions = (
@@ -481,52 +493,60 @@ class StoryRuntimeStore:
 
     def _resolve(self, conn, user, ref):
         cache = self._source_cache
-        if cache is None:
+        if cache is None or cache.changes != conn.total_changes:
+            # A later rollback does not decrement total_changes. Leave the
+            # memo disabled for the rest of a snapshot that observed a write.
             return self._resolve_uncached(conn, user, ref)
-        if cache[0] != conn.total_changes:
-            cache = self._source_cache = (conn.total_changes, {})
         key = (user, ref)
-        if key not in cache[1]:
-            cache[1][key] = self._resolve_uncached(conn, user, ref)
-        return cache[1][key]
+        if key not in cache.sources:
+            cache.sources[key] = self._resolve_uncached(conn, user, ref)
+        return cache.sources[key]
+
+    def _fact_guards(self, conn, user):
+        cache = self._source_cache
+        if cache is not None and cache.changes == conn.total_changes and user in cache.fact_guards:
+            return cache.fact_guards[user]
+        has_stamps = self._has_table(conn, 'memory_turn_state')
+        tombstones = [(row['memory_id'], json.loads(row['source_key']))
+                      for row in conn.execute(
+                          'SELECT memory_id,source_key FROM memory_tombstones WHERE user_id=?',
+                          (user,))]
+        guards = (has_stamps, tombstones)
+        if cache is not None and cache.changes == conn.total_changes:
+            cache.fact_guards[user] = guards
+        return guards
 
     def _resolve_uncached(self, conn, user, ref):
         source = read_source(conn, user, ref)
         if source is None:
             return None
-        row = conn.execute('SELECT * FROM conversation_turns WHERE user_id=? AND conversation_id=? '
-                           'AND session_instance_id=? AND generation=? AND turn_id=?',
-                           (user, ref.conversation_id, ref.session_instance_id,
-                            ref.generation, ref.turn_id)).fetchone()
-        scope = conn.execute('SELECT identity_json FROM story_runtime_scope WHERE user_id=? '
-                             'AND request_id=?', (user, row['request_id'])).fetchone() if row else None
-        if scope is None or scope[0] != _identity(row):
+        identity = (ref.conversation_id, ref.session_instance_id, ref.generation, ref.turn_id)
+        row = conn.execute(
+            '''SELECT t.request_id FROM conversation_turns t
+               JOIN story_runtime_scope s ON s.user_id=t.user_id AND s.request_id=t.request_id
+               WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
+                 AND t.generation=? AND t.turn_id=? AND s.identity_json=?
+                 AND NOT EXISTS (SELECT 1 FROM story_runtime_exclusions
+                                 WHERE user_id=t.user_id AND message_key=? AND sha256=?)''',
+            (user, *identity, _json(identity), _message_key(ref), ref.sha256),
+        ).fetchone()
+        if row is None:
             return None
-        # Fact deletion/correction retains raw conversation text, but revokes
-        # its source and any turns explicitly stamped as depending on it.
-        # Story-only reply markers have no fact source: do not treat disabling
-        # story recall as a deletion of the underlying retained story.
-        source_key = {key: row[key] for key in (
-            'conversation_id', 'session_instance_id', 'generation',
-            'turn_id', 'request_id',
-        )}
+        # Fact deletion can retain raw text. Revoke both its exact source and
+        # turns stamped as depending on it. Story-only markers have no source.
+        source_key = dict(conversation_id=ref.conversation_id,
+                          session_instance_id=ref.session_instance_id, generation=ref.generation,
+                          turn_id=ref.turn_id, request_id=row['request_id'])
+        has_stamps, tombstones = self._fact_guards(conn, user)
         dependencies = set()
-        if self._has_table(conn, 'memory_turn_state'):
+        if has_stamps:
             stamp = conn.execute('SELECT dependencies_json FROM memory_turn_state '
                                  'WHERE user_id=? AND request_id=?',
                                  (user, row['request_id'])).fetchone()
             if stamp is not None:
                 dependencies = set(json.loads(stamp[0]))
-        for tombstone in conn.execute(
-                'SELECT memory_id,source_key FROM memory_tombstones WHERE user_id=?',
-                (user,)):
-            revoked = json.loads(tombstone['source_key'])
-            if revoked and (revoked == source_key
-                            or tombstone['memory_id'] in dependencies):
-                return None
-        if conn.execute('SELECT 1 FROM story_runtime_exclusions WHERE user_id=? '
-                        'AND message_key=? AND sha256=?',
-                        (user, _message_key(ref), ref.sha256)).fetchone():
+        if any(revoked and (revoked == source_key or memory_id in dependencies)
+               for memory_id, revoked in tombstones):
             return None
         return source
 
