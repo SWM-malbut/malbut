@@ -229,3 +229,71 @@ def test_pending_correction_after_read_fences_other_replies(runtime, text):
         assert after['stories'] == after['evidence'] == after['readset'] == []
     finally:
         current.close()
+
+
+def queue_patrol(runtime, utterance, *, tool='request_patrol', allowed=True, legacy=False):
+    token = runtime.begin(utterance, room='other-room').token
+    answer = 'Manager에 작업 실행을 요청할게요.'
+    public = {'decision': {'type': 'tool_call', 'tool_name': tool, 'message': answer},
+              'safety': {'allowed': allowed, 'code': 'manager_request' if allowed else 'denied'}}
+    response = public if legacy else {'schema_version': 2, 'public': public}
+    runtime.conversations.complete_turn(token, answer, response)
+    assert runtime.store.enqueue_completed('alice', token.request_id)
+
+
+@pytest.mark.parametrize('claim', [False, True])
+def test_pending_drink_question_and_home_patrol_leave_exhibition_available(runtime, claim):
+    exhibition = save(runtime, '순찰 로봇 전시회는 금요일에 가기로 했어.', '순찰 전시')
+    patrol = save(runtime, '집 안을 가볍게 둘러보는 건 오후에 하기로 했어.', '집 안 둘러보기')
+    manager = save(runtime, '외출 준비는 Manager에 요청하기로 했어.', '외출 준비')
+    drink = runtime.complete('내가 좋아하는 음료가 뭐였더라?', answer='좋아하는 음료는 오미자차예요.')
+    assert runtime.store.enqueue_completed('alice', drink.request_id)
+    queue_patrol(runtime, '집 안을 가볍게 한 바퀴 둘러봐 줘.')
+    if claim:
+        job = runtime.store.claim('alice', batch_size=2)
+        assert len(job['batch_job_ids']) == 2
+        assert {s['story_id'] for s in job['stories']} == {patrol, manager}
+    runtime.reopen()
+    current = service(runtime)
+    try:
+        assert runtime.store.pending_story_ids('alice') == {patrol, manager}
+        result = current.context('alice', '내가 순찰 로봇 전시회에 무슨 요일에 가기로 했었지?')
+        assert result['pending'] == 2
+        assert [s['story_id'] for s in result['stories']] == [exhibition]
+        assert current.validate_readset('alice', result['revision'], result['readset'])
+        correction = runtime.complete('그 전시는 토요일로 바꿨어.', room='third-room')
+        assert runtime.store.enqueue_completed('alice', correction.request_id)
+        assert runtime.store.pending_story_ids('alice') is None
+        assert not current.validate_readset('alice', result['revision'], result['readset'])
+    finally:
+        current.close()
+
+
+@pytest.mark.parametrize('text,tool,allowed,legacy,scoped', [
+    ('집을 한 바퀴 순찰해 줘.', 'request_patrol', True, False, True),
+    ('별일 없는지 집을 구석구석 꼼꼼히 순찰해 줘.', 'request_patrol', True, False, True),
+    ('이제 집 안 순찰을 시작해 줘.', 'request_patrol', True, False, True),
+    ('지금은 간단히 집 안을 한 번 순찰해 줘.', 'request_patrol', True, False, True),
+    ('순찰해 주세요.', 'request_patrol', True, False, True),
+    ('집 안을 한 바퀴 둘러봐 줘.', 'request_patrol', True, False, True),
+    ('둘러봐 줘.', 'request_patrol', True, False, False),
+    ('집 안 순찰해 줘.', 'request_navigation', True, False, False),
+    ('집 안 순찰해 줘.', 'request_patrol', False, False, False),
+    ('집 안 순찰해 줘.', 'request_patrol', True, True, False),
+    ('그날은 토요일이야 집 안을 한 바퀴 둘러봐 줘.', 'request_patrol', True, False, False),
+    ('집 안 순찰해 줘 전시는 토요일로 바꿨어.', 'request_patrol', True, False, False),
+    ('집 안 순찰할 때 작은방을 빼 줘.', 'request_patrol', True, False, False),
+    ('집 안 순찰해 줘 이름은 모래별이야.', 'request_patrol', True, False, False),
+])
+def test_pending_patrol_needs_standalone_request_and_approved_receipt(
+        runtime, text, tool, allowed, legacy, scoped):
+    save(runtime, '도예 예약은 금요일이야.', '도예 예약')
+    current = service(runtime)
+    try:
+        before = current.context('alice', '도예 예약')
+        assert before['readset']
+        queue_patrol(runtime, text, tool=tool, allowed=allowed, legacy=legacy)
+        assert runtime.store.pending_story_ids('alice') == (set() if scoped else None)
+        assert current.validate_readset('alice', before['revision'], before['readset']) is scoped
+    finally:
+        current.close()

@@ -54,6 +54,16 @@ _FACT_QUESTION = re.compile(
 )
 
 
+# A standalone patrol can refer only to the house or the patrol itself.
+# A generic "둘러봐" may refer to a topic supplied by another turn.
+_PATROL_SCOPE = r'(?:구석구석)?(?:가볍게|간단히|꼼꼼히)?(?:한바퀴|한번)?'
+_PATROL_REQUEST = re.compile(
+    r'(?:지금은?|이제)?(?:별일없는지)?(?:간단히)?'
+    rf'(?:(?:집(?:안)?(?:을)?)?{_PATROL_SCOPE}순찰(?:을)?(?:시작)?해'
+    rf'|집(?:안)?(?:을)?{_PATROL_SCOPE}둘러봐)(?:줘|주세요|줄래(?:요)?)?[.!?。]?'
+)
+
+
 def _normalized(text):
     return unicodedata.normalize('NFKC', text).casefold()
 
@@ -953,7 +963,23 @@ class StoryRuntimeStore:
                     return None
                 question = ''.join(_normalized(sources['user'].text).split())
                 if not _FACT_QUESTION.fullmatch(question):
-                    return None
+                    if not _PATROL_REQUEST.fullmatch(question):
+                        return None
+                    # Use the stored final Manager proposal. Missing, denied
+                    # and older responses leave the possible update unbounded.
+                    receipt = conn.execute(
+                        """SELECT 1 FROM conversation_turns
+                           WHERE user_id=? AND request_id=? AND status='completed'
+                           AND CASE WHEN json_valid(response_json) THEN
+                               json_extract(response_json, '$.schema_version')=2
+                               AND json_extract(response_json, '$.public.decision.type')='tool_call'
+                               AND json_extract(response_json, '$.public.decision.tool_name')='request_patrol'
+                               AND json_type(response_json, '$.public.safety.allowed')='true'
+                               AND json_extract(response_json, '$.public.safety.code')='manager_request'
+                           END""", (user, job['request_id']),
+                    ).fetchone()
+                    if not receipt:
+                        return None
                 texts.extend(source.text for source in sources.values())
             if not texts:
                 return set()
