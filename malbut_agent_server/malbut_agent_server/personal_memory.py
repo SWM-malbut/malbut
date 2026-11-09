@@ -8,7 +8,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, replace
 
-from malbut_agent_server.conversation_recall import speech_recall_focus, speech_recall_prohibited
+from malbut_agent_server.conversation_recall import is_self_name_question, speech_recall_focus, speech_recall_prohibited
 from malbut_agent_server.conversation_preferences import (
     SETTINGS_PROMPT, commit_settings, initial_settings,
     initialize_schema as initialize_preferences_schema,
@@ -212,6 +212,15 @@ def self_name_correction(text):
     )):
         return match
     return None
+
+
+def _self_introduction(text):
+    # Used solely to select evidence for a read. Quoted, conditional, negative
+    # and compound sentences cannot supply an identity from a previous turn.
+    return re.fullmatch(
+        r'\s*(?:내|제|나의|저의|사용자(?:의)?)\s*(?:본명|이름)(?:은|는|이|가|:)?\s*'
+        r'[가-힣]{2,6}(?:이야|야|입니다|이에요|예요)?[.!。]?\s*', text,
+    ) and direct_source(text) and not re.search(r'아니|몰라|비밀|뭐야|뭔데|기억', text)
 
 
 def _stored_identity_question(text):
@@ -559,6 +568,31 @@ class PersonalMemory:
                     summary,
                     conn,
                 )
+                name_evidence_only = False
+                if (state['enabled'] and not pending and not stored_identity and not blocked
+                        and is_self_name_question(request.utterance)
+                        and not self._active_identity(request.user_id, 'name', conn)):
+                    # A deleted fact, another person's name, or an old story
+                    # cannot establish the current speaker's identity. Preserve
+                    # active legacy self-name records and surviving introductions.
+                    cutoff = conn.execute(
+                        'SELECT MAX(self_name_cutoff,legacy_cutoff) FROM memory_policy_state WHERE user_id=?',
+                        (request.user_id,),
+                    ).fetchone()[0]
+                    legacy = conn.execute(
+                        "SELECT m.* FROM memories m WHERE m.user_id=? AND m.kind='name' "
+                        'AND m.created_at>? AND (m.expires_at IS NULL OR m.expires_at>?) AND NOT EXISTS '
+                        '(SELECT 1 FROM memory_fact_slots s WHERE s.memory_id=m.id)',
+                        (request.user_id, cutoff, time.time()),
+                    )
+                    memories = candidates = [self.memory._record(row) for row in legacy
+                                             if _self_introduction(row['content'])]
+                    filtered = [replace(turn, assistant_content='', response={}) for turn in filtered
+                                if turn.created_at > cutoff and _self_introduction(turn.user_content)]
+                    clean_summary, deferred = None, False
+                    name_evidence_only = bool(memories or filtered)
+                    if not name_evidence_only:
+                        stored_identity = 'name'
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -582,6 +616,7 @@ class PersonalMemory:
                 ),
                 'memories': self._model_candidates(candidates),
                 'allowed_kinds': ['name', 'nickname', 'pet', 'preference'],
+                **({'self_name_evidence_only': True} if name_evidence_only else {}),
                 **({'self_name_correction': {'new_name_verbatim': correction['new']}}
                    if correction else {}),
             },

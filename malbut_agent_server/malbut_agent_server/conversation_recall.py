@@ -143,12 +143,13 @@ _SELF_NAME_QUESTION = re.compile(
 )
 
 
+def is_self_name_question(utterance):
+    value = ''.join(unicodedata.normalize('NFKC', utterance).split()).rstrip('.?!。')
+    return _SELF_NAME_QUESTION.fullmatch(value) is not None
+
+
 def previous_self_name_id(text, turns, summary):
     """Find a prior lookup receipt for a standalone question about the speaker's own name."""
-    def is_self_name_question(utterance):
-        value = ''.join(unicodedata.normalize('NFKC', utterance).split()).rstrip('.?!。')
-        return _SELF_NAME_QUESTION.fullmatch(value)
-
     if summary is None and is_self_name_question(text):
         for turn in reversed(turns):
             if not is_self_name_question(turn.user_content):

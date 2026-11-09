@@ -85,6 +85,9 @@ class StoryMemoryProvider(AgentProvider):
         conversation_summary=None, *, memory_context=None, weather_context=None, fact_lookup=None,
     ):
         context = memory_context or {}
+        if context.get('self_name_evidence_only'):
+            return self._answer_recall(request, memories, conversation_turns, None, context,
+                                       None, None, 'name')
         deferred = (self.on_demand_speech and isinstance(request, SpeechAgentRequest)
                     and context.get('mode') not in {'source_review', 'extract_only', 'automatic_extraction'})
         recall_tool = PERSONAL_RECALL_TOOL if fact_lookup is not None else STORY_RECALL_TOOL

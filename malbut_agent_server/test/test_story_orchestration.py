@@ -385,19 +385,40 @@ class StoryOrchestrationTests(unittest.TestCase):
                 self.assertIn('recall_personal_context', [tool.name for tool in calls[0].args[3]])
                 self.assertIn(temporary, [t.user_content for t in calls[0].args[2]])
 
-    def test_saved_name_repeat_requires_the_speakers_name_slot_for_the_prior_fact_id(self):
-        runtime, backend = self.fact_voice_runtime()
-        other = self.save_identity_fact(runtime, 'name', '친구', 'name', '하은별', '내 친구 이름은 하은별이야.')
-        # An old answer can have read a single name record without establishing whose name it is.
-        _, first, _ = self.ask_identity(runtime, backend, '내 이름이 뭐였지?',
-                                        decide=lambda *a, **k: self.fact_voice_decision())
-        self.assertEqual(first.memory_ids, [other.id])
-        _, reply, calls = self.ask_identity(runtime, backend, '전에 알려 준 내 이름이 뭐였더라?',
-                                            decide=lambda *a, **k: self.fact_voice_decision())
-        self.assertIn('recall_personal_context', [tool.name for tool in calls[0].args[3]])
-        self.assertEqual(calls[0].args[1], [])
-        self.assertEqual(calls[0].kwargs['memory_context']['memories'], [])
-        self.assertEqual(reply.memory_ids, [])
+    def test_plain_name_question_never_uses_a_friends_name_after_deletion(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        old = self.save_identity_fact(runtime, 'name', 'user', 'name', '윤가람', '내 본명은 윤가람이야.')
+        self.ask_identity(runtime, backend, '내 이름이 뭐였지?')
+        # This independent turn has no fact receipt to revoke at deletion.
+        self.turn(runtime, '내 본명은 윤가람이야.', room='identity-voice')
+        runtime.memory_store.remove_facts('alice', [old.id])
+        self.save_identity_fact(runtime, 'name', '친구', 'name', '윤가람', '내 친구 이름은 윤가람이야.')
+        self.turn(runtime, '윤가람은 친구 이름이야. 내 이름으로 저장하지 마.', room='identity-voice')
+        for text in ('내 이름이 뭐야?', '전에 알려 준 내 이름이 뭐였더라?'):
+            _, reply, calls = self.ask_identity(runtime, backend, text)
+            self.assertEqual(calls, [])
+            self.assertEqual(reply.memory_ids, [])
+            self.assertEqual(reply.decision.message, '현재 저장된 본명을 확인할 수 없어요.')
+
+    def test_plain_name_question_preserves_legacy_and_recent_first_person_evidence(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        gone = self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 이름은 나예솔이야.')
+        runtime.memory_store.remove_facts('alice', [gone.id])
+        self.save_identity_fact(runtime, 'name', '친구', 'name', '윤가람', '내 친구 이름은 윤가람이야.')
+        legacy = runtime.memory_store.add('alice', '제 이름은 비단', kind='name')
+        self.turn(runtime, '친구 윤가람이 그러던데.', room='identity-voice')
+        self.turn(runtime, '저는 대학생입니다.', room='identity-voice')
+        self.turn(runtime, '제 본명은 해담이입니다.', room='identity-voice')
+        pet = self.save_identity_fact(runtime, 'pet', '고양이', 'name', '두부', '고양이 이름은 두부야.')
+        runtime.memory_store.remove_facts('alice', [pet.id])
+        _, reply, calls = self.ask_identity(runtime, backend, '내 이름이 뭐야?',
+                                             decide=lambda *a, **k: self.fact_voice_decision())
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(reply.memory_ids, [legacy.id])
+        self.assertEqual([t.user_content for t in calls[0].args[2]], ['제 본명은 해담이입니다.'])
+        self.assertEqual(calls[0].args[3], [])
+        self.assertNotIn('윤가람', repr(calls))
+        self.assertNotIn('story_memory_untrusted', calls[0].kwargs['memory_context'])
 
     def test_saved_name_repeat_after_other_session_correction_and_deletion(self):
         runtime, backend = self.fact_voice_runtime()
@@ -425,7 +446,8 @@ class StoryOrchestrationTests(unittest.TestCase):
             runtime.handle(req)
         _, missing, calls = self.ask_identity(runtime, backend, text)
         self.assertEqual(missing.memory_ids, [])
-        self.assertEqual(missing.decision.message, '모르겠어요.')
+        self.assertEqual(missing.decision.message, '현재 저장된 본명을 확인할 수 없어요.')
+        self.assertEqual(calls, [])
         for revoked in ('한여울', '나예솔', paraphrase):
             self.assertNotIn(revoked, repr(calls))
 

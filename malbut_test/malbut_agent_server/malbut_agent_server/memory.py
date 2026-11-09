@@ -83,7 +83,8 @@ def initialize_memory_schema(connection: sqlite3.Connection) -> None:
             revision INTEGER NOT NULL DEFAULT 0,
             legacy_cutoff REAL NOT NULL DEFAULT 0,
             consent_source_json TEXT NOT NULL DEFAULT '{}',
-            updated_at REAL NOT NULL
+            updated_at REAL NOT NULL,
+            self_name_cutoff REAL NOT NULL DEFAULT 0
         )''',
         '''CREATE TABLE IF NOT EXISTS memory_state_counter (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -106,6 +107,16 @@ def initialize_memory_schema(connection: sqlite3.Connection) -> None:
     )
     for statement in statements:
         connection.execute(statement)
+
+    if 'self_name_cutoff' not in {row[1] for row in connection.execute('PRAGMA table_info(memory_policy_state)')}:
+        connection.execute('ALTER TABLE memory_policy_state ADD COLUMN self_name_cutoff REAL NOT NULL DEFAULT 0')
+        # Old tombstones omit the fact's kind. Keep active facts readable, but
+        # don't use older unbound dialogue as the speaker's present identity.
+        connection.execute(
+            'UPDATE memory_policy_state SET self_name_cutoff=COALESCE(('
+            'SELECT MAX(t.invalidated_at) FROM memory_tombstones t '
+            "WHERE t.user_id=memory_policy_state.user_id AND t.memory_id NOT LIKE 'story-reply-%'),0)"
+        )
 
 
 @dataclass(frozen=True)
@@ -771,6 +782,13 @@ class SQLiteMemoryStore:
                 'SELECT 1 FROM memory_fact_slots WHERE memory_id = ?',
                 (row['id'],),
             ).fetchone()
+            fact = metadata.get('fact', {})
+            if (tracked and fact.get('kind') == fact.get('attribute') == 'name'
+                    and fact.get('subject') in {'user', 'self', '사용자', '나', '저'}):
+                connection.execute(
+                    'UPDATE memory_policy_state SET self_name_cutoff=MAX(self_name_cutoff,?) WHERE user_id=?',
+                    (now, row['user_id']),
+                )
             try:
                 if tracked is None:
                     raise ValidationError('legacy memory has no source link')

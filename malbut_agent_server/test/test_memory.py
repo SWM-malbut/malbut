@@ -1,12 +1,28 @@
 """Tests for user-isolated SQLite memory retrieval."""
 
+import sqlite3
 import stat
 import time
 
 import pytest
 
-from malbut_agent_server.memory import SQLiteMemoryStore
+from malbut_agent_server.memory import SQLiteMemoryStore, initialize_memory_schema
 from malbut_agent_server.schemas import ValidationError
+
+
+def test_existing_untyped_invalidations_fence_older_unbound_name_evidence():
+    with sqlite3.connect(':memory:') as conn:
+        conn.execute("CREATE TABLE memory_policy_state (user_id TEXT PRIMARY KEY, enabled INTEGER, "
+                     "revision INTEGER, legacy_cutoff REAL, consent_source_json TEXT, updated_at REAL)")
+        conn.execute("INSERT INTO memory_policy_state VALUES ('alice',1,2,0,'{}',0)")
+        conn.execute('CREATE TABLE memory_tombstones (user_id TEXT, memory_id TEXT, source_key TEXT, '
+                     'invalidated_at REAL, PRIMARY KEY(user_id,memory_id))')
+        conn.executemany("INSERT INTO memory_tombstones VALUES ('alice',?,'{}',?)",
+                         [('untyped-old-id', 12), ('story-reply-later', 45)])
+        initialize_memory_schema(conn)
+        conn.execute("INSERT INTO memory_tombstones VALUES ('alice','future','{}',60)")
+        initialize_memory_schema(conn)
+        assert conn.execute("SELECT self_name_cutoff FROM memory_policy_state").fetchone()[0] == 12
 
 
 def test_korean_memory_retrieval_and_user_isolation() -> None:
