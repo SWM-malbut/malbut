@@ -164,6 +164,12 @@ class StoryMemoryService:
     def validate(self, user, revision, data_revision=None):
         return not self._stop.is_set() and self.store.validate(user, revision, data_revision)
 
+    def recall_revision(self, user):
+        """Check consent without recovering jobs or searching story content."""
+        self._open()
+        policy = self.store.policy(user)
+        return policy['revision'] if policy['enabled'] and policy['external_consent'] else None
+
     def reply_dependency_revision(self, user, request_id):
         return self.store.reply_dependency_revision(user, request_id)
 

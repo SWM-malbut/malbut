@@ -16,7 +16,7 @@ from malbut_agent_server.orchestrator import MemoryChangedError, OrchestrationRe
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.safety import SafetyResult
 from malbut_agent_server.schemas import (
-    AgentDecision, AgentRequest, ProviderResult, ValidationError,
+    AgentDecision, AgentRequest, ProviderResult, SpeechAgentRequest, ValidationError,
 )
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.story_runtime_store import StoryRuntimeStore
@@ -94,6 +94,41 @@ class StoryOrchestrationTests(unittest.TestCase):
         self.assertEqual(binding['readset'][0]['story_id'], story['story_id'])
         self.assertTrue(binding['readset'][0]['entry_hashes'])
         return request, result, story
+
+    def test_on_demand_speech_reply_replay_respects_story_deletion(self):
+        runtime, backend, _ = self.runtime()
+        runtime.story_provider.on_demand_speech = True
+        runtime.story_memory.enable('alice')
+        self.turn(runtime, '전시의 작품이 좋아서 즐거웠어.', room='source')
+        self.checkpoint(runtime)
+        story = runtime.story_memory.list_stories('alice')[0]
+        request = SpeechAgentRequest.from_dict(
+            self.request(runtime, '전시 이야기를 다시 들려줘.', room='recall').to_dict()
+        )
+        answer = backend.complete
+
+        def decide(request, memories, conversation_turns, tools, **kwargs):
+            if any(tool.name == 'recall_story_memory' for tool in tools):
+                self.assertNotIn('story_memory_untrusted', kwargs['memory_context'])
+                return ProviderResult(
+                    decision=AgentDecision(type='tool_call', tool_name='recall_story_memory',
+                                           arguments={}, message='이야기를 조회할게.'),
+                    provider='offline-story-fixture', model='fixture', latency_ms=0,
+                )
+            return answer(request, memories, conversation_turns, tools, **kwargs)
+
+        with patch.object(backend, 'complete', side_effect=decide) as model:
+            reply = runtime.handle(request)
+            self.assertEqual(reply.to_dict()['decision']['message'], story['current'][0]['text'])
+            self.assertEqual(self.persisted(runtime, request)['story_binding']['readset'][0]
+                             ['story_id'], story['story_id'])
+            self.assertEqual(runtime.handle(request).decision_id, reply.decision_id)
+            self.assertEqual(model.call_count, 2)
+        runtime.story_memory.forget('alice', story['story_id'], timeout=5)
+        with self.assertRaises(MemoryChangedError):
+            runtime.assert_reply_fresh('alice', request.request_id)
+        with self.assertRaises(ValidationError):
+            runtime.handle(request)
 
     def persisted(self, runtime, request):
         with runtime.conversation_store._lock:

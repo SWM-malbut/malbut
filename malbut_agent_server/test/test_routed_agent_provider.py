@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, List, Optional
 
 import pytest
@@ -33,7 +34,7 @@ from malbut_agent_server.schemas import (
     RobotState,
     SpeechAgentRequest,
 )
-from malbut_agent_server.tools import TOOL_SPECS, ToolSpec
+from malbut_agent_server.tools import STORY_RECALL_TOOL, TOOL_SPECS, ToolSpec
 
 
 class ScriptedFrontRouter:
@@ -361,6 +362,20 @@ def test_general_route_removes_tools_from_both_input_channels() -> None:
     assert general.tool_lists[0] == []
     assert original.available_tools == ('navigate',)
     assert (planner.calls, fallback.calls) == (0, 0)
+
+
+def test_general_route_can_request_private_memory_without_robot_tools() -> None:
+    router = ScriptedFrontRouter(FrontRouteMatch(route=FrontRoute.GENERAL_CONVERSATION))
+    general = RecordingProvider(name='general', decision=AgentDecision(
+        'tool_call', '', tool_name=STORY_RECALL_TOOL.name, arguments={},
+    ))
+    provider, _, planner, _ = _routed(router, general=general)
+    request = replace(_request(), available_tools=('navigate', STORY_RECALL_TOOL.name))
+    result = provider.complete(request, [], [], [TOOL_SPECS['navigate'], STORY_RECALL_TOOL])
+    assert general.requests[0].available_tools == (STORY_RECALL_TOOL.name,)
+    assert general.tool_lists[0] == [STORY_RECALL_TOOL]
+    assert result.decision.tool_name == STORY_RECALL_TOOL.name
+    assert planner.calls == 0
 
 
 def test_general_route_blocks_a_wrong_route_tool_proposal() -> None:

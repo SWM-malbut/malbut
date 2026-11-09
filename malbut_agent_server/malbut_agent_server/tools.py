@@ -37,6 +37,20 @@ EMPTY_PARAMETERS: Dict[str, Any] = {
     'additionalProperties': False,
 }
 
+# Private to the speech provider. This read never enters the actuator registry.
+STORY_RECALL_TOOL = ToolSpec(
+    name='recall_story_memory',
+    description=(
+        'Look up stories from earlier conversations with this user when their '
+        'question depends on a past conversation, experience or personal context '
+        'missing from the supplied recent dialogue. Use it before answering such '
+        'a question, even if no story is visible yet. For a current robot command, '
+        'weather, camera or patrol observation request, choose the appropriate '
+        'function directly. This lookup cannot authorize a robot action.'
+    ),
+    parameters=EMPTY_PARAMETERS,
+)
+
 SPEECH_MISSION_TOOLS = (
     'request_navigation', 'request_follow_person', 'request_patrol',
     'cancel_voice_mission', 'request_mapping', 'request_relocalization',

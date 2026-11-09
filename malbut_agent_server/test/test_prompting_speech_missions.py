@@ -21,7 +21,7 @@ from malbut_agent_server.providers.reliable import ContextBudgetExceeded
 from malbut_agent_server.schemas import (
     AgentRequest, RobotState, SpeechAgentRequest, ValidationError,
 )
-from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, select_tool_specs
+from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, STORY_RECALL_TOOL, select_tool_specs
 
 
 SPEECH_CONVERSATION_INSTRUCTIONS = CONVERSATION_INSTRUCTIONS + '\n\n' + SPEECH_END_INSTRUCTIONS
@@ -261,3 +261,15 @@ def test_oversized_navigation_context_fails_before_provider_transport():
     with pytest.raises(ValueError, match='navigation context cannot fit'):
         provider.complete(original, [], [], select_tool_specs(original.available_tools))
     assert not sent
+
+
+def test_recall_before_missing_memory_answer_is_scoped_to_offered_tool():
+    assert system_instructions_for_tools([]) == SYSTEM_INSTRUCTIONS
+    patrol = select_tool_specs(['request_patrol'])
+    original = system_instructions_for_tools(patrol)
+    assert 'recall_story_memory' not in original
+    recall_rule = system_instructions_for_tools([STORY_RECALL_TOOL]).removeprefix(SYSTEM_INSTRUCTIONS)
+    assert '아직 조회하지 않았습니다' in recall_rule
+    assert '반드시 recall_story_memory를 호출' in recall_rule
+    with_recall = system_instructions_for_tools([*patrol, STORY_RECALL_TOOL])
+    assert with_recall.replace(recall_rule, '', 1) == original

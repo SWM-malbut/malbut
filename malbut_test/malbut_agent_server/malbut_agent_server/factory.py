@@ -307,7 +307,9 @@ def build_orchestrator(
         )
         story_provider = None
         if accepts_memory_context(provider):
-            story_provider = StoryMemoryProvider(provider, story_memory)
+            story_provider = StoryMemoryProvider(
+                provider, story_memory, on_demand_speech=settings.provider == 'openai',
+            )
             provider = story_provider
         speech_addressee = SpeechAddresseeClassifier(
             _openai_adapter(
