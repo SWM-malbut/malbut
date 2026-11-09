@@ -51,6 +51,23 @@ STORY_RECALL_TOOL = ToolSpec(
     parameters=EMPTY_PARAMETERS,
 )
 
+PERSONAL_RECALL_TOOL = ToolSpec(
+    name='recall_personal_context',
+    description=(
+        'Read consented personal facts and available stories from earlier conversations. '
+        'Use before answering about their name, nickname, pet, preferences or past '
+        'experience when recent dialogue does not establish it. For personalized '
+        'recommendations, focus on preference even when the current request contains no '
+        'food or activity keywords. Use related for general past conversations. '
+        'Choose current commands and observation queries directly.'
+    ),
+    parameters={
+        'type': 'object', 'additionalProperties': False, 'required': ['focus'],
+        'properties': {'focus': {'type': 'string',
+                                  'enum': ['related', 'name', 'nickname', 'pet', 'preference']}},
+    },
+)
+
 SPEECH_MISSION_TOOLS = (
     'request_navigation', 'request_follow_person', 'request_patrol',
     'cancel_voice_mission', 'request_mapping', 'request_relocalization',

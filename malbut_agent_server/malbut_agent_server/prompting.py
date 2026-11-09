@@ -16,7 +16,9 @@ from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
     SpeechAgentRequest,
 )
-from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, SPEECH_MISSION_TOOLS, STORY_RECALL_TOOL, ToolSpec
+from malbut_agent_server.tools import (
+    HOMECAM_QUERY_TOOLS, PERSONAL_RECALL_TOOL, SPEECH_MISSION_TOOLS, STORY_RECALL_TOOL, ToolSpec,
+)
 
 
 MAX_MEMORY_CONTEXT_CHARS = 3000
@@ -219,6 +221,14 @@ def system_instructions_for_tools(
             '모른다거나 기록이 없다고 답하거나 다시 질문하기 전에 반드시 recall_story_memory를 호출합니다. '
             '개인 사실 기억 enabled 값은 이 이야기 조회와 별개입니다. '
             '현재 발화로 충분한 실행 요청과 순찰 관찰 기록 질문은 해당 기능을 바로 선택합니다.'
+        )
+    if any(tool.name == PERSONAL_RECALL_TOOL.name for tool in tools):
+        instructions += (
+            '\n\n이 단계에서는 저장된 개인 사실과 이야기를 아직 조회하지 않았습니다. '
+            '이름·호칭·반려동물·취향 또는 이전 경험이 질문의 답에 필요하면, 현재 대화에 '
+            '답이 없는 경우 모른다고 답하기 전에 recall_personal_context로 조회합니다. '
+            '내 취향에 맞는 추천처럼 개인화된 선택에는 preference를 사용합니다. '
+            '보통 인사, 일반 지식, 현재 로봇 기능 실행, 순찰 기록 조회는 해당 요청만 처리합니다.'
         )
     if patrol_result:
         instructions += (

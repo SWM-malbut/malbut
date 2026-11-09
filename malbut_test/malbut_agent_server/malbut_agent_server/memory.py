@@ -457,6 +457,7 @@ class SQLiteMemoryStore:
         limit: int = 5,
         now: Optional[float] = None,
         connection: Optional[sqlite3.Connection] = None,
+        *, fact_kind: Optional[str] = None,
     ) -> Tuple[List[MemoryRecord], int]:
         """Return ranked active memories and their atomic store revision."""
         normalized_user = validate_user_id(user_id)
@@ -468,23 +469,19 @@ class SQLiteMemoryStore:
             raise ValidationError(
                 'memory search limit must be between 1 and 10'
             )
+        if fact_kind is not None and fact_kind not in {'name', 'nickname', 'pet', 'preference'}:
+            raise ValidationError('invalid personal fact focus')
         current_time = float(now if now is not None else time.time())
         with self._transaction(connection) as active:
-            rows = active.execute(
-                '''
-                SELECT *
-                FROM memories
-                WHERE user_id = ?
-                  AND (expires_at IS NULL OR expires_at > ?)
-                ORDER BY created_at DESC
-                LIMIT ?
-                ''',
-                (
-                    normalized_user,
-                    current_time,
-                    MAX_RETRIEVAL_CANDIDATES,
-                ),
-            ).fetchall()
+            query_sql = ('SELECT * FROM memories WHERE user_id = ? '
+                         'AND (expires_at IS NULL OR expires_at > ?)')
+            parameters = [normalized_user, current_time]
+            if fact_kind is not None:
+                # Old untyped fact records still qualify by matching the utterance.
+                query_sql += " AND kind IN (?, 'fact')"
+                parameters.append(fact_kind)
+            rows = active.execute(query_sql + ' ORDER BY created_at DESC LIMIT ?',
+                                  [*parameters, MAX_RETRIEVAL_CANDIDATES]).fetchall()
             revision = int(active.execute(
                 'SELECT revision FROM memory_state_counter WHERE singleton=1',
             ).fetchone()['revision'])
@@ -510,7 +507,7 @@ class SQLiteMemoryStore:
                     if len(content_token) >= 2
                 ):
                     score += 1
-            if score <= 0:
+            if score <= 0 and row['kind'] != fact_kind:
                 continue
             age_days = max(
                 0.0,

@@ -345,6 +345,7 @@ class MemorySnapshot:
     context: dict
     pending: dict | None
     source: dict
+    facts_deferred: bool = False
 
 
 class PersonalMemory:
@@ -419,7 +420,7 @@ class PersonalMemory:
                 self.conversations._connection, user_id, settings,
             )
 
-    def snapshot(self, request, token, history, summary, memory_limit=5):
+    def snapshot(self, request, token, history, summary, memory_limit=5, *, defer_facts=False):
         """Read eligible history and memories under one read transaction."""
         source = {
             'user_id': request.user_id,
@@ -442,28 +443,6 @@ class PersonalMemory:
                 )
                 source['response_settings'] = retained_settings
                 source['settings_edit'] = settings_edit
-                memories = (
-                    list(
-                        self.memory.search(
-                            request.user_id,
-                            request.utterance,
-                            limit=memory_limit,
-                            connection=conn,
-                        )
-                    )
-                    if state['enabled']
-                    else []
-                )
-                candidates = memories
-                if management_request(request.utterance):
-                    candidates = list(
-                        self.memory.search(
-                            request.user_id,
-                            request.utterance,
-                            limit=10,
-                            connection=conn,
-                        )
-                    )
                 pending_row = conn.execute(
                     (
                         'SELECT * FROM memory_questions\n'
@@ -493,6 +472,33 @@ class PersonalMemory:
                         not in CANCEL
                     ):
                         pending = None
+                manage = management_request(request.utterance)
+                deferred = bool(defer_facts and state['enabled'] and not manage and not pending
+                                and not settings_edit and local_intent(request.utterance) is None
+                                and not any(requested_operation(request.utterance, operation)
+                                            for operation in ('remember', 'correct', 'forget')))
+                memories = (
+                    list(
+                        self.memory.search(
+                            request.user_id,
+                            request.utterance,
+                            limit=memory_limit,
+                            connection=conn,
+                        )
+                    )
+                    if state['enabled'] and not deferred
+                    else []
+                )
+                candidates = memories
+                if manage:
+                    candidates = list(
+                        self.memory.search(
+                            request.user_id,
+                            request.utterance,
+                            limit=10,
+                            connection=conn,
+                        )
+                    )
                 filtered, clean_summary, deps = self._context(
                     request.user_id,
                     token,
@@ -520,26 +526,57 @@ class PersonalMemory:
                     if pending
                     else None
                 ),
-                'memories': [
-                    {
-                        'id': record.id,
-                        'kind': record.kind,
-                        'content': record.content,
-                        'fact': {
-                            key: value
-                            for key, value in record.metadata.get(
-                                'fact', {}
-                            ).items()
-                            if key != 'evidence'
-                        },
-                    }
-                    for record in candidates
-                ],
+                'memories': self._model_candidates(candidates),
                 'allowed_kinds': ['name', 'nickname', 'pet', 'preference'],
             },
             pending,
             source,
+            deferred,
         )
+
+    @staticmethod
+    def _model_candidates(records):
+        return [{'id': record.id, 'kind': record.kind, 'content': record.content,
+                 'fact': {key: value for key, value in record.metadata.get('fact', {}).items()
+                          if key != 'evidence'}} for record in records]
+
+    def _check_deferred_turn(self, conn, token, snapshot):
+        if (not snapshot.facts_deferred or not snapshot.state['enabled']
+                or self.memory.policy_state(token.user_id, connection=conn) != snapshot.state):
+            raise ValidationError('memory_changed')
+        pending = conn.execute(
+            "SELECT 1 FROM conversation_turns t JOIN conversation_sessions s "
+            "ON s.user_id=t.user_id AND s.conversation_id=t.conversation_id "
+            "AND s.session_instance_id=t.session_instance_id AND s.generation=t.generation "
+            "WHERE t.user_id=? AND t.request_id=? AND t.conversation_id=? AND t.session_instance_id=? "
+            "AND t.generation=? AND t.turn_id=? AND t.status='pending' AND s.status='active' "
+            "AND s.revision=? AND s.expires_at>?",
+            (token.user_id, token.request_id, token.conversation_id, token.session_instance_id,
+             token.generation, token.turn_id, token.revision, self.conversations._now()),
+        ).fetchone()
+        if pending is None:
+            raise ValidationError('memory_changed')
+        if any(record.expires_at is not None and record.expires_at <= time.time()
+               for record in snapshot.memories):
+            raise ValidationError('memory_changed')
+
+    def recall_deferred_facts(self, token, snapshot, focus, limit):
+        """Acquire this turn's fact readset in one consent-checked snapshot."""
+        with self.memory._transaction() as conn:
+            self._check_deferred_turn(conn, token, snapshot)
+            records, _ = self.memory.search_with_revision(
+                token.user_id, snapshot.source['text'], limit=limit, connection=conn,
+                fact_kind=None if focus == 'related' else focus,
+            )
+        snapshot.memories = records
+        snapshot.dependencies.update(record.id for record in records)
+        snapshot.context['memories'] = self._model_candidates(records)
+
+        def guard():
+            with self.memory._transaction() as conn:
+                self._check_deferred_turn(conn, token, snapshot)
+
+        return records, snapshot.context['memories'], guard
 
     def prepare_source_review(self, request, snapshot, result, reviewer):
         """Review unresolved meanings before opening the commit transaction."""
@@ -924,9 +961,7 @@ class PersonalMemory:
         dependencies = (
             snapshot.dependencies | inherited_dependencies | set(added)
         )
-        for record in self.memory.list_for_user(
-            request.user_id, connection=conn
-        ):
+        for record in (self.memory.list_for_user(request.user_id, connection=conn) if added else ()):
             if record.id not in added:
                 continue
             origin = record.metadata.get('source', {}).get('request_id')

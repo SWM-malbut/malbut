@@ -60,6 +60,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
     ProviderUsage,
     RobotState,
+    SpeechAgentRequest,
     ValidationError,
 )
 
@@ -732,6 +733,9 @@ class AgentOrchestrator:
                 memory_snapshot = self.personal_memory.snapshot(
                     request, token, begin.history, begin.summary,
                     memory_limit=self.memory_limit,
+                    defer_facts=(isinstance(request, SpeechAgentRequest)
+                                 and self.provider is self.story_provider
+                                 and getattr(self.story_provider, 'on_demand_speech', False)),
                 )
                 effective_request = self._effective_request(
                     request,
@@ -957,6 +961,12 @@ class AgentOrchestrator:
                 if self._separate_memory_extraction(request, memory_snapshot):
                     memory_context['mode'] = 'answer_only'
                 memory_arguments['memory_context'] = memory_context
+            if memory_snapshot.facts_deferred:
+                def recall_facts(focus):
+                    return self.personal_memory.recall_deferred_facts(
+                        token, memory_snapshot, focus, self.memory_limit,
+                    )
+                memory_arguments['fact_lookup'] = recall_facts
             provider_result = self.provider.complete(
                 model_request,
                 memories,
@@ -967,6 +977,8 @@ class AgentOrchestrator:
                 ),
                 **memory_arguments,
             )
+            if memory_snapshot.facts_deferred:
+                memories = memory_snapshot.memories
         else:
             memories = []
             provider_result = ProviderResult(

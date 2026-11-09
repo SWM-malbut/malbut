@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -129,6 +130,171 @@ class StoryOrchestrationTests(unittest.TestCase):
             runtime.assert_reply_fresh('alice', request.request_id)
         with self.assertRaises(ValidationError):
             runtime.handle(request)
+
+    def fact_voice_runtime(self, *, stories=False):
+        runtime, backend, _ = self.runtime()
+        runtime.story_provider.on_demand_speech = True
+        if stories:
+            runtime.story_memory.enable('alice')
+        origin = {'request_id': 'enable', 'turn_id': 'enable', 'generation': 1,
+                  'conversation_id': 'controls', 'session_instance_id': 'controls-1',
+                  'text': '개인화를 켜 줘.'}
+        runtime.memory_store.set_personalization('alice', True, origin)
+        return runtime, backend
+
+    @staticmethod
+    def fact_voice_decision(name=None, **args):
+        decision = (AgentDecision('tool_call', '', tool_name=name, arguments=args) if name
+                    else AgentDecision('message', '조회한 내용으로 답할게요.'))
+        return ProviderResult(decision, 'offline', 'test', 0, memory_supported=True)
+
+    def test_direct_speech_skips_all_fact_contents_on_enabled_profile(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        saved = runtime.memory_store.add('alice', '순찰과 무관한 고유 개인 사실', kind='preference')
+        request = SpeechAgentRequest.from_dict(self.request(runtime, '집 한 바퀴 순찰해 줘.').to_dict())
+        statements = []
+        runtime.conversation_store._connection.set_trace_callback(statements.append)
+        with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model:
+            reply = runtime.handle(request)
+        runtime.conversation_store._connection.set_trace_callback(None)
+        call = model.call_args
+        self.assertEqual(call.args[1], [])
+        self.assertEqual(call.kwargs['memory_context']['memories'], [])
+        self.assertIn('recall_personal_context', [tool.name for tool in call.args[3]])
+        self.assertNotIn('recall_story_memory', [tool.name for tool in call.args[3]])
+        self.assertEqual(reply.memory_ids, [])
+        self.assertFalse(any('FROM memories ' in ' '.join(sql.split()) for sql in statements))
+        conn = runtime.conversation_store._connection
+        deps = conn.execute('SELECT dependencies_json FROM memory_turn_state WHERE request_id=?',
+                            (request.request_id,)).fetchone()
+        self.assertNotIn(saved.id, json.loads(deps[0]))
+
+    def test_preference_hit_keeps_fact_ids_expiry_and_does_not_read_stories(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        expiry = time.time() + 20
+        pref = runtime.memory_store.add('alice', '매운 음식을 싫어해요.', kind='preference', expires_at=expiry)
+        runtime.memory_store.add('alice', '비공개 이름은 다래', kind='name')
+        runtime.memory_store.add('bob', '다른 사용자의 정보', kind='preference')
+        request = SpeechAgentRequest.from_dict(self.request(runtime, '내 입맛에 맞는 저녁 추천해 줘.').to_dict())
+        responses = [self.fact_voice_decision('recall_personal_context', focus='preference'),
+                     self.fact_voice_decision()]
+        with patch.object(backend, 'complete', side_effect=responses) as model, patch.object(
+                runtime.story_memory, 'context', wraps=runtime.story_memory.context) as story:
+            reply = runtime.handle(request)
+            self.assertEqual(runtime.handle(request).decision_id, reply.decision_id)
+        self.assertEqual(model.call_count, 2)
+        self.assertFalse(story.called)
+        first, second = model.call_args_list
+        self.assertEqual(first.args[1], [])
+        self.assertEqual([item.id for item in second.args[1]], [pref.id])
+        self.assertEqual(second.kwargs['memory_context']['memories'][0]['id'], pref.id)
+        self.assertEqual(second.args[3], [])
+        self.assertEqual(reply.memory_ids, [pref.id])
+        self.assertLessEqual(reply.expires_at, expiry)
+        conn = runtime.conversation_store._connection
+        deps = conn.execute('SELECT dependencies_json FROM memory_turn_state WHERE request_id=?',
+                            (request.request_id,)).fetchone()
+        self.assertIn(pref.id, json.loads(deps[0]))
+        followup = SpeechAgentRequest.from_dict(self.request(runtime, '알겠어.').to_dict())
+        with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model:
+            later = runtime.handle(followup)
+        self.assertEqual(later.memory_ids, [])
+        self.assertEqual(model.call_args.args[1], [])
+        inherited = conn.execute('SELECT dependencies_json FROM memory_turn_state WHERE request_id=?',
+                                 (followup.request_id,)).fetchone()
+        self.assertIn(pref.id, json.loads(inherited[0]))
+        runtime.memory_store.remove_facts('alice', [pref.id])
+        for turn in (request, followup):
+            with self.assertRaises(ValidationError):
+                runtime.handle(turn)
+
+    def test_typed_fact_miss_reads_stories_once_if_consented(self):
+        runtime, backend = self.fact_voice_runtime(stories=True)
+        source = '전시에서 사람들에게 내 이름을 겨울이라고 소개했어.'
+        self.turn(runtime, source, room='source')
+        self.checkpoint(runtime)
+        request = SpeechAgentRequest.from_dict(self.request(runtime, '전시에서 밝힌 내 이름은?').to_dict())
+        answer = backend.complete
+
+        def choose(req, memories, turns, tools, **kwargs):
+            if any(tool.name == 'recall_personal_context' for tool in tools):
+                return self.fact_voice_decision('recall_personal_context', focus='name')
+            return answer(req, memories, turns, tools, **kwargs)
+
+        with patch.object(backend, 'complete', side_effect=choose) as model, patch.object(
+                runtime.story_memory, 'context', wraps=runtime.story_memory.context) as story:
+            reply = runtime.handle(request)
+        self.assertEqual(story.call_count, 1)
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(reply.memory_ids, [])
+        self.assertEqual(reply.decision.message, source)
+        self.assertTrue(self.persisted(runtime, request)['story_binding']['readset'])
+
+    def test_personal_recall_stops_before_second_model_if_deleted_after_first(self):
+        runtime, backend = self.fact_voice_runtime()
+        pref = runtime.memory_store.add('alice', '매운 음식을 싫어해요.', kind='preference')
+        request = SpeechAgentRequest.from_dict(self.request(runtime, '내 취향에 맞는 저녁 추천해 줘.').to_dict())
+
+        def erase(*args, **kwargs):
+            runtime.memory_store.remove_facts('alice', [pref.id])
+            return self.fact_voice_decision('recall_personal_context', focus='preference')
+
+        with patch.object(backend, 'complete', side_effect=erase) as model:
+            with self.assertRaises(MemoryChangedError):
+                runtime.handle(request)
+        self.assertEqual(model.call_count, 1)
+
+    def test_personal_recall_refuses_unknown_focus_and_second_pass_actions(self):
+        runtime, backend = self.fact_voice_runtime()
+        recall = 'recall_personal_context'
+        for decisions in ([self.fact_voice_decision(recall, focus='all_users')],
+                          [self.fact_voice_decision(recall, focus='related'),
+                           self.fact_voice_decision('request_patrol')]):
+            with self.subTest(steps=len(decisions)):
+                req = SpeechAgentRequest.from_dict(self.request(runtime, '내 취향에 맞춰 줘.').to_dict())
+                with patch.object(backend, 'complete', side_effect=decisions) as model:
+                    with self.assertRaises(ProviderError):
+                        runtime.handle(req)
+                self.assertEqual(model.call_count, len(decisions))
+                if len(decisions) == 2:
+                    self.assertEqual(model.call_args.args[3], [])
+
+    def test_personal_recall_refuses_deleted_fact_after_second_model(self):
+        runtime, backend = self.fact_voice_runtime()
+        fact = runtime.memory_store.add('alice', '별명은 구름', kind='nickname')
+        req = SpeechAgentRequest.from_dict(self.request(runtime, '내 별명은 뭐야?').to_dict())
+
+        def choose(req, memories, turns, tools, **kwargs):
+            if tools:
+                return self.fact_voice_decision('recall_personal_context', focus='nickname')
+            self.assertEqual([item.id for item in memories], [fact.id])
+            runtime.memory_store.remove_facts('alice', [fact.id])
+            return self.fact_voice_decision()
+
+        with patch.object(backend, 'complete', side_effect=choose) as model:
+            with self.assertRaises(MemoryChangedError):
+                runtime.handle(req)
+        self.assertEqual(model.call_count, 2)
+
+    def test_personal_management_confirmation_keeps_its_original_target(self):
+        from test_personal_memory_flow import pet_fact, proposed
+
+        runtime, backend = self.fact_voice_runtime()
+        for value in ('두부', '보리'):
+            text = f'우리 강아지 이름은 {value}야. 기억해줘'
+            req = SpeechAgentRequest.from_dict(self.request(runtime, text).to_dict())
+            proposal = self.fact_voice_decision()
+            proposal.memory_proposal = proposed('remember', text, facts=[pet_fact(text, value)])
+            with patch.object(backend, 'complete', return_value=proposal) as model:
+                result = runtime.handle(req)
+            self.assertNotIn('recall_personal_context', [tool.name for tool in model.call_args.args[3]])
+        self.assertEqual(result.decision.type, 'clarification')
+        self.assertEqual(runtime.memory_store.list_for_user('alice')[0].metadata['fact']['value'], '두부')
+        confirm = SpeechAgentRequest.from_dict(self.request(runtime, '네').to_dict())
+        with patch.object(backend, 'complete', side_effect=AssertionError('confirmation is local')):
+            confirmed = runtime.handle(confirm)
+        self.assertIn('정정했어요', confirmed.decision.message)
+        self.assertEqual(runtime.memory_store.list_for_user('alice')[0].metadata['fact']['value'], '보리')
 
     def persisted(self, runtime, request):
         with runtime.conversation_store._lock:

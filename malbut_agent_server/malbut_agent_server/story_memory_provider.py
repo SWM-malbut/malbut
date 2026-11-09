@@ -13,7 +13,7 @@ from malbut_agent_server.providers.base import (
 )
 from malbut_agent_server.prompting import MAX_CONVERSATION_CONTEXT_CHARS
 from malbut_agent_server.schemas import ProviderUsage, SpeechAgentRequest, ValidationError
-from malbut_agent_server.tools import STORY_RECALL_TOOL
+from malbut_agent_server.tools import PERSONAL_RECALL_TOOL, STORY_RECALL_TOOL
 
 
 class StoryMemoryProvider(AgentProvider):
@@ -78,11 +78,12 @@ class StoryMemoryProvider(AgentProvider):
 
     def complete(
         self, request, memories, conversation_turns, tools,
-        conversation_summary=None, *, memory_context=None, weather_context=None,
+        conversation_summary=None, *, memory_context=None, weather_context=None, fact_lookup=None,
     ):
         context = memory_context or {}
         deferred = (self.on_demand_speech and isinstance(request, SpeechAgentRequest)
                     and context.get('mode') not in {'source_review', 'extract_only', 'automatic_extraction'})
+        recall_tool = PERSONAL_RECALL_TOOL if fact_lookup is not None else STORY_RECALL_TOOL
         phase = None
         revision = None
         first_request, first_tools = request, tools
@@ -92,25 +93,43 @@ class StoryMemoryProvider(AgentProvider):
             followup = (weather_context is not None or 'patrol_observations_untrusted' in context
                         or 'homecam_query_result_untrusted' in context)
             phase = 'result' if followup else 'deferred'
-            if revision is not None and not followup:
-                first_tools = [*tools, STORY_RECALL_TOOL]
+            if (revision is not None or fact_lookup is not None) and not followup:
+                first_tools = [*tools, recall_tool]
                 first_request = replace(
-                    request, available_tools=(*request.available_tools, STORY_RECALL_TOOL.name),
+                    request, available_tools=(*request.available_tools, recall_tool.name),
                 )
         first = self._complete(
             first_request, memories, conversation_turns, first_tools, conversation_summary,
             memory_context, weather_context, phase, revision,
         )
-        if getattr(getattr(first, 'decision', None), 'tool_name', None) != STORY_RECALL_TOOL.name:
+        name = getattr(getattr(first, 'decision', None), 'tool_name', None)
+        if name not in (STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name):
             return first
         first.validate()
-        if (phase != 'deferred' or revision is None or first.decision.type != 'tool_call'
-                or first.decision.arguments):
+        if (phase != 'deferred' or name != recall_tool.name or first.decision.type != 'tool_call'
+                or (revision is None and fact_lookup is None)):
             raise ProviderError('invalid story lookup request')
+        fact_guard = None
+        answer_phase = 'requested'
+        if fact_lookup is None:
+            if first.decision.arguments:
+                raise ProviderError('invalid story lookup request')
+        else:
+            arguments = first.decision.arguments
+            if set(arguments) != {'focus'} or arguments['focus'] not in (
+                    'related', 'name', 'nickname', 'pet', 'preference'):
+                raise ProviderError('invalid personal recall focus')
+            focus = arguments['focus']
+            memories, candidates, fact_guard = fact_lookup(focus)
+            context = dict(context, memories=candidates)
+            # An exact typed fact already answers the selected personal lookup.
+            # Missing and general facts may still need consented narrative evidence.
+            if any(record.kind == focus for record in memories):
+                answer_phase = 'facts'
         # A story selected as evidence can support a spoken answer, never an action.
         answer = self._complete(
             replace(request, available_tools=()), memories, conversation_turns, [], conversation_summary,
-            dict(context, mode='answer_only'), weather_context, 'requested', revision,
+            dict(context, mode='answer_only'), weather_context, answer_phase, revision, fact_guard,
         )
         answer.validate()
         if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
@@ -126,7 +145,7 @@ class StoryMemoryProvider(AgentProvider):
         )
 
     def _complete(self, request, memories, conversation_turns, tools, conversation_summary,
-                  memory_context, weather_context, phase, revision):
+                  memory_context, weather_context, phase, revision, fact_guard=None):
         context = copy.deepcopy(memory_context or {})
 
         def trace(event, data):
@@ -144,7 +163,7 @@ class StoryMemoryProvider(AgentProvider):
         # future caller routes an extraction request through it.
         mode = context.get('mode')
         story_context = None
-        if (phase in (None, 'requested') and self.supports_memory
+        if ((phase is None or (phase == 'requested' and revision is not None)) and self.supports_memory
                 and mode not in {'source_review', 'extract_only', 'automatic_extraction'}):
             story_context = self.service.context(
                 request.user_id, request.utterance, conversation_turns,
@@ -220,6 +239,8 @@ class StoryMemoryProvider(AgentProvider):
             revision = self.service.reply_dependency_revision(request.user_id, request.request_id)
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
+        if fact_guard is not None:
+            fact_guard()
         with observe_inputs(trace):
             try:
                 result = self.provider.complete(
@@ -229,8 +250,10 @@ class StoryMemoryProvider(AgentProvider):
             except Exception as error:
                 trace('provider_failed', {'error_type': type(error).__name__})
                 raise
+        if fact_guard is not None:
+            fact_guard()
         event = ('story_recall_requested'
-                 if phase == 'deferred' and result.decision.tool_name == STORY_RECALL_TOOL.name
+                 if phase == 'deferred' and result.decision.tool_name in (STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name)
                  else 'provider_completed')
         trace(event, {'provider': getattr(result, 'provider', None),
                       'model': getattr(result, 'model', None),

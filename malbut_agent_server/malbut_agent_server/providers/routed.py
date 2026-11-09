@@ -37,7 +37,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
     ValidationError,
 )
-from malbut_agent_server.tools import STORY_RECALL_TOOL, ToolSpec
+from malbut_agent_server.tools import PERSONAL_RECALL_TOOL, STORY_RECALL_TOOL, ToolSpec
 
 
 DEFAULT_ROUTING_POLICY_REVISION = 'malbut-front-provider-routing-v1'
@@ -146,7 +146,7 @@ class RoutedAgentProvider(AgentProvider):
         if match.route is FrontRoute.GENERAL_CONVERSATION:
             general_request = self._without_robot_tools(request)
             general_tools = [tool for tool in tools if tool.name in {
-                'get_weather', 'set_weather_location', STORY_RECALL_TOOL.name,
+                'get_weather', 'set_weather_location', STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name,
             }]
             result = self._delegate(
                 self.general_provider,
@@ -274,7 +274,7 @@ class RoutedAgentProvider(AgentProvider):
         value = request.to_dict()
         value['available_tools'] = [
             name for name in request.available_tools
-            if name in {'get_weather', 'set_weather_location', STORY_RECALL_TOOL.name}
+            if name in {'get_weather', 'set_weather_location', STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name}
         ]
         return type(request).from_dict(value)
 
