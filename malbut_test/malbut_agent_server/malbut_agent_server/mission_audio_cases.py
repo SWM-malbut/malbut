@@ -18,6 +18,7 @@ NOTICE_TEXTS = {
     'navigation.map_required': '저장된 지도를 먼저 선택해 주세요.',
     'navigation.target_missing': '이동할 목적지를 다시 알려주세요.',
     'navigation.changed': '지도가 바뀌었어요. 다시 요청해 주세요.',
+    'weather.fetch_failed': '날씨 정보를 가져오지 못했어요.',
     'weather.location_not_found': '지역 이름을 다시 알려주세요.',
     'weather.location_required': '날씨를 확인할 지역을 알려주세요.',
     'set_weather_location.succeeded': '날씨 조회 지역을 저장했어요.',
@@ -86,6 +87,8 @@ def event_audio_id(event):
     capability = event.get('capability_id')
     if capability == 'set_weather_location' and kind == 'succeeded':
         return 'set_weather_location.succeeded'
+    if capability == 'get_weather' and kind in ('failed', 'rejected', 'unavailable', 'unknown'):
+        return 'weather.fetch_failed'
     if capability == 'relocalize' and kind == 'failed':
         payload = event.get('result_yaml')
         if isinstance(payload, str) and len(payload) <= 16384:

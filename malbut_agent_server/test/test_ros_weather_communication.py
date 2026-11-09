@@ -623,10 +623,10 @@ def test_new_speech_fetches_again_but_duplicate_id_does_not(ros_weather):
 
 
 @pytest.mark.parametrize('failure,expected,notice_id', [
-    ('fetch_error', 'FETCH_FAILED', 'operation.failed'),
-    ('timeout', 'TIMEOUT', 'operation.failed'),
-    ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED', 'operation.failed'),
-    ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED', 'operation.failed'),
+    ('fetch_error', 'FETCH_FAILED', 'weather.fetch_failed'),
+    ('timeout', 'TIMEOUT', 'weather.fetch_failed'),
+    ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED', 'weather.fetch_failed'),
+    ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED', 'weather.fetch_failed'),
 ])
 def test_fetch_failure_and_timeout_reach_manager_as_aborted(
     ros_weather, failure, expected, notice_id,
@@ -719,8 +719,7 @@ def test_missing_manager_or_weather_action_never_falls_back(
     assert run.client.calls == 0
     assert len(run.provider.calls) == 1
     assert run.provider.calls[0]['weather'] is None
-    notice_id = ('operation.unavailable' if missing == 'manager'
-                 else 'operation.failed')
+    notice_id = 'weather.fetch_failed'
     assert reply == CATALOG[notice_id]
     assert run.speech_messages[-1].audio_id == notice_id
     assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) <= 1

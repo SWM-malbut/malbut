@@ -1217,11 +1217,14 @@ class AgentOrchestrator:
         *, memory_context=None,
     ) -> ProviderResult:
         """Execute one Manager read after the model's Tool choice, then answer without Tools."""
+        from malbut_agent_server.mission_audio import CATALOG
+
         setting_location = first_result.decision.tool_name == 'set_weather_location'
         executor = self.weather_location_executor if setting_location else self.weather_executor
         if executor is None or not accepts_weather_context(self.provider):
             return replace(first_result, decision=AgentDecision(
-                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
+                type='message', message=(SERVICE_UNAVAILABLE_NOTICE if setting_location
+                                         else CATALOG['weather.fetch_failed']),
                 reason='weather_unavailable', confidence=1.0,
             ), memory_proposal=None)
         announce_function_start(first_result.decision.tool_name)
@@ -1241,13 +1244,16 @@ class AgentOrchestrator:
             if (setting_location or weather['status'] != 'unavailable' or attempt
                     or not claim_retry(WEATHER_RETRY_NOTICE)):
                 break
-        from malbut_agent_server.mission_audio import CATALOG
         notice_id = weather.get('notice_id')
-        if not setting_location and weather['status'] == 'location_required':
-            notice_id = 'weather.location_required'
-        if isinstance(notice_id, str) and notice_id in {
-                'operation.failed', 'operation.unavailable', 'operation.unknown',
-                'weather.location_required'}:
+        if not setting_location:
+            if weather['status'] == 'location_required':
+                notice_id = 'weather.location_required'
+            elif weather['status'] == 'unavailable' and notice_id != 'weather.location_required':
+                notice_id = 'weather.fetch_failed'
+        if (weather['status'] in {'unavailable', 'location_required'}
+                and isinstance(notice_id, str) and notice_id in {
+                    'operation.failed', 'operation.unavailable', 'operation.unknown',
+                    'weather.location_required', 'weather.fetch_failed'}):
             return replace(first_result, decision=AgentDecision(
                 type='message', message=CATALOG[notice_id], reason=notice_id,
                 confidence=1.0,
@@ -1277,11 +1283,6 @@ class AgentOrchestrator:
                     reason='weather_location_unavailable',
                 )
             return replace(first_result, decision=decision, memory_proposal=None)
-        if weather['status'] == 'unavailable':
-            return replace(first_result, decision=AgentDecision(
-                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
-                reason='weather_unavailable', confidence=1.0,
-            ), memory_proposal=None)
         settings = (memory_context or {}).get('response_settings', {})
         for render, reason in ((daily_forecast_reply, 'weather_daily_forecast'),
                                (current_temperature_reply, 'weather_current_temperature')):
