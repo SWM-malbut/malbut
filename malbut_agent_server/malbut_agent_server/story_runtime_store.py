@@ -971,7 +971,7 @@ class StoryRuntimeStore:
                         """SELECT 1 FROM conversation_turns
                            WHERE user_id=? AND request_id=? AND status='completed'
                            AND CASE WHEN json_valid(response_json) THEN
-                               json_extract(response_json, '$.schema_version')=2
+                               json_extract(response_json, '$.schema_version') IN (2, 3)
                                AND json_extract(response_json, '$.public.decision.type')='tool_call'
                                AND json_extract(response_json, '$.public.decision.tool_name')='request_patrol'
                                AND json_type(response_json, '$.public.safety.allowed')='true'
