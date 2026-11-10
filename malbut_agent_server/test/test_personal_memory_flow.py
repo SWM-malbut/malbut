@@ -158,6 +158,170 @@ def origin(text, turn='external'):
     }
 
 
+def test_pet_name_save_checks_copula_and_preserves_a_confirmed_final_i(flow):
+    flow.enable()
+
+    def save(text, value):
+        return flow.say(text, proposed('remember', text, facts=[pet_fact(text, value, '고양이')]))
+
+    text = '우리 고양이 이름은 방울밤이야. 고양이 이름으로 기억해 줘.'
+    assert save(text, '방울밤이').decision.type == 'clarification'
+    assert flow.memory.list_for_user('alice') == []
+    assert flow.provider.calls[-1]['context']['pet_name_spelling']['name_before_copula'] == '방울밤'
+    assert '기억했어요' in save(text, '방울밤').decision.message
+    assert flow.memory.list_for_user('alice')[0].metadata['fact']['value'] == '방울밤'
+    record = flow.memory.list_for_user('alice')[0]
+    flow.memory.remove_facts('alice', [record.id])
+
+    assert '기억했어요' in save('우리 고양이 이름은 송이입니다. 기억해 줘.', '송이').decision.message
+    assert '기억했어요' in save('우리 고양이 이름은 송이야. 기억해 줘.', '송이').decision.message
+    assert flow.memory.list_for_user('alice')[0].metadata['fact']['value'] == '송이'
+
+
+def test_explicit_pet_correction_binds_the_exact_live_slot_despite_an_unknown_model_id(flow):
+    flow.enable()
+    flow.remember('두부', subject='고양이')
+    flow.remember('두부', subject='강아지')
+    text = '우리 반려묘 이름을 두부에서 송이로 정정해 줘.'
+    wrong_id = '102a4d06-2cec-455f-9cfc-4ec7506c3774'
+    before = len(flow.provider.calls)
+    answer = flow.say(text, proposed('correct', text, targets=[wrong_id], facts=[pet_fact(text, '송이', '반려묘')]))
+    assert '정정했어요' in answer.decision.message
+    assert len(flow.provider.calls) == before + 1
+    assert [r.metadata['fact']['subject'] for r in flow.provider.calls[-1]['memories']] == ['고양이']
+    facts = [r.metadata['fact'] for r in flow.memory.list_for_user('alice')]
+    assert {(f['subject'], f['value']) for f in facts} == {('고양이', '송이'), ('강아지', '두부')}
+
+
+@pytest.mark.parametrize('case', [
+    'old mismatch', 'wrong value', 'wrong subject', 'other active id', 'other user id',
+    'multiple targets', 'ambiguous slots', 'quoted', 'negative', 'other owner', 'indirect new name',
+])
+def test_explicit_pet_correction_never_widens_authority(flow, case):
+    flow.enable()
+    flow.remember('보리', subject='고양이')
+    flow.remember('두부', subject='강아지')
+    flow.enable(user='bob')
+    flow.remember('가을', user='bob', subject='고양이')
+    saved = {r.metadata['fact']['subject']: r for r in flow.memory.list_for_user('alice')}
+    cat, dog = saved['고양이'], saved['강아지']
+    other = flow.memory.list_for_user('bob')[0]
+    if case == 'ambiguous slots':
+        flow.remember('여름', subject='반려묘')
+    text = '우리 고양이 이름을 보리에서 모카로 정정해 줘.'
+    if case == 'old mismatch':
+        text = text.replace('보리', '옛별')
+    elif case == 'indirect new name':
+        text = text.replace('모카로', '원래대로')
+    elif case == 'negative':
+        text = text.replace('정정해 줘.', '정정하지 마.')
+    elif case == 'quoted':
+        text = '예시로 “' + text + '”라고 읽어 줘.'
+    elif case == 'other owner':
+        text = text.replace('우리', '친구네')
+    targets = {'other active id': [dog.id], 'other user id': [other.id],
+               'multiple targets': [cat.id, dog.id]}.get(case, ['unknown-id'])
+    value = {'wrong value': '보리', 'indirect new name': '원래대'}.get(case, '모카')
+    fact = pet_fact(text, value, '강아지' if case == 'wrong subject' else '고양이')
+    initial = set((r.id, r.content) for u in ('alice', 'bob') for r in flow.memory.list_for_user(u))
+    flow.say(text, proposed('correct', text, targets=targets, facts=[fact]))
+    assert {(r.id, r.content) for u in ('alice', 'bob') for r in flow.memory.list_for_user(u)} == initial
+
+
+def test_pet_name_lookup_scopes_both_inputs_and_deletion(flow):
+    flow.enable()
+    flow.remember('초코', subject='강아지')
+    cat = '우리 고양이 이름은 보리야. 기억해 줘.'
+    flow.say(cat, proposed('remember', cat, facts=[pet_fact(cat, '보리', '고양이')]))
+    # Some older unstructured records contain multiple facts in one sentence.
+    flow.memory.add('alice', '고양이 이름은 가을 강아지 이름은 초코', kind='pet')
+    lookup = '전에 말한 우리 반려묘 이름이 뭐였지?'
+    flow.say(lookup, conversation='read')
+    call = flow.provider.calls[-1]
+    assert [r.metadata['fact']['value'] for r in call['memories']] == ['보리']
+    assert [r['fact']['value'] for r in call['context']['memories']] == ['보리']
+    assert '초코' not in supplied_text(call)
+    stored = call['memories'][0]
+    text = '저장한 우리 고양이 이름만 삭제해 줘.'
+    flow.say(text, proposed('forget', text, query='고양이 이름', targets=[stored.id]))
+    flow.memory.add('alice', '고양이 이름은 가을, 강아지 이름은 초코', kind='fact')
+    count = len(flow.provider.calls)
+    answer = flow.say('우리 고양이 이름을 기억해?', conversation='read')
+    assert '고양이 이름을 확인할 수 없' in answer.decision.message
+    assert len(flow.provider.calls) == count
+    assert '보리' not in answer.decision.message and '초코' not in answer.decision.message
+    flow.say('우리 반려견 이름 좀 알려 줘', conversation='dog')
+    assert [r.metadata['fact']['value'] for r in flow.provider.calls[-1]['memories']] == ['초코']
+    flow.memory.add('alice', '고양이 이름은 해솔', kind='fact')
+    flow.say('우리 고양이 이름이 뭐였어?', conversation='legacy')
+    assert [r.content for r in flow.provider.calls[-1]['memories']] == ['고양이 이름은 해솔']
+
+
+@pytest.mark.parametrize('subject', ['첫째 고양이', '둘째반려묘', '세 번째 고양이'])
+def test_general_pet_question_finds_single_numbered_pet_only(flow, subject):
+    flow.enable()
+    flow.remember('초코', subject='첫째 강아지')
+    flow.say('친구네 고양이 이름은 별이래.')
+    flow.memory.add('alice', '고양이 이름은 옛별', kind='pet')
+    flow.remember('두부', subject=subject)
+    before = len(flow.provider.calls)
+    flow.say('우리 반려묘 이름이 뭐야?')
+    assert len(flow.provider.calls) == before + 1
+    call = flow.provider.calls[-1]
+    assert [r.metadata['fact']['subject'] for r in call['memories']] == [subject]
+    assert [r['fact']['value'] for r in call['context']['memories']] == ['두부']
+    assert all(word not in supplied_text(call) for word in ('초코', '별이래', '옛별'))
+    flow.memory.remove_facts('alice', [call['memories'][0].id])
+    assert '확인할 수 없' in flow.say('우리 고양이 이름이 뭐야?').decision.message
+
+
+def test_generic_pet_request_cannot_pick_between_two_pets_of_the_same_species(flow):
+    flow.enable()
+    flow.remember('두부', subject='첫째 고양이')
+    flow.remember('모카', subject='둘째 반려묘')
+    flow.remember('초코', subject='강아지')
+    count = len(flow.provider.calls)
+    answer = flow.say('우리 고양이 이름이 뭐야?', conversation='lookup')
+    assert answer.decision.type == 'clarification' and '고양이' in answer.decision.message
+    assert len(flow.provider.calls) == count and '초코' not in answer.decision.message
+    initial = {r.id: r.content for r in flow.memory.list_for_user('alice')}
+    first_cat = next(key for key, content in initial.items() if '두부' in content)
+    edit = '우리 고양이 이름을 두부에서 송이로 정정해 줘.'
+    answer = flow.say(edit, proposed('correct', edit, targets=[first_cat],
+                                     facts=[pet_fact(edit, '송이', '고양이')]))
+    assert answer.decision.type == 'clarification'
+    assert {r.id: r.content for r in flow.memory.list_for_user('alice')} == initial
+
+
+def test_pet_deletion_fences_only_older_evidence_of_the_same_pet(flow):
+    flow.enable()
+    flow.memory.add('alice', '고양이 이름은 옛별', kind='pet')
+    flow.memory.add('alice', '반려견 이름은 햇살', kind='fact')
+    flow.remember('하루', subject='고양이')
+    record = next(r for r in flow.memory.list_for_user('alice') if r.metadata.get('fact'))
+    flow.memory.remove_facts('alice', [record.id])
+    unrelated = flow.memory.add('alice', '나는 모과를 좋아해', kind='preference')
+    flow.memory.remove_facts('alice', [unrelated.id])
+    assert '확인할 수 없' in flow.say('우리 반려묘 이름을 기억해?', conversation='cat').decision.message
+    flow.say('우리 강아지 이름이 뭐였어?', conversation='dog')
+    assert [r.content for r in flow.provider.calls[-1]['memories']] == ['반려견 이름은 햇살']
+    flow.remember('새봄', subject='고양이')
+    flow.say('우리 고양이 이름은 뭐야?', conversation='new-cat')
+    assert [r.metadata['fact']['value'] for r in flow.provider.calls[-1]['memories']] == ['새봄']
+
+
+@pytest.mark.parametrize('text', [
+    '우리 고양이 이름 기억해.', '예시로 “우리 고양이 이름을 기억해?”라고 말해 봐.',
+    '우리 고양이 이름하고 강아지 이름이 뭐였지?', '친구 고양이 이름 좀 알려 줘.',
+    '우리 고양이 이름은 말하지 마.', '우리 고양이 이름을 수정해 줘.',
+])
+def test_other_pet_requests_remain_on_their_normal_route(flow, text):
+    flow.enable()
+    flow.say(text, conversation='control')
+    context = flow.provider.calls[-1]['context']
+    assert 'pet_name_evidence_only' not in context and 'pet_name_spelling' not in context
+
+
 def test_explicit_save_asks_consent_then_recalls_in_new_session(flow):
     """Consent approves the original save without another model call."""
     text = '우리 강아지 이름은 두부야. 기억해줘'

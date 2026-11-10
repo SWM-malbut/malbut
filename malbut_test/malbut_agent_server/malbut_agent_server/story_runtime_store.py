@@ -7,7 +7,7 @@ Deletion is application-level redaction; it does not promise media/backup erasur
 """
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -42,6 +42,36 @@ _DEICTIC_REFERENCE = re.compile(r'그(?:거|것|때|곳|날|쪽|\s)|이어서|�
 _CORRECTION = re.compile(r'정정|수정|바(?:꾸|꿔|꿨|꾼|뀌|뀐|뀔)|변경|취소|아니[야었라]|잘못|사실')
 
 
+# These standalone requests have a fixed subject and no slot for a new value.
+# Do not use the looser foreground intent matcher: speech can contain a
+# correction and a question in the same unpunctuated sentence.
+_FACT_QUESTION = re.compile(
+    r'(?:저장해둔|전에알려준|평소)?(?:내|제|우리|저희)?'
+    r'(?:이름|본명|성함|호칭|별명|애칭|닉네임|(?:강아지|고양이|반려견|반려묘)이름|'
+    r'가?좋아하는(?:음료|음식|색)|취향)'
+    r'(?:이|가|은|는)?(?:뭐(?:야|예요|에요|였지|였죠|였더라|였나요)|무엇(?:인가요|이었지)|기억나(?:요)?)'
+    r'[?.!。]?'
+)
+
+
+# A standalone patrol can refer only to the house or the patrol itself.
+# A generic "둘러봐" may refer to a topic supplied by another turn.
+_PATROL_SCOPE = r'(?:구석구석)?(?:가볍게|간단히|꼼꼼히)?(?:한바퀴|한번)?'
+_PATROL_REQUEST = re.compile(
+    r'(?:지금은?|이제)?(?:별일없는지)?(?:간단히)?'
+    rf'(?:(?:집(?:안)?(?:을)?)?{_PATROL_SCOPE}순찰(?:을)?(?:시작)?해'
+    rf'|집(?:안)?(?:을)?{_PATROL_SCOPE}둘러봐)(?:줘|주세요|줄래(?:요)?)?[.!?。]?'
+)
+# The complement after "말고" must also be a standalone request to stay put.
+# Extra words can change a different memory, even if the reply acknowledges a stop.
+_PATROL_STOP = re.compile(
+    r'(?:(?:지금|오늘)은?|이제는?)?(?:집(?:안)?(?:을)?)?순찰(?:은|을)?'
+    r'(?:하지(?:마(?:라|세요|요)?|말아(?:줘요?|주세요|줄래요?)?|말자'
+    r'|말고,?(?:지금은?)?(?:그냥)?(?:가만히있어|기다려|대기해)(?:줘요?|주세요|줄래요?)?)'
+    r'|(?:그만|취소|중지)해(?:줘요?|주세요|줄래요?)?)[.!?。]?'
+)
+
+
 def _normalized(text):
     return unicodedata.normalize('NFKC', text).casefold()
 
@@ -72,6 +102,13 @@ def _source_object(ref, source, identifier):
     return {'id': identifier, 'ref': ref.to_dict(), 'text': source.text,
             'role': ref.role, 'created_at': source.created_at,
             'completed_at': source.completed_at}
+
+
+@dataclass
+class _ValidationSnapshot:
+    changes: int
+    sources: dict = field(default_factory=dict)
+    fact_guards: dict = field(default_factory=dict)
 
 
 class StoryRuntimeStore:
@@ -122,13 +159,18 @@ class StoryRuntimeStore:
         can correct or erase source text without touching this Python object.
         Writes on this connection also invalidate the snapshot's memo.
         """
-        with self._transaction() as conn:
-            previous = self._source_cache
-            self._source_cache = (conn.total_changes, {})
-            try:
+        with self.conversations._lock:
+            if self.conversations._connection.in_transaction:
+                # A caller-owned transaction can roll back a savepoint without
+                # changing total_changes. Only reuse a snapshot we opened.
                 yield
-            finally:
-                self._source_cache = previous
+                return
+            with self._transaction() as conn:
+                self._source_cache = _ValidationSnapshot(conn.total_changes)
+                try:
+                    yield
+                finally:
+                    self._source_cache = None
 
     def _initialize(self):
         definitions = (
@@ -481,52 +523,60 @@ class StoryRuntimeStore:
 
     def _resolve(self, conn, user, ref):
         cache = self._source_cache
-        if cache is None:
+        if cache is None or cache.changes != conn.total_changes:
+            # A later rollback does not decrement total_changes. Leave the
+            # memo disabled for the rest of a snapshot that observed a write.
             return self._resolve_uncached(conn, user, ref)
-        if cache[0] != conn.total_changes:
-            cache = self._source_cache = (conn.total_changes, {})
         key = (user, ref)
-        if key not in cache[1]:
-            cache[1][key] = self._resolve_uncached(conn, user, ref)
-        return cache[1][key]
+        if key not in cache.sources:
+            cache.sources[key] = self._resolve_uncached(conn, user, ref)
+        return cache.sources[key]
+
+    def _fact_guards(self, conn, user):
+        cache = self._source_cache
+        if cache is not None and cache.changes == conn.total_changes and user in cache.fact_guards:
+            return cache.fact_guards[user]
+        has_stamps = self._has_table(conn, 'memory_turn_state')
+        tombstones = [(row['memory_id'], json.loads(row['source_key']))
+                      for row in conn.execute(
+                          'SELECT memory_id,source_key FROM memory_tombstones WHERE user_id=?',
+                          (user,))]
+        guards = (has_stamps, tombstones)
+        if cache is not None and cache.changes == conn.total_changes:
+            cache.fact_guards[user] = guards
+        return guards
 
     def _resolve_uncached(self, conn, user, ref):
         source = read_source(conn, user, ref)
         if source is None:
             return None
-        row = conn.execute('SELECT * FROM conversation_turns WHERE user_id=? AND conversation_id=? '
-                           'AND session_instance_id=? AND generation=? AND turn_id=?',
-                           (user, ref.conversation_id, ref.session_instance_id,
-                            ref.generation, ref.turn_id)).fetchone()
-        scope = conn.execute('SELECT identity_json FROM story_runtime_scope WHERE user_id=? '
-                             'AND request_id=?', (user, row['request_id'])).fetchone() if row else None
-        if scope is None or scope[0] != _identity(row):
+        identity = (ref.conversation_id, ref.session_instance_id, ref.generation, ref.turn_id)
+        row = conn.execute(
+            '''SELECT t.request_id FROM conversation_turns t
+               JOIN story_runtime_scope s ON s.user_id=t.user_id AND s.request_id=t.request_id
+               WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
+                 AND t.generation=? AND t.turn_id=? AND s.identity_json=?
+                 AND NOT EXISTS (SELECT 1 FROM story_runtime_exclusions
+                                 WHERE user_id=t.user_id AND message_key=? AND sha256=?)''',
+            (user, *identity, _json(identity), _message_key(ref), ref.sha256),
+        ).fetchone()
+        if row is None:
             return None
-        # Fact deletion/correction retains raw conversation text, but revokes
-        # its source and any turns explicitly stamped as depending on it.
-        # Story-only reply markers have no fact source: do not treat disabling
-        # story recall as a deletion of the underlying retained story.
-        source_key = {key: row[key] for key in (
-            'conversation_id', 'session_instance_id', 'generation',
-            'turn_id', 'request_id',
-        )}
+        # Fact deletion can retain raw text. Revoke both its exact source and
+        # turns stamped as depending on it. Story-only markers have no source.
+        source_key = dict(conversation_id=ref.conversation_id,
+                          session_instance_id=ref.session_instance_id, generation=ref.generation,
+                          turn_id=ref.turn_id, request_id=row['request_id'])
+        has_stamps, tombstones = self._fact_guards(conn, user)
         dependencies = set()
-        if self._has_table(conn, 'memory_turn_state'):
+        if has_stamps:
             stamp = conn.execute('SELECT dependencies_json FROM memory_turn_state '
                                  'WHERE user_id=? AND request_id=?',
                                  (user, row['request_id'])).fetchone()
             if stamp is not None:
                 dependencies = set(json.loads(stamp[0]))
-        for tombstone in conn.execute(
-                'SELECT memory_id,source_key FROM memory_tombstones WHERE user_id=?',
-                (user,)):
-            revoked = json.loads(tombstone['source_key'])
-            if revoked and (revoked == source_key
-                            or tombstone['memory_id'] in dependencies):
-                return None
-        if conn.execute('SELECT 1 FROM story_runtime_exclusions WHERE user_id=? '
-                        'AND message_key=? AND sha256=?',
-                        (user, _message_key(ref), ref.sha256)).fetchone():
+        if any(revoked and (revoked == source_key or memory_id in dependencies)
+               for memory_id, revoked in tombstones):
             return None
         return source
 
@@ -542,9 +592,12 @@ class StoryRuntimeStore:
                 'updated_at': row['updated_at'], 'source_time': row['source_time'],
                 'untrusted': True, 'execution_authorized': False}
 
-    def _candidate_rows(self, conn, user, query, limit, exclude_ids=()):
+    def _candidate_rows(self, conn, user, query, limit, exclude_ids=(), *, extraction=False):
         normalized_query = unicodedata.normalize('NFKC', query).casefold()
         terms = set(re.findall(r'\w+', normalized_query))
+        if extraction:
+            # First-person pronouns identify the speaker, never a shared topic.
+            terms.difference_update({'내', '제', '내가', '제가', '나는', '저는', '저희', '우리'})
         ranked = []
         for row in conn.execute('SELECT * FROM story_runtime_stories WHERE user_id=? AND active=1', (user,)):
             if row['story_id'] in exclude_ids:
@@ -616,7 +669,8 @@ class StoryRuntimeStore:
                                  'error_code': 'source_too_large', 'retry_scheduled': False,
                                  'attempt': row['attempts']})
                 return None
-            previous = self._candidate_rows(conn, user, ' '.join(item['text'] for item in sources), 5)
+            previous = self._candidate_rows(conn, user, ' '.join(item['text'] for item in sources),
+                                            5, extraction=True)
             stories = []
             source_ids = {SourceRef.from_dict(item['ref']).key: item['id'] for item in sources}
             total = sum(len(item['text']) for item in sources)
@@ -896,6 +950,63 @@ class StoryRuntimeStore:
                                  'attempt': member['attempts'], 'error_code': code,
                                  'retry_scheduled': retry,
                                  'retry_after_seconds': 2 ** member['attempts'] if retry else None})
+
+    @staticmethod
+    def _standalone_patrol_receipt(conn, user, request_id, utterance):
+        if _PATROL_STOP.fullmatch(utterance):
+            tool = 'cancel_voice_mission'
+        elif _PATROL_REQUEST.fullmatch(utterance):
+            tool = 'request_patrol'
+        else:
+            return False
+        # Check the final, approved decision; older receipts cannot establish it.
+        receipt = conn.execute(
+            """SELECT json_extract(response_json, '$.public.decision.type'),
+                      json_extract(response_json, '$.public.decision.tool_name'),
+                      json_extract(response_json, '$.public.safety.code')
+               FROM conversation_turns
+               WHERE user_id=? AND request_id=? AND status='completed'
+               AND CASE WHEN json_valid(response_json) THEN
+                   json_extract(response_json, '$.schema_version') IN (2, 3)
+                   AND json_type(response_json, '$.public.safety.allowed')='true'
+                   AND json_type(response_json, '$.public.decision.tool_name') IS NOT NULL
+               END""", (user, request_id),
+        ).fetchone()
+        if receipt is None:
+            return False
+        decision = tuple(receipt)
+        return (decision == ('tool_call', tool, 'manager_request')
+                or (tool == 'cancel_voice_mission' and decision == ('message', None, 'not_an_action')))
+
+    def pending_story_ids(self, user, request_id=None):
+        """Return possible extraction targets, or None when their scope is unknown."""
+        with self._transaction() as conn:
+            jobs = conn.execute(
+                "SELECT request_id,sources_json FROM story_runtime_jobs "
+                "WHERE user_id=? AND state IN ('queued','running')", (user,),
+            ).fetchall()
+            if len(jobs) >= MAX_PENDING:
+                # Recovery can still owe a job for a turn that did not fit.
+                return None
+            texts = []
+            for job in jobs:
+                if request_id is not None and job['request_id'] == request_id:
+                    continue
+                refs = _refs(job['sources_json'])
+                sources = {ref.role: self._resolve(conn, user, ref) for ref in refs}
+                if set(sources) != {'user', 'assistant'} or not all(sources.values()):
+                    return None
+                utterance = ''.join(_normalized(sources['user'].text).split())
+                if not (_FACT_QUESTION.fullmatch(utterance)
+                        or self._standalone_patrol_receipt(conn, user, job['request_id'], utterance)):
+                    return None
+                texts.extend(source.text for source in sources.values())
+            if not texts:
+                return set()
+            # claim() matches both sides of every turn in a batch. All positive
+            # matches across pending turns cover every possible top-five batch.
+            return {row['story_id'] for row in self._candidate_rows(
+                conn, user, ' '.join(texts), limit=None, extraction=True)}
 
     def failed_story_ids(self, user, request_id=None):
         """Quarantine affected stories, not every story owned by a failed job's user.

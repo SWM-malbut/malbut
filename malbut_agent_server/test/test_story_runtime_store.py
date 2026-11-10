@@ -192,6 +192,62 @@ def test_source_memo_is_invalidated_by_writes_in_same_transaction(runtime):
         assert runtime.store.list_stories('alice') == []
 
 
+def test_validation_snapshot_reads_fact_guards_once_per_user(runtime):
+    runtime.allow()
+    runtime.saved()
+    _, second = runtime.claim_turn('요가 수업을 듣고 싶어.')
+    assert runtime.store.commit(second, [runtime.update(second, title='요가')])
+    runtime.allow('bob')
+    runtime.saved(user='bob')
+    conn = runtime.conversations._connection
+    statements = []
+    conn.set_trace_callback(statements.append)
+    try:
+        with runtime.store.validation_snapshot():
+            assert len(runtime.store.list_stories('alice')) == 2
+            assert runtime.store.list_stories('bob')
+    finally:
+        conn.set_trace_callback(None)
+    selects = [sql for sql in statements if 'FROM memory_tombstones WHERE' in sql]
+    assert len(selects) == 2
+    assert any("user_id='alice'" in sql for sql in selects)
+    assert any("user_id='bob'" in sql for sql in selects)
+
+
+@pytest.mark.parametrize('caller_owns_transaction', [False, True])
+def test_rolled_back_tombstone_removal_keeps_source_revoked(runtime, caller_owns_transaction):
+    runtime.allow()
+    token, _, _ = runtime.saved()
+    conn = runtime.conversations._connection
+    source = {key: getattr(token, key) for key in (
+        'conversation_id', 'session_instance_id', 'generation', 'turn_id', 'request_id',
+    )}
+    with conn:
+        conn.execute('INSERT INTO memory_tombstones VALUES (?,?,?,?)',
+                     ('alice', 'revoked', json.dumps(source), runtime.now))
+
+    def remove_until_rollback():
+        conn.execute('SAVEPOINT pending_removal')
+        conn.execute('DELETE FROM memory_tombstones WHERE user_id=?', ('alice',))
+
+    if caller_owns_transaction:
+        conn.execute('BEGIN')
+        remove_until_rollback()
+    try:
+        with runtime.store.validation_snapshot():
+            if not caller_owns_transaction:
+                assert runtime.store.list_stories('alice') == []
+                remove_until_rollback()
+            assert runtime.store.list_stories('alice')
+            # SQLite rolls back the deletion without changing total_changes.
+            conn.execute('ROLLBACK TO pending_removal')
+            assert runtime.store.list_stories('alice') == []
+            conn.execute('RELEASE pending_removal')
+    finally:
+        if caller_owns_transaction:
+            conn.rollback()
+
+
 def test_default_off_does_not_queue_or_disclose_completed_sources(runtime):
     token = runtime.complete()
     policy = runtime.store.policy('alice')

@@ -483,6 +483,12 @@ class OpenAIResponsesProvider(AgentProvider):
         }
         if memory_mode == 'answer_only':
             payload['instructions'] += '\n\n' + ANSWER_ONLY_INSTRUCTIONS
+            if (memory_context.get('story_memory_untrusted') or {}).get('stories'):
+                payload['instructions'] += (
+                    '\n저장된 이름이나 표식을 답할 때 이름 자체의 끝 글자를 보존하고 조사·어미를 이름에 붙이지 마세요. '
+                    '기록이 이름을 따로 구분하지 않고 서술한 경우, 이름만 새로 잘라 따옴표를 붙이지 말고 '
+                    '해당 값이 있는 짧은 구절을 기록의 어미까지 그대로 전하세요.'
+                )
         elif memory_mode == 'automatic_extraction':
             proposal_schema = copy.deepcopy(MEMORY_PROPOSAL_SCHEMA)
             proposal_schema['properties']['operation']['enum'] = ['remember']
@@ -522,6 +528,12 @@ class OpenAIResponsesProvider(AgentProvider):
         if (getattr(request, 'scene_context', None) is not None
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
             payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS
+        if (memory_context or {}).get('pet_name_spelling') and memory_mode != 'answer_only':
+            payload['instructions'] += (
+                '\n반려동물 이름 선언에서 evidence에는 원문을 그대로 두고, facts의 value에는 '
+                'pet_name_spelling.name_before_copula에 분리된 이름을 쓰세요. '
+                '같은 동물의 확인된 기존 이름에 끝 이가 포함된다면 그 표기를 유지하세요.'
+            )
         if self.include_reasoning:
             payload['reasoning'] = {
                 'effort': self.reasoning_effort,

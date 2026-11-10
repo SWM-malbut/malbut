@@ -4,12 +4,17 @@ from copy import deepcopy
 import hashlib
 import json
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
-from malbut_agent_server.providers.base import AgentProvider, accepts_memory_context
-from malbut_agent_server.schemas import ValidationError
+from malbut_agent_server.providers.base import AgentProvider, ProviderError, accepts_memory_context
+from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.schemas import (
+    AgentDecision, ProviderResult, ProviderUsage, RobotState, SpeechAgentRequest, ValidationError,
+)
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
+from malbut_agent_server.tools import STORY_RECALL_TOOL, TOOL_SPECS
 
 
 class Service:
@@ -210,3 +215,114 @@ def test_missing_current_request_blocks_untracked_inference():
     with pytest.raises(ValidationError, match='memory_changed'):
         wrapper.complete(request(), [], [], [])
     assert backend.calls == []
+
+
+def speech_fixture(*decisions):
+    service = Service()
+    service.recall_revision = Mock(return_value=service.revision)
+    service.context = Mock(wraps=service.context)
+    service.trace = Mock()
+    backend = Provider()
+    backend.complete = Mock(side_effect=[
+        ProviderResult(decision, 'openai', 'test', 10, ProviderUsage(5, 3, 8), input_chars=20)
+        for decision in decisions
+    ])
+    wrapper = StoryMemoryProvider(backend, service, on_demand_speech=True)
+    speech = SpeechAgentRequest('req-a', 'user-a', 'conv-a', 'turn-a', '그 전시 말이야',
+                                RobotState(), ('request_patrol',))
+    return wrapper, speech, service, backend
+
+
+def recall(**arguments):
+    return AgentDecision('tool_call', '', tool_name=STORY_RECALL_TOOL.name, arguments=arguments)
+
+
+def test_current_speech_action_skips_recall_and_keeps_recent_lineage():
+    decision = AgentDecision('tool_call', '', tool_name='request_patrol',
+                             arguments={'thoroughness': 'normal'})
+    wrapper, speech, service, backend = speech_fixture(decision)
+    offered = [TOOL_SPECS['request_patrol']]
+    result = wrapper.complete(speech, [], ['recent'], offered)
+    assert result.decision == decision
+    service.context.assert_not_called()
+    assert not service.recorded
+    assert service.history_recorded == [('user-a', 'req-a', ['recent'], None)]
+    args, kwargs = backend.complete.call_args
+    assert args[0].available_tools == ('request_patrol', 'recall_story_memory')
+    assert args[3] == [*offered, STORY_RECALL_TOOL]
+    assert 'story_memory_untrusted' not in kwargs['memory_context']
+    assert speech.available_tools == ('request_patrol',) and len(offered) == 1
+    wrapper.validate_reply('user-a', 'req-a')
+
+
+def test_requested_story_uses_original_utterance_once_and_answers_without_tools():
+    wrapper, speech, service, backend = speech_fixture(recall(), AgentDecision('message', '전시였어요.'))
+    result = wrapper.complete(speech, [], ['recent'], [TOOL_SPECS['request_patrol']])
+    service.context.assert_called_once_with('user-a', speech.utterance, ['recent'])
+    assert result.usage == ProviderUsage(10, 6, 16)
+    assert result.latency_ms == 20 and result.input_chars == 40
+    assert [args[1] for args, _ in service.trace.call_args_list] == [
+        'memory_retrieved', 'story_recall_requested', 'memory_retrieved', 'provider_completed',
+    ]
+    args, kwargs = backend.complete.call_args_list[1]
+    assert args[0].available_tools == () and args[3] == []
+    assert kwargs['memory_context']['story_memory_untrusted']['stories'][0]['story_id'] == 'exhibition'
+    assert service.recorded == [('user-a', 'req-a', ['exhibition'], 1)]
+
+
+@pytest.mark.parametrize('second', [
+    recall(), AgentDecision('tool_call', '', tool_name='request_patrol', arguments={'thoroughness': 'light'}),
+])
+def test_story_answer_cannot_call_a_second_tool(second):
+    wrapper, speech, service, backend = speech_fixture(recall(), second)
+    with pytest.raises(ProviderError, match='after story lookup'):
+        wrapper.complete(speech, [], [], [TOOL_SPECS['request_patrol']])
+    assert backend.complete.call_count == 2 and service.context.call_count == 1
+
+
+@pytest.mark.parametrize('revision,weather,arguments', [
+    (None, None, {}), (1, {'status': 'fresh'}, {}), (1, None, {'user_id': 'bob'}),
+])
+def test_unoffered_or_malformed_lookup_does_not_read_stories(revision, weather, arguments):
+    wrapper, speech, service, backend = speech_fixture(recall(**arguments))
+    service.recall_revision.return_value = revision
+    with pytest.raises(ProviderError, match='invalid story lookup'):
+        wrapper.complete(speech, [], [], [], weather_context=weather)
+    service.context.assert_not_called()
+    assert backend.complete.call_count == 1
+
+
+def test_changed_story_policy_between_calls_does_not_send_recalled_text():
+    wrapper, speech, service, backend = speech_fixture(recall(), AgentDecision('message', 'unused'))
+    service.context_value['revision'] = service.revision + 1
+    with pytest.raises(ValidationError, match='memory_changed'):
+        wrapper.complete(speech, [], [], [])
+    assert backend.complete.call_count == 1
+
+
+def test_openai_recall_response_schema_allows_only_an_answer():
+    _, speech, service, _ = speech_fixture()
+    payloads = []
+
+    def transport(url, headers, payload, timeout):
+        payloads.append(payload)
+        if len(payloads) == 1:
+            output = {'type': 'function_call', 'name': STORY_RECALL_TOOL.name, 'arguments': '{}'}
+        else:
+            output = {'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps({
+                'type': 'message', 'message': '전시를 보러 갔어요.', 'reason': 'story_recalled',
+                'confidence': 1.0,
+            })}]}
+        return {'status': 'completed', 'output': [output]}
+
+    backend = OpenAIResponsesProvider(api_key='test-only-key', model='test-model', transport=transport)
+    wrapper = StoryMemoryProvider(backend, service, on_demand_speech=True)
+    answer = wrapper.complete(speech, [], [], [TOOL_SPECS['request_patrol']],
+                              memory_context={'enabled': False})
+    assert answer.decision.message == '전시를 보러 갔어요.'
+    assert answer.memory_proposal is None
+    first, second = payloads
+    assert 'memory_proposal' in first['text']['format']['schema']['properties']
+    assert 'memory_proposal' not in second['text']['format']['schema']['properties']
+    assert 'tools' not in second and 'tool_choice' not in second
+    assert 'exhibition' in second['input']

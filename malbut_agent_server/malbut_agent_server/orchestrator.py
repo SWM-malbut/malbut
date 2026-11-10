@@ -46,7 +46,7 @@ from malbut_agent_server.providers.base import (
     accepts_weather_context,
 )
 from malbut_agent_server.prompting import bounded_weather_context
-from malbut_agent_server.weather import daily_forecast_reply
+from malbut_agent_server.weather import current_temperature_reply, daily_forecast_reply
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import (
@@ -60,6 +60,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
     ProviderUsage,
     RobotState,
+    SpeechAgentRequest,
     ValidationError,
 )
 
@@ -732,6 +733,9 @@ class AgentOrchestrator:
                 memory_snapshot = self.personal_memory.snapshot(
                     request, token, begin.history, begin.summary,
                     memory_limit=self.memory_limit,
+                    defer_facts=(isinstance(request, SpeechAgentRequest)
+                                 and self.provider is self.story_provider
+                                 and getattr(self.story_provider, 'on_demand_speech', False)),
                 )
                 effective_request = self._effective_request(
                     request,
@@ -957,6 +961,12 @@ class AgentOrchestrator:
                 if self._separate_memory_extraction(request, memory_snapshot):
                     memory_context['mode'] = 'answer_only'
                 memory_arguments['memory_context'] = memory_context
+            if memory_snapshot.facts_deferred:
+                def recall_facts(focus, *, previous_name_id=None):
+                    return self.personal_memory.recall_deferred_facts(
+                        token, memory_snapshot, focus, self.memory_limit, previous_name_id=previous_name_id,
+                    )
+                memory_arguments['fact_lookup'] = recall_facts
             provider_result = self.provider.complete(
                 model_request,
                 memories,
@@ -967,6 +977,8 @@ class AgentOrchestrator:
                 ),
                 **memory_arguments,
             )
+            if memory_snapshot.facts_deferred:
+                memories = memory_snapshot.memories
         else:
             memories = []
             provider_result = ProviderResult(
@@ -1205,11 +1217,14 @@ class AgentOrchestrator:
         *, memory_context=None,
     ) -> ProviderResult:
         """Execute one Manager read after the model's Tool choice, then answer without Tools."""
+        from malbut_agent_server.mission_audio import CATALOG
+
         setting_location = first_result.decision.tool_name == 'set_weather_location'
         executor = self.weather_location_executor if setting_location else self.weather_executor
         if executor is None or not accepts_weather_context(self.provider):
             return replace(first_result, decision=AgentDecision(
-                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
+                type='message', message=(SERVICE_UNAVAILABLE_NOTICE if setting_location
+                                         else CATALOG['weather.fetch_failed']),
                 reason='weather_unavailable', confidence=1.0,
             ), memory_proposal=None)
         announce_function_start(first_result.decision.tool_name)
@@ -1229,13 +1244,16 @@ class AgentOrchestrator:
             if (setting_location or weather['status'] != 'unavailable' or attempt
                     or not claim_retry(WEATHER_RETRY_NOTICE)):
                 break
-        from malbut_agent_server.mission_audio import CATALOG
         notice_id = weather.get('notice_id')
-        if not setting_location and weather['status'] == 'location_required':
-            notice_id = 'weather.location_required'
-        if isinstance(notice_id, str) and notice_id in {
-                'operation.failed', 'operation.unavailable', 'operation.unknown',
-                'weather.location_required'}:
+        if not setting_location:
+            if weather['status'] == 'location_required':
+                notice_id = 'weather.location_required'
+            elif weather['status'] == 'unavailable' and notice_id != 'weather.location_required':
+                notice_id = 'weather.fetch_failed'
+        if (weather['status'] in {'unavailable', 'location_required'}
+                and isinstance(notice_id, str) and notice_id in {
+                    'operation.failed', 'operation.unavailable', 'operation.unknown',
+                    'weather.location_required', 'weather.fetch_failed'}):
             return replace(first_result, decision=AgentDecision(
                 type='message', message=CATALOG[notice_id], reason=notice_id,
                 confidence=1.0,
@@ -1265,18 +1283,14 @@ class AgentOrchestrator:
                     reason='weather_location_unavailable',
                 )
             return replace(first_result, decision=decision, memory_proposal=None)
-        if weather['status'] == 'unavailable':
-            return replace(first_result, decision=AgentDecision(
-                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
-                reason='weather_unavailable', confidence=1.0,
-            ), memory_proposal=None)
-        reply = daily_forecast_reply(
-            request.utterance, weather, (memory_context or {}).get('response_settings', {}),
-        )
-        if reply is not None:
-            return replace(first_result, decision=AgentDecision(
-                'message', reply, reason='weather_daily_forecast', confidence=1.0,
-            ), memory_proposal=None)
+        settings = (memory_context or {}).get('response_settings', {})
+        for render, reason in ((daily_forecast_reply, 'weather_daily_forecast'),
+                               (current_temperature_reply, 'weather_current_temperature')):
+            reply = render(request.utterance, weather, settings)
+            if reply is not None:
+                return replace(first_result, decision=AgentDecision(
+                    'message', reply, reason=reason, confidence=1.0,
+                ), memory_proposal=None)
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(

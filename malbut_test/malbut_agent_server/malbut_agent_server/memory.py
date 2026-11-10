@@ -1,5 +1,6 @@
 """SQLite-backed, user-isolated long-term memory retrieval."""
 
+import hashlib
 import json
 import math
 import os
@@ -83,7 +84,8 @@ def initialize_memory_schema(connection: sqlite3.Connection) -> None:
             revision INTEGER NOT NULL DEFAULT 0,
             legacy_cutoff REAL NOT NULL DEFAULT 0,
             consent_source_json TEXT NOT NULL DEFAULT '{}',
-            updated_at REAL NOT NULL
+            updated_at REAL NOT NULL,
+            self_name_cutoff REAL NOT NULL DEFAULT 0
         )''',
         '''CREATE TABLE IF NOT EXISTS memory_state_counter (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -106,6 +108,29 @@ def initialize_memory_schema(connection: sqlite3.Connection) -> None:
     )
     for statement in statements:
         connection.execute(statement)
+
+    have_pet_cutoffs = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_pet_name_cutoffs'",
+    ).fetchone()
+    if not have_pet_cutoffs:
+        connection.execute(
+            'CREATE TABLE IF NOT EXISTS memory_pet_name_cutoffs (user_id TEXT NOT NULL, slot_hash TEXT NOT NULL, '
+            'cutoff REAL NOT NULL, PRIMARY KEY (user_id, slot_hash))')
+        # Historical tombstones do not identify their slot. Bound active records
+        # remain usable; only unbound evidence older than such a removal is unsafe.
+        connection.execute(
+            "INSERT OR IGNORE INTO memory_pet_name_cutoffs SELECT user_id,'*',MAX(invalidated_at) "
+            "FROM (SELECT user_id,invalidated_at FROM memory_tombstones WHERE memory_id NOT LIKE 'story-reply-%' "
+            "UNION ALL SELECT user_id,legacy_cutoff FROM memory_policy_state WHERE legacy_cutoff>0) GROUP BY user_id")
+    if 'self_name_cutoff' not in {row[1] for row in connection.execute('PRAGMA table_info(memory_policy_state)')}:
+        connection.execute('ALTER TABLE memory_policy_state ADD COLUMN self_name_cutoff REAL NOT NULL DEFAULT 0')
+        # Old tombstones omit the fact's kind. Keep active facts readable, but
+        # don't use older unbound dialogue as the speaker's present identity.
+        connection.execute(
+            'UPDATE memory_policy_state SET self_name_cutoff=COALESCE(('
+            'SELECT MAX(t.invalidated_at) FROM memory_tombstones t '
+            "WHERE t.user_id=memory_policy_state.user_id AND t.memory_id NOT LIKE 'story-reply-%'),0)"
+        )
 
 
 @dataclass(frozen=True)
@@ -246,7 +271,7 @@ class SQLiteMemoryStore:
             if self.database_path == ':memory:':
                 tables = (
                     'memories', 'memory_policy_state', 'memory_fact_slots',
-                    'memory_tombstones',
+                    'memory_tombstones', 'memory_pet_name_cutoffs',
                 )
                 for table in tables:
                     rows = self._connection.execute(
@@ -457,6 +482,7 @@ class SQLiteMemoryStore:
         limit: int = 5,
         now: Optional[float] = None,
         connection: Optional[sqlite3.Connection] = None,
+        *, fact_kind: Optional[str] = None,
     ) -> Tuple[List[MemoryRecord], int]:
         """Return ranked active memories and their atomic store revision."""
         normalized_user = validate_user_id(user_id)
@@ -468,23 +494,19 @@ class SQLiteMemoryStore:
             raise ValidationError(
                 'memory search limit must be between 1 and 10'
             )
+        if fact_kind is not None and fact_kind not in {'name', 'nickname', 'pet', 'preference'}:
+            raise ValidationError('invalid personal fact focus')
         current_time = float(now if now is not None else time.time())
         with self._transaction(connection) as active:
-            rows = active.execute(
-                '''
-                SELECT *
-                FROM memories
-                WHERE user_id = ?
-                  AND (expires_at IS NULL OR expires_at > ?)
-                ORDER BY created_at DESC
-                LIMIT ?
-                ''',
-                (
-                    normalized_user,
-                    current_time,
-                    MAX_RETRIEVAL_CANDIDATES,
-                ),
-            ).fetchall()
+            query_sql = ('SELECT * FROM memories WHERE user_id = ? '
+                         'AND (expires_at IS NULL OR expires_at > ?)')
+            parameters = [normalized_user, current_time]
+            if fact_kind is not None:
+                # Old untyped fact records still qualify by matching the utterance.
+                query_sql += " AND kind IN (?, 'fact')"
+                parameters.append(fact_kind)
+            rows = active.execute(query_sql + ' ORDER BY created_at DESC LIMIT ?',
+                                  [*parameters, MAX_RETRIEVAL_CANDIDATES]).fetchall()
             revision = int(active.execute(
                 'SELECT revision FROM memory_state_counter WHERE singleton=1',
             ).fetchone()['revision'])
@@ -510,7 +532,7 @@ class SQLiteMemoryStore:
                     if len(content_token) >= 2
                 ):
                     score += 1
-            if score <= 0:
+            if score <= 0 and row['kind'] != fact_kind:
                 continue
             age_days = max(
                 0.0,
@@ -660,10 +682,10 @@ class SQLiteMemoryStore:
             )
             if state['enabled'] == enabled and same_source:
                 return state
-            self._bump_revision(
-                active, normalized_user,
-                cutoff=0.0 if enabled else time.time(),
-            )
+            cutoff = 0.0 if enabled else time.time()
+            self._bump_revision(active, normalized_user, cutoff=cutoff)
+            if cutoff:
+                self._mark_pet_name_cutoff(active, normalized_user, '*', cutoff)
             active.execute(
                 '''UPDATE memory_policy_state
                     SET enabled = ?, consent_source_json = ?
@@ -764,6 +786,13 @@ class SQLiteMemoryStore:
         )}
 
     @staticmethod
+    def _mark_pet_name_cutoff(connection, user_id, slot_hash, now):
+        connection.execute(
+            'INSERT INTO memory_pet_name_cutoffs (user_id,slot_hash,cutoff) VALUES (?,?,?) '
+            'ON CONFLICT(user_id,slot_hash) DO UPDATE SET cutoff=MAX(cutoff,excluded.cutoff)',
+            (user_id, slot_hash, now))
+
+    @staticmethod
     def _invalidate_rows(connection, rows):
         now = time.time()
         cutoff = 0.0
@@ -771,9 +800,22 @@ class SQLiteMemoryStore:
             metadata = json.loads(row['metadata_json'])
             source = metadata.get('source')
             tracked = connection.execute(
-                'SELECT 1 FROM memory_fact_slots WHERE memory_id = ?',
+                'SELECT slot_key FROM memory_fact_slots WHERE memory_id = ?',
                 (row['id'],),
             ).fetchone()
+            fact = metadata.get('fact', {})
+            if (tracked and fact.get('kind') == fact.get('attribute') == 'name'
+                    and fact.get('subject') in {'user', 'self', '사용자', '나', '저'}):
+                connection.execute(
+                    'UPDATE memory_policy_state SET self_name_cutoff=MAX(self_name_cutoff,?) WHERE user_id=?',
+                    (now, row['user_id']),
+                )
+            if tracked and fact.get('kind') == 'pet' and fact.get('attribute') == 'name':
+                slot_hash = hashlib.sha256(tracked['slot_key'].encode()).hexdigest()
+                SQLiteMemoryStore._mark_pet_name_cutoff(connection, row['user_id'], slot_hash, now)
+            elif not tracked and row['kind'] in {'fact', 'pet'}:
+                # An unstructured removal may include several pets.
+                SQLiteMemoryStore._mark_pet_name_cutoff(connection, row['user_id'], '*', now)
             try:
                 if tracked is None:
                     raise ValidationError('legacy memory has no source link')

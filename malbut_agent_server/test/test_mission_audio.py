@@ -18,7 +18,6 @@ from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, SPEECH_MISSION_TOOLS
 @pytest.mark.parametrize('capability,reason,payload', [
     ('patrol', '', 'message: RGB camera is stale'),
     ('autoslam', '', 'message: Nav2 map saver failed'),
-    ('get_weather', '', 'error_code: KMA_RATE_LIMITED'),
     ('enroll_person', '', 'message: At most five people can be registered'),
     ('patrol', 'mission preempted by a replacement request', 'message: RGB camera is stale'),
     ('future_capability', 'unrecognized failure', '!!python/object:malicious {}'),
@@ -37,6 +36,8 @@ def test_every_registered_capability_has_all_recorded_outcomes():
                     for path in root.glob('*.yaml')}
     for capability in capabilities | {'future_capability'}:
         for kind, expected in EVENT_AUDIO_IDS.items():
+            if capability == 'get_weather' and kind in ('failed', 'rejected', 'unavailable', 'unknown'):
+                expected = 'weather.fetch_failed'
             if capability == 'set_weather_location' and kind == 'succeeded':
                 expected = 'set_weather_location.succeeded'
             if capability == 'relocalize' and kind == 'failed':

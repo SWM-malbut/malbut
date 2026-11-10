@@ -2069,6 +2069,36 @@
     "text": "날씨 조회 결과로 답변을 만들지 못했어요.",
     "voice": "kss"
   },
+  "weather.fetch_failed": {
+    "generation": {
+      "backend": "piper",
+      "model_config_sha256": "153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df",
+      "model_sha256": "624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9",
+      "output_rate": 24000,
+      "provider": "CPUExecutionProvider",
+      "resampling": "scipy.signal.resample_poly:160/147",
+      "source_rate": 22050,
+      "source_sha256": {
+        "config/korean_pronunciation_lexicon.json": "4d319b588cd4595061bd469fa14ccdb79c5f7fe7dd23851c822e5616948f6ecc",
+        "korean_normalization.py": "21e81030f7d176e416c6501f19c0c3bf4115826a4cccbc9baa30fda3b7cf59c6",
+        "piper_notices.py": "0abe671f85bb17bbc4f9cc560ae7af672f0e4f601e6eb891d927bf9cb28d69bd",
+        "piper_synthesis.py": "149bb70e7d72b0a5c840bc15909b63d18682c0974808c08c883df1a17f16e4a3",
+        "vendor/n2gk.py": "07dad28a398eb05abff7e422b13a14986fdaf1e64666f20b0228336c8f9f36dc"
+      },
+      "threads": 6,
+      "versions": {
+        "numpy": "1.26.4",
+        "onnxruntime": "1.23.2",
+        "piper-tts": "1.8.0",
+        "scipy": "1.15.3"
+      }
+    },
+    "instructions": null,
+    "model": "rhasspy/piper-voices/ko_KR-kss-medium",
+    "sha256": "89fa1197d63de8a7799da41462e0baa7628d5c622a8a2db7e5cfd2994afc72e4",
+    "text": "날씨 정보를 가져오지 못했어요.",
+    "voice": "kss"
+  },
   "weather.invalid_arguments": {
     "generation": {
       "backend": "piper",

@@ -136,6 +136,23 @@ def test_basic_daily_forecast_reads_manager_once_and_skips_followup(runtime, que
     assert result.provider_result.usage == ProviderUsage(10, 2, 12)
 
 
+@pytest.mark.parametrize('question,temperature,spoken', [
+    ('오늘 여기 기온이 몇 도야?', -3.5, '영하 3.5도'),
+    ('지금 기온은 몇 도인가요?', 0, '0도'),
+    ('현재 기온이 몇 도예요?', 18.5, '18.5도'),
+])
+def test_current_temperature_reads_only_the_manager_observation(runtime, question, temperature, spoken):
+    provider = WeatherProvider()
+    calls = []
+    weather = context_from_weather(replace(state_at(), temperature_c=temperature), clock=lambda: NOW)
+    runtime.provider, runtime.weather_executor = provider, lambda key: calls.append(key) or weather
+    result = runtime.handle(request(text=question))
+    assert calls == ['weather-1'] and len(provider.calls) == 1
+    assert result.raw_decision.tool_name == 'get_weather'
+    assert result.decision.reason == 'weather_current_temperature'
+    assert result.decision.message == f'시험 지역 기준 현재 기온은 {spoken}예요.'
+
+
 def test_today_after_morning_rain_uses_only_remaining_hours_without_extra_model_call(runtime):
     state = state_at()
     today, tomorrow = state.daily
@@ -162,6 +179,14 @@ def test_today_after_morning_rain_uses_only_remaining_hours_without_extra_model_
     ('오늘 날씨 알려줘', 'missing'),
     ('오늘 날씨 알려줘', 'stale'),
     ('오늘 날씨 알려줘', 'tone'),
+    ('그럼 내일 거기 최고기온은 몇 도래?', None),
+    ('부산 기온이 몇 도야?', None),
+    ('지금 기온이 몇 도야? 겉옷을 입을까?', None),
+    ('오늘 여기 기온이 몇 도야?', 'no_observation_time'),
+    ('오늘 여기 기온이 몇 도야?', 'previous_day'),
+    ('오늘 여기 기온이 몇 도야?', 'invalid_temperature'),
+    ('오늘 여기 기온이 몇 도야?', 'stale'),
+    ('오늘 여기 기온이 몇 도야?', 'tone'),
 ])
 def test_special_forecast_or_preferences_preserve_answer_model(runtime, question, change):
     from malbut_agent_server.conversation_preferences import save_initial_settings
@@ -172,6 +197,13 @@ def test_special_forecast_or_preferences_preserve_answer_model(runtime, question
         weather['daily'][1]['date'] = weather['daily'][0]['date']
     elif change == 'missing':
         del weather['daily'][0]['temperature_min_c']
+    elif change == 'no_observation_time':
+        del weather['current']['time']
+    elif change == 'previous_day':
+        weather['current']['time'] = '2026-09-11T23:50:00+09:00'
+        weather['checked_at'] = '2026-09-12T00:05:00+09:00'
+    elif change == 'invalid_temperature':
+        weather['current']['temperature_c'] = False
     elif change == 'stale':
         weather['status'] = 'stale'
     elif change == 'tone':
@@ -228,8 +260,8 @@ def test_manager_failure_returns_offline_notice_without_another_model_call(runti
     assert result.request_id == 'weather-1' and result.turn_id == 'weather-1'
     assert result.raw_decision.tool_name == 'get_weather'
     assert result.decision.type == 'message'
-    assert result.decision.message == '지금은 대화를 할 수 없어요.'
-    assert result.decision.reason == 'weather_unavailable'
+    assert result.decision.message == '날씨 정보를 가져오지 못했어요.'
+    assert result.decision.reason == 'weather.fetch_failed'
     assert result.decision.tool_name is None and result.decision.arguments == {}
     assert result.provider_result.decision == result.decision
     assert result.provider_result.memory_proposal is None
@@ -251,7 +283,7 @@ def test_missing_weather_dependency_returns_offline_notice(runtime, monkeypatch,
         )
     first = provider.complete(request(), [], [], [])
     result = runtime._answer_weather(request(), [], [], None, first)
-    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.decision.message == '날씨 정보를 가져오지 못했어요.'
     assert result.decision.reason == 'weather_unavailable'
     assert result.memory_proposal is None
     assert result.usage == first.usage and len(provider.calls) == 1
@@ -510,10 +542,12 @@ def test_lookup_and_answer_failures_are_distinguished_without_repeating_executio
         assert result.decision.type == 'message'
         assert result.decision.reason == 'weather_answer_unavailable'
     elif status == 'unavailable':
-        assert result.decision.reason == 'weather_unavailable'
+        assert result.decision.reason == 'weather.fetch_failed'
     else:
         assert result.decision.reason == 'provider_unavailable'
-    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.decision.message == (
+        '날씨 정보를 가져오지 못했어요.' if status == 'unavailable' else '지금은 대화를 할 수 없어요.'
+    )
     assert result.provider_result.provider == (
         'weather-fixture' if status == 'unavailable' else 'reliable-fallback'
     )
@@ -534,5 +568,15 @@ def test_weather_failure_uses_a_brief_recording_without_another_model_call(runti
         'status': 'unavailable', 'notice_id': audio_id,
     }
     result = runtime.handle(request())
-    assert result.decision.message == CATALOG[audio_id]
+    assert result.decision.message == CATALOG['weather.fetch_failed']
     assert len(runtime.provider.calls) == 1
+
+
+def test_successful_weather_retry_answers_with_the_observation(runtime):
+    fresh = context_from_weather(state_at(), clock=lambda: NOW)
+    results = iter([{'status': 'unavailable', 'notice_id': 'operation.failed'}, fresh])
+    runtime.provider = WeatherProvider()
+    runtime.weather_executor = lambda _: next(results)
+    result = runtime.handle(request(text='지금 기온이 몇 도야?'))
+    assert result.decision.reason == 'weather_current_temperature'
+    assert result.decision.message == '시험 지역 기준 현재 기온은 24.5도예요.'

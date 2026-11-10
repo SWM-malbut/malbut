@@ -15,6 +15,7 @@ from malbut_agent_server.conversation_preferences import DEFAULTS
 
 SOURCE = '기상청 초단기실황·단기예보'
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_OBSERVATION_AGE_S = 4200
 CONDITIONS = {
     0: '맑음', 1: '대체로 맑음', 2: '부분적으로 흐림', 3: '흐림',
     45: '안개', 48: '착빙 안개',
@@ -210,7 +211,7 @@ def context_from_weather(message_or_state, *, clock=time.time):
         fetched_at=datetime.fromtimestamp(state.fetched_at, zone).isoformat(),
         valid_at=datetime.fromtimestamp(state.valid_at, zone).isoformat(),
     )
-    if (now - state.fetched_at > 1800 or now - state.valid_at > 4200
+    if (now - state.fetched_at > 1800 or now - state.valid_at > MAX_OBSERVATION_AGE_S
             or state.daily[0].date != checked_at.date().isoformat()):
         return result
     result.update(
@@ -316,14 +317,41 @@ def _today_reply(weather, forecast, checked_at, location):
             f'남은 시간의 최대 강수 확률은 {probability:g}퍼센트예요.{advice}')
 
 
-def daily_forecast_reply(utterance, weather, settings):
-    """Read an ordinary daily forecast after the model selected and ran get_weather."""
+def _can_read_weather(weather, settings):
     if weather.get('status') != 'fresh':
-        return None
+        return False
     defaults = dict(DEFAULTS, response_mode='natural')
     if settings.get('length') == '짧고 간단하게':
         defaults['length'] = settings['length']
-    if any(defaults.get(key) != value for key, value in settings.items()):
+    return all(defaults.get(key) == value for key, value in settings.items())
+
+
+def current_temperature_reply(utterance, weather, settings):
+    """Read a single current outdoor temperature for the configured area."""
+    if not re.fullmatch(
+        r'(?:(?:오늘|지금|현재)(?:여기|이곳)?|(?:여기|이곳)(?:지금|현재)?)?'
+        r'기온(?:이|은)?몇도(?:야|예요|인가요|지|죠)?[?!.]*', ''.join(utterance.split()),
+    ) or not _can_read_weather(weather, settings):
+        return None
+    try:
+        location = _text(weather['location'])
+        current = weather['current']
+        temperature = _number(current['temperature_c'])
+        observed = datetime.fromisoformat(current['time'])
+        checked = datetime.fromisoformat(weather['checked_at'])
+        if (observed.tzinfo is None or checked.tzinfo is None
+                or observed.astimezone(checked.tzinfo).date() != checked.date()
+                or not -60 <= (checked - observed).total_seconds() <= MAX_OBSERVATION_AGE_S):
+            return None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    sign = '영하 ' if temperature < 0 else ''
+    return f'{location} 기준 현재 기온은 {sign}{abs(temperature):g}도예요.'
+
+
+def daily_forecast_reply(utterance, weather, settings):
+    """Read an ordinary daily forecast after the model selected and ran get_weather."""
+    if not _can_read_weather(weather, settings):
         return None
     day = basic_forecast_day(utterance)
     if day is None:

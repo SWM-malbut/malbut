@@ -1,17 +1,23 @@
 """Attach consented story context to dialogue without granting tool authority."""
 
 from collections import OrderedDict
+from dataclasses import replace
 import copy
 import hashlib
 import json
 import threading
+from malbut_agent_server.conversation_recall import (
+    event_scoped_attribute, previous_self_name_id, self_name_lookup, speech_recall_focus, speech_recall_prohibited,
+)
 from malbut_agent_server.memory_trace import observe_inputs
+from malbut_agent_server.personal_memory import requested_operation, self_name_correction
 
 from malbut_agent_server.providers.base import (
-    AgentProvider, accepts_memory_context, accepts_weather_context,
+    AgentProvider, ProviderError, accepts_memory_context, accepts_weather_context,
 )
 from malbut_agent_server.prompting import MAX_CONVERSATION_CONTEXT_CHARS
-from malbut_agent_server.schemas import ValidationError
+from malbut_agent_server.schemas import ProviderUsage, SpeechAgentRequest, ValidationError
+from malbut_agent_server.tools import PERSONAL_RECALL_TOOL, STORY_RECALL_TOOL
 
 
 class StoryMemoryProvider(AgentProvider):
@@ -22,9 +28,10 @@ class StoryMemoryProvider(AgentProvider):
     on cache replay and delayed delivery. This cache never contains recalled text.
     """
 
-    def __init__(self, provider, service):
+    def __init__(self, provider, service, *, on_demand_speech=False):
         self.provider = provider
         self.service = service
+        self.on_demand_speech = on_demand_speech
         self._revisions = OrderedDict()
         self._lock = threading.RLock()
 
@@ -75,14 +82,147 @@ class StoryMemoryProvider(AgentProvider):
 
     def complete(
         self, request, memories, conversation_turns, tools,
-        conversation_summary=None, *, memory_context=None, weather_context=None,
+        conversation_summary=None, *, memory_context=None, weather_context=None, fact_lookup=None,
     ):
+        context = memory_context or {}
+        if context.get('pet_name_evidence_only'):
+            return self._answer_recall(request, memories, conversation_turns, None, context,
+                                       None, None, 'pet')
+        if context.get('self_name_evidence_only'):
+            return self._answer_recall(request, memories, conversation_turns, None, context,
+                                       None, None, 'name')
+        deferred = (self.on_demand_speech and isinstance(request, SpeechAgentRequest)
+                    and context.get('mode') not in {'source_review', 'extract_only', 'automatic_extraction'})
+        recall_tool = PERSONAL_RECALL_TOOL if fact_lookup is not None else STORY_RECALL_TOOL
+        phase = None
+        revision = None
+        first_request, first_tools = request, tools
+        restricted_operations = ()
+        if deferred:
+            revision = self.service.recall_revision(request.user_id)
+            # An evidence answer has already selected a read-only function.
+            followup = (weather_context is not None or 'patrol_observations_untrusted' in context
+                        or 'homecam_query_result_untrusted' in context)
+            phase = 'result' if followup else 'deferred'
+            if speech_recall_prohibited(request.utterance):
+                phase = 'restricted'
+                restricted_operations = tuple(op for op in ('remember', 'correct', 'forget')
+                                              if requested_operation(request.utterance, op))
+                if not restricted_operations:
+                    memory_context = dict(context, mode='answer_only')
+            elif (not followup and context.get('enabled') and not context.get('pending_question')
+                  and self_name_correction(request.utterance)):
+                # The correction already identifies its slot. No lookup or
+                # robot actuation belongs to this one foreground decision.
+                first_tools = []
+                first_request = replace(request, available_tools=())
+            elif (revision is not None or fact_lookup is not None) and not followup:
+                if not context.get('pending_question') and (not context.get('enabled') or fact_lookup):
+                    focus = speech_recall_focus(request.utterance, conversation_turns, conversation_summary)
+                    previous_name_id = None
+                    if focus is None and fact_lookup is not None:
+                        previous_name_id = previous_self_name_id(
+                            request.utterance, conversation_turns, conversation_summary)
+                        if previous_name_id is not None:
+                            focus = 'name'
+                    if focus is not None:
+                        answer = self._answer_recall(
+                            request, memories, conversation_turns, conversation_summary, context,
+                            revision, fact_lookup, focus, previous_name_id=previous_name_id)
+                        if answer is not None:
+                            return answer
+                first_tools = [*tools, recall_tool]
+                first_request = replace(
+                    request, available_tools=(*request.available_tools, recall_tool.name),
+                )
+        first = self._complete(
+            first_request, memories, conversation_turns, first_tools, conversation_summary,
+            memory_context, weather_context, phase, revision,
+        )
+        if (phase == 'restricted' and first.memory_proposal is not None
+                and first.memory_proposal.get('operation') not in restricted_operations):
+            raise ProviderError('unexpected memory operation on a restricted turn')
+        name = getattr(getattr(first, 'decision', None), 'tool_name', None)
+        if name not in (STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name):
+            return first
+        first.validate()
+        if (phase != 'deferred' or name != recall_tool.name or first.decision.type != 'tool_call'
+                or (revision is None and fact_lookup is None)):
+            raise ProviderError('invalid story lookup request')
+        arguments = first.decision.arguments
+        if fact_lookup is None:
+            if arguments:
+                raise ProviderError('invalid story lookup request')
+            focus = 'related'
+        else:
+            if set(arguments) != {'focus'} or arguments['focus'] not in (
+                    'related', 'name', 'nickname', 'pet', 'preference'):
+                raise ProviderError('invalid personal recall focus')
+            focus = arguments['focus']
+        answer = self._answer_recall(request, memories, conversation_turns, conversation_summary,
+                                     context, revision, fact_lookup, focus)
+        usage = {}
+        for key in ProviderUsage.__dataclass_fields__:
+            a, b = getattr(first.usage, key), getattr(answer.usage, key)
+            usage[key] = a + b if a is not None and b is not None else None
+        return replace(
+            answer, latency_ms=first.latency_ms + answer.latency_ms, usage=ProviderUsage(**usage),
+            input_chars=(first.input_chars + answer.input_chars
+                         if first.input_chars is not None and answer.input_chars is not None else None),
+        )
+
+    def _answer_recall(self, request, memories, conversation_turns, conversation_summary,
+                       context, revision, fact_lookup, focus, *, previous_name_id=None):
+        fact_guard = None
+        answer_phase = 'requested'
+        if focus == 'story_repeat' or previous_name_id is not None:
+            # A prior assistant answer or its paraphrases may predate a correction.
+            # The user's own statements still carry corrections and temporary names.
+            conversation_turns = [replace(turn, assistant_content='', response={})
+                                  for turn in conversation_turns]
+            if focus == 'story_repeat':
+                focus = 'related'
+        if fact_lookup is not None:
+            if previous_name_id is None:
+                memories, candidates, fact_guard = fact_lookup(focus)
+            else:
+                current = fact_lookup(focus, previous_name_id=previous_name_id)
+                if current is None:
+                    return None
+                memories, candidates, fact_guard = current
+            context = dict(context, memories=candidates)
+            if focus == 'name' and self_name_lookup(request.utterance):
+                # A model-selected self-name lookup also uses only owned facts.
+                # A lookup miss must not fall through to another person's story.
+                conversation_turns, conversation_summary, revision = [], None, None
+            if event_scoped_attribute(request.utterance):
+                context['event_attribute_evidence'] = (
+                    '개인 사실은 보통 쓰는 기본값이며 행사 당시의 값으로 삼을 수 없습니다. '
+                    '질문한 바로 그 행사·장소와 값을 연결하는 대화나 이야기 근거로만 당시 값을 답하세요. '
+                    '다른 행사 기록이나 기본값만 있으면 당시 값은 확인할 수 없다고 답하세요.'
+                )
+            elif any(record.kind == focus for record in memories):
+                answer_phase = 'facts'
+        # Evidence can support an answer, never a new action or memory mutation.
+        answer = self._complete(
+            replace(request, available_tools=()), memories, conversation_turns, [], conversation_summary,
+            dict(context, mode='answer_only'), None, answer_phase, revision, fact_guard,
+        )
+        answer.validate()
+        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
+            raise ProviderError('unexpected tool or memory operation after story lookup')
+        return answer
+
+    def _complete(self, request, memories, conversation_turns, tools, conversation_summary,
+                  memory_context, weather_context, phase, revision, fact_guard=None):
         context = copy.deepcopy(memory_context or {})
 
         def trace(event, data):
             writer = getattr(self.service, 'trace', None)
             if writer is not None:
                 try:
+                    if phase is not None:
+                        data = dict(data, story_lookup=phase)
                     writer(request, event, data)
                 except Exception:
                     import logging
@@ -92,22 +232,26 @@ class StoryMemoryProvider(AgentProvider):
         # future caller routes an extraction request through it.
         mode = context.get('mode')
         story_context = None
-        if self.supports_memory and mode not in {'source_review', 'extract_only'}:
+        if ((phase is None or (phase == 'requested' and revision is not None)) and self.supports_memory
+                and mode not in {'source_review', 'extract_only', 'automatic_extraction'}):
             story_context = self.service.context(
                 request.user_id, request.utterance, conversation_turns,
             )
+            if phase == 'requested' and (
+                    story_context['revision'] != revision or not story_context.get('enabled', True)):
+                raise ValidationError('memory_changed')
         trace('memory_retrieved', {
             'fact_ids': [item.id for item in memories],
             'stories': [{'story_id': item['story_id'], 'version': item.get('version')}
                         for item in (story_context or {}).get('stories', [])],
-            'story_enabled': bool((story_context or {}).get('enabled')),
+            'story_enabled': revision is not None or bool((story_context or {}).get('enabled')),
             'fact_enabled': bool(context.get('enabled')),
             'status': (story_context or {}).get('status',
-                'ready' if (story_context or {}).get('enabled') else 'disabled'),
+                'ready' if (story_context or {}).get('enabled') else phase if revision is not None
+                else 'disabled'),
             'pending': (story_context or {}).get('pending', 0),
             'failed': (story_context or {}).get('failed', 0),
         })
-        revision = None
         readset = []
         if story_context is not None and story_context.get('enabled', True):
             revision = story_context['revision']
@@ -147,6 +291,8 @@ class StoryMemoryProvider(AgentProvider):
                 )
                 if registered is False:
                     raise ValidationError('memory_changed')
+        if phase == 'result' and self.reply_revision(request.user_id, request.request_id) is not None:
+            self.validate_reply(request.user_id, request.request_id)
         arguments = {}
         if self.supports_memory:
             arguments['memory_context'] = context
@@ -162,6 +308,8 @@ class StoryMemoryProvider(AgentProvider):
             revision = self.service.reply_dependency_revision(request.user_id, request.request_id)
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
+        if fact_guard is not None:
+            fact_guard()
         with observe_inputs(trace):
             try:
                 result = self.provider.complete(
@@ -171,9 +319,14 @@ class StoryMemoryProvider(AgentProvider):
             except Exception as error:
                 trace('provider_failed', {'error_type': type(error).__name__})
                 raise
-        trace('provider_completed', {'provider': getattr(result, 'provider', None),
-                                     'model': getattr(result, 'model', None),
-                                     'latency_ms': getattr(result, 'latency_ms', None)})
+        if fact_guard is not None:
+            fact_guard()
+        event = ('story_recall_requested'
+                 if phase == 'deferred' and result.decision.tool_name in (STORY_RECALL_TOOL.name, PERSONAL_RECALL_TOOL.name)
+                 else 'provider_completed')
+        trace(event, {'provider': getattr(result, 'provider', None),
+                      'model': getattr(result, 'model', None),
+                      'latency_ms': getattr(result, 'latency_ms', None)})
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
             with self._lock:

@@ -16,6 +16,9 @@ import sqlite3
 from typing import Any, Dict, Optional
 
 
+_IDENTIFIER_CONTROLS = re.compile(r'[\x00-\x1f\x7f]')
+
+
 class SourceLookupError(ValueError):
     """The requested completed source or span is unavailable."""
 
@@ -24,7 +27,7 @@ def _identifier(value: str, name: str) -> str:
     if (
         not isinstance(value, str) or not value.strip() or len(value) > 128
         or value != value.strip()
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        or _IDENTIFIER_CONTROLS.search(value)
     ):
         raise ValueError(f'{name} must be a nonempty identifier')
     return value

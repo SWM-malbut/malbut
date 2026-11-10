@@ -85,7 +85,7 @@ def boundary(request, tmp_path, monkeypatch):
 def test_weather_does_not_bypass_missing_manager(boundary):
     if boundary.manager is None:
         assert boundary.query.execute('weather') == {
-            'status': 'unavailable', 'notice_id': 'operation.unavailable',
+            'status': 'unavailable', 'notice_id': 'weather.fetch_failed',
         }
         assert boundary.calls == []
     else:
