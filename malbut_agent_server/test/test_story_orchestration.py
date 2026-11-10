@@ -449,6 +449,88 @@ class StoryOrchestrationTests(unittest.TestCase):
         self.assertNotIn(name.id, result.memory_ids)
         self.assertNotIn('나예솔', result.decision.message)
 
+    def test_speech_thanks_after_an_ordinary_answer_commits_and_keeps_listening(self):
+        runtime, backend = self.fact_voice_runtime()
+        self.ask_identity(runtime, backend, '세모에는 변이 몇 개 있어?', decide=lambda *a, **k:
+                          ProviderResult(AgentDecision('message', '세모에는 변이 세 개 있어요.', reason='general_knowledge'),
+                                         'offline', 'fixture', 0))
+        req, answer, calls = self.ask_identity(runtime, backend, '고마워.')
+        self.assertEqual(calls, [])
+        self.assertEqual(answer.decision.message, '천만에요.')
+        self.assertFalse(answer.decision.ends_conversation)
+        self.assertEqual(answer.safety.code, 'not_an_action')
+        self.assertEqual(answer.decision_id, runtime.handle(req).decision_id)
+        self.assertEqual(self.persisted(runtime, req)['public']['decision'], answer.decision.to_dict())
+        _, closing, calls = self.ask_identity(runtime, backend, '고마워, 오늘은 그만하자.', decide=lambda *a, **k:
+            ProviderResult(AgentDecision('message', '다음에 봬요.', reason='end_conversation'), 'offline', 'fixture', 0))
+        self.assertTrue(calls)
+        self.assertTrue(closing.decision.ends_conversation)
+
+    def test_standalone_thanks_leaves_unsettled_or_configured_conversations_with_the_model(self):
+        runtime, backend = self.fact_voice_runtime()
+        cases = [('고마워?', None), ('고맙지 않아.', None), ('‘고마워’라고 읽어 줘.', None),
+                 ('고마워. 날씨도 알려 줘.', None), ('고마워.', '확인해 주실래요?'),
+                 ('고마워.', '어느 방으로 갈까요?'), ('감사합니다.', '저장할 이름을 알려 주세요.')]
+        for index, (text, previous) in enumerate(cases):
+            with self.subTest(text=text, previous=previous):
+                room = f'thanks-{index}'
+                with patch.object(backend, 'complete', return_value=ProviderResult(
+                        AgentDecision('message', previous or '세 개예요.', reason='general_knowledge'),
+                        'offline', 'fixture', 0)):
+                    self.turn(runtime, '세모의 변은 몇 개야?', room=room)
+                req = SpeechAgentRequest.from_dict(self.request(runtime, text, room=room).to_dict())
+                with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model:
+                    runtime.handle(req)
+                self.assertTrue(model.called)
+
+    def test_thanks_checks_speech_controls_profile_and_previous_receipt(self):
+        from malbut_agent_server.conversation_preferences import DEFAULTS
+        runtime, backend = self.fact_voice_runtime()
+        for case in ('casual', 'unpunctuated', 'compound', 'compound question', 'address', 'length', 'listen', 'mapping',
+                     'navigation', 'confirmation', 'nonvoice', 'first', 'later', 'unknown intent'):
+            with self.subTest(case=case):
+                prefs = dict(DEFAULTS)
+                if case == 'casual':
+                    prefs['tone'] = '친근한 반말'
+                elif case == 'address':
+                    prefs['address'] = '선생님'
+                elif case == 'length':
+                    prefs['length'] = '자세하게'
+                elif case == 'listen':
+                    prefs['initiative'] = '주로 들어줘'
+                runtime.personal_memory.set_initial_settings('alice', prefs)
+                room = 'control-' + case.replace(' ', '-')
+                if case != 'first':
+                    decision = AgentDecision('message', '변은 세 개예요.',
+                                             reason='unknown' if case == 'unknown intent' else '일반_지식_답변')
+                    with patch.object(backend, 'complete', return_value=ProviderResult(decision, 'offline', 'fixture', 0)):
+                        question = {'unpunctuated': '세모에는 변이 몇 개 있어',
+                                    'compound': '앞으로 영어로 답하고 세모에는 변이 몇 개 있어',
+                                    'compound question': '영어로만 대답하고 세모의 변은 몇 개야?'}.get(case, '세모의 변은 몇 개야?')
+                        self.turn(runtime, question, room=room)
+                        if case == 'later':
+                            self.turn(runtime, '다시 말해 줄래?', room=room)
+                req = self.request(runtime, '고맙습니다!', room=room)
+                if case != 'nonvoice':
+                    fields = req.to_dict()
+                    if case == 'mapping':
+                        fields['mapping_name_requested'] = True
+                    if case == 'navigation':
+                        fields.update(navigation_locations=['거실'], navigation_confirmation='거실')
+                    req = SpeechAgentRequest.from_dict(fields)
+                with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model, patch.object(
+                    runtime.conversation_store, 'pending_confirmation', return_value=case == 'confirmation',
+                ):
+                    result = runtime.handle(req)
+                if case == 'casual':
+                    self.assertFalse(model.called)
+                    self.assertEqual(result.decision.message, '도움이 됐다니 기뻐.')
+                elif case == 'unpunctuated':
+                    self.assertFalse(model.called)
+                    self.assertEqual(result.decision.message, '천만에요.')
+                else:
+                    self.assertTrue(model.called)
+
     def test_saved_name_repeat_keeps_ambiguous_identity_requests_on_existing_route(self):
         runtime, backend = self.fact_voice_runtime()
         self.save_identity_fact(runtime, 'name', 'user', 'name', '나예솔', '내 본명은 나예솔이야.')

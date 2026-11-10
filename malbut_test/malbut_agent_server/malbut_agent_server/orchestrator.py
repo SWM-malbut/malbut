@@ -22,6 +22,7 @@ from malbut_agent_server.conversation_progress import (
     announce_function_start, claim_retry, conversation_request,
     SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
+from malbut_agent_server.conversation_preferences import CHOICES, DEFAULTS
 from malbut_agent_server.conversation_ownership import (
     owned_conversation_request, recover_abandoned_turns,
 )
@@ -897,6 +898,38 @@ class AgentOrchestrator:
             and automatic_request(request, snapshot)
         )
 
+    def _thanks_after_answer(self, request, snapshot, token):
+        """A bare thank-you after a settled voice answer keeps the session open."""
+        # Later turns may carry free-form instructions outside the saved response settings.
+        if (not isinstance(request, SpeechAgentRequest) or token.ordinal != 2
+                or not re.fullmatch(r'\s*(?:고마워요?|고맙습니다|감사해요?|감사합니다)[.!。！]?\s*', request.utterance)
+                or request.navigation_confirmation or request.mapping_name_requested or snapshot.pending
+                or not snapshot.history):
+            return None
+        previous = snapshot.history[-1]
+        receipt = previous.response.get('public', {})
+        decision = receipt.get('decision', {})
+        settings = snapshot.context.get('response_settings', {})
+        tone = settings.get('tone')
+        # STT may omit punctuation. A complete Korean count question still has
+        # an explicit interrogative, without interpreting an arbitrary clause.
+        question = re.fullmatch(
+            r'[^.!?。！？,，\n]+[?？]|(?:[가-힣]+(?:에는|은|는)\s+)?[가-힣]+[이가은는]\s*몇\s*개\s*(?:있어(?:요)?|야|예요|인가요)',
+            previous.user_content.strip())
+        if (previous.ordinal != 1 or not question or re.search(r'(?:앞으로|하고|말고)\s', previous.user_content)
+                or not previous.assistant_content or decision.get('type') != 'message'
+                or (decision.get('reason') or '').replace('_', ' ') not in {'general knowledge', '일반 지식 답변'}
+                or decision.get('message') != previous.assistant_content
+                or receipt.get('safety', {}).get('code') != 'not_an_action'
+                or 'weather_tool_decision' in previous.response
+                or re.search(r'[?？]|(?:주세요|할까요|실래요|해줄래|알려줘)[.!。！]?$', previous.assistant_content)
+                or tone not in CHOICES['tone'] or settings != dict(DEFAULTS, tone=tone, response_mode='natural')
+                or self.conversation_store.pending_confirmation(request.user_id, request.conversation_id)):
+            return None
+        text = '천만에요.' if tone == '편안한 존댓말' else '도움이 됐다니 기뻐.'
+        return ProviderResult(AgentDecision('message', text, reason='courtesy_response'),
+                              'malbut-dialogue', 'standalone-thanks', 0, memory_supported=True)
+
     def _handle_uncached(
         self,
         request: AgentRequest,
@@ -938,6 +971,9 @@ class AgentOrchestrator:
                 decision=local_memory, provider='malbut-memory-policy',
                 model='consent-v1', latency_ms=0.0, memory_supported=True,
             )
+        elif (server_clarification is None and request.utterance == effective_request.utterance
+              and (thanks := self._thanks_after_answer(request, memory_snapshot, token)) is not None):
+            provider_result = thanks
         elif server_clarification is None:
             if self.robot_state_source is not None and set(model_request.available_tools) - {
                 'get_weather', 'set_weather_location',
