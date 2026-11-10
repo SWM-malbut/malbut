@@ -144,6 +144,12 @@ def test_compacted_original_recall_redaction_and_reset_are_isolated():
     ('등산 약속은 우리가 지난주에 언제로 정했죠?', 'related'),
     ('우리 집 반려견 이름 기억나?', 'pet'),
     ('제가 어떤 간식을 좋아한다고 했죠?', 'preference'),
+    ('그리고 내가 좋아하는 음료는 뭐였지?', 'preference'),
+    ('그리고, 제가 선호하는 차는 무엇인가요?', 'preference'),
+    ('그리고 친구가 좋아하는 음료는 뭐였지?', None),
+    ('그리고 내가 좋아하는 음료 말고 주문해 줘.', None),
+    ('그리고 내가 좋아하는 음료는 뭐였지? 커피도 주문해 줘.', None),
+    ('“그리고 내가 좋아하는 음료는 뭐였지?”라고 물었어.', None),
     ('저의 본명은 뭐였나요?', 'name'),
     ('내 별명은?', 'nickname'),
     ('방금 부르라고 한 별명은 뭐였지?', None),
@@ -169,6 +175,10 @@ def test_current_dialogue_or_summary_can_supersede_stored_evidence():
     assert speech_recall_focus('내 별명은 뭐야?', [turn], None) is None
     summary = SimpleNamespace(content='등산 약속을 다음 수요일로 잡았다.')
     assert speech_recall_focus('지난번 우리가 등산 약속 언제로 정했지?', [], summary) is None
+    drink = '그리고 내가 좋아하는 음료는 뭐였지?'
+    updated = SimpleNamespace(user_content='요즘은 식혜를 좋아해.', assistant_content='알겠어요.')
+    assert speech_recall_focus(drink, [updated], None) is None
+    assert speech_recall_focus(drink, [], SimpleNamespace(content='음료 취향을 정정함.')) is None
 
 
 @pytest.mark.parametrize('utterance,prohibited', [

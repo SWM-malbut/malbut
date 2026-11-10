@@ -88,6 +88,13 @@ def event_scoped_attribute(text):
 def _standalone_speech_focus(text):
     """Select the evidence type for a self-contained long-term question."""
     raw = unicodedata.normalize('NFKC', text).strip()
+    # A leading 그리고 can introduce a new, complete question about the speaker's drink.
+    # Keep embedded conjunctions and requests with another clause on the normal path.
+    followup = re.fullmatch(
+        r'그리고[\s,]+((?:내가|제가)\s*(?:좋아하는|선호하는|즐겨\s*마시는)\s*'
+        r'(?:음료수?|차|커피)(?:[은는이가])?\s*(?:뭐|무엇|뭔)[가-힣]{0,6}[.?!。]?)', raw)
+    if followup:
+        raw = followup[1]
     value = re.sub(r'[\s,]+', '', raw.rstrip('.?!。！？')).casefold()
     if (not re.fullmatch('[가-힣a-z0-9]+', value) or _NOT_SINGLE_READ.search(value)
             or _MULTIPLE.search(raw) or speech_recall_prohibited(raw)

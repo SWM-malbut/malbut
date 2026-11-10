@@ -208,6 +208,19 @@ class StoryOrchestrationTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 runtime.handle(turn)
 
+    def test_followup_drink_question_sends_owned_evidence_in_one_call(self):
+        runtime, backend = self.fact_voice_runtime()
+        saved = runtime.memory_store.add('alice', '음료 취향은 식혜', kind='preference')
+        runtime.memory_store.add('bob', '음료 취향은 홍차', kind='preference')
+        request = SpeechAgentRequest.from_dict(
+            self.request(runtime, '그리고 제가 좋아하는 음료는 무엇인가요?').to_dict())
+        with patch.object(backend, 'complete', return_value=self.fact_voice_decision()) as model:
+            reply = runtime.handle(request)
+        model.assert_called_once()
+        self.assertEqual(reply.memory_ids, [saved.id])
+        self.assertEqual([item.id for item in model.call_args.args[1]], [saved.id])
+        self.assertEqual(model.call_args.args[3], [])
+
     def test_typed_fact_miss_reads_stories_once_if_consented(self):
         runtime, backend = self.fact_voice_runtime(stories=True)
         source = '전시에서 사람들에게 내 이름을 겨울이라고 소개했어.'
