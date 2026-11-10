@@ -12,7 +12,7 @@ import pytest
 from malbut_agent_server.config import Settings
 from malbut_agent_server.factory import build_orchestrator, build_provider
 from malbut_agent_server.homecam_query import (
-    _NoRedirect, HomecamQueryClient, configure_homecam_queries,
+    _NoRedirect, HomecamQueryClient, configure_homecam_queries, record_existence_reply,
 )
 from malbut_agent_server.schemas import AgentDecision, AgentRequest, ProviderResult, RobotState, SpeechAgentRequest
 from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, TOOL_SPECS
@@ -158,16 +158,19 @@ def test_real_provider_payload_treats_query_response_as_data_not_commands():
 class QueryProvider:
     supports_memory = True
 
-    def __init__(self, followup=None):
+    def __init__(self, followup=None, *, selection=None):
         self.calls = []
         self.followup = followup
+        self.selection = selection or AgentDecision(
+            'tool_call', '조회', tool_name='get_homecam_events',
+            arguments={'limit': 2, 'event_type': None},
+        )
 
     def complete(self, request, memories, conversation_turns, tools,
                  conversation_summary=None, *, memory_context=None):
         self.calls.append((request, [tool.name for tool in tools], copy.deepcopy(memory_context)))
         if len(self.calls) % 2:
-            decision = AgentDecision('tool_call', '조회', tool_name='get_homecam_events',
-                                     arguments={'limit': 2, 'event_type': None})
+            decision = self.selection
         else:
             decision = self.followup or AgentDecision('message', '최근 사람 감지 기록이 하나 있어요.')
         return ProviderResult(decision, 'fixture', 'fixed', 1)
@@ -202,6 +205,63 @@ def test_only_confirmed_reads_reduce_effort_and_custom_results_still_answer(resp
             assert context['homecam_query_result_untrusted'] == {
                 'tool': 'get_homecam_events', 'data': response['result'],
             }
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize(('tool', 'utterance', 'data', 'expected'), [
+    ('get_homecam_recordings', '최근 홈캠 녹화 기록도 있어?', {'recordings': [{'id': 'r1'}]}, '녹화 기록이 1건'),
+    ('get_homecam_recordings', '녹화 기록이 남아 있나요?', {'recordings': []}, '녹화 기록은 없어요'),
+    ('get_homecam_falls', '홈캠에 넘어진 기록이 남아 있어?', {'incidents': []}, '낙상 관련 기록은 없어요'),
+    ('get_homecam_falls', '최근 낙상 기록도 있습니까?', {'incidents': [{'id': 'i', 'state': 'candidate'}]},
+     '낙상 관련 기록이 1건'),
+    ('get_homecam_falls', '어제 거실에 넘어진 기록이 있어?', {'incidents': []}, None),
+    ('get_homecam_falls', '사람이 다쳤거나 넘어진 거야?', {'incidents': []}, None),
+    ('get_homecam_recordings', '홈캠에 넘어진 기록이 있어?', {'recordings': []}, None),
+    ('get_homecam_recordings', '녹화 기록 있어? 어떤 장면인지도 알려줘.', {'recordings': []}, None),
+    ('get_homecam_recordings', '“녹화 기록 있어?”라고 물었어.', {'recordings': []}, None),
+    ('get_homecam_recordings', '홈캠 녹화 기록이 언제 시작했어?', {'recordings': []}, None),
+    ('get_homecam_recordings', '최근 녹화 기록 있어?', {'recordings': [{}]}, None),
+    ('get_homecam_falls', '최근 낙상 기록 있어?', {}, None),
+])
+def test_render_only_existence_of_the_requested_record_type(tool, utterance, data, expected):
+    reply = record_existence_reply(utterance, tool, data)
+    assert reply is None if expected is None else expected in reply
+
+
+@pytest.mark.parametrize(('voice', 'code', 'custom_style', 'expected_calls'), [
+    (True, 'OK', False, 1), (False, 'OK', False, 2), (True, 'OK', True, 2),
+    (True, 'CUSTOM', False, 2), (True, 'VOICE_DELEGATION_REQUIRED', False, 1),
+])
+def test_record_existence_follows_authorized_read(voice, code, custom_style, expected_calls):
+    runtime = build_orchestrator(Settings(provider='mock', database_path=':memory:'))
+    tool = 'get_homecam_recordings'
+    provider = QueryProvider(selection=AgentDecision('tool_call', '조회', tool_name=tool,
+                                                     arguments={'limit': 3}))
+    runtime.provider = provider
+    reads = []
+    success = code != 'VOICE_DELEGATION_REQUIRED'
+
+    def read(name, args):
+        reads.append((name, args))
+        return {'success': success, 'code': code, 'result': {'recordings': [{'id': 'r1'}]}}
+
+    configure_homecam_queries(runtime, read)
+    runtime.conversation_store.create('user', 'room')
+    cls = SpeechAgentRequest if voice else AgentRequest
+    request = cls('query', 'user', 'room', 'turn', '최근 홈캠 녹화 기록도 있어?', RobotState(), (tool,))
+    try:
+        if custom_style:
+            runtime.handle(cls('prefs', 'user', 'room', 'prefs', '초기 설정 말투=친근한 반말', RobotState(), ()))
+        decision = runtime.handle(request).decision
+        assert decision.type == 'message'
+        if not success:
+            assert decision.reason == 'homecam_unavailable'
+        elif expected_calls == 1:
+            assert decision.reason == 'homecam_record_existence'
+            assert decision.message == '조회한 홈캠 목록에 녹화 기록이 1건 있어요.'
+        assert len(provider.calls) == expected_calls
+        assert reads == [(tool, {'limit': 3})]
     finally:
         runtime.close()
 

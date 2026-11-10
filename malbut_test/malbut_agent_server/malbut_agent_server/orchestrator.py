@@ -30,6 +30,7 @@ from malbut_agent_server.gateway import (
     CapabilityRegistry,
     production_registry,
 )
+from malbut_agent_server.homecam_query import record_existence_reply
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
 from malbut_agent_server.automatic_memory_policy import (
@@ -1221,6 +1222,18 @@ class AgentOrchestrator:
             return replace(first_result, decision=AgentDecision(
                 'message', message, reason='homecam_unavailable',
             ), memory_proposal=None)
+        confirmed = (result['success'] is True and result.get('code') == 'OK'
+                     and isinstance(result['result'], dict))
+        settings = (memory_context or {}).get('response_settings')
+        if (confirmed and isinstance(request, SpeechAgentRequest)
+                and settings == dict(DEFAULTS, response_mode='natural')):
+            reply = record_existence_reply(
+                request.utterance, first_result.decision.tool_name, result['result'],
+            )
+            if reply is not None:
+                return replace(first_result, decision=AgentDecision(
+                    'message', reply, reason='homecam_record_existence',
+                ), memory_proposal=None)
         context = copy.deepcopy(memory_context)
         # This is current-query data, not a remembered fact or workflow journal.
         context['homecam_query_result_untrusted'] = {
@@ -1230,10 +1243,7 @@ class AgentOrchestrator:
         value['available_tools'] = []
         followup = copy_request(request, value)
         if isinstance(followup, SpeechAgentRequest):
-            followup = replace(followup, confirmed_homecam_read=(
-                result['success'] is True and result.get('code') == 'OK'
-                and isinstance(result['result'], dict)
-            ))
+            followup = replace(followup, confirmed_homecam_read=confirmed)
         answer = self.provider.complete(
             followup, list(memories), copy.deepcopy(list(turns)), [],
             conversation_summary=copy.deepcopy(summary), memory_context=context,
