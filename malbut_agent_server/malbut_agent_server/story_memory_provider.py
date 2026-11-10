@@ -351,7 +351,8 @@ class StoryMemoryProvider(AgentProvider):
                         merged.setdefault(item['story_id'], set()).update(item['entry_hashes'])
                     readset = [{'story_id': identifier, 'entry_hashes': sorted(hashes)}
                                for identifier, hashes in merged.items()]
-                if prior is not None or result.decision.type != 'message' or result.memory_proposal is not None:
+                if read_version is not None and (prior is not None or result.decision.type != 'message'
+                                                 or result.memory_proposal is not None):
                     read_version = None
                 self._revisions[(request.user_id, request.request_id)] = (revision, readset, read_version)
                 self._revisions.move_to_end((request.user_id, request.request_id))
