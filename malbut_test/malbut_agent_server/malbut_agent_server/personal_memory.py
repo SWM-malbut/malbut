@@ -241,6 +241,47 @@ def _stored_identity_question(text):
     return 'nickname' if match else None
 
 
+_PET_ALIAS = {'강아지': '반려견', '반려견': '강아지', '고양이': '반려묘', '반려묘': '고양이'}
+_PET_ORDINALS = ('첫째', '둘째', '셋째', '넷째', '첫번째', '두번째', '세번째', '첫 번째', '두 번째', '세 번째')
+_PET = r'(?:강아지|반려견|고양이|반려묘|토끼|햄스터|앵무새|거북이)'
+_PET_OWNER = r'(?:우리(?:집)?|저희(?:집)?|내|제|나의|저의)'
+_PET_LABEL = _PET_OWNER + '(?P<pet>' + _PET + r')(?:의)?이름'
+
+
+def _pet_name_question(text):
+    """Identify a single owned pet's name without widening a compound request."""
+    value = compact(text)
+    if not value.endswith(('?', '？')) and re.search(r'기억해(?:요)?[.!。]?$', value):
+        return None
+    match = re.fullmatch(
+        r'(?:혹시)?(?:지금|현재)?(?:전에(?:말한|알려준)|저장된|저장한)?' + _PET_LABEL
+        + r'(?:이|은|을)?(?:좀)?(?:뭐(?:야|예요|였어|였지|였더라|지|죠)|(?:알려|말해)(?:줘요?|주세요|줄래요?)'
+        r'|기억(?:해요?|나(?:요)?|하고있(?:어|니|나요|어요)))' r'[?？.!。]?', value)
+    return match['pet'] if match else None
+
+
+def _pet_name_declaration(text):
+    """Read a single owned pet name predicate without joining words or clauses."""
+    match = re.fullmatch(
+        r'\s*(?:우리|저희|내|제|나의|저의)\s*(?:집\s*)?(?P<pet>' + _PET + r')\s*(?:의\s*)?'
+        r'이름(?:은|는|이|가)\s*(?P<stem>[가-힣]{1,24}?)(?P<ending>입니다|이에요|예요|이야|야)[.!。]?'
+        r'(?:\s*(?:' + _PET + r'\s*이름으로\s*)?(?:기억|저장)해\s*(?:줘요?|주세요))?[.!。]?\s*', text)
+    if match and not re.search(r'아니|몰라|예시|가명|뭐|비밀|였', match['stem']):
+        return match
+    return None
+
+
+def _pet_name_correction(text):
+    """A single owned pet and both literal names must be stated in the edit."""
+    match = re.fullmatch(
+        r'\s*(?:우리|저희|내|제|나의|저의)\s*(?:집\s*)?(?P<pet>' + _PET + r')\s*(?:의\s*)?'
+        r'이름(?:을|를)?\s*(?P<old>[가-힣]{1,24}?)에서\s*(?P<new>[가-힣]{1,24}?)(?:으로|로)\s*'
+        r'(?:(?:정정|수정|변경)해|바꿔)(?:\s*(?:줘요?|주세요))?[.!。]?\s*', text)
+    if match and not re.search(r'에서.*(?:이름|그대로|원래대로|예전대로|이전대로|에서)', text):
+        return match
+    return None
+
+
 def _correct_name_fact(fact, correction, text):
     # A model may strip a final 이 as a spoken suffix. Here 로 is already the
     # particle, so the preceding 이 is part of the value supplied by the user.
@@ -295,11 +336,7 @@ def fact_matches_source(fact, source):
         r'반려동물|강아지|반려견|고양이|반려묘|토끼|햄스터|앵무새|거북이', raw,
     ):
         return False
-    aliases = {
-        '강아지': ('강아지', '반려견'), '반려견': ('강아지', '반려견'),
-        '고양이': ('고양이', '반려묘'), '반려묘': ('고양이', '반려묘'),
-    }
-    if not any(name in raw for name in aliases.get(subject, (subject,))):
+    if not any(name in raw for name in (subject, _PET_ALIAS.get(subject, subject))):
         return False
     if any(word in raw for word in ('강아지', '반려견')) and any(
         word in raw for word in ('고양이', '반려묘')
@@ -326,7 +363,7 @@ def pet_owner_is_unambiguous(fact, source):
     raw = compact(fact['evidence'])
     ownership = r'(?:우리(?:집)?|저희(?:집)?|내|제|나의|저의)'
     animal = r'(?:반려동물|강아지|반려견|고양이|반려묘|토끼|햄스터|앵무새|거북이)'
-    ordinal = r'(?:(?:첫째|둘째|셋째|넷째|첫번째|두번째|세번째))?'
+    ordinal = '(?:' + '|'.join(_PET_ORDINALS) + ')?'
     if not (re.search(ownership + ordinal + animal, raw)
             or (requested_operation(source, 'correct')
                 and re.match(animal + r'(?:의)?(?:이름|품종|나이|생일|털색)', raw))):
@@ -551,7 +588,14 @@ class PersonalMemory:
                                  and (is_self_name_question(request.utterance) or (
                                      self_name_lookup(request.utterance) and
                                      speech_recall_focus(request.utterance, (), None) == 'name')))
-                if correction or stored_identity or name_question:
+                pet = (_pet_name_question(request.utterance)
+                       if state['enabled'] and not blocked and not pending else None)
+                pet_edit = (_pet_name_correction(request.utterance)
+                            if state['enabled'] and not blocked and not pending else None)
+                if pet or pet_edit:
+                    deferred = manage = False
+                    memories, pet_cutoff = self._pet_names(request.user_id, pet or pet_edit['pet'], conn)
+                elif correction or stored_identity or name_question:
                     deferred = False
                     memories = self._active_identity(request.user_id, stored_identity or 'name', conn)
                 elif state['enabled'] and not (blocked or deferred):
@@ -589,10 +633,30 @@ class PersonalMemory:
                     name_evidence_only = bool(memories or filtered) or not is_self_name_question(request.utterance)
                     if not name_evidence_only:
                         stored_identity = 'name'
+                if pet:
+                    # Current slots are authoritative. On a miss keep only a direct
+                    # statement of this pet's name since the last invalidation.
+                    subjects = (pet, _PET_ALIAS.get(pet))
+                    filtered = [replace(turn, assistant_content='', response={}) for turn in filtered
+                                if not memories and '저장' not in request.utterance
+                                and turn.created_at > max(pet_cutoff, state['legacy_cutoff'])
+                                and (said := _pet_name_declaration(turn.user_content)) and said['pet'] in subjects]
+                    clean_summary = None
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
+        if pet:
+            source['pet_name_question'] = pet
+        spelling = None
+        declaration = _pet_name_declaration(request.utterance)
+        if declaration:
+            stem, ending = declaration['stem'], declaration['ending']
+            # A consonant-final noun takes 이야. The same sounds can also be
+            # a name ending in 이 followed by 야. An established spelling wins.
+            if not ending.startswith('이') or (ord(stem[-1]) - ord('가')) % 28:
+                spelling = {'subject': declaration['pet'], 'name_before_copula': stem, 'copula': ending}
+                source['pet_name_spelling'] = spelling
         if stored_identity:
             source['stored_identity'] = stored_identity
         deps.update(record.id for record in memories)
@@ -612,6 +676,8 @@ class PersonalMemory:
                 ),
                 'memories': self._model_candidates(candidates),
                 'allowed_kinds': ['name', 'nickname', 'pet', 'preference'],
+                **({'pet_name_spelling': spelling} if spelling else {}),
+                **({'pet_name_evidence_only': True} if pet else {}),
                 **({'self_name_evidence_only': True} if name_evidence_only else {}),
                 **({'self_name_correction': {'new_name_verbatim': correction['new']}}
                    if correction else {}),
@@ -620,6 +686,32 @@ class PersonalMemory:
             source,
             deferred, blocked,
         )
+
+    def _pet_names(self, user_id, pet, conn):
+        subjects = (pet, _PET_ALIAS[pet]) if pet in _PET_ALIAS else (pet,)
+        slots = [json.dumps(['pet', subject, 'name'], ensure_ascii=False) for subject in subjects]
+        slots.extend(json.dumps(['pet', ordinal + space + subject, 'name'], ensure_ascii=False)
+                     for subject in subjects for ordinal in _PET_ORDINALS for space in ('', ' '))
+        placeholders = ','.join('?' for _ in slots)
+        now = time.time()
+        rows = conn.execute(
+            'SELECT m.* FROM memory_fact_slots s JOIN memories m ON m.id=s.memory_id AND m.user_id=s.user_id '
+            f'WHERE s.user_id=? AND s.slot_key IN ({placeholders}) AND (m.expires_at IS NULL OR m.expires_at>?)',
+            (user_id, *slots, now)).fetchall()
+        if rows:
+            return [self.memory._record(row) for row in rows], 0
+        cutoff = conn.execute(
+            "SELECT COALESCE(MAX(cutoff),0) FROM memory_pet_name_cutoffs "
+            f"WHERE user_id=? AND slot_hash IN ('*',{placeholders})",
+            (user_id, *(hashlib.sha256(slot.encode()).hexdigest() for slot in slots))).fetchone()[0]
+        legacy = (r'\s*(?:(?:우리|저희|내|제)\s*(?:집\s*)?)?(?:' + '|'.join(subjects)
+                  + r')\s*(?:의\s*)?이름(?:은|는|:)\s*[가-힣A-Za-z0-9]+[.!。]?\s*')
+        rows = conn.execute(
+            "SELECT m.* FROM memories m WHERE m.user_id=? AND m.kind IN ('pet','fact') AND m.created_at>? "
+            "AND (m.expires_at IS NULL OR m.expires_at>?) AND NOT EXISTS "
+            "(SELECT 1 FROM memory_fact_slots s WHERE s.memory_id=m.id)", (user_id, cutoff, now))
+        return [self.memory._record(row) for row in rows if row['content'].count('이름') == 1
+                and not json.loads(row['metadata_json']).get('fact') and re.fullmatch(legacy, row['content'])], cutoff
 
     def _active_identity(self, user_id, kind, conn):
         rows = conn.execute(
@@ -732,9 +824,9 @@ class PersonalMemory:
         explicit_correct = requested_operation(request.utterance, 'correct')
         if not snapshot.state['enabled'] and not explicit_save:
             return
-        if self_name_correction(request.utterance):
-            # This exact command is checked against the primary fact and live
-            # user-name slot at commit. A reviewer cannot widen its authority.
+        if self_name_correction(request.utterance) or _pet_name_correction(request.utterance):
+            # An exact name edit is checked against the primary fact and live
+            # owned slot at commit. A reviewer cannot widen its authority.
             return
         if proposal['operation'] == 'correct' and not explicit_correct:
             return
@@ -911,6 +1003,11 @@ class PersonalMemory:
             if edit['scope'] == 'invalid' or not edit['patch']:
                 return reply(SETTINGS_PROMPT, True)
             return reply('선택한 대화 취향을 초기 설정에 저장했어요. 기억 사용 동의는 바꾸지 않았어요.')
+        if pet := snapshot.source.get('pet_name_question'):
+            if len(snapshot.memories) > 1:
+                return reply(f'저장된 이름이 여러 개예요. 어느 {pet}의 이름이 궁금하세요?', True)
+            if not (snapshot.memories or snapshot.history):
+                return reply(f'저장된 {pet} 이름을 확인할 수 없어요.')
         if snapshot.source.get('stored_identity'):
             # A question about what is *stored* is answered by the active slot.
             # A previous correction may still be mentioned in story or dialogue.
@@ -1325,6 +1422,17 @@ class PersonalMemory:
         if negated_management(source['text']):
             return reply('기억을 변경하지 않았어요.'), []
         correction = self_name_correction(source['text']) if not pending else None
+        pet_edit = _pet_name_correction(source['text']) if not pending else None
+        if pet_edit:
+            subjects = (pet_edit['pet'], _PET_ALIAS.get(pet_edit['pet']))
+            facts = proposal['facts']
+            if (not snapshot.state['enabled'] or not result.provider_result.memory_supported
+                    or result.decision.type not in {'message', 'clarification'} or operation != 'correct'
+                    or len(facts) != 1 or facts[0]['kind'] != 'pet' or facts[0]['attribute'] != 'name'
+                    or facts[0]['subject'] not in subjects or facts[0]['value'] != pet_edit['new']
+                    or facts[0]['evidence'] not in source['text']
+                    or not all(pet_edit[k] in facts[0]['evidence'] for k in ('old', 'new'))):
+                return reply('정정할 반려동물 이름을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
         if correction:
             facts = proposal['facts']
             if (not snapshot.state['enabled'] or not result.provider_result.memory_supported
@@ -1379,7 +1487,7 @@ class PersonalMemory:
             return None, []
         for fact in proposal['facts']:
             if not (
-                correction or fact_matches_source(fact, source['text'])
+                correction or pet_edit or fact_matches_source(fact, source['text'])
                 or source_review_matches(fact, source)
             ):
                 if operation == 'remember' and not explicit:
@@ -1395,6 +1503,24 @@ class PersonalMemory:
         records = list(
             self.memory.list_for_user(token.user_id, connection=conn)
         )
+        spelling = source.get('pet_name_spelling')
+        if spelling and operation == 'remember':
+            subjects = (spelling['subject'], _PET_ALIAS.get(spelling['subject']))
+            known_pets = [r.metadata.get('fact') or {} for r in records if r.kind == 'pet']
+            for fact in proposal['facts']:
+                if fact['kind'] != 'pet' or fact['attribute'] != 'name' or fact['subject'] not in subjects:
+                    continue
+                name = spelling['name_before_copula']
+                if spelling['copula'] in {'이야', '이에요'} and any(
+                    known.get('subject') in subjects and known.get('attribute') == 'name'
+                    and known.get('value') == name + '이'
+                    for known in known_pets
+                ):
+                    name += '이'
+                if fact['value'] != name:
+                    if not explicit:
+                        return None, []
+                    return reply(f"이름 표기를 확인할게요. ‘우리 {spelling['subject']} 이름은 ○○입니다’처럼 다시 말씀해 주세요.", True), []
         by_id = {record.id: record for record in records}
         targets = proposal['target_ids']
         supplied = {r['id'] for r in snapshot.context['memories']}
@@ -1413,6 +1539,18 @@ class PersonalMemory:
             proposal['facts'][0]['subject'] = original_fact.get('subject', 'user')
             targets = [original.id]
             supplied.add(original.id)
+        if pet_edit:
+            # Resolve authority from the user's full edit and current slot. The
+            # model can mistype a UUID; it cannot select a different record.
+            current, _ = self._pet_names(token.user_id, pet_edit['pet'], conn)
+            original = current[0] if len(current) == 1 else None
+            original_fact = original.metadata.get('fact', {}) if original else {}
+            if (not original or original.id not in supplied or original_fact.get('value') != pet_edit['old']
+                    or len(targets) > 1 or (targets and targets[0] != original.id and conn.execute(
+                        'SELECT 1 FROM memories WHERE id=?', (targets[0],)).fetchone())):
+                return reply('정정할 기존 반려동물 이름을 확인하지 못했어요. 다시 말씀해 주세요.', True), []
+            proposal['facts'][0]['subject'] = original_fact['subject']
+            targets = [original.id]
         if any(key not in by_id or key not in supplied for key in targets):
             if operation == 'remember' and not explicit:
                 return None, []
@@ -1426,7 +1564,7 @@ class PersonalMemory:
         if (
             operation in {'forget', 'correct'}
             and targets
-            and not (selected_target or confirmed_correction or correction)
+            and not (selected_target or confirmed_correction or correction or pet_edit)
         ):
             identified = self._identify_targets(records, source['text'])
             if set(targets) != set(identified) or len(identified) != 1:

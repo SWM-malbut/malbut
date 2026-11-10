@@ -24,6 +24,8 @@ def test_existing_untyped_invalidations_fence_older_unbound_name_evidence():
         initialize_memory_schema(conn)
         assert conn.execute("SELECT self_name_cutoff FROM memory_policy_state").fetchone()[0] == 12
 
+        assert conn.execute("SELECT user_id,slot_hash,cutoff FROM memory_pet_name_cutoffs").fetchone()[:] == ('alice', '*', 12)
+
 
 def test_korean_memory_retrieval_and_user_isolation() -> None:
     """Korean particles should not prevent recall or cross user scope."""

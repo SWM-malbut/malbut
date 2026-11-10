@@ -85,6 +85,9 @@ class StoryMemoryProvider(AgentProvider):
         conversation_summary=None, *, memory_context=None, weather_context=None, fact_lookup=None,
     ):
         context = memory_context or {}
+        if context.get('pet_name_evidence_only'):
+            return self._answer_recall(request, memories, conversation_turns, None, context,
+                                       None, None, 'pet')
         if context.get('self_name_evidence_only'):
             return self._answer_recall(request, memories, conversation_turns, None, context,
                                        None, None, 'name')

@@ -528,6 +528,12 @@ class OpenAIResponsesProvider(AgentProvider):
         if (getattr(request, 'scene_context', None) is not None
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
             payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS
+        if (memory_context or {}).get('pet_name_spelling') and memory_mode != 'answer_only':
+            payload['instructions'] += (
+                '\n반려동물 이름 선언에서 evidence에는 원문을 그대로 두고, facts의 value에는 '
+                'pet_name_spelling.name_before_copula에 분리된 이름을 쓰세요. '
+                '같은 동물의 확인된 기존 이름에 끝 이가 포함된다면 그 표기를 유지하세요.'
+            )
         if self.include_reasoning:
             payload['reasoning'] = {
                 'effort': self.reasoning_effort,

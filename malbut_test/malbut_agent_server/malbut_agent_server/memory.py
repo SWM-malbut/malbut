@@ -1,5 +1,6 @@
 """SQLite-backed, user-isolated long-term memory retrieval."""
 
+import hashlib
 import json
 import math
 import os
@@ -108,6 +109,19 @@ def initialize_memory_schema(connection: sqlite3.Connection) -> None:
     for statement in statements:
         connection.execute(statement)
 
+    have_pet_cutoffs = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_pet_name_cutoffs'",
+    ).fetchone()
+    if not have_pet_cutoffs:
+        connection.execute(
+            'CREATE TABLE IF NOT EXISTS memory_pet_name_cutoffs (user_id TEXT NOT NULL, slot_hash TEXT NOT NULL, '
+            'cutoff REAL NOT NULL, PRIMARY KEY (user_id, slot_hash))')
+        # Historical tombstones do not identify their slot. Bound active records
+        # remain usable; only unbound evidence older than such a removal is unsafe.
+        connection.execute(
+            "INSERT OR IGNORE INTO memory_pet_name_cutoffs SELECT user_id,'*',MAX(invalidated_at) "
+            "FROM (SELECT user_id,invalidated_at FROM memory_tombstones WHERE memory_id NOT LIKE 'story-reply-%' "
+            "UNION ALL SELECT user_id,legacy_cutoff FROM memory_policy_state WHERE legacy_cutoff>0) GROUP BY user_id")
     if 'self_name_cutoff' not in {row[1] for row in connection.execute('PRAGMA table_info(memory_policy_state)')}:
         connection.execute('ALTER TABLE memory_policy_state ADD COLUMN self_name_cutoff REAL NOT NULL DEFAULT 0')
         # Old tombstones omit the fact's kind. Keep active facts readable, but
@@ -257,7 +271,7 @@ class SQLiteMemoryStore:
             if self.database_path == ':memory:':
                 tables = (
                     'memories', 'memory_policy_state', 'memory_fact_slots',
-                    'memory_tombstones',
+                    'memory_tombstones', 'memory_pet_name_cutoffs',
                 )
                 for table in tables:
                     rows = self._connection.execute(
@@ -668,10 +682,10 @@ class SQLiteMemoryStore:
             )
             if state['enabled'] == enabled and same_source:
                 return state
-            self._bump_revision(
-                active, normalized_user,
-                cutoff=0.0 if enabled else time.time(),
-            )
+            cutoff = 0.0 if enabled else time.time()
+            self._bump_revision(active, normalized_user, cutoff=cutoff)
+            if cutoff:
+                self._mark_pet_name_cutoff(active, normalized_user, '*', cutoff)
             active.execute(
                 '''UPDATE memory_policy_state
                     SET enabled = ?, consent_source_json = ?
@@ -772,6 +786,13 @@ class SQLiteMemoryStore:
         )}
 
     @staticmethod
+    def _mark_pet_name_cutoff(connection, user_id, slot_hash, now):
+        connection.execute(
+            'INSERT INTO memory_pet_name_cutoffs (user_id,slot_hash,cutoff) VALUES (?,?,?) '
+            'ON CONFLICT(user_id,slot_hash) DO UPDATE SET cutoff=MAX(cutoff,excluded.cutoff)',
+            (user_id, slot_hash, now))
+
+    @staticmethod
     def _invalidate_rows(connection, rows):
         now = time.time()
         cutoff = 0.0
@@ -779,7 +800,7 @@ class SQLiteMemoryStore:
             metadata = json.loads(row['metadata_json'])
             source = metadata.get('source')
             tracked = connection.execute(
-                'SELECT 1 FROM memory_fact_slots WHERE memory_id = ?',
+                'SELECT slot_key FROM memory_fact_slots WHERE memory_id = ?',
                 (row['id'],),
             ).fetchone()
             fact = metadata.get('fact', {})
@@ -789,6 +810,12 @@ class SQLiteMemoryStore:
                     'UPDATE memory_policy_state SET self_name_cutoff=MAX(self_name_cutoff,?) WHERE user_id=?',
                     (now, row['user_id']),
                 )
+            if tracked and fact.get('kind') == 'pet' and fact.get('attribute') == 'name':
+                slot_hash = hashlib.sha256(tracked['slot_key'].encode()).hexdigest()
+                SQLiteMemoryStore._mark_pet_name_cutoff(connection, row['user_id'], slot_hash, now)
+            elif not tracked and row['kind'] in {'fact', 'pet'}:
+                # An unstructured removal may include several pets.
+                SQLiteMemoryStore._mark_pet_name_cutoff(connection, row['user_id'], '*', now)
             try:
                 if tracked is None:
                     raise ValidationError('legacy memory has no source link')
