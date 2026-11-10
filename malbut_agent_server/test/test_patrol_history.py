@@ -44,7 +44,8 @@ def test_confirmed_history_survives_newer_unknowns_and_context_budget(tmp_path):
     assert answer['history_semantics'] == (
         'past_confirmed_sightings_not_current_or_tracked_identity')
     assert 'capture_rooms' not in answer['observations'][0]
-    assert answer['last_confirmed_observations'] == [history]
+    assert answer['last_confirmed_observations'] == [dict(
+        history, captured_at='2026년 10월 25일 19시 00분 00초 (한국 시각)')]
     # A later confirmed move supersedes the historical location, using capture time.
     store.complete(unknown[-2].stem, observation('거실'), 'fixture')
     result = store.search('owner', dict(ARGS, query='세탁기', limit=1))
