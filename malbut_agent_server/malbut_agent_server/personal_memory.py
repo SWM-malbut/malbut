@@ -230,15 +230,30 @@ def _self_introduction(text):
 
 
 def _stored_identity_question(text):
+    owner = r'(?:내|제|나의|저의)'
+    saved = r'(?:장기기억에)?(?:저장(?:된|한|해둔)?|기억해둔)'
+    name, nickname = r'(?:본명|이름)', r'(?:호칭|별명)'
+    join = r'(?:과|와|이?랑|하고)'
+    both = rf'(?:{name}{join}{owner}?{nickname}|{nickname}{join}{owner}?{name})'
+    # The saved qualifier must cover the nickname or both items. Room-only
+    # and otherwise unqualified nicknames still need the conversation.
+    if re.fullmatch(
+        r'(?:혹시)?(?:지금|현재)?(?:(?:내가|제가)(?:전에)?(?:알려준|말해준))?'
+        rf'(?:(?:{owner}{saved}|{saved}{owner}|(?:내가|제가){saved}){both}|'
+        rf'{owner}{name}{join}{owner}?{saved}{owner}?{nickname}|{saved}{nickname}{join}{owner}{name})'
+        r'(?:을|를|은|는|이|가)?(?:목록으로|각각|둘다|모두|함께|같이)?'
+        r'(?:(?:말해|알려)(?:줘요?|주세요|줄래요?)|뭐(?:야|예요|였지)|무엇인가요)[?？.!。]?', compact(text),
+    ):
+        return ('name', 'nickname')
     if is_self_name_question(text) and '저장' in text:
-        return 'name'
+        return ('name',)
     match = re.fullmatch(
         r'\s*(?:새\s*대화야[.]\s*)?(?:(?:지금|현재)\s*)?(?:장기\s*기억에\s*)?'
         r'(?:저장된|저장해\s*둔|저장한)\s*(?:내|제|나의|저의)\s*'
         r'(?:호칭|별명)(?:이|가|은|는)?\s*(?:뭐야|뭐예요|뭔가요|무엇인가요)[?？.]?\s*',
         text,
     )
-    return 'nickname' if match else None
+    return ('nickname',) if match else None
 
 
 _PET_ALIAS = {'강아지': '반려견', '반려견': '강아지', '고양이': '반려묘', '반려묘': '고양이'}
@@ -597,7 +612,8 @@ class PersonalMemory:
                     memories, pet_cutoff = self._pet_names(request.user_id, pet or pet_edit['pet'], conn)
                 elif correction or stored_identity or name_question:
                     deferred = False
-                    memories = self._active_identity(request.user_id, stored_identity or 'name', conn)
+                    memories = [record for kind in stored_identity or ('name',)
+                                for record in self._active_identity(request.user_id, kind, conn)]
                 elif state['enabled'] and not (blocked or deferred):
                     memories = list(self.memory.search(
                         request.user_id, request.utterance, limit=memory_limit, connection=conn,
@@ -624,7 +640,7 @@ class PersonalMemory:
                 )
                 name_evidence_only = False
                 if name_question and not stored_identity and len(memories) > 1:
-                    stored_identity = 'name'
+                    stored_identity = ('name',)
                 if name_question and not stored_identity:
                     filtered = self._name_history(request.user_id, conn, memories, filtered)
                     clean_summary = None
@@ -632,7 +648,7 @@ class PersonalMemory:
                     # keep a conversational answer even when there is no evidence.
                     name_evidence_only = bool(memories or filtered) or not is_self_name_question(request.utterance)
                     if not name_evidence_only:
-                        stored_identity = 'name'
+                        stored_identity = ('name',)
                 if pet:
                     # Current slots are authoritative. On a miss keep only a direct
                     # statement of this pet's name since the last invalidation.
@@ -1008,18 +1024,25 @@ class PersonalMemory:
                 return reply(f'저장된 이름이 여러 개예요. 어느 {pet}의 이름이 궁금하세요?', True)
             if not (snapshot.memories or snapshot.history):
                 return reply(f'저장된 {pet} 이름을 확인할 수 없어요.')
-        if snapshot.source.get('stored_identity'):
+        if identities := snapshot.source.get('stored_identity'):
             # A question about what is *stored* is answered by the active slot.
             # A previous correction may still be mentioned in story or dialogue.
-            label = '본명' if snapshot.source['stored_identity'] == 'name' else '호칭'
-            if len(snapshot.memories) == 1:
-                record = snapshot.memories[0]
-                value = (record.metadata['fact']['value'] if record.metadata.get('fact')
-                         else _self_introduction(record.content))
-                return reply(f'저장된 {label}은 {value}입니다.')
-            if len(snapshot.memories) > 1:
-                return reply(f'저장된 {label} 후보가 여러 개예요. 어떤 {label}을 사용해야 할까요?', True)
-            return reply(f'현재 저장된 {label}을 확인할 수 없어요.')
+            parts = []
+            clarify = False
+            for kind in identities:
+                label = '본명' if kind == 'name' else '호칭'
+                records = [record for record in snapshot.memories if record.kind == kind]
+                if len(records) == 1:
+                    record = records[0]
+                    value = (record.metadata['fact']['value'] if record.metadata.get('fact')
+                             else _self_introduction(record.content))
+                    parts.append(f'저장된 {label}은 {value}입니다.')
+                elif records:
+                    parts.append(f'저장된 {label} 후보가 여러 개예요. 어떤 {label}을 사용해야 할까요?')
+                    clarify = True
+                else:
+                    parts.append(f'현재 저장된 {label}을 확인할 수 없어요.')
+            return reply(' '.join(parts), clarify)
         if local_intent(request.utterance) is not None:
             return reply('기억 설정 요청을 확인했어요.')
         answer = compact(request.utterance).rstrip('.!?。')
