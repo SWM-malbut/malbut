@@ -264,6 +264,7 @@ class SpeechAgentRequest(AgentRequest):
     scene_context: Optional[Dict[str, Any]] = None
     turn_image: Any = field(default=None, repr=False, compare=False)
     mapping_name_requested: bool = False
+    confirmed_homecam_read: bool = False  # Server-owned, excluded from the model input.
 
     def __post_init__(self) -> None:
         """Validate server-owned names independently of the public HTTP schema."""

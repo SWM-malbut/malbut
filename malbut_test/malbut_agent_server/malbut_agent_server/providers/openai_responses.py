@@ -60,7 +60,7 @@ from malbut_agent_server.schemas import (
     ProviderAPITiming,
 )
 from malbut_agent_server.weather import basic_forecast_day
-from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, ToolSpec
 from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS, mapping_name_binding
 
 
@@ -173,6 +173,7 @@ class OpenAIResponsesProvider(AgentProvider):
         token_counter: Optional[Callable[[Any], int]] = None,
         api_timing_enabled: bool = False,
         prompt_cache_enabled: bool = False,
+        *, is_fallback: bool = False,
     ) -> None:
         """Initialize a lazy adapter without performing a network call.
 
@@ -222,6 +223,7 @@ class OpenAIResponsesProvider(AgentProvider):
         self.reasoning_effort = normalized_effort
         self.include_reasoning = include_reasoning
         self.semantic_context = semantic_context
+        self.is_fallback = is_fallback
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
         if type(api_timing_enabled) is not bool or type(prompt_cache_enabled) is not bool:
@@ -535,8 +537,16 @@ class OpenAIResponsesProvider(AgentProvider):
                 '같은 동물의 확인된 기존 이름에 끝 이가 포함된다면 그 표기를 유지하세요.'
             )
         if self.include_reasoning:
+            homecam = (memory_context or {}).get('homecam_query_result_untrusted')
+            grounded = (
+                self.semantic_context and not self.is_fallback and self.model == 'gpt-5.6-luna'
+                and self.reasoning_effort == 'low' and isinstance(request, SpeechAgentRequest)
+                and request.confirmed_homecam_read and memory_mode == 'answer_only'
+                and not (tools or request.available_tools) and isinstance(homecam, dict)
+                and homecam.get('tool') in HOMECAM_QUERY_TOOLS and isinstance(homecam.get('data'), dict)
+            )
             payload['reasoning'] = {
-                'effort': self.reasoning_effort,
+                'effort': 'none' if grounded else self.reasoning_effort,
                 'context': 'current_turn',
             }
         if tools:

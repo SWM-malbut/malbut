@@ -22,6 +22,7 @@ from malbut_agent_server.conversation_progress import (
     announce_function_start, claim_retry, conversation_request,
     SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
+from malbut_agent_server.conversation_preferences import CHOICES, DEFAULTS
 from malbut_agent_server.conversation_ownership import (
     owned_conversation_request, recover_abandoned_turns,
 )
@@ -29,6 +30,7 @@ from malbut_agent_server.gateway import (
     CapabilityRegistry,
     production_registry,
 )
+from malbut_agent_server.homecam_query import record_existence_reply
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
 from malbut_agent_server.automatic_memory_policy import (
@@ -837,8 +839,26 @@ class AgentOrchestrator:
                                                result.story_binding)
                     result.speech_published = deliver_before_save(result)
 
-                if delivery_available():
-                    completion_arguments['before_commit'] = deliver_committing_reply
+                publish = delivery_available()
+                read_version = None
+                lookup_version = getattr(self.story_provider, 'direct_story_read_version', None)
+                if (lookup_version is not None and result.story_binding is not None
+                        and request.utterance == effective_request.utterance):
+                    read_version = lookup_version(request.user_id, request.request_id)
+
+                def before_commit():
+                    if (read_version is not None and result.raw_decision.type == result.decision.type == 'message'
+                            and result.safety.allowed and result.safety.code == 'not_an_action'
+                            and result.provider_result.memory_proposal is None):
+                        self.story_memory.store.checkpoint_source_read(
+                            self.conversation_store._connection, request.user_id, request.request_id,
+                            result.story_binding.policy_revision, result.story_binding.readset, read_version,
+                        )
+                    if publish:
+                        deliver_committing_reply()
+
+                if publish or read_version is not None:
+                    completion_arguments['before_commit'] = before_commit
 
                 with self.conversation_store._lock:
                     # Policy/erasure writes use this same lock. Keep validation
@@ -897,6 +917,38 @@ class AgentOrchestrator:
             and automatic_request(request, snapshot)
         )
 
+    def _thanks_after_answer(self, request, snapshot, token):
+        """A bare thank-you after a settled voice answer keeps the session open."""
+        # Later turns may carry free-form instructions outside the saved response settings.
+        if (not isinstance(request, SpeechAgentRequest) or token.ordinal != 2
+                or not re.fullmatch(r'\s*(?:고마워요?|고맙습니다|감사해요?|감사합니다)[.!。！]?\s*', request.utterance)
+                or request.navigation_confirmation or request.mapping_name_requested or snapshot.pending
+                or not snapshot.history):
+            return None
+        previous = snapshot.history[-1]
+        receipt = previous.response.get('public', {})
+        decision = receipt.get('decision', {})
+        settings = snapshot.context.get('response_settings', {})
+        tone = settings.get('tone')
+        # STT may omit punctuation. A complete Korean count question still has
+        # an explicit interrogative, without interpreting an arbitrary clause.
+        question = re.fullmatch(
+            r'[^.!?。！？,，\n]+[?？]|(?:[가-힣]+(?:에는|은|는)\s+)?[가-힣]+[이가은는]\s*몇\s*개\s*(?:있어(?:요)?|야|예요|인가요)',
+            previous.user_content.strip())
+        if (previous.ordinal != 1 or not question or re.search(r'(?:앞으로|하고|말고)\s', previous.user_content)
+                or not re.search(r'[가-힣]', previous.assistant_content or '') or decision.get('type') != 'message'
+                or (decision.get('reason') or '').replace('_', ' ') not in {'general knowledge', '일반 지식 답변'}
+                or decision.get('message') != previous.assistant_content
+                or receipt.get('safety', {}).get('code') != 'not_an_action'
+                or 'weather_tool_decision' in previous.response
+                or re.search(r'[?？]|(?:주세요|할까요|실래요|해줄래|알려줘)[.!。！]?$', previous.assistant_content)
+                or tone not in CHOICES['tone'] or settings != dict(DEFAULTS, tone=tone, response_mode='natural')
+                or self.conversation_store.pending_confirmation(request.user_id, request.conversation_id)):
+            return None
+        text = '천만에요.' if tone == '편안한 존댓말' else '도움이 됐다니 기뻐.'
+        return ProviderResult(AgentDecision('message', text, reason='courtesy_response'),
+                              'malbut-dialogue', 'standalone-thanks', 0, memory_supported=True)
+
     def _handle_uncached(
         self,
         request: AgentRequest,
@@ -938,6 +990,9 @@ class AgentOrchestrator:
                 decision=local_memory, provider='malbut-memory-policy',
                 model='consent-v1', latency_ms=0.0, memory_supported=True,
             )
+        elif (server_clarification is None and request.utterance == effective_request.utterance
+              and (thanks := self._thanks_after_answer(request, memory_snapshot, token)) is not None):
+            provider_result = thanks
         elif server_clarification is None:
             if self.robot_state_source is not None and set(model_request.available_tools) - {
                 'get_weather', 'set_weather_location',
@@ -1185,6 +1240,18 @@ class AgentOrchestrator:
             return replace(first_result, decision=AgentDecision(
                 'message', message, reason='homecam_unavailable',
             ), memory_proposal=None)
+        confirmed = (result['success'] is True and result.get('code') == 'OK'
+                     and isinstance(result['result'], dict))
+        settings = (memory_context or {}).get('response_settings')
+        if (confirmed and isinstance(request, SpeechAgentRequest)
+                and settings == dict(DEFAULTS, response_mode='natural')):
+            reply = record_existence_reply(
+                request.utterance, first_result.decision.tool_name, result['result'],
+            )
+            if reply is not None:
+                return replace(first_result, decision=AgentDecision(
+                    'message', reply, reason='homecam_record_existence',
+                ), memory_proposal=None)
         context = copy.deepcopy(memory_context)
         # This is current-query data, not a remembered fact or workflow journal.
         context['homecam_query_result_untrusted'] = {
@@ -1192,8 +1259,11 @@ class AgentOrchestrator:
         }
         value = request.to_dict()
         value['available_tools'] = []
+        followup = copy_request(request, value)
+        if isinstance(followup, SpeechAgentRequest):
+            followup = replace(followup, confirmed_homecam_read=confirmed)
         answer = self.provider.complete(
-            copy_request(request, value), list(memories), copy.deepcopy(list(turns)), [],
+            followup, list(memories), copy.deepcopy(list(turns)), [],
             conversation_summary=copy.deepcopy(summary), memory_context=context,
         )
         answer.validate()

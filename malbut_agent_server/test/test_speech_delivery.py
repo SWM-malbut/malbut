@@ -39,6 +39,25 @@ def test_semantic_close_sends_only_control_even_with_early_delivery(tmp_path, ea
         worker.close()
 
 
+@pytest.mark.parametrize('early_delivery', [False, True])
+def test_standalone_thanks_is_spoken_and_accepts_the_next_turn_in_the_same_room(tmp_path, early_delivery):
+    provider = FixedProvider(lambda *_: AgentDecision('message', '세 개예요.', reason='general_knowledge'))
+    worker = DialogueWorker(RuntimeFactory(provider, str(tmp_path/'speech.sqlite3')), 'speaker',
+                            publish_before_save=early_delivery)
+    try:
+        delivered = []
+        for uid, utterance in [('question', '세모에는 변이 몇 개야?'), ('thanks', '고마워.'), ('next', '네모는?')]:
+            assert worker.submit(uid, utterance)
+            reply, = collect(worker, 1)
+            assert worker.publish_reply(reply, lambda text: delivered.append((reply['conversation_id'], text)) or True,
+                                        end_dialogue=lambda _: pytest.fail('ordinary thanks closed the dialogue'))
+        assert len({room for room, _ in delivered}) == 1
+        assert delivered[1][1] == '천만에요.'
+        assert [call[0].utterance for call in provider.calls] == ['세모에는 변이 몇 개야?', '네모는?']
+    finally:
+        worker.close()
+
+
 def test_publishes_before_durable_result_and_keeps_next_turn_order(tmp_path):
     path = str(tmp_path / 'speech.sqlite3')
     factory = RuntimeFactory(database_path=path)

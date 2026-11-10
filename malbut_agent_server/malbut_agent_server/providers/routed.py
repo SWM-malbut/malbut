@@ -117,7 +117,7 @@ class RoutedAgentProvider(AgentProvider):
             # speech turn through the existing provider instead of projecting a prefix.
             return self._delegate(
                 self.fallback_provider, request, memories, conversation_turns,
-                tools, conversation_summary, memory_context, weather_context,
+                tools, conversation_summary, memory_context, weather_context, fallback=True,
             )
         front_request = self._front_request(
             request,
@@ -142,6 +142,7 @@ class RoutedAgentProvider(AgentProvider):
                 conversation_summary,
                 memory_context,
                 weather_context,
+                fallback=True,
             )
         if match.route is FrontRoute.GENERAL_CONVERSATION:
             general_request = self._without_robot_tools(request)
@@ -288,7 +289,10 @@ class RoutedAgentProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary],
         memory_context: Optional[dict] = None,
         weather_context: Optional[dict] = None,
+        *, fallback: bool = False,
     ) -> ProviderResult:
+        if fallback and isinstance(request, SpeechAgentRequest) and request.confirmed_homecam_read:
+            request = replace(request, confirmed_homecam_read=False)
         context_arguments = (
             {'memory_context': memory_context}
             if memory_context is not None

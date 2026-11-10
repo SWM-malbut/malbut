@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +31,31 @@ _ITEM_FIELDS = {
     'incidents': {'id', 'state', 'assessment', 'answer', 'fallSeen',
                   'occurredAt', 'updatedAt', 'href'},
 }
+
+
+def record_existence_reply(utterance, tool, data):
+    """Answer a plain existence question using only the retrieved list."""
+    question = re.fullmatch(
+        r'(?:최근(?:에)?)?(?:홈캠(?:에|에서|의)?)?(?:최근(?:에)?)?'
+        r'(?P<kind>녹화|낙상|넘어진)기록(?:이|은|도)?(?:남아)?'
+        r'(?:있어(?:요)?|있나요|있니|있을까(?:요)?|있습니까)[?.!]*',
+        ''.join(utterance.split()),
+    )
+    if question is None:
+        return None
+    if question['kind'] == '녹화':
+        expected_tool, field, label = 'get_homecam_recordings', 'recordings', '녹화 기록'
+    else:
+        expected_tool, field, label = 'get_homecam_falls', 'incidents', '낙상 관련 기록'
+    records = data.get(field)
+    if tool != expected_tool or not isinstance(records, list):
+        return None
+    if not all(isinstance(item, dict) and isinstance(item.get('id'), str)
+               and item['id'].strip() for item in records):
+        return None
+    if records:
+        return f'조회한 홈캠 목록에 {label}이 {len(records)}건 있어요.'
+    return f'조회한 홈캠 목록에 {label}은 없어요.'
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -111,9 +137,10 @@ class HomecamQueryClient:
             if key in result:
                 if not isinstance(result[key], list):
                     raise ValueError('invalid Homecam list')
-                result[key] = [{k: v for k, v in item.items() if k in fields}
-                               for item in result[key][:arguments['limit']]
-                               if isinstance(item, dict)]
+                items = result[key][:arguments['limit']]
+                if any(not isinstance(item, dict) for item in items):
+                    raise ValueError('invalid Homecam list item')
+                result[key] = [{k: v for k, v in item.items() if k in fields} for item in items]
         for key in ('mediaApplyReceipt', 'fallApplyReceipt'):
             if key in result and isinstance(result[key], dict):
                 result[key] = {k: v for k, v in result[key].items()

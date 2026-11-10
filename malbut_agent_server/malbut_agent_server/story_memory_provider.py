@@ -7,7 +7,8 @@ import hashlib
 import json
 import threading
 from malbut_agent_server.conversation_recall import (
-    event_scoped_attribute, previous_self_name_id, self_name_lookup, speech_recall_focus, speech_recall_prohibited,
+    event_scoped_attribute, named_story_read_only, previous_self_name_id, self_name_lookup,
+    speech_recall_focus, speech_recall_prohibited,
 )
 from malbut_agent_server.memory_trace import observe_inputs
 from malbut_agent_server.personal_memory import requested_operation, self_name_correction
@@ -51,6 +52,11 @@ class StoryMemoryProvider(AgentProvider):
         with self._lock:
             receipt = self._revisions.get((user_id, request_id))
             return copy.deepcopy(receipt[1]) if receipt else []
+
+    def direct_story_read_version(self, user_id, request_id):
+        with self._lock:
+            receipt = self._revisions.get((user_id, request_id))
+            return receipt[2] if receipt else None
 
     def reply_binding(self, user_id, request_id):
         with self._lock:
@@ -128,7 +134,8 @@ class StoryMemoryProvider(AgentProvider):
                     if focus is not None:
                         answer = self._answer_recall(
                             request, memories, conversation_turns, conversation_summary, context,
-                            revision, fact_lookup, focus, previous_name_id=previous_name_id)
+                            revision, fact_lookup, focus, previous_name_id=previous_name_id,
+                            direct_story_read=focus in {'related', 'story_repeat'})
                         if answer is not None:
                             return answer
                 first_tools = [*tools, recall_tool]
@@ -172,7 +179,7 @@ class StoryMemoryProvider(AgentProvider):
         )
 
     def _answer_recall(self, request, memories, conversation_turns, conversation_summary,
-                       context, revision, fact_lookup, focus, *, previous_name_id=None):
+                       context, revision, fact_lookup, focus, *, previous_name_id=None, direct_story_read=False):
         fact_guard = None
         answer_phase = 'requested'
         if focus == 'story_repeat' or previous_name_id is not None:
@@ -207,6 +214,7 @@ class StoryMemoryProvider(AgentProvider):
         answer = self._complete(
             replace(request, available_tools=()), memories, conversation_turns, [], conversation_summary,
             dict(context, mode='answer_only'), None, answer_phase, revision, fact_guard,
+            direct_story_read=direct_story_read,
         )
         answer.validate()
         if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
@@ -214,7 +222,7 @@ class StoryMemoryProvider(AgentProvider):
         return answer
 
     def _complete(self, request, memories, conversation_turns, tools, conversation_summary,
-                  memory_context, weather_context, phase, revision, fact_guard=None):
+                  memory_context, weather_context, phase, revision, fact_guard=None, *, direct_story_read=False):
         context = copy.deepcopy(memory_context or {})
 
         def trace(event, data):
@@ -253,6 +261,7 @@ class StoryMemoryProvider(AgentProvider):
             'failed': (story_context or {}).get('failed', 0),
         })
         readset = []
+        read_version = None
         if story_context is not None and story_context.get('enabled', True):
             revision = story_context['revision']
             attachment = {
@@ -275,6 +284,9 @@ class StoryMemoryProvider(AgentProvider):
                 else:
                     context.pop('story_memory_untrusted', None)
                     break
+            attached = attachment.get('stories', [])
+            if direct_story_read and phase == 'requested' and named_story_read_only(request.utterance, attached):
+                read_version = attached[0].get('version')
             story_ids = [item['story_id'] for item in attachment.get('stories', [])]
             for story in attachment.get('stories', []):
                 hashes = []
@@ -339,7 +351,10 @@ class StoryMemoryProvider(AgentProvider):
                         merged.setdefault(item['story_id'], set()).update(item['entry_hashes'])
                     readset = [{'story_id': identifier, 'entry_hashes': sorted(hashes)}
                                for identifier, hashes in merged.items()]
-                self._revisions[(request.user_id, request.request_id)] = (revision, readset)
+                if read_version is not None and (prior is not None or result.decision.type != 'message'
+                                                 or result.memory_proposal is not None):
+                    read_version = None
+                self._revisions[(request.user_id, request.request_id)] = (revision, readset, read_version)
                 self._revisions.move_to_end((request.user_id, request.request_id))
                 while len(self._revisions) > 256:
                     self._revisions.popitem(last=False)
