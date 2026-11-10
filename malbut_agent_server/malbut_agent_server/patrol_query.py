@@ -2,11 +2,14 @@
 
 import copy
 from dataclasses import replace
+from datetime import datetime
 import logging
 import os
 import sqlite3
+from zoneinfo import ZoneInfo
 
 from malbut_agent_server.gateway import CapabilityRegistry, PROPOSAL_ONLY, ToolCapability
+from malbut_agent_server.patrol_memory import timestamp
 from malbut_agent_server.providers.base import accepts_memory_context
 from malbut_agent_server.schemas import AgentDecision, ProviderUsage
 from malbut_agent_server.tools import PATROL_QUERY_TOOLS, TOOL_SPECS
@@ -64,9 +67,21 @@ def configure_patrol_from_settings(runtime, settings, *, http_server):
         logging.getLogger(__name__).warning('Patrol observation memory unavailable')
 
 
+def _korean_time(value):
+    """Format only timezone-aware capture metadata for the answer model."""
+    try:
+        local = datetime.fromtimestamp(timestamp(value), ZoneInfo('Asia/Seoul'))
+        return local.strftime('%Y년 %m월 %d일 %H시 %M분 %S초 (한국 시각)')
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
 def _answer_evidence(result):
     """Keep camera provenance in storage; expose only measured object regions to answers."""
     evidence = copy.deepcopy(result)
+    evidence['queried_at'] = _korean_time(evidence.get('queried_at'))
+    for observation in (*evidence['observations'], *evidence.get('last_confirmed_observations', [])):
+        observation['captured_at'] = _korean_time(observation.get('captured_at'))
     evidence['location_semantics'] = 'object_regions_only_camera_location_withheld'
     if evidence.get('last_confirmed_observations'):
         evidence['history_semantics'] = 'past_confirmed_sightings_not_current_or_tracked_identity'

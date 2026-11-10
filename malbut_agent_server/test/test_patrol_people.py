@@ -116,7 +116,7 @@ def test_unknown_answer_evidence_excludes_camera_and_freeform_room_claims():
     assert '촬영방' not in json.dumps(result, ensure_ascii=False)
     assert 'camera_pose' not in json.dumps(result)
     assert result['observations'][0]['objects'][0]['spatial']['status'] == 'unknown'
-    assert result['observations'][0]['captured_at'] == original['observations'][0]['captured_at']
+    assert result['observations'][0]['captured_at'] == '2026년 10월 22일 18시 00분 00초 (한국 시각)'
     assert original == saved  # Provenance must remain intact in durable storage.
     original['observations'][0]['objects'][0]['location'] = '소파 앞'
     assert _answer_evidence(original)['observations'][0]['objects'][0][
