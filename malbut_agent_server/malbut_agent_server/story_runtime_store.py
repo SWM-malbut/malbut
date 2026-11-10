@@ -16,6 +16,7 @@ import secrets
 import time
 import unicodedata
 
+from .schemas import ValidationError
 from .story_memory import StoryEntry, StoryMemoryError, _entries, _id, _json, _text
 from .story_memory_sources import SourceRef, make_source_ref, read_source
 from .memory_trace import record_trace
@@ -477,6 +478,57 @@ class StoryRuntimeStore:
         self._job_trace(conn, 'story_queued', user, request_id,
                         {'job_id': _digest([user, request_id, digest]), 'state': 'queued'})
         return True
+
+    def checkpoint_source_read(self, conn, user, request_id, revision, readset, version):
+        """Finish one server-certified read in the same transaction as its reply."""
+        if conn is not self.conversations._connection or not conn.in_transaction or len(readset) != 1:
+            raise StoryMemoryError('invalid source-read transaction')
+        identifier, hashes = readset[0]
+        policy = self._policy(conn, user)
+        turn = conn.execute("SELECT rowid,* FROM conversation_turns WHERE user_id=? AND request_id=? "
+                            "AND status='completed'", (user, request_id)).fetchone()
+        story = conn.execute('SELECT * FROM story_runtime_stories WHERE user_id=? AND story_id=?',
+                             (user, identifier)).fetchone()
+        lineage = conn.execute('SELECT stories_json,revision FROM story_runtime_replies WHERE user_id=? AND request_id=?',
+                               (user, request_id)).fetchone()
+        if (not turn or not story or not story['active'] or not lineage or lineage['revision'] != revision
+                or identifier not in json.loads(lineage['stories_json']) or story['version'] != version or not policy['enabled']
+                or not policy['external_consent'] or policy['revision'] != revision
+                or not self._grant(conn, user, turn, policy) or not self._story_valid(conn, user, story)):
+            raise ValidationError('memory_changed')
+        current = json.loads(story['current_json'])
+        entry_hashes = [_digest({key: entry[key] for key in ('text', 'kind', 'actor', 'status')})
+                        for entry in current]
+        if len(current) != 1 or tuple(hashes) != tuple(entry_hashes):
+            raise ValidationError('memory_changed')
+        source_keys = set(current[0]['source_keys'])
+        original = [ref for ref in _refs(story['refs_json']) if ref.key in source_keys]
+        refs = self._raw_refs(conn, user, turn)
+        if not original or len(original) != len(source_keys) or any(ref.role != 'user' for ref in original):
+            # Legacy entries may cite both speakers. They keep ordinary extraction.
+            return
+        if ({ref.role for ref in refs} != {'user', 'assistant'}
+                or any(self._resolve(conn, user, ref) is None for ref in refs)):
+            raise ValidationError('memory_changed')
+        digest = _digest([ref.key for ref in refs])
+        job_id = _digest([user, request_id, digest])
+        # Link the pure question to the story's deletion scope. Its answer is
+        # already erased via story_runtime_replies and must never become evidence.
+        coverage = {ref.key: ref for ref in _refs(story['refs_json'])}
+        coverage.update((ref.key, ref) for ref in refs if ref.role == 'user')
+        conn.execute('UPDATE story_runtime_stories SET refs_json=? WHERE user_id=? AND story_id=?',
+                     (_refs_json(list(coverage.values())), user, identifier))
+        read_sources = [{'id': 'p' + str(i), 'ref': ref.to_dict()} for i, ref in enumerate(original, 1)]
+        now = self._now()
+        conn.execute("""INSERT INTO story_runtime_jobs
+            (user_id,job_id,request_id,source_digest,sources_json,read_sources_json,state,processed,
+             available_at,policy_revision,result_digest,created_at) VALUES (?,?,?,?,?,?,'done',1,?,?,?,?)""",
+                     (user, job_id, request_id, digest, _refs_json(refs), _json(read_sources),
+                      now, revision, _digest([]), now))
+        self._job_trace(conn, 'story_readback_covered', user, request_id,
+                        {'job_id': job_id, 'story_id': identifier, 'entry_hashes': list(hashes),
+                         'source_refs': [ref.to_dict() for ref in original], 'policy_revision': revision,
+                         'story_version': version})
 
     def enqueue_completed(self, user, request_id):
         user, request_id = _id(user, 'user_id'), _id(request_id, 'request_id')

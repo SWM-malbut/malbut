@@ -839,8 +839,26 @@ class AgentOrchestrator:
                                                result.story_binding)
                     result.speech_published = deliver_before_save(result)
 
-                if delivery_available():
-                    completion_arguments['before_commit'] = deliver_committing_reply
+                publish = delivery_available()
+                read_version = None
+                lookup_version = getattr(self.story_provider, 'direct_story_read_version', None)
+                if (lookup_version is not None and result.story_binding is not None
+                        and request.utterance == effective_request.utterance):
+                    read_version = lookup_version(request.user_id, request.request_id)
+
+                def before_commit():
+                    if (read_version is not None and result.raw_decision.type == result.decision.type == 'message'
+                            and result.safety.allowed and result.safety.code == 'not_an_action'
+                            and result.provider_result.memory_proposal is None):
+                        self.story_memory.store.checkpoint_source_read(
+                            self.conversation_store._connection, request.user_id, request.request_id,
+                            result.story_binding.policy_revision, result.story_binding.readset, read_version,
+                        )
+                    if publish:
+                        deliver_committing_reply()
+
+                if publish or read_version is not None:
+                    completion_arguments['before_commit'] = before_commit
 
                 with self.conversation_store._lock:
                     # Policy/erasure writes use this same lock. Keep validation

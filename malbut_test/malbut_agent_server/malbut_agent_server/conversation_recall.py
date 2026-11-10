@@ -85,6 +85,41 @@ def event_scoped_attribute(text):
     return bool(_EVENT_SCOPE.search(''.join(unicodedata.normalize('NFKC', text).split())))
 
 
+# The foreground read route can answer a question even when its topic contains
+# new information. Skipping extraction requires one fully consumed question
+# about a subject already present in the source-backed claim.
+_NAMED_STORY_QUESTION = re.compile(
+    r'(?:혹시)?(?:(?:예전|이전|지난번|저번|그때|전)에?)?'
+    r'(?:(?:내가|제가|우리가)?(?:말한|말했던|정한|정했던|알려준))?'
+    r'(?P<subject>[가-힣a-z0-9]{2,100}?)(?:은|는|이|가|을|를)?'
+    r'(?:(?:뭐|무엇|어디|언제|무슨요일)(?:였지|였더라|였죠|였나요|이었지|이었나요|이었죠)'
+    r'|(?:뭐|무엇|언제|어디)(?:로|으로|라고)(?:정했|불렀|골랐)는지(?:기억나(?:요)?|알려(?:줘|주세요)))'
+    r'[?.。]?'
+)
+
+
+def named_story_read_only(text, stories):
+    """Certify that the directly routed question carries no additional user claim."""
+    def compact(value):
+        return ''.join(unicodedata.normalize('NFKC', value).casefold().split())
+
+    match = _NAMED_STORY_QUESTION.fullmatch(compact(text))
+    if not match or len(stories) != 1:
+        return False
+    story = stories[0]
+    entries = story.get('current', [])
+    if len(entries) != 1 or entries[0]['actor'] != 'user' or entries[0]['status'] not in {'stated', 'confirmed'}:
+        return False
+    subject, claim = match['subject'], compact(entries[0]['text'])
+    for label in (story['title'], *story.get('aliases', [])):
+        label = compact(label)
+        if subject.startswith(label):
+            attribute = subject[len(label):].removeprefix('의')
+            if re.match(re.escape(label) + '(?:의)?' + re.escape(attribute) + '[은는이가]', claim):
+                return True
+    return False
+
+
 def _standalone_speech_focus(text):
     """Select the evidence type for a self-contained long-term question."""
     raw = unicodedata.normalize('NFKC', text).strip()
