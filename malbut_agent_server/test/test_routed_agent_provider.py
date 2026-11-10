@@ -17,6 +17,7 @@ from malbut_agent_server.conversation import (
 from malbut_agent_server.domain.front_route import (
     MAX_FRONT_HISTORY_CHARS,
     MAX_FRONT_HISTORY_MESSAGES,
+    MAX_FRONT_MESSAGE_CHARS,
     MAX_FRONT_HISTORY_MESSAGE_CHARS,
     FrontRoute,
     FrontRouteMatch,
@@ -244,6 +245,16 @@ def test_each_route_selects_only_its_owned_handler(
         assert result.model == 'malbut-front-provider-routing-v1'
         assert result.latency_ms == 0.0
         assert result.input_chars == 0
+
+
+@pytest.mark.parametrize('utterance', ['홈캠 상태를 알려줘', '가' * (MAX_FRONT_MESSAGE_CHARS + 1)])
+def test_front_fallback_preserves_its_standard_homecam_reasoning(utterance):
+    routed, _, _, fallback = _routed(ScriptedFrontRouter())
+    req = SpeechAgentRequest('request', 'user', 'room', 'turn', utterance, RobotState(), (),
+                             confirmed_homecam_read=True)
+    routed.complete(req, [], [], [])
+    assert fallback.calls == 1
+    assert not fallback.requests[0].confirmed_homecam_read
 
 
 def test_abstain_calls_only_the_existing_fallback_once() -> None:

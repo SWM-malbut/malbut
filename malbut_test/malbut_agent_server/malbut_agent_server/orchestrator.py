@@ -1228,8 +1228,14 @@ class AgentOrchestrator:
         }
         value = request.to_dict()
         value['available_tools'] = []
+        followup = copy_request(request, value)
+        if isinstance(followup, SpeechAgentRequest):
+            followup = replace(followup, confirmed_homecam_read=(
+                result['success'] is True and result.get('code') == 'OK'
+                and isinstance(result['result'], dict)
+            ))
         answer = self.provider.complete(
-            copy_request(request, value), list(memories), copy.deepcopy(list(turns)), [],
+            followup, list(memories), copy.deepcopy(list(turns)), [],
             conversation_summary=copy.deepcopy(summary), memory_context=context,
         )
         answer.validate()

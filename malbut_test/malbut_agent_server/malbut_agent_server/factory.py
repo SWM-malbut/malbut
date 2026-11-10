@@ -69,6 +69,7 @@ def _openai_adapter(
     *,
     include_reasoning: bool = True,
     semantic_context: bool = False,
+    is_fallback: bool = False,
 ) -> OpenAIResponsesProvider:
     """Build one official-origin OpenAI model adapter."""
     return OpenAIResponsesProvider(
@@ -81,6 +82,7 @@ def _openai_adapter(
         reasoning_effort=settings.openai_reasoning_effort,
         include_reasoning=include_reasoning,
         semantic_context=semantic_context,
+        is_fallback=is_fallback,
         # Half is allocated to dialogue. The rest reserves room for tools,
         # rules, memory, and turns arriving while compaction is in flight.
         # Output has its own max_output_tokens reservation outside this cap.
@@ -112,6 +114,7 @@ def _reliable_openai_provider(
             fallback_model,
             include_reasoning=include_reasoning,
             semantic_context=semantic_context,
+            is_fallback=True,
         ))
     key = openai_key_for(settings)
     return ReliableProvider(

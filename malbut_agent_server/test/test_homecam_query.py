@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 import copy
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -9,11 +10,12 @@ from urllib.error import HTTPError
 import pytest
 
 from malbut_agent_server.config import Settings
-from malbut_agent_server.factory import build_orchestrator
+from malbut_agent_server.factory import build_orchestrator, build_provider
 from malbut_agent_server.homecam_query import (
     _NoRedirect, HomecamQueryClient, configure_homecam_queries,
 )
-from malbut_agent_server.schemas import AgentDecision, AgentRequest, ProviderResult, RobotState
+from malbut_agent_server.schemas import AgentDecision, AgentRequest, ProviderResult, RobotState, SpeechAgentRequest
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, TOOL_SPECS
 
 
 @pytest.fixture
@@ -91,6 +93,47 @@ def test_api_errors_and_token_files_cannot_leak_secrets(client):
     assert 'secret' not in str(error.value) and '/token' not in str(error.value)
 
 
+@pytest.mark.parametrize('tool', HOMECAM_QUERY_TOOLS)
+def test_grounded_homecam_voice_answer_changes_only_reasoning_effort(tool):
+    from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+
+    request = SpeechAgentRequest('request', 'user', 'conversation', 'turn', '홈캠 상태는?', RobotState(), (),
+                                 confirmed_homecam_read=True)
+    ctx = dict(mode='answer_only', homecam_query_result_untrusted={'tool': tool, 'data': {}})
+
+    def payload(effort):
+        provider = OpenAIResponsesProvider('offline-key', 'gpt-5.6-luna', reasoning_effort=effort, semantic_context=True)
+        return provider.build_payload(request, [], [], [], memory_context=ctx)
+
+    assert payload('low')['reasoning']['effort'] == 'none'
+    assert payload('low') == payload('none')
+
+
+@pytest.mark.parametrize('case', ['nonvoice', 'selection', 'tools in request', 'other tool', 'error', 'no data',
+                                   'non-answer', 'unconfirmed', 'plain adapter', 'explicit effort', 'other model', 'fallback'])
+def test_homecam_effort_preserves_other_model_calls(case):
+    settings = Settings(provider='openai', openai_api_key='offline-key',
+                        openai_model='other' if case in {'fallback', 'other model'} else 'gpt-5.6-luna',
+                        openai_fallback_model='gpt-5.6-luna' if case == 'fallback' else '',
+                        openai_reasoning_effort='medium' if case == 'explicit effort' else 'low')
+    provider = build_provider(settings, semantic_context=case != 'plain adapter')._providers[-1]
+    cls = AgentRequest if case == 'nonvoice' else SpeechAgentRequest
+    req = cls('request', 'user', 'conversation', 'turn', '홈캠을 알려줘', RobotState(), ())
+    if isinstance(req, SpeechAgentRequest) and case != 'unconfirmed':
+        req = replace(req, confirmed_homecam_read=True)
+    if case == 'tools in request':
+        req = replace(req, available_tools=('get_homecam_status',))
+    tools = [TOOL_SPECS['get_homecam_status']] if case == 'selection' else []
+    ctx = dict(mode=None if case == 'non-answer' else 'answer_only')
+    if case != 'error':
+        ctx['homecam_query_result_untrusted'] = {
+            'tool': 'get_weather' if case == 'other tool' else 'get_homecam_status',
+            'data': None if case == 'no data' else {},
+        }
+    payload = provider.build_payload(req, [], [], tools, memory_context=ctx)
+    assert payload['reasoning']['effort'] == settings.openai_reasoning_effort
+
+
 def test_real_provider_payload_treats_query_response_as_data_not_commands():
     from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 
@@ -128,6 +171,39 @@ class QueryProvider:
         else:
             decision = self.followup or AgentDecision('message', '최근 사람 감지 기록이 하나 있어요.')
         return ProviderResult(decision, 'fixture', 'fixed', 1)
+
+
+@pytest.mark.parametrize(('response', 'confirmed'), [
+    ({'success': False, 'code': 'VOICE_DELEGATION_REQUIRED', 'result': {}}, None),
+    ({'success': True, 'code': 'OK', 'result': {}}, True),
+    ({'success': True, 'result': {}}, False),
+    ({'success': True, 'code': 'CUSTOM', 'result': {}}, False),
+    ({'success': True, 'code': 'OK', 'result': None}, False),
+])
+def test_only_confirmed_reads_reduce_effort_and_custom_results_still_answer(response, confirmed):
+    runtime = build_orchestrator(Settings(provider='mock', database_path=':memory:'))
+    provider = QueryProvider()
+    runtime.provider = provider
+    configure_homecam_queries(runtime, lambda *_: response)
+    try:
+        runtime.conversation_store.create('user', 'room')
+        request = SpeechAgentRequest('query', 'user', 'room', 'turn', '홈캠 이벤트를 알려줘.', RobotState(),
+                                     ('get_homecam_events',))
+        answer = runtime.handle(request)
+        if confirmed is None:
+            assert answer.decision.reason == 'homecam_unavailable'
+            assert len(provider.calls) == 1
+        else:
+            assert answer.decision.message == '최근 사람 감지 기록이 하나 있어요.'
+            assert len(provider.calls) == 2
+            followup, _, context = provider.calls[1]
+            assert followup.confirmed_homecam_read is confirmed
+            assert 'confirmed_homecam_read' not in followup.to_dict()
+            assert context['homecam_query_result_untrusted'] == {
+                'tool': 'get_homecam_events', 'data': response['result'],
+            }
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize('forbidden', [False, True])
