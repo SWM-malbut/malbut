@@ -266,6 +266,38 @@ def test_record_existence_follows_authorized_read(voice, code, custom_style, exp
         runtime.close()
 
 
+@pytest.mark.parametrize(('tool', 'field', 'utterance', 'label'), [
+    ('get_homecam_recordings', 'recordings', '홈캠 녹화 기록이 있어?', '녹화 기록'),
+    ('get_homecam_falls', 'incidents', '홈캠 낙상 기록이 있어?', '낙상 관련 기록'),
+])
+@pytest.mark.parametrize(('items', 'expected'), [
+    (['invalid'], None), ([{'id': 'first'}, None], None),
+    ([], '은 없어요.'), ([{'id': 'first'}], '이 1건 있어요.'),
+    ([{'id': 'first'}, {'id': 'second'}, None], '이 2건 있어요.'),
+])
+def test_spoken_existence_uses_a_valid_bounded_http_list(client, tool, field, utterance, label, items, expected):
+    api, calls, response, _token = client
+    response['result'] = {field: items}
+    runtime = build_orchestrator(Settings(provider='mock', database_path=':memory:'))
+    provider = QueryProvider(selection=AgentDecision('tool_call', '조회', tool_name=tool, arguments={'limit': 2}))
+    runtime.provider = provider
+    configure_homecam_queries(runtime, api)
+    runtime.conversation_store.create('user', 'room')
+    request = SpeechAgentRequest('query', 'user', 'room', 'turn', utterance, RobotState(), (tool,))
+    try:
+        decision = runtime.handle(request).decision
+        assert len(calls) == len(provider.calls) == 1
+        assert decision.type == 'message'
+        if expected is None:
+            assert decision.reason == 'homecam_unavailable'
+            assert '조회하지 못했어요' in decision.message
+        else:
+            assert decision.reason == 'homecam_record_existence'
+            assert decision.message == f'조회한 홈캠 목록에 {label}{expected}'
+    finally:
+        runtime.close()
+
+
 @pytest.mark.parametrize('forbidden', [False, True])
 def test_query_round_trip_never_enters_manager_or_preparation(client, forbidden):
     runtime = build_orchestrator(Settings(database_path=':memory:'), http_server=False)

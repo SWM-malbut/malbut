@@ -137,9 +137,10 @@ class HomecamQueryClient:
             if key in result:
                 if not isinstance(result[key], list):
                     raise ValueError('invalid Homecam list')
-                result[key] = [{k: v for k, v in item.items() if k in fields}
-                               for item in result[key][:arguments['limit']]
-                               if isinstance(item, dict)]
+                items = result[key][:arguments['limit']]
+                if any(not isinstance(item, dict) for item in items):
+                    raise ValueError('invalid Homecam list item')
+                result[key] = [{k: v for k, v in item.items() if k in fields} for item in items]
         for key in ('mediaApplyReceipt', 'fallApplyReceipt'):
             if key in result and isinstance(result[key], dict):
                 result[key] = {k: v for k, v in result[key].items()
