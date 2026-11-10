@@ -936,7 +936,7 @@ class AgentOrchestrator:
             r'[^.!?。！？,，\n]+[?？]|(?:[가-힣]+(?:에는|은|는)\s+)?[가-힣]+[이가은는]\s*몇\s*개\s*(?:있어(?:요)?|야|예요|인가요)',
             previous.user_content.strip())
         if (previous.ordinal != 1 or not question or re.search(r'(?:앞으로|하고|말고)\s', previous.user_content)
-                or not previous.assistant_content or decision.get('type') != 'message'
+                or not re.search(r'[가-힣]', previous.assistant_content or '') or decision.get('type') != 'message'
                 or (decision.get('reason') or '').replace('_', ' ') not in {'general knowledge', '일반 지식 답변'}
                 or decision.get('message') != previous.assistant_content
                 or receipt.get('safety', {}).get('code') != 'not_an_action'

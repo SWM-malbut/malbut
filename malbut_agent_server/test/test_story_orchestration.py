@@ -466,6 +466,25 @@ class StoryOrchestrationTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(closing.decision.ends_conversation)
 
+    def test_voice_thanks_keeps_the_language_of_the_previous_answer(self):
+        runtime, backend = self.fact_voice_runtime()
+        for language, first, second in [('영어', 'A triangle has three sides.', "You're welcome."),
+                                        ('일본어', '三角形の辺は三つです。', 'どういたしまして。')]:
+            with self.subTest(language=language):
+                room = f'language-{language}'
+                question = f'앞으로는 {language}로만 답해 줘 세모에는 변이 몇 개 있어?'
+                with patch.object(backend, 'complete', return_value=ProviderResult(
+                        AgentDecision('message', first, reason='general_knowledge'), 'offline', 'fixture', 0)):
+                    source = SpeechAgentRequest.from_dict(self.request(runtime, question, room=room).to_dict())
+                    self.assertEqual(runtime.handle(source).decision.message, first)
+                with patch.object(backend, 'complete', return_value=ProviderResult(
+                        AgentDecision('message', second), 'offline', 'fixture', 0)) as model:
+                    thanks = SpeechAgentRequest.from_dict(self.request(runtime, '고마워.', room=room).to_dict())
+                    answer = runtime.handle(thanks)
+                self.assertEqual(model.call_count, 1)
+                self.assertEqual(answer.decision.message, second)
+                self.assertFalse(answer.decision.ends_conversation)
+
     def test_standalone_thanks_leaves_unsettled_or_configured_conversations_with_the_model(self):
         runtime, backend = self.fact_voice_runtime()
         cases = [('고마워?', None), ('고맙지 않아.', None), ('‘고마워’라고 읽어 줘.', None),
