@@ -102,7 +102,8 @@ def test_grounded_homecam_voice_answer_changes_only_reasoning_effort(tool):
     ctx = dict(mode='answer_only', homecam_query_result_untrusted={'tool': tool, 'data': {}})
 
     def payload(effort):
-        provider = OpenAIResponsesProvider('offline-key', 'gpt-5.6-luna', reasoning_effort=effort, semantic_context=True)
+        provider = OpenAIResponsesProvider('offline-key', 'gpt-5.6-luna', reasoning_effort=effort,
+                                          semantic_context=True, token_counter=lambda _payload: 100)
         return provider.build_payload(request, [], [], [], memory_context=ctx)
 
     assert payload('low')['reasoning']['effort'] == 'none'
@@ -117,6 +118,7 @@ def test_homecam_effort_preserves_other_model_calls(case):
                         openai_fallback_model='gpt-5.6-luna' if case == 'fallback' else '',
                         openai_reasoning_effort='medium' if case == 'explicit effort' else 'low')
     provider = build_provider(settings, semantic_context=case != 'plain adapter')._providers[-1]
+    provider.token_counter = lambda _payload: 100
     cls = AgentRequest if case == 'nonvoice' else SpeechAgentRequest
     req = cls('request', 'user', 'conversation', 'turn', '홈캠을 알려줘', RobotState(), ())
     if isinstance(req, SpeechAgentRequest) and case != 'unconfirmed':
