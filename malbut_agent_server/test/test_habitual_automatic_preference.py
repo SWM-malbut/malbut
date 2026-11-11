@@ -121,6 +121,78 @@ def test_exact_source_repair_preserves_other_source_backed_candidates():
     assert original == before
 
 
+@pytest.mark.parametrize('habitual, other, attribute', [
+    ('드라마 음악', '드라마', 'dislikes'),
+    ('드라마 음악', '드라마', 'likes'),
+    ('보리차', '차', 'likes'),
+    ('차', '보리차', 'likes'),
+    ('보리차', '차', 'dislikes'),
+])
+@pytest.mark.parametrize('whole_source_evidence', [False, True])
+def test_recovery_preserves_overlapping_objects_from_other_clauses(
+    habitual, other, attribute, whole_source_evidence,
+):
+    first = '나는 평소에는 %s를 좋아해.' % habitual
+    second = '나는 %s를 %s해.' % (
+        other, '싫어' if attribute == 'dislikes' else '좋아',
+    )
+    text = first + ' ' + second
+    unrelated = preference(text if whole_source_evidence else second,
+                           other, attribute)
+    original = proposed('remember', text, facts=[
+        preference(text if whole_source_evidence else first, habitual, 'likes'),
+        unrelated,
+    ])
+    before = copy.deepcopy(original)
+    result = grounded_habitual_proposal(original, text)
+    assert result['facts'][0] == unrelated
+    assert result['facts'][1]['value'] == habitual
+    assert len(stable_automatic_proposal(result, text)['facts']) == 2
+    assert original == before
+
+
+def test_worker_keeps_opposite_preference_for_overlapping_object(lab):
+    flow, extractor, reviewer, entered, release = lab
+    text = '나는 평소에는 드라마 음악을 좋아해. 나는 드라마를 싫어해.'
+    extractor.change = lambda result: setattr(result, 'memory_proposal', proposed(
+        'remember', text, facts=[preference(text, '드라마 음악', 'likes'),
+                                 preference(text, '드라마', 'dislikes')],
+    ))
+    flow.say(text, message='그렇군요.')
+    request = flow.requests[-1]
+    assert entered.wait(2)
+    release.set()
+    until(lambda: status(flow, request)['state'] in {'saved', 'discarded'})
+    facts = [record.metadata['fact'] for record in flow.memory.list_for_user('alice')]
+    assert {(fact['attribute'], fact['value']) for fact in facts} == {
+        ('likes', '드라마 음악'), ('dislikes', '드라마'),
+    }
+
+
+def test_empty_habitual_object_does_not_create_an_invalid_candidate():
+    assert grounded_habitual_proposal(None, '나는 평소에는  좋아해.') is None
+
+
+@pytest.mark.parametrize('object_prefix', ['', '보리차'])
+def test_long_whitespace_without_preference_predicate_is_not_recovered(object_prefix):
+    text = '나는 평소에는 ' + object_prefix + ' ' * 4000 + '모름.'
+    assert grounded_habitual_proposal(None, text) is None
+
+
+def test_recovery_uses_bounded_clause_evidence_for_long_source():
+    text = '나는 평소에는 보리차를 좋아해. ' + '이어서 대화해. ' * 250
+    result = grounded_habitual_proposal(None, text)
+    assert result['evidence'] in text
+    assert len(result['evidence']) <= 2000
+    assert [fact['value'] for fact in result['facts']] == ['보리차']
+    assert stable_automatic_proposal(result, text) == result
+
+
+def test_oversized_habitual_object_is_not_recovered():
+    text = '나는 평소에는 ' + '보리차' * 700 + '를 좋아해.'
+    assert grounded_habitual_proposal(None, text) is None
+
+
 @pytest.mark.parametrize('text', [
     '나는 평소에는 보리차를 좋아하지만, 오늘은 커피를 좋아해.',
     '나는 평소에는 보리차를 좋아하지만, 오늘은 보리차를 싫어해.',

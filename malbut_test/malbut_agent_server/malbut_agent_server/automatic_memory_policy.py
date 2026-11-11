@@ -48,7 +48,8 @@ _HABITUAL_DECLARATION = re.compile(
     r'(?<![가-힣A-Za-z0-9])(?P<evidence>'
     r'(?:나는|저는|난|전|내가|제가)\s*'
     r'(?P<habit>평소|보통|원래|항상|매일|매번|대체로|일반적으로)'
-    r'(?:에는|에|는|엔)?\s+(?P<value>[^.!?;。,\n]+?)'
+    r'(?:에는|에|는|엔)?\s+(?P<value>[^\s.!?;。,]'
+    r'[^.!?;。,\n]*?)(?<!\s)'
     r'(?:을|를)?\s*(?P<predicate>좋아|싫어|선호)'
     r'(?:해(?:요)?|합니다|하지만|하는데|하고))'
     r'(?=$|\s*[.!?;。,\n])',
@@ -126,7 +127,8 @@ def grounded_habitual_proposal(proposal, source):
     for match in _HABITUAL_DECLARATION.finditer(source):
         evidence, value = match['evidence'], match['value'].strip()
         prefix = source[:match.start()].rstrip()
-        if ((prefix and prefix[-1] not in '.!?;。,')
+        if (not value or len(value) > 2000 or len(evidence) > 2000
+                or (prefix and prefix[-1] not in '.!?;。,')
                 or re.search(r'(?:^|\s)\S+[가이]\s|^\S+[은는]\s', value)):
             continue
         raw = compact(evidence)
@@ -143,18 +145,28 @@ def grounded_habitual_proposal(proposal, source):
         return proposal
     if proposal is None:
         proposal = dict(operation='remember', facts=[], target_ids=[],
-                        query='', evidence=source)
+                        query='', evidence=(source if len(source) <= 2000
+                                            else recovered[0]['evidence']))
     proposal = validate_memory_proposal(proposal)
     if proposal['operation'] != 'remember' or proposal['target_ids'] or proposal['query']:
         return proposal
     facts = []
     for fact in proposal['facts']:
         value = compact(fact['value'])
-        same_object = any(value in compact(r['value']) or compact(r['value']) in value
-                          for r in recovered)
+        evidence = compact(fact['evidence']).rstrip('.!?;。')
+        same_source = any(
+            fact['attribute'] in {r['attribute'], 'preference'}
+            and (evidence in compact(r['evidence']).rstrip('.!?;。')
+                 or compact(r['evidence']).rstrip('.!?;。') in evidence)
+            and (value == compact(r['value'])
+                 or (compact(r['value']) in value
+                     and value in compact(r['evidence']))
+                 or value not in compact(fact['evidence']))
+            for r in recovered
+        )
         if not (fact['kind'] == 'preference'
                 and compact(fact['subject']) in _SELF_SUBJECTS
-                and (same_object or value not in compact(fact['evidence']))):
+                and same_source):
             facts.append(fact)
     proposal['facts'] = facts + recovered[:8 - len(facts)]
     return proposal
