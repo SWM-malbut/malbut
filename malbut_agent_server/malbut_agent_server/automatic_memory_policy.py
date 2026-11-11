@@ -44,6 +44,15 @@ _PREFERENCE_CLAUSE = re.compile(
     r'[.!?;。,]|하지만|지만|그런데|반면|그리고|는데|'
     r'(?=' + _STANDING_PREFERENCE.pattern + r')',
 )
+_HABITUAL_DECLARATION = re.compile(
+    r'(?<![가-힣A-Za-z0-9])(?P<evidence>'
+    r'(?:나는|저는|난|전|내가|제가)\s*'
+    r'(?P<habit>평소|보통|원래|항상|매일|매번|대체로|일반적으로)'
+    r'(?:에는|에|는|엔)?\s+(?P<value>[^.!?;。,\n]+?)'
+    r'(?:을|를)?\s*(?P<predicate>좋아|싫어|선호)'
+    r'(?:해(?:요)?|합니다|하지만|하는데|하고))'
+    r'(?=$|\s*[.!?;。,\n])',
+)
 
 
 def temporary_automatic_preference(fact, source):
@@ -98,6 +107,56 @@ def stable_automatic_proposal(proposal, source):
     proposal = validate_memory_proposal(proposal)
     proposal['facts'] = [fact for fact in proposal['facts']
                          if not temporary_automatic_preference(fact, source)]
+    return proposal
+
+
+def grounded_habitual_proposal(proposal, source):
+    """Recover explicit habits with literal source values, not fuzzy matches.
+
+    This only supplies candidates. The normal temporal filter, source review
+    and deferred commit/invalidation checks still decide whether they save.
+    """
+    if not direct_source(source) or re.search(
+        r'아마|모르|확실하지|불확실|추측|듯|일지도|것\s*같|'
+        r'아니|아냐|라고|라는|다는|다고|말로는|말했|말하길|말하기를|'
+        r'들었|들은|듣기로', source,
+    ):
+        return proposal
+    recovered = []
+    for match in _HABITUAL_DECLARATION.finditer(source):
+        evidence, value = match['evidence'], match['value'].strip()
+        prefix = source[:match.start()].rstrip()
+        if ((prefix and prefix[-1] not in '.!?;。,')
+                or re.search(r'(?:^|\s)\S+[가이]\s|^\S+[은는]\s', value)):
+            continue
+        raw = compact(evidence)
+        habit = raw[raw.index(compact(match['habit'])):]
+        attribute = 'dislikes' if match['predicate'] == '싫어' else 'likes'
+        predicate = raw[:raw.rfind(match['predicate']) + len(match['predicate'])]
+        fact = dict(kind='preference', subject='user', attribute=attribute,
+                    value=value, evidence=evidence)
+        if (re.match(_HABITUAL_PREFERENCE, habit)
+                and preference_matches_source(attribute, compact(value), predicate)
+                and not temporary_automatic_preference(fact, source)):
+            recovered.append(fact)
+    if not recovered:
+        return proposal
+    if proposal is None:
+        proposal = dict(operation='remember', facts=[], target_ids=[],
+                        query='', evidence=source)
+    proposal = validate_memory_proposal(proposal)
+    if proposal['operation'] != 'remember' or proposal['target_ids'] or proposal['query']:
+        return proposal
+    facts = []
+    for fact in proposal['facts']:
+        value = compact(fact['value'])
+        same_object = any(value in compact(r['value']) or compact(r['value']) in value
+                          for r in recovered)
+        if not (fact['kind'] == 'preference'
+                and compact(fact['subject']) in _SELF_SUBJECTS
+                and (same_object or value not in compact(fact['evidence']))):
+            facts.append(fact)
+    proposal['facts'] = facts + recovered[:8 - len(facts)]
     return proposal
 
 
