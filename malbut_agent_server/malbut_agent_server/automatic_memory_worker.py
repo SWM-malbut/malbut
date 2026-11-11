@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from malbut_agent_server.automatic_memory_policy import (
     apply_automatic, automatic_candidate, automatic_deferred,
+    stable_automatic_proposal,
 )
 from malbut_agent_server.personal_memory import MemorySnapshot
 from malbut_agent_server.schemas import (
@@ -172,6 +173,10 @@ class AutomaticMemoryWorker:
                 decision=copy.deepcopy(extracted.decision),
                 raw_decision=copy.deepcopy(extracted.decision),
                 provider_result=extracted,
+            )
+        if result.provider_result.memory_proposal is not None:
+            result.provider_result.memory_proposal = stable_automatic_proposal(
+                result.provider_result.memory_proposal, request.utterance,
             )
         if not automatic_candidate(request, snapshot, result):
             self._transaction(lambda conn: self.jobs.finish(
