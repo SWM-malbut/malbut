@@ -13,8 +13,9 @@ import re
 from malbut_agent_server.conversation_preferences import response_setting_fact
 from malbut_agent_server.memory_contract import validate_memory_proposal
 from malbut_agent_server.personal_memory import (
-    compact, direct_source, local_intent, management_request,
-    negated_management, requested_operation,
+    compact, direct_source, fact_matches_source, local_intent,
+    management_request, negated_management, preference_matches_source,
+    requested_operation,
 )
 from malbut_agent_server.schemas import ValidationError
 
@@ -30,6 +31,145 @@ _ATTRIBUTES = {
 }
 _SELF_SUBJECTS = {'user', 'self', '사용자', '나', '저'}
 _QUESTION = re.compile(r'[?？]|뭐|누구|어떤|어떻게|일까|인가요')
+_TEMPORARY_PREFERENCE = re.compile(r'이번|오늘(?!날)|지금|잠깐|잠시|당분간')
+_HABITUAL_PREFERENCE = (
+    r'(?:평소|보통|원래|항상|매일|매번|대체로|일반적으로)'
+    r'(?!(?:와|랑)(?:는)?(?:달리|다르게)|'
+    r'(?:에|에는)?(?:먹|마시|입|하|가|보|듣|쓰)던)'
+)
+_STANDING_PREFERENCE = re.compile(
+    r'(?:나는|저는|난|전|내가|제가)' + _HABITUAL_PREFERENCE,
+)
+_PREFERENCE_CLAUSE = re.compile(
+    r'[.!?;。,]|하지만|지만|그런데|반면|그리고|는데|'
+    r'(?=' + _STANDING_PREFERENCE.pattern + r')',
+)
+_HABITUAL_DECLARATION = re.compile(
+    r'(?<![가-힣A-Za-z0-9])(?P<evidence>'
+    r'(?:나는|저는|난|전|내가|제가)\s*'
+    r'(?P<habit>평소|보통|원래|항상|매일|매번|대체로|일반적으로)'
+    r'(?:에는|에|는|엔)?\s+(?P<value>[^\s.!?;。,]'
+    r'[^.!?;。,\n]*?)(?<!\s)'
+    r'(?:을|를)?\s*(?P<predicate>좋아|싫어|선호)'
+    r'(?:해(?:요)?|합니다|하지만|하는데|하고))'
+    r'(?=$|\s*[.!?;。,\n])',
+)
+
+
+def temporary_automatic_preference(fact, source):
+    """Reject an occasion's preference even when its evidence was clipped.
+
+    Scope follows clauses until a sentence ends or an explicit habitual clause
+    resets it. Match the candidate's evidence and polarity, so a temporary tea
+    choice cannot discard a separate standing coffee preference.
+    """
+    if fact['kind'] != 'preference':
+        return False
+    text = compact(source.replace('\n', '。'))
+    evidence = compact(fact['evidence'].replace('\n', '。'))
+    value = compact(fact['value'])
+    if not evidence or not value:
+        return False  # Structural/source validation rejects these separately.
+    cited = [(m.start(), m.end()) for m in re.finditer(re.escape(evidence), text)]
+    values = [(m.start(), m.end()) for m in re.finditer(re.escape(value), text)
+              if any(a <= m.start() and m.end() <= b for a, b in cited)]
+    supported, possible = [], []
+    start, limited = 0, False
+    for boundary in [*_PREFERENCE_CLAUSE.finditer(text), None]:
+        end = boundary.start() if boundary is not None else len(text)
+        clause = text[start:end]
+        if _TEMPORARY_PREFERENCE.search(clause):
+            limited = True
+        elif _STANDING_PREFERENCE.search(clause):
+            limited = False
+        if any(a < end and start < b for a, b in values):
+            possible.append(limited)
+            if (fact_matches_source(dict(fact, evidence=clause), clause)
+                    or (re.match(_HABITUAL_PREFERENCE, clause)
+                        and not re.search(
+                            r'(?:좋아|싫어|선호)(?:하[는던]|했던|할)',
+                            clause,
+                        )
+                        and preference_matches_source(
+                            fact['attribute'], value, clause,
+                        ))):
+                supported.append(limited)
+        if boundary is not None:
+            if boundary.group() and boundary.group() in '.!?;。':
+                limited = False
+            start = boundary.end()
+    # A standing clause with the same polarity supports a durable candidate.
+    # Otherwise an ambiguous same-object clip must not erase temporal scope.
+    return all(supported) if supported else any(possible)
+
+
+def stable_automatic_proposal(proposal, source):
+    """Filter scoped preferences without dropping other source-backed facts."""
+    proposal = validate_memory_proposal(proposal)
+    proposal['facts'] = [fact for fact in proposal['facts']
+                         if not temporary_automatic_preference(fact, source)]
+    return proposal
+
+
+def grounded_habitual_proposal(proposal, source):
+    """Recover explicit habits with literal source values, not fuzzy matches.
+
+    This only supplies candidates. The normal temporal filter, source review
+    and deferred commit/invalidation checks still decide whether they save.
+    """
+    if not direct_source(source) or re.search(
+        r'아마|모르|확실하지|불확실|추측|듯|일지도|것\s*같|'
+        r'아니|아냐|라고|라는|다는|다고|말로는|말했|말하길|말하기를|'
+        r'들었|들은|듣기로', source,
+    ):
+        return proposal
+    recovered = []
+    for match in _HABITUAL_DECLARATION.finditer(source):
+        evidence, value = match['evidence'], match['value'].strip()
+        prefix = source[:match.start()].rstrip()
+        if (not value or len(value) > 2000 or len(evidence) > 2000
+                or (prefix and prefix[-1] not in '.!?;。,')
+                or re.search(r'(?:^|\s)\S+[가이]\s|^\S+[은는]\s', value)):
+            continue
+        raw = compact(evidence)
+        habit = raw[raw.index(compact(match['habit'])):]
+        attribute = 'dislikes' if match['predicate'] == '싫어' else 'likes'
+        predicate = raw[:raw.rfind(match['predicate']) + len(match['predicate'])]
+        fact = dict(kind='preference', subject='user', attribute=attribute,
+                    value=value, evidence=evidence)
+        if (re.match(_HABITUAL_PREFERENCE, habit)
+                and preference_matches_source(attribute, compact(value), predicate)
+                and not temporary_automatic_preference(fact, source)):
+            recovered.append(fact)
+    if not recovered:
+        return proposal
+    if proposal is None:
+        proposal = dict(operation='remember', facts=[], target_ids=[],
+                        query='', evidence=(source if len(source) <= 2000
+                                            else recovered[0]['evidence']))
+    proposal = validate_memory_proposal(proposal)
+    if proposal['operation'] != 'remember' or proposal['target_ids'] or proposal['query']:
+        return proposal
+    facts = []
+    for fact in proposal['facts']:
+        value = compact(fact['value'])
+        evidence = compact(fact['evidence']).rstrip('.!?;。')
+        same_source = any(
+            fact['attribute'] in {r['attribute'], 'preference'}
+            and (evidence in compact(r['evidence']).rstrip('.!?;。')
+                 or compact(r['evidence']).rstrip('.!?;。') in evidence)
+            and (value == compact(r['value'])
+                 or (compact(r['value']) in value
+                     and value in compact(r['evidence']))
+                 or value not in compact(fact['evidence']))
+            for r in recovered
+        )
+        if not (fact['kind'] == 'preference'
+                and compact(fact['subject']) in _SELF_SUBJECTS
+                and same_source):
+            facts.append(fact)
+    proposal['facts'] = facts + recovered[:8 - len(facts)]
+    return proposal
 
 
 def automatic_request(request, snapshot):
@@ -112,6 +252,7 @@ def automatic_candidate(request, snapshot, result):
                 or fact['attribute'] not in _ATTRIBUTES[fact['kind']]
                 or (fact['kind'] == 'pet' and self_subject)
                 or (fact['kind'] != 'pet' and not self_subject)
+                or temporary_automatic_preference(fact, text)
             ):
                 return False
         return True
