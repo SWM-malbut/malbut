@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import pytest
 
+from malbut_patrol import photo_recorder
 from malbut_patrol.coverage import CoverageGrid
 from malbut_patrol.photo_recorder import PhotoRecorder, encode_image
 
@@ -34,6 +35,15 @@ def offer(recorder, yaw=0.0, phase='OBSERVING', simulated=False):
     recorder._last_capture = 0
     return recorder.offer(camera_image(), x=1.0, y=2.0, yaw=yaw, room_names=['거실'],
                           phase=phase, simulated=simulated)
+
+
+def wait_until(predicate):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(.01)
+    assert predicate()
 
 
 def test_padded_rgb_rows_keep_correct_color_and_reject_invalid_images():
@@ -198,3 +208,170 @@ def test_restart_seals_committed_photos_from_interrupted_patrol(tmp_path):
     saved = json.loads(manifest.read_text())
     assert saved['outcome'] == 'interrupted' and len(saved['captures']) == 1
     assert saved['capture_failures'] is None
+
+
+def test_held_analysis_waits_across_run_transitions_then_releases_all_batches(tmp_path):
+    recorder = PhotoRecorder(tmp_path)
+    recorder.hold_analysis()
+    try:
+        begin(recorder)
+        first = recorder.identity()['patrol_id']
+        assert offer(recorder)
+        wait_until(lambda: recorder.status()['saved'] == 1)
+        recorder.finish()
+        begin(recorder)
+        second = recorder.identity()['patrol_id']
+        assert offer(recorder)
+        wait_until(lambda: recorder.status()['saved'] == 1)
+        recorder.finish()
+        # A settled capture and the next run's begin both used to publish here.
+        recorder._flush_batches()
+        assert not list((tmp_path / 'runs').glob('*.json'))
+        assert recorder.status()['analysis_held']
+        assert recorder.status()['analysis_pending_batches'] == 2
+        assert len(recorder._media._items) == 2
+        assert not list(tmp_path.rglob('*.jpg'))
+        recorder.release_analysis()
+        wait_until(lambda: len(list((tmp_path / 'runs').glob('*.json'))) == 2)
+        assert not recorder.status()['analysis_held']
+        for identity in (first, second):
+            batch = json.loads((tmp_path / 'runs' / (identity + '.json')).read_text())
+            assert batch['outcome'] == 'completed'
+            assert len(batch['captures']) == 1
+        # Already released batches retain pixels for the consumer until normal
+        # release/expiry, rather than close's held-data discard path.
+        assert len(recorder._media._items) == 2
+    finally:
+        recorder.close()
+
+
+def test_release_seals_open_batch_but_waits_for_accepted_encoding(tmp_path):
+    entered, release = Event(), Event()
+    recorder = PhotoRecorder(tmp_path)
+    original = recorder._save
+
+    def delayed(image, metadata):
+        entered.set()
+        assert release.wait(3)
+        original(image, metadata)
+
+    recorder._save = delayed
+    recorder.hold_analysis()
+    begin(recorder)
+    manifest = tmp_path / 'runs' / (recorder.identity()['patrol_id'] + '.json')
+    try:
+        assert offer(recorder)
+        assert entered.wait(1)
+        recorder.release_analysis('aborted')
+        assert not offer(recorder, math.pi)
+        assert not manifest.exists()
+        release.set()
+        wait_until(manifest.exists)
+        batch = json.loads(manifest.read_text())
+        assert batch['outcome'] == 'aborted'
+        assert len(batch['captures']) == 1
+    finally:
+        release.set()
+        recorder.close()
+
+
+@pytest.mark.parametrize('shutdown', [False, True])
+def test_held_discard_removes_media_metadata_and_prevents_restart_recovery(tmp_path, shutdown):
+    recorder = PhotoRecorder(tmp_path)
+    recorder.hold_analysis()
+    begin(recorder)
+    assert offer(recorder)
+    wait_until(lambda: recorder.status()['saved'] == 1)
+    recorder.finish()
+    if shutdown:
+        recorder.close()
+    else:
+        recorder.discard_held_analysis()
+    assert recorder.status()['discarded'] == 1
+    assert recorder.status()['saved'] == 0
+    assert not recorder._media._items
+    assert not list((tmp_path / 'captures').glob('*.json'))
+    assert not list((tmp_path / 'runs').glob('*.json'))
+    recorder.close()
+    recovered = PhotoRecorder(tmp_path)
+    recovered.close()
+    assert not list((tmp_path / 'runs').glob('*.json'))
+
+
+def test_discard_during_encoding_drops_inflight_and_queued_captures(tmp_path):
+    entered, release = Event(), Event()
+    recorder = PhotoRecorder(tmp_path)
+    original = recorder._save
+
+    def delayed(image, metadata):
+        entered.set()
+        assert release.wait(3)
+        original(image, metadata)
+
+    recorder._save = delayed
+    recorder.hold_analysis()
+    begin(recorder)
+    try:
+        assert offer(recorder)
+        assert entered.wait(1)
+        assert offer(recorder, math.pi)
+        recorder.discard_held_analysis()
+        release.set()
+        wait_until(lambda: recorder.status()['discarded'] == 2)
+        assert recorder.status()['saved'] == 0
+        assert recorder.status()['failed'] == 0
+        assert not recorder._media._items
+        assert not list((tmp_path / 'captures').glob('*.json'))
+        assert not list((tmp_path / 'runs').glob('*.json'))
+        # Starting another patrol does not inherit the previous discard state.
+        recorder._save = original
+        begin(recorder)
+        assert offer(recorder)
+        recorder.finish()
+        wait_until(lambda: recorder.status()['batch_ready'])
+        assert recorder.status()['saved'] == 1
+    finally:
+        release.set()
+        recorder.close()
+
+
+def test_run_context_matches_capture_map_frame_and_region_fingerprint(tmp_path):
+    recorder = PhotoRecorder(tmp_path)
+    try:
+        assert recorder.context() is None
+        begin(recorder)
+        context = recorder.context()
+        assert offer(recorder)
+        wait_until(lambda: recorder.status()['saved'] == 1)
+        metadata = json.loads(next((tmp_path / 'captures').glob('*.json')).read_text())
+        for field in ('patrol_id', 'map_id', 'map_frame', 'regions_sha256'):
+            assert context[field] == metadata[field]
+    finally:
+        recorder.close()
+
+
+@pytest.mark.parametrize('folder', ['captures', 'runs'])
+def test_slow_metadata_commit_does_not_block_navigation_capture(tmp_path, monkeypatch, folder):
+    entered, release = Event(), Event()
+    original = photo_recorder._atomic_write
+
+    def delayed(path, data):
+        if path.parent.name == folder:
+            entered.set()
+            assert release.wait(3)
+        original(path, data)
+
+    monkeypatch.setattr(photo_recorder, '_atomic_write', delayed)
+    recorder = PhotoRecorder(tmp_path)
+    begin(recorder)
+    try:
+        assert offer(recorder)
+        recorder.finish()
+        assert entered.wait(1)
+        begin(recorder)
+        start = time.monotonic()
+        assert offer(recorder)
+        assert time.monotonic() - start < .5
+    finally:
+        release.set()
+        recorder.close()
