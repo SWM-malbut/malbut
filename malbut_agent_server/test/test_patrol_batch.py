@@ -4,13 +4,15 @@ import base64
 import hashlib
 import json
 import math
+from pathlib import Path
+import time
 from uuid import uuid4
 
 import cv2
 import numpy as np
 import pytest
 
-from malbut_agent_server.patrol_batch import complete_batch
+from malbut_agent_server.patrol_batch import claim_batch, complete_batch
 from malbut_agent_server.patrol_memory import PatrolMemoryStore
 from malbut_agent_server.patrol_mosaic import make_mosaic, source_bbox, split_results
 from malbut_agent_server.patrol_observer import OpenAIPatrolObserver, PatrolObservationWorker
@@ -134,6 +136,75 @@ def test_active_patrol_is_not_analyzed_and_separate_runs_never_share_a_call(tmp_
     assert worker.run_once() and len(calls) == 2
     assert [len(json.loads(call['input'][0]['content'][0]['text'])['frame_ids'])
             for call in calls] == [3, 2]
+
+
+@pytest.mark.parametrize('state', ['expired', 'discarded', 'fresh', 'ready'])
+def test_unsealed_volatile_capture_cleanup_does_not_wait_for_return(
+        tmp_path, monkeypatch, state):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]
+                                   / 'malbut_autonomy/malbut_patrol'))
+    from malbut_patrol.transient_media import TransientMedia
+    from malbut_agent_server import patrol_media
+
+    captures, _ = batch(tmp_path, 1, sealed=False)
+    metadata, image = captures[0]
+    path = tmp_path / 'captures' / (metadata['observation_id'] + '.json')
+    metadata.update(media_storage='volatile_v1',
+                    media_expires_at=time.time() + (-1 if state == 'expired' else 900))
+    path.write_text(json.dumps(metadata))
+    path.with_suffix('.jpg').unlink()
+    media = TransientMedia(tmp_path)
+    try:
+        media.put(path.stem, {'.jpg': image})
+        store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+        store.ingest()
+        if state == 'discarded':
+            path.unlink()
+        elif state == 'ready':
+            with store.connect() as db:
+                db.execute("UPDATE observations SET status='ready'")
+        releases = []
+        original_release = patrol_media.release_media
+
+        def release_without_db_lock(source):
+            with store.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+            releases.append(source.stem)
+            original_release(source)
+
+        monkeypatch.setattr(patrol_media, 'release_media', release_without_db_lock)
+        calls = []
+        worker = PatrolObservationWorker(store, observer(calls), autostart=False)
+        assert not worker.run_once()
+        assert not worker.run_once()
+        assert calls == []
+        with store.connect() as db:
+            row = db.execute('SELECT * FROM observations').fetchone()
+        if state in {'expired', 'discarded'}:
+            assert row['status'] == 'failed'
+            assert row['error'] == 'transient_capture_' + state
+            assert releases == [path.stem]
+            with pytest.raises(FileNotFoundError):
+                patrol_media.exchange(path, '.jpg', limit=len(image))
+        else:
+            assert row['status'] == ('ready' if state == 'ready' else 'pending')
+            assert row['error'] is None and releases == []
+            assert patrol_media.exchange(path, '.jpg', limit=len(image)) == image
+        assert not list(tmp_path.rglob('*.jpg'))
+    finally:
+        media.close()
+
+
+def test_unsealed_legacy_capture_is_not_discarded_by_transient_cleanup(tmp_path):
+    captures, _ = batch(tmp_path, 1, sealed=False)
+    store = PatrolMemoryStore(tmp_path, 'owner', simulation=True)
+    store.ingest()
+    path = tmp_path / 'captures' / (captures[0][0]['observation_id'] + '.json')
+    path.unlink()
+    assert claim_batch(store) is None
+    with store.connect() as db:
+        row = db.execute('SELECT status,error FROM observations').fetchone()
+    assert tuple(row) == ('pending', None)
 
 
 def test_batch_retains_cache_writes_for_cost_accounting(tmp_path):

@@ -1,12 +1,14 @@
 """Read sealed observations and choose bounded alternate views without calling an LLM."""
 
 import hashlib
+from datetime import datetime
 from itertools import permutations
 import json
 import math
 from pathlib import Path
 import re
 import sqlite3
+import time
 
 import numpy as np
 
@@ -98,6 +100,164 @@ def unresolved_targets(rows, maximum=2):
     # each priority and retain the configured bound on additional captures.
     targets.sort(key=lambda t: t['kind'] != 'person')
     return targets[:maximum]
+
+
+def read_deferred_targets(directory, map_id, simulated, maximum=2, max_rounds=2,
+                          now=None, *, map_frame=None, regions_sha256=None):
+    """
+    Read recent, sealed static-object hints for one later patrol without waiting.
+
+    People are not pursued using yesterday's position. Objects expire after 24h,
+    and a linked capture consumes its attempt even while analysis is pending or
+    failed. Only explicit observation links supersede a target: names alone do
+    not establish identity. The bounded read never opens RGB or depth media.
+    """
+    directory = Path(directory).expanduser()
+    try:
+        current = time.time() if now is None else float(now)
+        if (not math.isfinite(current) or type(maximum) is not int or maximum < 1
+                or type(max_rounds) is not int or max_rounds < 1):
+            return []
+        maximum, max_rounds = min(maximum, 2), min(max_rounds, 2)
+        database = directory / 'observations.sqlite3'
+        if database.is_symlink() or not database.is_file():
+            return []
+        connection = sqlite3.connect(database.resolve().as_uri() + '?mode=ro',
+                                     uri=True, timeout=.1)
+        try:
+            connection.row_factory = sqlite3.Row
+            owners = connection.execute('SELECT user_id FROM owner LIMIT 2').fetchall()
+            if len(owners) != 1 or not isinstance(owners[0][0], str) or not owners[0][0]:
+                return []
+            # Use the owner/time index; no unbounded scan of historical analyses.
+            records = connection.execute(
+                'SELECT id, captured_at, metadata, status FROM observations '
+                'WHERE user_id=? AND captured_at BETWEEN ? AND ? '
+                'ORDER BY captured_at DESC, id DESC LIMIT 96',
+                (owners[0][0], current-86400, current)).fetchall()
+        finally:
+            connection.close()
+
+        manifests, verified, analyzed = {}, {}, {}
+        for record in records:
+            raw = record['metadata']
+            if not isinstance(raw, str) or len(raw) > 16384:
+                continue
+            metadata = json.loads(raw)
+            identity, patrol = metadata['observation_id'], metadata['patrol_id']
+            if (identity != record['id'] or not _identity(identity) or not _identity(patrol)
+                    or metadata['map_id'] != map_id or metadata['simulated'] is not simulated
+                    or (map_frame is not None and metadata.get('map_frame') != map_frame)
+                    or (regions_sha256 is not None
+                        and metadata.get('regions_sha256') != regions_sha256)):
+                continue
+            stamp = datetime.fromisoformat(metadata['captured_at'].replace('Z', '+00:00'))
+            if (stamp.tzinfo is None or abs(stamp.timestamp()-record['captured_at']) > .001
+                    or not current-86400 <= stamp.timestamp() <= current):
+                continue
+            if patrol not in manifests:
+                if len(manifests) >= 8:
+                    continue
+                manifest = directory / 'runs' / (patrol+'.json')
+                if not manifest.exists():
+                    continue
+                sealed = _bounded_json(manifest)
+                captures = sealed['captures']
+                if (sealed['patrol_id'] != patrol or not isinstance(captures, list)
+                        or not 1 <= len(captures) <= 24):
+                    return []
+                refs = {capture['observation_id']: capture['manifest_sha256']
+                        for capture in captures}
+                if len(refs) != len(captures):
+                    return []
+                manifests[patrol] = refs
+            path = directory / 'captures' / (identity+'.json')
+            saved = _bounded_bytes(path)
+            if (hashlib.sha256(saved).hexdigest() != manifests[patrol].get(identity)
+                    or metadata != json.loads(saved)):
+                return []
+            verified[identity] = metadata
+            if patrol not in analyzed:
+                analyzed[patrol] = read_results(directory, patrol, map_id, simulated) or []
+
+        ready = {m['observation_id']: (m, analysis)
+                 for rows in analyzed.values() for m, analysis in rows
+                 if m['observation_id'] in verified}
+
+        def lineage(identity, seen=()):
+            if identity in seen or len(seen) > max_rounds:
+                return None
+            metadata = verified.get(identity)
+            if metadata is None:
+                return None
+            if not any(k in metadata for k in ('reobserve_of', 'reobserve_round',
+                                               'reobserve_target')):
+                return metadata['patrol_id'], 0
+            root, round_ = metadata.get('reobserve_of'), metadata.get('reobserve_round')
+            parent = metadata.get('reobserve_target', {})
+            index = parent.get('object_index')
+            source = ready.get(parent.get('observation_id'))
+            if (not _identity(root) or type(round_) is not int or not 1 <= round_ <= 2
+                    or type(index) is not int or source is None
+                    or not 0 <= index < len(source[1]['objects'])
+                    or datetime.fromisoformat(source[0]['captured_at'].replace('Z', '+00:00'))
+                    >= datetime.fromisoformat(metadata['captured_at'].replace('Z', '+00:00'))):
+                return None
+            previous = lineage(parent['observation_id'], (*seen, identity))
+            return ((root, round_) if previous == (root, round_-1) else None)
+
+        contexts = {identity: lineage(identity) for identity in verified}
+        consumed = {(m['reobserve_target']['observation_id'],
+                     m['reobserve_target']['object_index'])
+                    for identity, m in verified.items()
+                    if contexts[identity] is not None and contexts[identity][1] > 0}
+        candidates = []
+        for identity, (metadata, analysis) in ready.items():
+            context = contexts[identity]
+            if context is None or context[1] >= max_rounds:
+                continue
+            for target in unresolved_targets([(metadata, analysis)], maximum=24):
+                if (target['kind'] == 'person'
+                        or (identity, target['object_index']) in consumed):
+                    continue
+                captured = datetime.fromisoformat(metadata['captured_at'].replace('Z', '+00:00'))
+                candidates.append((captured.timestamp(), dict(
+                    target, reobserve_of=context[0], reobserve_round=context[1]+1)))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = []
+        for _, target in candidates:
+            if selected and any(target[key] != selected[0][key]
+                                for key in ('reobserve_of', 'reobserve_round')):
+                continue
+            if any(t['kind'] == target['kind'] and t['name'] == target['name']
+                   and math.dist(t['xy'], target['xy']) < .7 for t in selected):
+                continue
+            selected.append(target)
+            if len(selected) == maximum:
+                break
+        return selected
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, IndexError,
+            AttributeError, OverflowError):
+        # Missing/partial databases and invalid evidence never initiate movement.
+        return []
+
+
+def _identity(value):
+    return isinstance(value, str) and re.fullmatch('[a-f0-9]{32}', value) is not None
+
+
+def _bounded_bytes(path):
+    if path.is_symlink() or path.stat().st_size > 16384:
+        raise ValueError('Invalid deferred observation metadata')
+    with path.open('rb') as source:
+        contents = source.read(16385)
+    if len(contents) > 16384:
+        raise ValueError('Invalid deferred observation metadata')
+    return contents
+
+
+def _bounded_json(path):
+    return json.loads(_bounded_bytes(path))
 
 
 def select_view(planner, target, robot_xy, previous=(), allowed=None, max_travel=3.,

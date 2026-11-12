@@ -397,35 +397,54 @@ def test_arrival_rechecks_turning_space_before_sending_spin(patrol_runtime):
 
 
 @pytest.mark.parametrize('patrol_runtime', [{'reobserve_enabled': True}], indirect=True)
-def test_reobservation_analysis_wait_remains_cancellable(patrol_runtime, monkeypatch):
-    """A missing Agent must never hold patrol ownership after a user's cancellation."""
+def test_return_wait_keeps_batch_private_and_cancellation_releases_after_stop(
+        patrol_runtime, monkeypatch):
+    """No analysis admission until the outstanding return action really stops."""
     from malbut_patrol.coverage import CoveragePlanner
 
     monkeypatch.setattr(CoveragePlanner, 'complete', property(lambda self: True))
     manager, navigation, _sensors, client = patrol_runtime
+    monkeypatch.setattr(manager, '_robot_xy', lambda: (2.1, 1.5))
+    monkeypatch.setattr(manager, '_await_analysis',
+                        lambda *args: pytest.fail('normal patrol waited for analysis'))
     handle = _result(client.send_goal_async(Patrol.Goal()))
     assert handle.accepted
-    _wait_until(lambda: manager.phase == 'ANALYZING')
-    assert not navigation.requests
+    assert navigation.request_received.wait(TIMEOUT_S)
+    _wait_until(lambda: manager.photo_recorder.status()['saved'] == 1)
+    directory = manager.photo_recorder.directory
+    assert manager.phase == 'RETURNING'
+    assert not list((directory / 'runs').glob('*.json'))
+    navigation.allow_cancel_finish.clear()
     assert _result(handle.cancel_goal_async()).goals_canceling
+    assert navigation.cancel_received.wait(TIMEOUT_S)
+    assert not list((directory / 'runs').glob('*.json'))
+    navigation.allow_cancel_finish.set()
     assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+    _wait_until(lambda: manager.photo_recorder.status()['batch_ready'])
     assert not manager.busy
+    manifest = json.loads(next((directory / 'runs').glob('*.json')).read_text())
+    assert manifest['outcome'] == 'canceled'
 
 
 @pytest.mark.parametrize('patrol_runtime', [{
-    'reobserve_enabled': True, 'reobserve_analysis_timeout_s': .3,
+    'reobserve_enabled': True, 'reobserve_analysis_timeout_s': 120.,
 }], indirect=True)
-def test_missing_analysis_has_bounded_wait_and_does_not_invent_retry(patrol_runtime, monkeypatch):
-    """Leave photographs for the Agent and report timeout without issuing another movement."""
+def test_missing_analysis_does_not_delay_normal_return_or_invent_retry(
+        patrol_runtime, monkeypatch):
+    """An absent Agent cannot hold the patrol action for its analysis timeout."""
     from malbut_patrol.coverage import CoveragePlanner
 
     monkeypatch.setattr(CoveragePlanner, 'complete', property(lambda self: True))
     manager, navigation, _sensors, client = patrol_runtime
+    monkeypatch.setattr(manager, '_await_analysis',
+                        lambda *args: pytest.fail('normal patrol waited for analysis'))
     handle = _result(client.send_goal_async(Patrol.Goal()))
     outcome = _result(handle.get_result_async())
     assert outcome.status == GoalStatus.STATUS_SUCCEEDED
-    assert manager.reobserve_status['state'] == 'analysis_timeout'
+    assert 'analysis queued' in outcome.result.message
+    assert manager.reobserve_status['state'] == 'deferred_until_next_patrol'
     assert manager.reobserve_status['views'] == 0
+    assert manager.return_status['state'] == 'arrived'
     assert not navigation.requests and not manager.busy
 
 
@@ -489,30 +508,27 @@ def test_blocked_start_is_reported_as_failed_return(patrol_runtime, monkeypatch)
 
 
 @pytest.mark.parametrize('patrol_runtime', [{'reobserve_enabled': True}], indirect=True)
-def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, monkeypatch):
-    """Exercise the Action transition from analyzed unknown to a fresh, separate capture."""
+def test_prior_unknown_uses_nav2_and_links_new_photo_without_analysis_wait(
+        patrol_runtime, monkeypatch):
+    """A prior verified target uses safe motion; both new batches wait for return."""
     from malbut_patrol.coverage import CoveragePlanner
 
     monkeypatch.setattr(CoveragePlanner, 'complete', property(lambda self: True))
     manager, navigation, _sensors, client = patrol_runtime
-    root = []
-
-    def feedback(directory, patrol_id, map_id, simulated):
-        if not root:
-            root.append(patrol_id)
-        if patrol_id != root[0]:
-            return [({'captured_at': '2026-10-23'}, {'objects': []})]
-        files = list((directory / 'captures').glob('[a-f0-9]'*32+'.json'))
-        metadata = json.loads(files[0].read_text())
-        return [(metadata, {'objects': [{'name': '상자', 'kind': 'object', 'confidence': 'high',
-                                        'spatial': {'status': 'unknown', 'reobserve_hint': {
-                                            'xy': [2., 1.5],
-                                            'purpose': 'aim_only_not_object_position'}}}]})]
-
-    monkeypatch.setattr('malbut_patrol.patrol_manager.read_results', feedback)
-    # Navigation can succeed with any yaw. The first camera pose faces away.
+    target = {'xy': [2., 1.5], 'camera_xy': [1.5, 1.5], 'kind': 'object',
+              'name': '상자', 'observation_id': 'a'*32, 'object_index': 0,
+              'reobserve_of': 'b'*32, 'reobserve_round': 1}
+    monkeypatch.setattr('malbut_patrol.patrol_manager.read_deferred_targets',
+                        lambda *args, **kwargs: [target])
+    monkeypatch.setattr(manager, '_await_analysis',
+                        lambda *args: pytest.fail('normal retry waited for analysis'))
     monkeypatch.setattr(manager, '_reobserve_heading_error',
                         lambda target, not_before: 0.0 if navigation.spin_requests else 1.2)
+
+    def moving(_request):
+        assert not list((manager.photo_recorder.directory / 'runs').glob('*.json'))
+
+    navigation.on_navigate = moving
     navigation.finish_navigation.set()
     handle = _result(client.send_goal_async(Patrol.Goal()))
     outcome = _result(handle.get_result_async())
@@ -521,14 +537,14 @@ def test_reobservation_uses_nav2_and_saves_a_linked_new_photo(patrol_runtime, mo
     assert len(navigation.spin_requests) == 1
     assert navigation.spin_requests[0].target_yaw == pytest.approx(1.2)
     assert manager.reobserve_status['views'] == 1
-    assert manager.reobserve_status['state'] == 'no_actionable_unknowns'
+    assert manager.reobserve_status['state'] == 'captured_for_analysis_after_return'
+    _wait_until(lambda: len(list((manager.photo_recorder.directory / 'runs').glob('*.json'))) == 2)
     files = list((manager.photo_recorder.directory / 'captures').glob('[a-f0-9]'*32+'.json'))
     assert len(files) == 2
     records = [json.loads(p.read_text()) for p in files]
-    original = next(m for m in records if 'reobserve_of' not in m)
     retry = next(m for m in records if 'reobserve_of' in m)
-    assert retry['reobserve_of'] == original['patrol_id']
-    assert retry['reobserve_target']['observation_id'] == original['observation_id']
+    assert retry['reobserve_of'] == target['reobserve_of']
+    assert retry['reobserve_target']['observation_id'] == target['observation_id']
 
 
 @pytest.mark.parametrize('patrol_runtime', [
@@ -703,7 +719,7 @@ def test_nav2_success_without_new_rgb_does_not_credit_coverage(patrol_runtime):
     # Arrival settling can let the live-camera watchdog expire before all
     # viewpoints are exhausted; neither terminal reason may credit new pixels.
     assert ('partial coverage' in outcome.result.message
-            or outcome.result.message == 'RGB camera is stale')
+            or outcome.result.message.startswith('RGB camera is stale'))
 
 
 @pytest.mark.parametrize('patrol_runtime', [{'sensor_timeout_s': 1.4}], indirect=True)

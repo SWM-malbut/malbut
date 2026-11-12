@@ -25,6 +25,10 @@ from malbut_patrol.transient_media import RETENTION_SECONDS, TransientMedia
 DEFAULT_DIRECTORY = '~/.local/share/malbut/patrol-observations'
 
 
+class _CaptureDiscarded(Exception):
+    """An accepted capture was abandoned before its handoff could be published."""
+
+
 def encode_image(message):
     """Encode supported ROS byte images, respecting padded rows and RGB order."""
     channels = {'rgb8': 3, 'bgr8': 3, 'rgba8': 4, 'bgra8': 4, 'mono8': 1}
@@ -75,11 +79,13 @@ class PhotoRecorder:
         self._queue = Queue(maxsize=4)
         self._stop = threading.Event()
         self._lock = threading.RLock()
+        self._commit_lock = threading.RLock()
         self._stats = {}
         self._poses = []
         self._last_capture = 0.0
         self._run = None
         self._batches = {}
+        self._analysis_held = False
         self._writer_owned = False
         self._media = None
         self._thread = threading.Thread(target=self._work, name='patrol-photo-writer', daemon=True)
@@ -102,10 +108,11 @@ class PhotoRecorder:
             if inspection_of is not None:
                 self._run['inspection_of'] = inspection_of
             self._limit = min(self.max_photos, capture_limit or self.max_photos)
-            self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'last_error': '',
+            self._stats = {'queued': 0, 'saved': 0, 'failed': 0, 'discarded': 0, 'last_error': '',
                            'batch_ready': False}
             self._batches[self._run['patrol_id']] = {
                 'stats': self._stats, 'captures': [], 'outcome': None,
+                'accepted': [], 'analysis_held': self._analysis_held, 'discarded': False,
             }
             self._references = self._batches[self._run['patrol_id']]['captures']
             self._poses = []
@@ -158,6 +165,7 @@ class PhotoRecorder:
             except Full:
                 return False
             self._stats['queued'] += 1
+            self._batches[self._run['patrol_id']]['accepted'].append(metadata['observation_id'])
             self._poses.append((x, y, yaw))
             self._last_capture = now
             return True
@@ -165,12 +173,23 @@ class PhotoRecorder:
     def status(self):
         """Report accepted versus RAM-ready captures, never inferred analysis success."""
         with self._lock:
-            return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats}
+            return {'patrol_id': self._run['patrol_id'] if self._run else None, **self._stats,
+                    'analysis_held': self._analysis_held,
+                    'analysis_pending_batches': sum(
+                        batch['analysis_held'] for batch in self._batches.values())}
 
     def identity(self):
         """Expose the current run identity without mutable sensor metadata."""
         with self._lock:
             return {k: self._run[k] for k in ('patrol_id', 'map_id')} if self._run else None
+
+    def context(self):
+        """Identify the exact map and room boundaries used for this run."""
+        with self._lock:
+            if self._run is None:
+                return None
+            return {**self.identity(), 'map_frame': self._run['map_frame'],
+                    'regions_sha256': hashlib.sha256(self._run['_regions']).hexdigest()}
 
     def evidence(self):
         """Keep producer references available after the batch has been sealed and flushed."""
@@ -185,30 +204,76 @@ class PhotoRecorder:
             if batch is not None and batch['outcome'] is None:
                 batch['outcome'] = outcome
 
+    def hold_analysis(self):
+        """Keep new batches private until the manager confirms movement has stopped."""
+        with self._lock:
+            if self._stop.is_set():
+                raise RuntimeError('photo recorder is closed')
+            self._analysis_held = True
+
+    def release_analysis(self, outcome='completed'):
+        """Allow held batches to publish once their accepted encodes have settled."""
+        with self._lock:
+            self._analysis_held = False
+            for batch in self._batches.values():
+                if batch['analysis_held']:
+                    batch['analysis_held'] = False
+                    if batch['outcome'] is None:
+                        batch['outcome'] = outcome
+
+    def discard_held_analysis(self):
+        """Drop unapproved batches, including queued encodes and restart metadata."""
+        with self._commit_lock:
+            discarded = []
+            with self._lock:
+                self._analysis_held = False
+                for batch in self._batches.values():
+                    if not batch['analysis_held']:
+                        continue
+                    batch['analysis_held'] = False
+                    batch['discarded'] = True
+                    batch['outcome'] = 'discarded'
+                    discarded.extend(batch['accepted'])
+                    batch['captures'].clear()
+                    batch['stats']['discarded'] += batch['stats']['saved']
+                    batch['stats']['saved'] = 0
+            for identifier in discarded:
+                if self._media is not None:
+                    self._media.discard(identifier)
+                (self.directory / 'captures' / (identifier + '.json')).unlink(missing_ok=True)
+
     def _flush_batches(self):
         """Publish a complete batch only after every accepted photo has settled."""
         if not self._writer_owned:
             return
-        with self._lock:
-            ready = [(identity, batch) for identity, batch in self._batches.items()
-                     if batch['outcome'] is not None and batch['stats']['queued']
-                     == batch['stats']['saved'] + batch['stats']['failed']]
-        for identity, batch in ready:
-            try:
-                folder = self.directory / 'runs'
-                folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-                manifest = {'version': 1, 'patrol_id': identity,
-                            'outcome': batch['outcome'], 'captures': batch['captures'],
-                            'capture_failures': batch['stats']['failed']}
-                _atomic_write(folder / (identity + '.json'),
-                              json.dumps(manifest, ensure_ascii=False).encode('utf-8'))
-            except OSError:
-                with self._lock:
-                    batch['stats']['last_error'] = 'batch_manifest_failed'
-                continue
+        # Disk commits and discard serialize independently from the capture lock,
+        # so slow fsync never stalls offer() on the navigation thread.
+        with self._commit_lock:
             with self._lock:
-                batch['stats']['batch_ready'] = True
-                del self._batches[identity]
+                ready = [(identity, batch) for identity, batch in self._batches.items()
+                         if not batch['analysis_held'] and batch['outcome'] is not None
+                         and batch['stats']['queued'] == batch['stats']['saved']
+                         + batch['stats']['failed'] + batch['stats']['discarded']]
+            for identity, batch in ready:
+                if batch['discarded']:
+                    with self._lock:
+                        del self._batches[identity]
+                    continue
+                try:
+                    folder = self.directory / 'runs'
+                    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    manifest = {'version': 1, 'patrol_id': identity,
+                                'outcome': batch['outcome'], 'captures': batch['captures'],
+                                'capture_failures': batch['stats']['failed']}
+                    _atomic_write(folder / (identity + '.json'),
+                                  json.dumps(manifest, ensure_ascii=False).encode('utf-8'))
+                except OSError:
+                    with self._lock:
+                        batch['stats']['last_error'] = 'batch_manifest_failed'
+                    continue
+                with self._lock:
+                    batch['stats']['batch_ready'] = True
+                    del self._batches[identity]
 
     def _save(self, image, metadata):
         folder = self.directory / 'captures'
@@ -245,13 +310,17 @@ class PhotoRecorder:
         if depth is not None:
             files['.depth.npy'] = depth
             spatial['depth_sha256'] = hashlib.sha256(depth).hexdigest()
-        try:
-            self._media.put(identifier, files)
-            _atomic_write(folder / (identifier + '.json'),
-                          json.dumps(metadata, ensure_ascii=False).encode('utf-8'))
-        except Exception:
-            self._media.discard(identifier)
-            raise
+        with self._commit_lock:
+            with self._lock:
+                if self._batches[metadata['patrol_id']]['discarded']:
+                    raise _CaptureDiscarded()
+            try:
+                self._media.put(identifier, files)
+                _atomic_write(folder / (identifier + '.json'),
+                              json.dumps(metadata, ensure_ascii=False).encode('utf-8'))
+            except Exception:
+                self._media.discard(identifier)
+                raise
 
     def _work(self):
         """One producer owns this directory; restart seals its interrupted runs."""
@@ -320,19 +389,30 @@ class PhotoRecorder:
             try:
                 if not self._writer_owned:
                     raise OSError('photo directory producer unavailable')
+                with self._lock:
+                    if self._batches[metadata['patrol_id']]['discarded']:
+                        raise _CaptureDiscarded()
                 self._save(image, metadata)
-                path = self.directory / 'captures' / (metadata['observation_id'] + '.json')
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                with self._commit_lock:
+                    with self._lock:
+                        batch = self._batches[metadata['patrol_id']]
+                        if batch['discarded']:
+                            raise _CaptureDiscarded()
+                    path = self.directory / 'captures' / (metadata['observation_id'] + '.json')
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    with self._lock:
+                        stats['saved'] += 1
+                        batch['captures'].append({
+                            'observation_id': metadata['observation_id'],
+                            'manifest_sha256': digest,
+                        })
+            except _CaptureDiscarded:
+                with self._lock:
+                    stats['discarded'] += 1
             except Exception:
                 with self._lock:
                     stats['failed'] += 1
                     stats['last_error'] = 'capture_failed'
-            else:
-                with self._lock:
-                    stats['saved'] += 1
-                    self._batches[metadata['patrol_id']]['captures'].append({
-                        'observation_id': metadata['observation_id'], 'manifest_sha256': digest,
-                    })
             finally:
                 self._queue.task_done()
                 # An idle writer must not retain the last RGB/depth message outside
@@ -342,7 +422,9 @@ class PhotoRecorder:
         self._flush_batches()
 
     def close(self):
-        """Drain accepted photos after navigation has settled on shutdown."""
-        self.finish('shutdown')
-        self._stop.set()
+        """Drain released captures; never authorize held analysis during shutdown."""
+        self.discard_held_analysis()
+        with self._lock:
+            self.finish('shutdown')
+            self._stop.set()
         self._thread.join(timeout=5.0)

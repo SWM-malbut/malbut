@@ -221,6 +221,35 @@ def test_unconfirmed_child_stop_keeps_patrol_inputs_owned(patrol):
     manager._change_processing.assert_not_called()
 
 
+@pytest.mark.parametrize('settled', [True, False])
+def test_normal_capture_is_released_only_after_motion_settlement(patrol, settled):
+    manager, handle = patrol
+    manager.photo_recorder = Mock()
+    manager.settings['reobserve_enabled'] = False
+    events = []
+    manager.photo_recorder.hold_analysis.side_effect = lambda: events.append('hold')
+    manager.photo_recorder.begin.side_effect = lambda *a, **k: events.append('capture')
+    manager.photo_recorder.release_analysis.side_effect = lambda *a: events.append('release')
+    manager.photo_recorder.discard_held_analysis.side_effect = lambda: events.append('discard')
+    manager._return_to_start = Mock(side_effect=lambda h: events.append('return') or True)
+    manager._settle_child = Mock(side_effect=lambda: events.append('settle') or settled)
+    manager._execute(handle)
+    assert events == ['hold', 'capture', 'return', 'settle',
+                      'release' if settled else 'discard']
+    manager.photo_recorder.finish.assert_not_called()
+
+
+def test_action_transport_failure_does_not_strand_held_capture(patrol):
+    manager, handle = patrol
+    manager.photo_recorder = Mock()
+    manager.settings['reobserve_enabled'] = False
+    handle.abort.side_effect = RuntimeError('Action transport closed')
+    with pytest.raises(RuntimeError, match='Action transport closed'):
+        manager._execute(handle)
+    manager.photo_recorder.release_analysis.assert_called_once_with('aborted')
+    assert not manager.busy
+
+
 def test_processing_disable_check_and_change_share_goal_acceptance_lock(patrol):
     manager, _ = patrol
     manager.busy = False

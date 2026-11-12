@@ -45,10 +45,12 @@ def closed_patrol(store, patrol_id):
 
 def claim_batch(store):
     """Lease all pending frames of one sealed run; never mix patrols or owners."""
+    now = time.time()
     with store.connect() as connection:
         pending = connection.execute('''SELECT * FROM observations WHERE user_id=?
             AND status='pending' AND retry_at<=? ORDER BY captured_at''',
-                                     (store.owner_id, time.time())).fetchall()
+                                     (store.owner_id, now)).fetchall()
+    pending = _retire_unavailable_captures(store, pending, now)
     checked = set()
     for candidate in pending:
         metadata = json.loads(candidate['metadata'])
@@ -95,6 +97,42 @@ def claim_batch(store):
                                + placeholders + ')', [time.time() + 120, store.owner_id] + ids)
         return manifest, [frames[identity] for identity in ids]
     return None
+
+
+def _retire_unavailable_captures(store, pending, now):
+    """Expire held RAM captures even when no return manifest will ever be published."""
+    unavailable = []
+    for row in pending:
+        metadata = json.loads(row['metadata'])
+        if (metadata.get('analysis_batch') not in SUPPORTED_POLICIES
+                or metadata.get('media_storage') != 'volatile_v1'):
+            continue
+        path = store.directory / 'captures' / (row['id'] + '.json')
+        if now >= metadata.get('media_expires_at', 0):
+            error = 'transient_capture_expired'
+        elif not path.exists():
+            error = 'transient_capture_discarded'
+        else:
+            continue
+        unavailable.append((row, path, error))
+    if not unavailable:
+        return pending
+    released = []
+    with store.connect() as connection:
+        for row, path, error in unavailable:
+            cursor = connection.execute(
+                "UPDATE observations SET status='failed', error=? WHERE id=? AND user_id=? "
+                "AND status='pending' AND retry_at<=? AND metadata=?",
+                (error, row['id'], store.owner_id, now, row['metadata']))
+            if cursor.rowcount == 1:
+                released.append(path)
+    # File/socket operations never hold the DB write transaction or touch ready rows.
+    from malbut_agent_server.patrol_media import release_media
+
+    for path in released:
+        release_media(path)
+    excluded = {row['id'] for row, _, _ in unavailable}
+    return [row for row in pending if row['id'] not in excluded]
 
 
 def verify_batch_files(store, manifest):

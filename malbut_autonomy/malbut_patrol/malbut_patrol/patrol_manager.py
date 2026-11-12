@@ -37,7 +37,9 @@ from malbut_patrol.coverage import (
 )
 from malbut_patrol.photo_recorder import DEFAULT_DIRECTORY, PhotoRecorder
 from malbut_patrol.inspection import InspectionCalibration, InspectionEvidence
-from malbut_patrol.reobserve import plan_reobservations, read_results, unresolved_targets
+from malbut_patrol.reobserve import (
+    plan_reobservations, read_deferred_targets, read_results, unresolved_targets,
+)
 from malbut_patrol.route import ReturnRoutePlanner
 from malbut_patrol.recovery import BreadcrumbTrail, angle_difference, path_segments
 from malbut_patrol.maneuver import ManeuverSpace
@@ -1010,6 +1012,10 @@ class PatrolManager(Node):
         self.last_observation = time.monotonic()
         success = False
         detail = ''
+        recorder = getattr(self, 'photo_recorder', None)
+        deferred_analysis = False
+        capture_started = False
+        deferred_targets = []
         try:
             self._publish_status('planning', 'Computing reachable viewpoints')
             rooms = None
@@ -1037,9 +1043,21 @@ class PatrolManager(Node):
                 self.return_pose[:2], self.settings['robot_clearance_m'], rooms,
                 fov, require_room_entry=calibration is None)
             self.route_planner = ReturnRoutePlanner(self.planner, self.return_pose[:2])
-            recorder = getattr(self, 'photo_recorder', None)
             if recorder is not None:
+                if calibration is None:
+                    recorder.hold_analysis()
+                    deferred_analysis = True
                 recorder.begin(grid, self.map_message.header.frame_id, room_file, rooms)
+                capture_started = True
+                if deferred_analysis and self.settings['reobserve_enabled']:
+                    context = recorder.context()
+                    deferred_targets = read_deferred_targets(
+                        recorder.directory, context['map_id'],
+                        bool(self.get_parameter('use_sim_time').value),
+                        maximum=self.settings['reobserve_targets'],
+                        max_rounds=self.settings['reobserve_rounds'],
+                        map_frame=context['map_frame'],
+                        regions_sha256=context['regions_sha256'])
             self.last_observation = time.monotonic()
             if calibration is not None:
                 run, _ = recorder.evidence()
@@ -1100,7 +1118,10 @@ class PatrolManager(Node):
                         raise PatrolInterrupted('Inspection rotation failed')
                     self._await_inspection(handle)
             if recorder is not None and self.settings['reobserve_enabled']:
-                self._reobserve(handle, grid, room_file, rooms)
+                if self.inspection is not None:
+                    self._reobserve(handle, grid, room_file, rooms)
+                else:
+                    self._reobserve_deferred(handle, grid, room_file, rooms, deferred_targets)
                 detail += '; reobservation: ' + self.reobserve_status['state']
             returned = self._return_to_start(handle)
             success = success and returned
@@ -1128,6 +1149,19 @@ class PatrolManager(Node):
                 result.message = detail
                 if not settled:
                     result.message += '; Nav2 stop unconfirmed; new patrols blocked until settled'
+                outcome = ('canceled' if handle.is_cancel_requested
+                           else 'completed' if result.success else 'aborted')
+                # Publish analysis work only after motion has stopped. A failed
+                # return still preserves usable observations; it is not a successful patrol.
+                # Do this before the action transport can raise during terminal publication.
+                if deferred_analysis:
+                    if settled:
+                        recorder.release_analysis(outcome)
+                        result.message += '; observation analysis queued after motion stopped'
+                    else:
+                        recorder.discard_held_analysis()
+                elif capture_started:
+                    recorder.finish(outcome)
                 if handle.is_cancel_requested and settled:
                     handle.canceled()
                     state = 'idle'
@@ -1137,9 +1171,6 @@ class PatrolManager(Node):
                 else:
                     handle.abort()
                     state = 'aborted'
-                recorder = getattr(self, 'photo_recorder', None)
-                if recorder is not None:
-                    recorder.finish('canceled' if state == 'idle' else state)
                 self._publish_status(state, result.message)
                 return result
             finally:
@@ -1317,49 +1348,68 @@ class PatrolManager(Node):
                 grid, self.map_message.header.frame_id, room_file, rooms,
                 reobserve_of=root, reobserve_round=round_index+1, capture_limit=len(targets))
             self.reobserve_status['rounds'] = round_index+1
-            pending = list(targets)
-            while pending:
-                self.phase = 'REPOSITIONING'
-                self._pump(handle)
-                self._refresh_viewpoints(handle)
-                steps, distance = plan_reobservations(
-                    self.planner, pending, self._robot_xy(), self.return_pose[:2], previous,
-                    self._observation_allowed, self.settings['reobserve_max_travel_m'],
-                    lambda: self._pump(handle))
-                self._record_route([('reobserve', view) for _, view in steps], distance,
-                                   'reobserve_remaining')
-                if not steps:
-                    break
-                target, view = steps[0]
-                pending.remove(target)
-                previous.append([view.x, view.y])
-                request = NavigateToPose.Goal()
-                request.pose.header.frame_id = self.map_message.header.frame_id
-                request.pose.header.stamp = self.get_clock().now().to_msg()
-                request.pose.pose.position.x, request.pose.pose.position.y = view.x, view.y
-                request.pose.pose.orientation.z = math.sin(view.yaw/2)
-                request.pose.pose.orientation.w = math.cos(view.yaw/2)
-                if not self._navigate(request, handle):
-                    continue
-                # Wait for a post-arrival image; moving images must not consume the quota.
-                settle_until = time.monotonic()+.5
-                while time.monotonic() < settle_until:
-                    self._pump(handle)
-                    self.stop_event.wait(.05)
-                self._refresh_maneuvers()
-                if not self._can_observe_here():
-                    continue
-                if not self._orient_reobservation(handle, target):
-                    continue
-                self.reobserve_target = {k: target[k] for k in ('observation_id', 'object_index')}
-                if self._stationary_observation(handle, 'REOBSERVING'):
-                    self.reobserve_status['views'] += 1
-                self.reobserve_target = None
-                self.phase = 'REPOSITIONING'
+            self._capture_reobservation_targets(handle, targets, previous)
             rows = self._await_analysis(handle)
         if rows:
             self.reobserve_status['state'] = ('attempt_limit' if unresolved_targets(rows)
                                               else 'no_actionable_unknowns')
+
+    def _reobserve_deferred(self, handle, grid, room_file, rooms, targets):
+        """Revisit verified old hints once, without awaiting this patrol's analysis."""
+        if not targets:
+            self.reobserve_status['state'] = 'deferred_until_next_patrol'
+            return
+        self.photo_recorder.finish()
+        self.photo_recorder.begin(
+            grid, self.map_message.header.frame_id, room_file, rooms,
+            reobserve_of=targets[0]['reobserve_of'],
+            reobserve_round=targets[0]['reobserve_round'], capture_limit=len(targets))
+        self.reobserve_status['rounds'] = 1
+        self._capture_reobservation_targets(handle, targets, [])
+        self.reobserve_status['state'] = ('captured_for_analysis_after_return'
+                                          if self.reobserve_status['views'] else 'no_safe_view')
+
+    def _capture_reobservation_targets(self, handle, targets, previous):
+        """Reuse collision checks, measured camera alignment and fresh RGB-D capture."""
+        pending = list(targets)
+        while pending:
+            self.phase = 'REPOSITIONING'
+            self._pump(handle)
+            self._refresh_viewpoints(handle)
+            steps, distance = plan_reobservations(
+                self.planner, pending, self._robot_xy(), self.return_pose[:2], previous,
+                self._observation_allowed, self.settings['reobserve_max_travel_m'],
+                lambda: self._pump(handle))
+            self._record_route([('reobserve', view) for _, view in steps], distance,
+                               'reobserve_remaining')
+            if not steps:
+                break
+            target, view = steps[0]
+            pending.remove(target)
+            previous.append([view.x, view.y])
+            request = NavigateToPose.Goal()
+            request.pose.header.frame_id = self.map_message.header.frame_id
+            request.pose.header.stamp = self.get_clock().now().to_msg()
+            request.pose.pose.position.x, request.pose.pose.position.y = view.x, view.y
+            request.pose.pose.orientation.z = math.sin(view.yaw/2)
+            request.pose.pose.orientation.w = math.cos(view.yaw/2)
+            if not self._navigate(request, handle):
+                continue
+            # Wait for a post-arrival image; moving images must not consume the quota.
+            settle_until = time.monotonic()+.5
+            while time.monotonic() < settle_until:
+                self._pump(handle)
+                self.stop_event.wait(.05)
+            self._refresh_maneuvers()
+            if not self._can_observe_here():
+                continue
+            if not self._orient_reobservation(handle, target):
+                continue
+            self.reobserve_target = {k: target[k] for k in ('observation_id', 'object_index')}
+            if self._stationary_observation(handle, 'REOBSERVING'):
+                self.reobserve_status['views'] += 1
+            self.reobserve_target = None
+            self.phase = 'REPOSITIONING'
 
     def _publish_status(self, state, detail):
         # This diagnostic topic is not the Action result or motion ownership.
