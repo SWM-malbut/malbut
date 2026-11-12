@@ -5,7 +5,8 @@ import unicodedata
 
 
 _THANKS = re.compile(r'(?:감사합니다)+')
-_REPEATED_SYLLABLE = re.compile(r'([가-힣])\1{11,}')
+# NFKC converts compatibility jamo such as ㅋ into the U+1100 jamo block.
+_REPEATED_SYLLABLE = re.compile(r'([가-힣\u1100-\u11ff])\1{11,}')
 _SUBSCRIBE = re.compile(r'구독(?:과|와)?좋아요|좋아요(?:와|과)?구독')
 _NEWS = re.compile(
     r'(?:mbc|kbs|sbs|ytn|jtbc|엠비씨|케이비에스|에스비에스)뉴스'

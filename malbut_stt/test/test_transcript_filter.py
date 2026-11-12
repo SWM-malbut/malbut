@@ -20,6 +20,9 @@ BLOCKED = [
     '구독과 좋아요', '구독, 좋아요 부탁드립니다!', '좋아요와 구독 부탁드려요.',
     '구 독 과 좋 아 요! 알림 설정도 부탁드립니다.',
     '아' * 300, '아, ' * 12, '음' * 12,
+    'ㅋ' * 300, 'ㅎ' * 12, 'ㅋ, ' * 12,
+    'ㅋᄏﾻ' * 4,
+    '오늘 날씨 알려 줘. ' + 'ㅋ' * 12,
     '오늘 날씨 알려 줘. ' + '아' * 12,
     unicodedata.normalize('NFD', '아' * 12),
 ]
@@ -35,6 +38,8 @@ def test_recurring_boilerplate_is_blocked_despite_formatting(text):
     '말씀 감사합니다. 그런데 오늘 날씨는?', '도와주셔서 감사합니다.',
     'MBC 뉴스 틀어 줘.', '뉴스가 궁금해요.', '구독 취소 방법 알려 줘.',
     '아, 아.', '아' * 11, '아' * 6 + '잠깐만' + '아' * 6,
+    'ㅋㅋ', 'ㅎㅎ', '오늘 날씨 알려 줘 ㅋㅋ',
+    'ㅋ' * 6 + '잠깐만' + 'ㅋ' * 6,
     '', None,
 ])
 def test_ordinary_speech_is_not_blocked_by_individual_keywords(text):
@@ -42,8 +47,9 @@ def test_ordinary_speech_is_not_blocked_by_individual_keywords(text):
 
 
 @pytest.mark.parametrize('count,expected', [(11, None), (12, 'repeated_syllable')])
-def test_repeated_syllable_threshold(count, expected):
-    assert boilerplate_reason('아' * count) == expected
+@pytest.mark.parametrize('char', ['아', 'ㅋ', 'ㅎ', 'ㄱ', 'ㅏ'])
+def test_repeated_syllable_threshold(char, count, expected):
+    assert boilerplate_reason(char * count) == expected
 
 
 VOICE = b'\x01\x00' * 320
@@ -102,6 +108,7 @@ def create():
 
 @pytest.mark.parametrize('text', [
     '감사합니다.', 'MBC 뉴스 김민수입니다.', '구독과 좋아요!', '아' * 300,
+    'ㅋ' * 300,
 ])
 @pytest.mark.parametrize('streaming', [False, True])
 @pytest.mark.parametrize('input_has_aec', [False, True])
@@ -169,7 +176,7 @@ def test_filtered_notice_allows_retry_even_when_normal_followup_is_disabled(crea
 
 
 @pytest.mark.parametrize('partial', [False, True])
-@pytest.mark.parametrize('text', ['감사합니다.', '아, ' * 12])
+@pytest.mark.parametrize('text', ['감사합니다.', '아, ' * 12, 'ㅋ, ' * 12])
 def test_boilerplate_preview_cannot_publish_or_trim_audio_and_can_recover(create, partial, text):
     state = create(text, streaming=True)
     p = state.pipeline
@@ -189,8 +196,10 @@ def test_boilerplate_preview_cannot_publish_or_trim_audio_and_can_recover(create
 
 
 @pytest.mark.parametrize('paused_first', [False, True])
-def test_filtered_interruption_resumes_answer_without_agent_classification(create, paused_first):
-    state = create('MBC 뉴스 김민수입니다.')
+@pytest.mark.parametrize('text', ['MBC 뉴스 김민수입니다.', 'ㅋ' * 300])
+def test_filtered_interruption_resumes_answer_without_agent_classification(
+        create, paused_first, text):
+    state = create(text)
     p = state.pipeline
     p.on_playback_status('answer', 'playing')
     p.feed(VOICE * 50)

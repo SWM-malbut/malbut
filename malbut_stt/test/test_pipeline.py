@@ -143,6 +143,7 @@ def test_same_sentence_spoken_twice_gets_different_ids():
 
 @pytest.mark.parametrize('text', [
     '감사합니다.', 'MBC 뉴스 김민수입니다.', '구독과 좋아요!', '아' * 300,
+    'ㅋ' * 300,
 ])
 @pytest.mark.parametrize('attached', [False, True])
 def test_boilerplate_never_reaches_publication(text, attached):
