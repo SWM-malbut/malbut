@@ -28,7 +28,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('phase', choices=('runtime', 'pose'))
     parser.add_argument('--model')
-    parser.add_argument('--pose-execution-provider', choices=('auto', 'cpu', 'cuda'), default='auto')
+    parser.add_argument('--pose-execution-provider',
+                        choices=('auto', 'cpu', 'cuda', 'tensorrt'), default='auto')
     parser.add_argument('--pose-intra-op-num-threads', type=int, default=2)
     parser.add_argument('--pose-allow-spinning', choices=('true', 'false'), default='false')
     parser.add_argument('--pose-opencv-num-threads', type=int, default=1)

@@ -1,5 +1,6 @@
 """Tests for YOLO26 pose post-processing and inference rate limiting."""
 
+import os
 import sys
 from types import SimpleNamespace
 
@@ -273,3 +274,132 @@ def test_estimate_all_rejects_bad_candidate_floor(threshold):
 def test_estimate_all_handles_empty_output_without_marking_failure():
     estimator = _estimator_with_output(np.zeros((1, 0, 57), np.float32))
     assert estimator.estimate_all(np.zeros((16, 16, 3), np.uint8)) == ()
+
+
+class _FakeEngine:
+    num_io_tensors = 2
+
+    def __init__(self, output_shape, context=object()):
+        self._shapes = {'images': (1, 3, 640, 640), 'output0': output_shape}
+        self._context = context
+
+    def get_tensor_name(self, index):
+        return ('images', 'output0')[index]
+
+    def get_tensor_mode(self, name):
+        return 'input' if name == 'images' else 'output'
+
+    def get_tensor_shape(self, name):
+        return self._shapes[name]
+
+    def get_tensor_dtype(self, name):
+        return np.float32
+
+    def create_execution_context(self):
+        return self._context
+
+
+def _fake_tensorrt(engine):
+    def logger(level=0):
+        return None
+    logger.ERROR = 0
+    return SimpleNamespace(
+        Logger=logger,
+        Runtime=lambda logger: SimpleNamespace(deserialize_cuda_engine=lambda data: engine),
+        TensorIOMode=SimpleNamespace(INPUT='input'), nptype=lambda dtype: dtype)
+
+
+class _FakeCuda:
+    def __init__(self):
+        self.freed, self._next = [], 4096
+
+    def cudaMalloc(self, reference, size):
+        reference._obj.value = self._next
+        self._next += 4096
+        return 0
+
+    def cudaMemcpy(self, destination, source, size, kind):
+        return 0
+
+    def cudaFree(self, pointer):
+        self.freed.append(pointer)
+        return 0
+
+
+def _with_engine(tmp_path, monkeypatch, engine, *, engine_is_stale=False):
+    from homecam_detector import trt_session
+    model = tmp_path / 'pose.onnx'
+    model.touch()
+    built = trt_session.engine_path_for(model)
+    built.touch()
+    stamp = model.stat().st_mtime
+    os.utime(built, (stamp, stamp - 10 if engine_is_stale else stamp + 10))
+    monkeypatch.setitem(sys.modules, 'tensorrt', _fake_tensorrt(engine))
+    cuda = _FakeCuda()
+    monkeypatch.setattr(trt_session, '_load_cuda_runtime', lambda: cuda)
+    return model, cuda
+
+
+@pytest.mark.parametrize('provider', ['auto', 'tensorrt'])
+def test_engine_beside_model_runs_without_onnx_runtime(tmp_path, monkeypatch, provider):
+    model, _ = _with_engine(tmp_path, monkeypatch, _FakeEngine((1, 300, 57)))
+    monkeypatch.setitem(sys.modules, 'onnxruntime', None)  # importing it would fail
+    estimator = PersonPoseEstimator(str(model), execution_provider=provider)
+    assert estimator.execution_provider == 'tensorrt'
+    assert estimator._input_name == 'images' and not estimator.tensorrt_fallback_reason
+
+
+def test_auto_without_engine_keeps_onnx_runtime_and_says_nothing(tmp_path, monkeypatch):
+    model = tmp_path / 'pose.onnx'
+    model.touch()
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
+        get_available_providers=lambda: ['CPUExecutionProvider'],
+        InferenceSession=lambda *a, **kw: session))
+    estimator = PersonPoseEstimator(str(model), execution_provider='auto')
+    assert estimator.execution_provider == 'cpu' and estimator.tensorrt_fallback_reason == ''
+    with pytest.raises(RuntimeError, match='TensorRT pose engine not found'):
+        PersonPoseEstimator(str(model), execution_provider='tensorrt')
+
+
+@pytest.mark.parametrize('engine,stale,reason', [
+    (None, False, 'rebuild it on this robot'),
+    (_FakeEngine((1, 300, 57)), True, 'older than the model'),
+    (_FakeEngine((1, 56, 8400)), False, 'end-to-end pose engine'),
+])
+def test_unusable_engine_falls_back_under_auto_but_fails_when_required(
+        tmp_path, monkeypatch, engine, stale, reason):
+    model, cuda = _with_engine(tmp_path, monkeypatch, engine, engine_is_stale=stale)
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
+        get_available_providers=lambda: ['CPUExecutionProvider'],
+        InferenceSession=lambda *a, **kw: session))
+    estimator = PersonPoseEstimator(str(model), execution_provider='auto')
+    assert estimator.execution_provider == 'cpu'
+    assert reason in estimator.tensorrt_fallback_reason
+    with pytest.raises(RuntimeError, match=reason):
+        PersonPoseEstimator(str(model), execution_provider='tensorrt')
+    if engine is not None and not stale:
+        assert len(cuda.freed) == 4  # both buffers of both rejected sessions
+
+
+def test_tensorrt_session_checks_shape_and_reports_failed_inference(tmp_path, monkeypatch):
+    from homecam_detector.trt_session import TensorRTSession
+    results = [True, False]
+    context = SimpleNamespace(execute_v2=lambda bindings: results.pop(0))
+    model, cuda = _with_engine(tmp_path, monkeypatch, _FakeEngine((1, 300, 57), context))
+    session = PersonPoseEstimator(str(model), execution_provider='tensorrt')._session
+    assert isinstance(session, TensorRTSession)
+    blob = np.zeros((1, 3, 640, 640), dtype=np.float32)
+    assert session.run(None, {'images': blob})[0].shape == (1, 300, 57)
+    with pytest.raises(ValueError, match='does not match engine'):
+        session.run(None, {'images': blob[:, :, :320]})
+    with pytest.raises(RuntimeError, match='TensorRT inference failed'):
+        session.run(None, {'images': blob})
+    session.close()
+    session.close()
+    assert len(cuda.freed) == 2

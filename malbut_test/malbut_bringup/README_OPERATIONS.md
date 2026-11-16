@@ -130,7 +130,8 @@ spinning `false`, OpenCV 스레드 `1`이다. 추가 인자 없이 스레드 제
 OSNet/ReID 가상환경을 재사용하거나 `runtime-cuda`를 자동 선택하지 않는다. 환경변수
 `MALBUT_FALL_POSE_PYTHON` 또는 `fall_pose_python_executable` 인자를 명시하면 그 값이 우선한다.
 이미 설치된 CUDA·cuDNN·Torch는 변경하지 않는다. Bringup 실행 중에는 설치하지 않는다.
-`auto`는 **해당 노드의 실행 Python**에 CUDA EP가
+`auto`는 모델 옆에 TensorRT 엔진(`build_pose_trt_engine.py`로 생성)이 있으면 TensorRT를,
+없으면 **해당 노드의 실행 Python**에 CUDA EP가
 있으면 CUDA를 선택하고, 없으면 CPU를 선택하면서 GPU 미사용 경고를 남긴다.
 CUDA가 설치돼 있지만 초기화에 실패하면 CPU로 조용히 바꾸지 않고 시작에 실패한다.
 GPU 실행을 필수로 하려면 `fall_pose_execution_provider:=cuda`를 사용한다.
@@ -368,7 +369,7 @@ TF가 맞는지도 확인한다. 시뮬레이션의 frame 보정이나 fake stat
 
 기존에 별도로 켠 Bringup·SLAM·Nav2와 겹치지 않게 정리한 뒤, 로봇에서
 `cloud.launch.py`로 서비스 웹([malbut_web](../malbut_web/README.md))에 연결하고
-웹의 **로봇 기능**에서 진행한다([실기기 클라우드 연결](../README_CLOUD.md)).
+웹의 **로봇 기능**에서 진행한다([실기기 클라우드 연결](../malbut_test/README_CLOUD.md)).
 연결만으로는 다른 노드를 켜거나 움직이지 않는다. 웹과의 1초 연락은 이 상주 프로그램
 (`robot_cloud_sync`) 하나이고, 홈캠의 heartbeat도 로봇 상태 업로드에 실어 나른다(2026-10-12,
 `/malbut/homecam/heartbeat/request`·`reply`). 상주 프로그램을 끄면 그 프로그램이 켠 Bringup도 꺼진다. LAN 테스트 패널

@@ -315,7 +315,8 @@ def main(argv=None):
         'MALBUT_FALL_POSE_PYTHON', str(cache / 'malbut_fall_pose/runtime/bin/python')))
     parser.add_argument('--probe', action='store_true',
                         help='Load local dependencies/models without images, ROS init or Cloud.')
-    parser.add_argument('--pose-execution-provider', choices=('auto', 'cpu', 'cuda'), default='auto',
+    parser.add_argument('--pose-execution-provider',
+                        choices=('auto', 'cpu', 'cuda', 'tensorrt'), default='auto',
                         help='Match Bringup; use cuda to require a working CUDA session.')
     parser.add_argument('--pose-intra-op-num-threads', type=int, default=2)
     parser.add_argument('--pose-allow-spinning', choices=('true', 'false'), default='false')

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from .onnx_session import create_session
+from .trt_session import TensorRTSession, engine_path_for
 
 
 COCO_KEYPOINT_NAMES = (
@@ -96,6 +97,40 @@ class PersonPoseEstimator:
             raise FileNotFoundError(
                 f"YOLO pose ONNX model not found: {model_path!r}"
             )
+        # A prebuilt TensorRT engine beside the model replaces ONNX Runtime:
+        # same GPU, about a third less memory. 'auto' uses it only when the
+        # engine was built for a model no newer than it; 'tensorrt' requires it.
+        self._session = None
+        self.tensorrt_fallback_reason = ''
+        engine = engine_path_for(path)
+        if execution_provider == 'tensorrt' or (
+                execution_provider == 'auto' and engine.is_file()):
+            try:
+                if engine.is_file() and engine.stat().st_mtime < path.stat().st_mtime:
+                    raise RuntimeError(f'TensorRT engine is older than the model: {engine}')
+                session = TensorRTSession(engine)
+                if (session.input_shape != [1, 3, input_size, input_size]
+                        or len(session.output_shape) != 3 or session.output_shape[0] != 1
+                        or 57 not in session.output_shape[1:]):
+                    session.close()
+                    raise ValueError('expected fixed-size YOLO26 end-to-end pose engine')
+                self._session, self.execution_provider = session, 'tensorrt'
+                self._input_name = session.input_name
+            except Exception as error:
+                if execution_provider == 'tensorrt':
+                    raise RuntimeError(
+                        f'cannot load TensorRT pose engine: {error}') from error
+                self.tensorrt_fallback_reason = f'{type(error).__name__}: {error}'
+        if self._session is None:
+            self._load_onnx(path, input_size, execution_provider,
+                            intra_op_num_threads, allow_spinning)
+        self._confidence = confidence_threshold
+        self._keypoint_threshold = keypoint_threshold
+        self._input_size = input_size
+        self._keep_aspect = keep_aspect
+
+    def _load_onnx(self, path, input_size, execution_provider,
+                   intra_op_num_threads, allow_spinning) -> None:
         try:
             import onnxruntime as ort
         except ImportError as error:
@@ -118,10 +153,6 @@ class PersonPoseEstimator:
             raise RuntimeError(
                 f"cannot load YOLO pose ONNX model: {error}"
             ) from error
-        self._confidence = confidence_threshold
-        self._keypoint_threshold = keypoint_threshold
-        self._input_size = input_size
-        self._keep_aspect = keep_aspect
 
     def estimate(self, bgr_frame: np.ndarray) -> Optional[PersonPose]:
         """Compatibility API: return the strongest qualifying pose."""

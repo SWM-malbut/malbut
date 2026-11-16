@@ -83,6 +83,10 @@ class HomecamDetectorNode(Node):
                 f"spinning={self._config.pose_allow_spinning}, "
                 f"opencv_threads={self._config.pose_opencv_num_threads}"
             )
+            if self._pose_estimator.tensorrt_fallback_reason:
+                self.get_logger().warning(
+                    'TensorRT pose engine was not used; running ONNX Runtime instead: '
+                    f'{self._pose_estimator.tensorrt_fallback_reason}')
             if (self._config.pose_execution_provider == 'auto'
                     and self._pose_estimator.execution_provider == 'cpu'):
                 self.get_logger().warning(
