@@ -45,6 +45,8 @@ class _Request:
     audio_id: str = ''
     prepared_id: str = ''
     generation_id: str = ''
+    piper_speed: Optional[float] = None
+    volume_percent: int = 100
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -62,7 +64,8 @@ class SpeechRuntime:
 
     def __init__(self, synthesizer, player_factory, on_status, logger=None, *,
                  max_pending_requests=32, pending_timeout_s=0.0,
-                 clock=monotonic, prerecorded=None, prefetch_enabled=False):
+                 clock=monotonic, prerecorded=None, prefetch_enabled=False,
+                 voice_settings=lambda: (None, 100)):
         if type(max_pending_requests) is not int or max_pending_requests < 1:
             raise ValueError('max_pending_requests must be a positive integer')
         if (isinstance(pending_timeout_s, bool)
@@ -72,6 +75,7 @@ class SpeechRuntime:
             raise ValueError('pending_timeout_s must be finite and nonnegative; zero disables expiry')
         self._synthesizer = synthesizer
         self._prerecorded = prerecorded
+        self._voice_settings = voice_settings
         self._player_factory = player_factory
         self._on_status = on_status
         self._logger = logger or logging.getLogger(__name__)
@@ -146,11 +150,14 @@ class SpeechRuntime:
                     return playback_id
                 return None
             now = self._clock()
+            # Snapshot committed ROS parameters on the request callback thread.
+            speed, volume = self._voice_settings()
             request = _Request(
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
                 validate, request_type=request_type, interim=interim,
                 request_id=correlated_id, audio_id=audio_id,
+                piper_speed=speed, volume_percent=volume,
             )
             key = preparation_key(correlated_id, generation_id, prepared_id)
             if (self._prefetch is not None and key is not None
@@ -237,7 +244,8 @@ class SpeechRuntime:
                     or self._active is not None or self._pending
                     or request_id in self._finalized_request_ids):
                 return False
-            accepted = self._prefetch.request(key, text)
+            speed, _ = self._voice_settings()
+            accepted = self._prefetch.request(key, text, piper_speed=speed)
             self._condition.notify_all()
             return accepted
 
@@ -459,6 +467,8 @@ class SpeechRuntime:
             if job is not None:
                 audio = None
                 try:
+                    if job.piper_speed is not None:
+                        self._synthesizer.set_speed(job.piper_speed)
                     audio = self._synthesizer.prepare_first(
                         job.text, job.cancel, max_bytes=MAX_PREPARED_BYTES)
                 except Exception as error:
@@ -498,6 +508,8 @@ class SpeechRuntime:
                 source = self._prerecorded if request.audio_id else self._synthesizer
                 if source is None:
                     raise ValueError('prerecorded audio is not configured')
+                if not request.audio_id and request.piper_speed is not None:
+                    self._synthesizer.set_speed(request.piper_speed)
                 prepared = None
                 if self._prefetch is not None and request.prepared_id:
                     with self._condition:
@@ -530,6 +542,8 @@ class SpeechRuntime:
                         break
                     if not has_audio and request.validate is not None:
                         request.validate()
+                    if request.volume_percent != 100:
+                        audio = audio * (request.volume_percent / 100)
                     player.write(audio, sample_rate)
                     has_audio = True
                 if not request.cancel.is_set():

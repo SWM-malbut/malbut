@@ -188,9 +188,17 @@ def runtime(monkeypatch, tmp_path):
         def __init__(self, name):
             state.calls['node_name'] = name
 
-        def declare_parameter(self, name, default):
+        def declare_parameter(self, name, default, *, ignore_override=False):
             state.calls.setdefault('defaults', {})[name] = default
+            if ignore_override:
+                state.parameters[name] = default
             return SimpleNamespace(value=state.parameters.get(name, default))
+
+        def get_parameter(self, name):
+            return SimpleNamespace(value=state.parameters.get(name, state.calls['defaults'][name]))
+
+        def add_on_set_parameters_callback(self, callback):
+            state.set_parameters = callback
 
         def get_logger(self):
             return logger
@@ -263,6 +271,9 @@ def runtime(monkeypatch, tmp_path):
             state.pipeline_args = kwargs
             state.pipeline = self
             self.input_has_aec = kwargs['input_has_aec']
+            self.command_stream = SimpleNamespace(
+                settings=kwargs['settings'],
+                set_next_turn_timing=lambda *timing: state.calls.setdefault('timings', []).append(timing))
             self.phase = 'idle'
             self.pending_addressee = None
             self.session = SimpleNamespace(
@@ -380,7 +391,7 @@ def runtime(monkeypatch, tmp_path):
                 VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
         ),
         'std_msgs.msg': SimpleNamespace(String=SimpleNamespace),
-        'rcl_interfaces.msg': SimpleNamespace(Log=SimpleNamespace),
+        'rcl_interfaces.msg': SimpleNamespace(Log=SimpleNamespace, SetParametersResult=SimpleNamespace),
         'malbut_interfaces.msg': state.messages,
         'malbut_interfaces.srv': state.services,
         'pvporcupine': None,
@@ -1384,3 +1395,73 @@ def test_explicit_endpoint_silence_floor_reaches_pipeline(runtime, minimum):
     runtime.parameters['endpoint_min_silence_s'] = minimum
     assert main() == 0
     assert runtime.pipeline_args['endpoint_min_silence_s'] == minimum
+
+
+def test_live_turn_timing_follows_committed_atomic_parameters(runtime, monkeypatch):
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', lambda *_: (None, object()))
+    attempts = iter([
+        ({'voice_profile_version': 1, 'endpoint_min_silence_s': 2.0, 'silence_timeout_s': 5.0},
+         True, True),
+        ({'silence_timeout_s': 1.2}, False, False),  # Below the committed 2.0 s floor.
+        ({'endpoint_min_silence_s': .4}, True, False),  # Another ROS callback vetoes this.
+        ({'endpoint_min_silence_s': .6}, True, True),
+        ({'endpoint_min_silence_s': .8, 'silence_timeout_s': 2.0}, True, True),
+    ])
+
+    def spin():
+        attempt = next(attempts, None)
+        if attempt is None:
+            raise KeyboardInterrupt
+        changes, valid, committed = attempt
+        result = runtime.set_parameters([SimpleNamespace(name=k, value=v) for k, v in changes.items()])
+        assert result.successful is valid
+        if committed:
+            runtime.parameters.update(changes)
+        if changes == {'endpoint_min_silence_s': .6}:
+            # Non-atomic ROS clients may attempt another write in this same spin.
+            vetoed = runtime.set_parameters([SimpleNamespace(name='silence_timeout_s', value=3.0)])
+            assert vetoed.successful  # A later validator rejects it before ROS commits.
+
+    runtime.on_spin = spin
+    assert main([]) == 0
+    assert [(m, s.silence_timeout_s, p) for m, s, p in runtime.calls['timings']] == [
+        (2.0, 5.0, .4), (.6, 5.0, .4), (.8, 2.0, .4)]
+
+
+@pytest.mark.parametrize('version', [0, 2, True, 1.0, '1'])
+def test_profile_protocol_rejects_incompatible_version_atomically(runtime, version):
+    runtime.parameters.update(turn_detection='legacy', voice_profile_version=2)
+    assert main() == 0
+    assert runtime.parameters['voice_profile_version'] == 1
+    result = runtime.set_parameters([
+        SimpleNamespace(name='endpoint_min_silence_s', value=.8),
+        SimpleNamespace(name='voice_profile_version', value=version)])
+    assert not result.successful and 'voice_profile_version' in result.reason
+    assert 'timings' not in runtime.calls
+
+
+@pytest.mark.parametrize('config,minimum,fallback,reason', [
+    ({}, .39, 2.0, '0.4 and 2.0'), ({}, True, 2.0, '0.4 and 2.0'),
+    ({}, 2.01, 3.0, '0.4 and 2.0'), ({}, .8, 1.19, '1.2 and 5.0'),
+    ({}, .8, 5.01, '1.2 and 5.0'), ({}, .8, float('nan'), '1.2 and 5.0'),
+    ({'max_buffer_s': 4.0}, 1.0, 4.0, 'buffer limit'),
+    ({'max_utterance_s': 4.0}, 1.0, 4.0, 'utterance limit'),
+    ({'endpoint_predecode_s': .9}, .8, 4.0, 'predecode'),
+])
+def test_invalid_live_turn_timing_rejects_both_values(runtime, config, minimum, fallback, reason):
+    runtime.parameters.update(turn_detection='legacy', **config)
+    assert main() == 0
+    result = runtime.set_parameters([
+        SimpleNamespace(name='endpoint_min_silence_s', value=minimum),
+        SimpleNamespace(name='silence_timeout_s', value=fallback)])
+    assert not result.successful and reason in result.reason
+    assert 'timings' not in runtime.calls
+
+
+def test_live_turn_timing_respects_missing_adaptive_model_hold(runtime, monkeypatch):
+    def unavailable(*_):
+        raise FileNotFoundError
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', unavailable)
+    assert main() == 0
+    result = runtime.set_parameters([SimpleNamespace(name='endpoint_min_silence_s', value=.8)])
+    assert not result.successful and 'Smart Turn unavailable' in result.reason

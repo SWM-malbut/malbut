@@ -1,5 +1,6 @@
 """ROS entry point for a microphone-driven STT publisher."""
 
+from dataclasses import replace
 from pathlib import Path
 from math import isfinite
 import os
@@ -19,6 +20,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     # Keep hardware/ROS/SDK imports out of pure Python collection and tests.
     try:
         import rclpy
+        from rcl_interfaces.msg import SetParametersResult
         from rclpy.node import Node
         from rclpy.qos import (
             DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
@@ -91,6 +93,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         max_utterance_s = parameter('max_utterance_s', 0.0)
         max_buffer_s = parameter('max_buffer_s', 60.0)
         endpoint_predecode_s = parameter('endpoint_predecode_s', 0.4)
+        # The bridge includes this version in its atomic write to distinguish older STT nodes.
+        node.declare_parameter('voice_profile_version', 1, ignore_override=True)
         turn_detection = parameter('turn_detection', 'adaptive')
         endpoint_min_silence_s = parameter(
             'endpoint_min_silence_s', 0.8 if turn_detection == 'adaptive' else 1.8)
@@ -179,6 +183,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'initializing_turn_detection'
         from malbut_stt.turn_detection import load_guards
+        adaptive_unavailable = False
         try:
             start_qualifier, smart_turn = load_guards(turn_detection, turn_model_directory)
         except Exception as error:
@@ -188,6 +193,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             # have not provisioned the optional, pinned local model/runtime.
             # Do not apply the shorter hold using lexical evidence alone.
             turn_detection = 'legacy'
+            adaptive_unavailable = True
             start_qualifier, smart_turn = None, None
             endpoint_min_silence_s = max(1.8, endpoint_min_silence_s)
             node.get_logger().warning(
@@ -530,6 +536,35 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                                    if settings.silence_timeout_s > 1.0 else 1.0),
         )
 
+        timing_names = ('endpoint_min_silence_s', 'silence_timeout_s')
+        validated_timings = {}
+
+        def validate_turn_timing(parameters):
+            if any(p.name == 'voice_profile_version' and (type(p.value) is not int or p.value != 1)
+                   for p in parameters):
+                return SetParametersResult(successful=False, reason='voice_profile_version must be integer 1')
+            changes = {p.name: p.value for p in parameters if p.name in timing_names}
+            if changes:
+                minimum, fallback = (
+                    changes[name] if name in changes else node.get_parameter(name).value
+                    for name in timing_names)
+                try:
+                    if type(minimum) not in (float, int) or not 0.4 <= minimum <= 2.0:
+                        raise ValueError('endpoint_min_silence_s must be between 0.4 and 2.0')
+                    if type(fallback) not in (float, int) or not 1.2 <= fallback <= 5.0:
+                        raise ValueError('silence_timeout_s must be between 1.2 and 5.0')
+                    if not endpoint_predecode_s <= minimum <= fallback:
+                        raise ValueError('minimum silence must be between predecode and fallback')
+                    if adaptive_unavailable and minimum < 1.8:
+                        raise ValueError('Smart Turn unavailable: minimum silence must be at least 1.8')
+                    updated = replace(pipeline.command_stream.settings, silence_timeout_s=fallback)
+                except ValueError as error:
+                    return SetParametersResult(successful=False, reason=str(error))
+                validated_timings[(minimum, fallback)] = updated
+            return SetParametersResult(successful=True)
+
+        node.add_on_set_parameters_callback(validate_turn_timing)
+
         def playback_status(message):
             if diagnostics is not None:
                 diagnostics.event('tts_playback', playback_id=message.playback_id,
@@ -634,6 +669,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             poll_requests()
             if rclpy.ok():
                 rclpy.spin_once(node, timeout_sec=0.02)
+                if validated_timings:
+                    # ROS may validate several changes during a single spin and veto any of them.
+                    committed = tuple(node.get_parameter(name).value for name in timing_names)
+                    updated = validated_timings.get(committed)
+                    validated_timings.clear()
+                    if updated is not None:
+                        pipeline.command_stream.set_next_turn_timing(
+                            committed[0], updated, endpoint_predecode_s)
         return 0
     except KeyboardInterrupt:
         return 0

@@ -46,6 +46,9 @@ def fake_ros(monkeypatch):
         def declare_parameter(self, name, default):
             self.parameters.setdefault(name, default)
 
+        def add_on_set_parameters_callback(self, callback):
+            self.validate_parameters = callback
+
         def get_parameter(self, name):
             return SimpleNamespace(value=self.parameters[name])
 
@@ -96,6 +99,9 @@ def fake_ros(monkeypatch):
             return True
 
     monkeypatch.setitem(sys.modules, 'rclpy', ModuleType('rclpy'))
+    monkeypatch.setitem(sys.modules, 'rcl_interfaces.msg', SimpleNamespace(
+        SetParametersResult=SimpleNamespace,
+    ))
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(
         Node=FakeNode,
     ))
@@ -313,6 +319,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
     node = tts_node.create_tts_node()
     from malbut_tts.prerecorded import PrerecordedAudio
     assert isinstance(received.pop('prerecorded'), PrerecordedAudio)
+    assert received.pop('voice_settings')() == (None, 100)
     assert received == dict(
         path='/local/cuda-model', backend='qwen-cuda', cuda_dtype='float16',
         cuda_sentence_mode=True, sentence_max_chars=80,
@@ -361,6 +368,7 @@ def test_explicit_openai_node_needs_no_model_and_reuses_ros_contract(
     node = tts_node.create_tts_node()
     from malbut_tts.prerecorded import PrerecordedAudio
     assert isinstance(received.pop('prerecorded'), PrerecordedAudio)
+    assert received.pop('voice_settings')() == (None, 100)
     assert received == {
         'options': {'model': model, 'voice': voice, 'timeout_seconds': timeout},
         'synth': 'api-synthesizer', 'player': None,
@@ -380,20 +388,48 @@ def test_default_node_warms_local_voice_without_api_key(fake_ros, monkeypatch):
     from unittest.mock import Mock
 
     engine = Mock(sample_rate=22050)
+    runtime_settings = {}
+
+    def runtime(synth, player, on_status, **kwargs):
+        runtime_settings.update(kwargs)
+        return FakeRuntime(on_status)
+
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', None)
     monkeypatch.setitem(sys.modules, 'malbut_tts.live_piper_synthesis', SimpleNamespace(
         LivePiperSynthesizer=lambda *a, **k: engine))
     monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
-        SpeechRuntime=lambda synth, player, on_status, **kwargs: FakeRuntime(on_status)))
+        SpeechRuntime=runtime))
     node = tts_node.create_tts_node()
     assert node.parameters['backend'] == 'piper'
     assert node.parameters['piper_threads'] == 3
     assert node.parameters['piper_speed'] == 0.9
     assert node.parameters['piper_max_chars'] == 40
+    assert runtime_settings['voice_settings']() == (0.9, 100)
+    node.parameters.update(piper_speed=1.25, speech_volume_percent=40)
+    assert runtime_settings['voice_settings']() == (1.25, 40)
     engine.load.assert_called_once_with()
     assert any('CPU only' in line for line in fake_ros.logs)
     node.destroy_node()
+
+
+@pytest.mark.parametrize('backend,speed,volume,accepted', [
+    ('piper', 0.5, 0, True), ('piper', 2.0, 100, True),
+    ('piper', float('nan'), 40, False), ('piper', 2.01, 40, False),
+    ('piper', 1.0, 101, False), ('piper', 1.0, True, False),
+    ('openai', 0.9, 30, True), ('openai', 1.0, 30, False),
+])
+def test_validate_atomic_voice_parameters(fake_ros, backend, speed, volume, accepted):
+    fake_ros.parameters.update(backend=backend)
+    node = tts_node.create_tts_node(FakeRuntime)
+    try:
+        result = node.validate_parameters([
+            SimpleNamespace(name='speech_volume_percent', value=volume),
+            SimpleNamespace(name='piper_speed', value=speed),
+        ])
+        assert result.successful is accepted
+    finally:
+        node.destroy_node()
 
 
 def test_help_and_missing_ros_need_no_model(monkeypatch, capsys):

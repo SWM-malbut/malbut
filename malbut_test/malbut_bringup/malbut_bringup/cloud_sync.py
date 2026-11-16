@@ -27,6 +27,7 @@ import yaml
 
 from .navigation import escape_point, NavigationError, Navigator
 from .drive_mode import FOLLOW_DISTANCE_M, robot_drive_mode
+from .voice_profile import VoiceProfileRelay
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
 )
@@ -677,7 +678,7 @@ def map_payload(metadata, png, runtime, zones=None, user_map=None, map_revision=
 class CloudSync:
     """Poll off the ROS executor and report dispatch separately from completion."""
 
-    def __init__(self, bridge, client, *, interval=1.0, homecam=None):
+    def __init__(self, bridge, client, *, interval=1.0, homecam=None, voice=None):
         """Prepare an idle bounded worker without starting any robot process."""
         if not 1.0 <= interval <= 60.0:
             raise ValueError('Cloud interval must be between 1 and 60 seconds')
@@ -685,6 +686,7 @@ class CloudSync:
         self.client = client
         self.interval = interval
         self.homecam = homecam
+        self.voice = voice
         self.stop_event = threading.Event()
         self.pending = OrderedDict()
         self.seen = OrderedDict()
@@ -897,6 +899,10 @@ class CloudSync:
             navigation = self.navigator.target(snapshot.get('requests', []),
                                                snapshot.get('system'))
             payload = state_payload(snapshot, info, self.maps, navigation=navigation)
+            if self.voice is not None:
+                applied = self.voice.advance()
+                if applied is not None:
+                    payload['appliedVoiceProfile'] = applied
             homecam = self.homecam.take() if self.homecam is not None else None
             if homecam is not None:
                 payload['homecam'] = homecam[1]
@@ -912,6 +918,8 @@ class CloudSync:
                 body, failure = homecam_answer(reply)
                 self.homecam.answer(homecam[0], requested_at, time.monotonic(),
                                     body=body, failure=failure)
+            if self.voice is not None:
+                self.voice.receive(reply)
             self.last_state_at = now
             closed = closed_fall_incidents(reply)
             if closed:
@@ -1001,7 +1009,8 @@ def main(args=None):
         except BlockingIOError:
             raise ValueError('A cloud bridge already owns this device credential') from None
         sync = CloudSync(bridge, CloudClient(backend, token), interval=float(interval),
-                         homecam=HomecamHeartbeatRelay(bridge.node))
+                         homecam=HomecamHeartbeatRelay(bridge.node),
+                         voice=VoiceProfileRelay(bridge.node))
         sync.thread.start()
         bridge.node.get_logger().info('Real robot cloud bridge started; no motion requested')
         executor.spin()

@@ -176,7 +176,6 @@ class DialoguePipeline:
                 or not math.isfinite(endpoint_min_silence_s)
                 or not 0.2 <= endpoint_min_silence_s <= 2.0):
             raise ValueError('endpoint_min_silence_s must be between 0.2 and 2.0 seconds')
-        self.endpoint_min_silence_s = endpoint_min_silence_s
         if endpoint_preempt_s is not None and (
                 type(endpoint_preempt_s) not in (int, float)
                 or not math.isfinite(endpoint_preempt_s)
@@ -197,6 +196,7 @@ class DialoguePipeline:
         self.command_stream = StreamingUtteranceCollector(
             observe_vad(is_speech, kind='command') if callable(observe_vad) else is_speech,
             settings=settings,
+            endpoint_min_silence_s=endpoint_min_silence_s,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
                               else endpoint_min_silence_s
                               if settings.silence_timeout_s > endpoint_min_silence_s else None),
@@ -1411,7 +1411,8 @@ class DialoguePipeline:
                     is_complete_korean_utterance(text) and (
                         self.smart_turn is None or self._smart_turn_result == (
                             (generation, uid, revision), True)))
-        if (self.command_stream.collector.silent_frames * 0.02 >= self.endpoint_min_silence_s
+        observed_silence_s = self.command_stream.collector.silent_frames * 0.02
+        if (observed_silence_s >= self.command_stream.endpoint_min_silence_s
                 and self._usable_text(text, error_name) and complete):
             event = self.command_stream.finish_endpoint(revision)
             if event is not None:

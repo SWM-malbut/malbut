@@ -15,6 +15,20 @@ def collector(**kwargs):
     return StreamingUtteranceCollector(lambda frame, _: any(frame), **kwargs)
 
 
+@pytest.mark.parametrize('started_frames', [1, 4])
+def test_live_timing_preserves_current_onset_and_handles_next_turn_in_same_chunk(started_frames):
+    stream = collector(settings=CaptureSettings(silence_timeout_s=2.0), early_endpoint_s=.4)
+    stream.feed(VOICE * started_frames)
+    stream.set_next_turn_timing(2.0, CaptureSettings(silence_timeout_s=5.0), .4)
+    events = stream.feed(VOICE * (4 - started_frames) + QUIET * 100 + SECOND * 4 + QUIET * 249)
+    completed, = [event for event in events if event.status == 'complete']
+    assert completed.pcm == VOICE * 4 + QUIET * 100
+    assert stream.endpoint_min_silence_s == 2.0
+    assert [e.silence_s for e in events if e.status == 'endpoint_check'] == [.4, .4]
+    completed, = stream.feed(QUIET)
+    assert completed.pcm == SECOND * 4 + QUIET * 250
+
+
 def test_utterance_finishes_after_two_seconds_of_silence():
     stream = collector()
     assert [event.status for event in stream.feed(VOICE * 4)] == ['speech_started']

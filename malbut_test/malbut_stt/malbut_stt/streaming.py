@@ -16,6 +16,7 @@ class StreamingUtteranceCollector:
     def __init__(self, is_speech: Callable[[bytes, int], bool], *,
                  settings: CaptureSettings | None = None,
                  early_endpoint_s: float | None = None,
+                 endpoint_min_silence_s: float = 1.0,
                  partial_interval_s: float | None = None,
                  start_qualifier=None) -> None:
         self.settings = settings or CaptureSettings(silence_timeout_s=2.0)
@@ -25,6 +26,8 @@ class StreamingUtteranceCollector:
         ):
             raise ValueError('early endpoint must precede the fallback silence timeout')
         self.early_endpoint_s = early_endpoint_s
+        self.endpoint_min_silence_s = endpoint_min_silence_s
+        self._next_turn_timing = None
         if partial_interval_s is not None and (
             isinstance(partial_interval_s, bool) or not math.isfinite(partial_interval_s)
             or partial_interval_s <= 0
@@ -61,6 +64,10 @@ class StreamingUtteranceCollector:
         self.quiet_frames = 0
         self.collector = self._new_collector()
         self._candidate_revision = None
+
+    def set_next_turn_timing(self, minimum_s, settings, predecode_s):
+        """Stage validated command timings until the next unvoiced boundary."""
+        self._next_turn_timing = (minimum_s, settings, predecode_s)
 
     def endpoint_is_current(self, revision: int) -> bool:
         """A resumed voice, reset or completed recording invalidates a candidate."""
@@ -114,6 +121,12 @@ class StreamingUtteranceCollector:
                     self.collector = self._new_collector()
                 continue
 
+            if (self._next_turn_timing is not None and not self.collector.started
+                    and not self.collector.candidate_frames):
+                self.endpoint_min_silence_s, self.settings, self.early_endpoint_s = (
+                    self._next_turn_timing)
+                self.collector.settings = self.settings
+                self._next_turn_timing = None
             started = self.collector.started
             result = self.collector.feed(frame, start_blocked=frame_blocked)
             self._revision = self.collector.revision

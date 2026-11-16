@@ -3887,6 +3887,11 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-summary-grid > div > strong {
   white-space: pre-line;
 }
+.voice-settings-fields {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+}
 .managed-robot-controls label {
   display: grid;
   gap: 6px;

@@ -20,6 +20,7 @@ def create_tts_node(runtime_factory=None):
     """Create a TTS node, optionally injecting runtime_factory(on_status)."""
     from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest
     from malbut_interfaces.srv import ControlSpeechPlayback
+    from rcl_interfaces.msg import SetParametersResult
     from rclpy.node import Node
     from rclpy.qos import (
         DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
@@ -40,7 +41,12 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'piper')
                 self.declare_parameter('piper_threads', 3)
+                self._fixed_piper_speed = None
+                self.add_on_set_parameters_callback(self._validate_voice_parameters)
                 self.declare_parameter('piper_speed', 0.9)
+                if self.get_parameter('backend').value != 'piper':
+                    self._fixed_piper_speed = self.get_parameter('piper_speed').value
+                self.declare_parameter('speech_volume_percent', 100)
                 self.declare_parameter('piper_max_chars', 40)
                 self.declare_parameter('piper_prefetch_enabled', False)
                 self._prefetch_enabled = self.get_parameter('piper_prefetch_enabled').value
@@ -86,6 +92,22 @@ def create_tts_node(runtime_factory=None):
             except Exception:
                 self.destroy_node()
                 raise
+
+        def _validate_voice_parameters(self, parameters):
+            for parameter in parameters:
+                value = parameter.value
+                if parameter.name == 'piper_speed':
+                    if type(value) is not float or not 0.5 <= value <= 2.0:
+                        return SetParametersResult(
+                            successful=False, reason='piper_speed must be 0.5 through 2.0')
+                    if self._fixed_piper_speed is not None and value != self._fixed_piper_speed:
+                        return SetParametersResult(
+                            successful=False, reason='piper_speed requires the Piper backend')
+                if parameter.name == 'speech_volume_percent' and (
+                        type(value) is not int or not 0 <= value <= 100):
+                    return SetParametersResult(
+                        successful=False, reason='speech_volume_percent must be an integer 0–100')
+            return SetParametersResult(successful=True)
 
         def _create_runtime(self):
             model_path = self.get_parameter('model_path').value
@@ -141,6 +163,11 @@ def create_tts_node(runtime_factory=None):
                 key = getattr(synthesizer, 'key', None)
                 if hasattr(key, 'add_listener'):
                     self._watch_key(key)
+
+            def voice_settings():
+                speed = self.get_parameter('piper_speed').value if backend == 'piper' else None
+                return speed, self.get_parameter('speech_volume_percent').value
+
             return SpeechRuntime(
                 synthesizer,
                 lambda on_state, cancel_event: StreamingPlayer(
@@ -152,6 +179,7 @@ def create_tts_node(runtime_factory=None):
                 max_pending_requests=self.get_parameter('max_pending_requests').value,
                 pending_timeout_s=self.get_parameter('pending_timeout_s').value,
                 prerecorded=PrerecordedAudio(self.get_parameter('audio_directory').value or None),
+                voice_settings=voice_settings,
                 **({'prefetch_enabled': True} if self._prefetch_enabled else {}),
             )
 

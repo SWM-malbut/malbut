@@ -26,14 +26,23 @@ class LivePiperSynthesizer(PiperSynthesizer):
     """Normalize once, then synthesize bounded segments lazily at the selected rate."""
 
     def __init__(self, model_path, *, threads=3, speed=0.9, max_chars=40):
-        if (type(speed) not in (int, float) or not math.isfinite(speed)
-                or not 0.5 <= speed <= 2.0):
-            raise ValueError('Piper speed must be finite and between 0.5 and 2.0')
         if type(max_chars) is not int or not 16 <= max_chars <= 512:
             raise ValueError('Piper max_chars must be an integer from 16 through 512')
         super().__init__(model_path, threads=threads)
-        self._speed = speed
+        self._speed = None
+        self.set_speed(speed)
         self._max_chars = max_chars
+
+    def set_speed(self, speed):
+        """Apply the next request's timing without reloading the ONNX voice."""
+        if (type(speed) not in (int, float) or not math.isfinite(speed)
+                or not 0.5 <= speed <= 2.0):
+            raise ValueError('Piper speed must be finite and between 0.5 and 2.0')
+        with self._lock:
+            if speed != self._speed:
+                self._speed = speed
+                if self._voice is not None:
+                    self._synthesis.length_scale = self._voice.config.length_scale / speed
 
     def load(self):
         with self._lock:

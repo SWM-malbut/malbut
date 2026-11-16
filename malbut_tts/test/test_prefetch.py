@@ -66,6 +66,34 @@ def test_default_disabled_does_not_prepare_or_create_player():
         h.runtime.close()
 
 
+@pytest.mark.parametrize('new_speed,expected_lengths', [
+    (0.9, [1.0, 1.0]), (1.8, [1.0, 0.5, 0.5]),
+])
+def test_prepared_audio_matches_final_speed_and_uses_final_volume(new_speed, expected_lengths):
+    lengths = []
+
+    def synthesize(text, config):
+        lengths.append(config.length_scale)
+        yield SimpleNamespace(audio_float_array=np.ones(32, dtype=np.float32))
+
+    synth, _ = engine(synthesize)
+    synth._voice.config = SimpleNamespace(length_scale=0.9)
+    synth._synthesis = SimpleNamespace(length_scale=1.0)
+    settings = (0.9, 100)
+    h = PrefetchHarness(synth, prefetch_enabled=True, voice_settings=lambda: settings)
+    try:
+        assert h.runtime.prepare(PREFIX, **KEY)
+        ready(h)
+        settings = (new_speed, 25)
+        player = finish(h, **KEY)
+        assert lengths == pytest.approx(expected_lengths)
+        assert len(player.audio) == 2
+        for samples, _ in player.audio:
+            np.testing.assert_allclose(samples, 0.25)
+    finally:
+        h.runtime.close()
+
+
 def test_silent_first_segment_is_consumed_once_without_duplicate_audio():
     synth, calls = engine()
     h = PrefetchHarness(synth, prefetch_enabled=True)

@@ -12,8 +12,10 @@ from malbut_interfaces.msg import (  # noqa: E402
     SpeechPlaybackStatus, SpeechPreparation, SpeechRequest,
 )
 from malbut_interfaces.srv import ControlSpeechPlayback  # noqa: E402
+from rcl_interfaces.srv import SetParametersAtomically  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.parameter import Parameter  # noqa: E402
 from rclpy.qos import (  # noqa: E402
     DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
 )
@@ -45,6 +47,33 @@ class ControlledRuntime:
 
     def close(self):
         self.closed = True
+
+
+def test_atomic_voice_settings_service_keeps_previous_pair_on_rejection():
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    tts = tts_node.create_tts_node(ControlledRuntime)
+    peer = Node('tts_voice_settings_test_peer')
+    try:
+        executor.add_node(tts)
+        executor.add_node(peer)
+        client = peer.create_client(SetParametersAtomically, '/malbut_tts/set_parameters_atomically')
+        assert client.wait_for_service(timeout_sec=5)
+        for speed, volume, valid in [(1.25, 35, True), (1.5, 101, False)]:
+            parameters = [
+                Parameter('piper_speed', value=speed).to_parameter_msg(),
+                Parameter('speech_volume_percent', value=volume).to_parameter_msg(),
+            ]
+            future = client.call_async(SetParametersAtomically.Request(parameters=parameters))
+            executor.spin_until_future_complete(future, timeout_sec=5)
+            assert future.done() and future.result().result.successful is valid
+            assert tts.get_parameter('piper_speed').value == 1.25
+            assert tts.get_parameter('speech_volume_percent').value == 35
+    finally:
+        tts.destroy_node()
+        peer.destroy_node()
+        executor.shutdown(timeout_sec=0)
+        rclpy.shutdown()
 
 
 def test_generated_optional_prepare_is_silent_and_final_hint_reaches_runtime():

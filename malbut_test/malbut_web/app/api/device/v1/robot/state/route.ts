@@ -2,6 +2,7 @@ import { listClosedFallIncidentsForRobot } from "../../../../../../db/fall-revie
 import { storeRobotState } from "../../../../../../db/robot-map";
 import { parseRobotState, readRobotJson } from "../../../../../robot-contract";
 import { noStore, unauthorized } from "../../../../../api-response";
+import { parseVoiceProfile } from "../../../../../voice-profile";
 import { getRequestDevice } from "../../../../../device-auth";
 import { exchangeHomecamHeartbeat } from "../../../../../homecam-heartbeat";
 
@@ -14,10 +15,13 @@ export async function POST(request: Request) {
     const body = await readRobotJson(request, "state");
     const state = parseRobotState(body);
     if (!state) return noStore({ error: "로봇 상태 형식을 확인해 주세요." }, 400);
-    await storeRobotState(device.deviceId, state);
+    const applied = body && typeof body === "object" && "appliedVoiceProfile" in body
+      ? parseVoiceProfile(body.appliedVoiceProfile) : null;
+    const voiceProfile = await storeRobotState(device.deviceId, state, applied);
     const homecam = await homecamExchange(device.deviceId, body);
     return noStore({
       accepted: true, closedFallIncidents: await closedFallIncidents(device.deviceId),
+      ...(voiceProfile ? { voiceProfile } : {}),
       ...(homecam ? { homecam } : {}),
     }, 202);
   } catch (error) {
