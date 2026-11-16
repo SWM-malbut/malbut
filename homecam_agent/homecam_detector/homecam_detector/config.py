@@ -52,8 +52,8 @@ class DetectorConfig:
 def validate_config(config: DetectorConfig) -> List[str]:
     """Return every actionable configuration error."""
     errors: List[str] = []
-    if config.pose_execution_provider not in ('auto', 'cpu', 'cuda'):
-        errors.append('pose_execution_provider must be auto, cpu or cuda')
+    if config.pose_execution_provider not in ('auto', 'cpu', 'cuda', 'tensorrt'):
+        errors.append('pose_execution_provider must be auto, cpu, cuda or tensorrt')
     threads = config.pose_intra_op_num_threads
     if type(threads) is not int or not 0 <= threads <= 256:
         errors.append('pose_intra_op_num_threads must be an integer in [0, 256]')

@@ -991,6 +991,7 @@ def test_fall_python_uses_dedicated_runtime_even_with_legacy_cuda_dir(
       'fall_pose_allow_spinning': 'true', 'fall_pose_opencv_num_threads': '0'},
      ('cpu', 0, True, 0)),
     ({'fall_pose_execution_provider': 'cuda'}, ('cuda', 2, False, 1)),
+    ({'fall_pose_execution_provider': 'tensorrt'}, ('tensorrt', 2, False, 1)),
 ])
 def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, expected):
     module = _load('fall')

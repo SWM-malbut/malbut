@@ -201,7 +201,7 @@ bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh --g
 | --- | --- |
 | `fall_pose_model_path` | 위 ONNX 경로. 환경변수 `MALBUT_FALL_POSE_MODEL`로 변경 가능 |
 | `fall_pose_python_executable` | `~/.cache/malbut_fall_pose/runtime/bin/python`. `MALBUT_FALL_POSE_PYTHON`으로 변경 가능 |
-| `fall_pose_execution_provider` | `auto`: 실행 Python에 CUDA EP가 있으면 CUDA, 없으면 CPU + 경고. `cuda`는 GPU 필수, `cpu`는 CPU 고정 |
+| `fall_pose_execution_provider` | `auto`: 모델 옆에 TensorRT 엔진이 있으면 TensorRT, 없으면 실행 Python에 CUDA EP가 있을 때 CUDA, 그것도 없으면 CPU + 경고. `tensorrt`는 엔진 필수, `cuda`는 ONNX Runtime GPU 필수, `cpu`는 CPU 고정 |
 | `fall_pose_intra_op_num_threads` | `2` |
 | `fall_pose_allow_spinning` | `false` |
 | `fall_pose_opencv_num_threads` | `1` |
@@ -254,6 +254,19 @@ ros2 param get /malbut_fall_pose pose_opencv_num_threads      # 1
 아직 사용하지 않는 상태다. CPU 실행을 허용하지 않으려면 Bringup에
 `fall_pose_execution_provider:=cuda`를 추가한다. 기존 launch/YAML에 `cpu / 0 / true / 0`을
 명시했다면 제거하거나 새 값으로 바꾼다. 이 값들은 기본값보다 우선한다.
+TensorRT 엔진은 로봇마다 한 번, Bringup을 끈 상태에서 만든다(Orin NX에서 약 10분, 메모리 2 GB 이상).
+
+```bash
+~/.cache/malbut_fall_pose/runtime/bin/python \
+  ~/ros2_ws/src/malbut/homecam_agent/scripts/build_pose_trt_engine.py
+```
+
+엔진은 ONNX 옆에 `yolo26s-pose.trt-fp16.engine`으로 생기고, 만든 로봇의 TensorRT 버전과
+GPU에서만 쓸 수 있으므로 다른 로봇으로 복사하지 않는다. `auto`는 엔진이 있으면 TensorRT로
+실행하고 시작 로그에 `provider=tensorrt (requested=auto)`를 남긴다. 엔진이 모델보다
+오래됐거나 불러오지 못하면 경고를 남기고 ONNX Runtime으로 실행한다. 엔진을 지우면
+이전 방식으로 돌아간다.
+
 `fall_runtime.json`의 Cloud 설정과 Pose 실행 설정은 별개이며 실행 중 param 변경으로는
 추론 세션이 바뀌지 않는다.
 

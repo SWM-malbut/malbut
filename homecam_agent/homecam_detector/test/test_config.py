@@ -28,6 +28,7 @@ def test_model_execution_settings_use_tuned_defaults_and_validate_overrides():
         default, pose_execution_provider='cuda',
         pose_intra_op_num_threads=2, pose_allow_spinning=False, pose_opencv_num_threads=1)) == []
     assert validate_config(replace(default, pose_execution_provider='auto')) == []
+    assert validate_config(replace(default, pose_execution_provider='tensorrt')) == []
     for changes in ({'pose_execution_provider': 'invalid'}, {'pose_intra_op_num_threads': True},
                     {'pose_intra_op_num_threads': -1}, {'pose_opencv_num_threads': -1},
                     {'pose_allow_spinning': 'false'}, {'pose_intra_op_num_threads': 257}):

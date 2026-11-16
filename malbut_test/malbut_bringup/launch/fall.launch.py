@@ -53,8 +53,9 @@ def _setup(context):
         pose_threads = int(value('fall_pose_intra_op_num_threads'))
         cv_threads = int(value('fall_pose_opencv_num_threads'))
         pose_spinning = value('fall_pose_allow_spinning')
-        if (pose_provider not in ('auto', 'cpu', 'cuda') or not 0 <= pose_threads <= 256
-                or not 0 <= cv_threads <= 256 or pose_spinning not in ('true', 'false')):
+        if (pose_provider not in ('auto', 'cpu', 'cuda', 'tensorrt')
+                or not 0 <= pose_threads <= 256 or not 0 <= cv_threads <= 256
+                or pose_spinning not in ('true', 'false')):
             raise RuntimeError('Invalid fall pose execution options')
         depth_on = value('fall_depth_aligned_to_rgb') == 'true'
         try:

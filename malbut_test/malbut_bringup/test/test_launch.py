@@ -19,7 +19,6 @@ import pytest
 from malbut_bringup import launch_support
 
 ROOT = Path(__file__).parents[2]
-ROBOT = ROOT / 'malbut_test' if (ROOT / 'malbut_test').is_dir() else ROOT
 
 
 def _load(name):
@@ -80,7 +79,6 @@ def launch_module(tmp_path, monkeypatch):
 
 
 def _context(module, **overrides):
-    overrides.setdefault('resource_monitor', 'false')
     context = LaunchContext()
     context.launch_configurations.update(overrides)
     for action in module.generate_launch_description().entities:
@@ -176,6 +174,17 @@ def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
                            for child in action.get_sub_entities())
 
 
+@pytest.mark.parametrize('options, enabled', [
+    ({}, True), ({'scheduled_patrol_enabled': 'false'}, False),
+    ({'use_sim_time': 'true'}, False),
+])
+def test_daily_patrol_enabled_only_for_real_robot_launch(launch_module, options, enabled):
+    """Production defaults on; simulation and explicit opt-out never schedule motion."""
+    context = _context(launch_module, **options)
+    manager = _nodes(_core_actions(launch_module, context), 'system_manager')[0]
+    assert _parameters(context, manager)['scheduled_patrol_enabled'] is enabled
+
+
 def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
     """SHM is exactly 8 MiB; default UDP discovery and endpoint policies remain."""
     import xml.etree.ElementTree as ET
@@ -195,7 +204,7 @@ def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
     assert profile.find('dds:publisher', ns) is None
     assert profile.find('dds:subscriber', ns) is None
     assert path.read_bytes() == (
-        ROBOT / 'malbut_bringup/config/fastdds_camera.xml').read_bytes()
+        ROOT / 'malbut_test/malbut_bringup/config/fastdds_camera.xml').read_bytes()
 
 
 def _components(context, actions):
@@ -256,7 +265,7 @@ def test_nav2_profile_only_allows_send_buffer_growth_and_is_deployed():
     assert node.text == 'true'
     for relative in ('config/fastdds_nav2.xml', 'malbut_bringup/nav2_stack.py'):
         assert (ROOT / 'malbut_bringup' / relative).read_bytes() == (
-        ROBOT / 'malbut_bringup' / relative).read_bytes()
+            ROOT / 'malbut_test/malbut_bringup' / relative).read_bytes()
 
 
 def test_missing_nav2_package_fails_the_launch_by_name(launch_module, monkeypatch):
@@ -457,7 +466,7 @@ def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():
     import yaml
 
     source = ROOT / 'malbut_bringup/config'
-    deployed = ROBOT / 'malbut_bringup/config'
+    deployed = ROOT / 'malbut_test/malbut_bringup/config'
     config = yaml.safe_load((source / 'default_map.yaml').read_text())
     lines = (source / config['image']).read_text().splitlines()
     tokens = ' '.join(line for line in lines if not line.startswith('#')).split()
@@ -509,6 +518,7 @@ def test_optional_modules_can_all_be_disabled(launch_module):
     includes = _included_modules(module._setup(context))
     assert set(includes) == {'robot'}
     assert includes['robot']['restore_pose'] == 'false'
+    assert includes['robot']['scheduled_patrol_enabled'] == 'false'
     observer, = _nodes(module._setup(context), 'wait_for_robot')
     assert _parameters(context, observer)['speech'] is False
 
@@ -627,6 +637,21 @@ def test_application_topic_wiring_and_manual_input_are_preserved(launch_module):
     assert options['map_topic'] == '/mapping/map'
     assert options['base_frame'] == 'robot/base'
     assert options['camera_image_topic'] == '/camera/color'
+    assert options['camera_image_rectified'] == 'false'
+    assert options['depth_registered_frame'] == 'rgb_camera_link'
+    assert options['depth_scale_m'] == '0.001'
+    assert options['inspection_calibration_file'] == ''
+    context = _context(module, patrol_camera_image_rectified='true',
+                       patrol_depth_registered_frame='camera/optical',
+                       patrol_depth_scale_m='0.01',
+                       patrol_inspection_calibration_file='/simulation/inspection.json',
+                       patrol_inspection_analysis_timeout_s='45.0')
+    options = dict(_includes(module._setup(context))[0].launch_arguments)
+    assert options['camera_image_rectified'] == 'true'
+    assert options['depth_registered_frame'] == 'camera/optical'
+    assert options['depth_scale_m'] == '0.01'
+    assert options['inspection_calibration_file'] == '/simulation/inspection.json'
+    assert options['inspection_analysis_timeout_s'] == '45.0'
     module = _load('autoslam')
     context = _context(module, map_directory='/maps', robot_frame='robot/base')
     options = dict(_includes(module._setup(context))[0].launch_arguments)
@@ -708,6 +733,20 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
                 == modules['fall']['fall_bridge_runtime_id'])
 
 
+@pytest.mark.parametrize('speech', [True, False])
+def test_agent_local_parameters_apply_only_when_speech_runs(launch_module, speech):
+    config = Path.home() / '.config/malbut/agent.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('/**:\n  ros__parameters:\n    speech_prefetch_enabled: true\n')
+    module = _load('agent')
+    ids = {f'fall_{peer}_runtime_id': peer + '-id' for peer in ('manager', 'bridge', 'vlm')}
+    context = _context(module, speech_python_executable=sys.executable,
+                       agent_speech=str(speech).lower(), agent_fall_rules='true', **ids)
+    node, = _nodes(module._setup(context), 'agent_communication')
+    parameters = evaluate_parameters(context, node._Node__parameters)
+    assert (config in parameters) is speech
+
+
 @pytest.mark.parametrize('started,speech,rules', [
     ({'fall': '', 'speech': ''}, True, True),
     ({'fall': ''}, False, True),
@@ -732,6 +771,9 @@ def test_agent_runs_only_the_parts_whose_modules_started(launch_module, started,
     # Speech uses its own Python; the fall rules alone need only ROS.
     prefix = perform_substitutions(context, node.process_description.prefix)
     assert prefix == (sys.executable if speech else '')
+    # The fall rules live in this process, so it comes back after dying.
+    assert node._ExecuteLocal__respawn is True
+    assert node._ExecuteLocal__respawn_delay == 5.0
 
 
 def test_agent_without_a_started_fall_or_speech_module_is_reported(launch_module):
@@ -807,6 +849,28 @@ def test_the_whole_body_look_is_on_by_default_and_needs_the_approach(
     context = _context(module, fall_config=str(fall_config), **overrides)
     monitor, = _nodes(module._setup(context), 'malbut-fall-monitor')
     assert _parameters(context, monitor)['full_view_enabled'] is enabled
+
+
+@pytest.mark.parametrize('overrides,enabled', [
+    ({}, True),  # SWM25-261: the one fall check by default.
+    ({'fall_flow': 'false'}, False),  # The earlier check, kept until the robot is checked.
+])
+def test_one_fall_flow_switch_reaches_the_monitor_and_the_fall_rules(
+        launch_module, fall_config, overrides, enabled):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), **overrides)
+    actions = module._setup(context)
+    monitor, = _nodes(actions, 'malbut-fall-monitor')
+    assert _parameters(context, monitor)['flow_enabled'] is enabled
+    alone = _arguments(context, _nodes(actions, 'agent_communication')[0])
+    agent = _load('agent')
+    ids = {f'fall_{peer}_runtime_id': peer + '-id' for peer in ('manager', 'bridge', 'vlm')}
+    rules_context = _context(agent, **ids, **overrides)
+    rules_context.extend_globals({'malbut_modular_bringup': True,
+                                  'malbut_modules': {'fall': ''}})
+    rules = _arguments(rules_context, _nodes(agent._setup(rules_context),
+                                             'agent_communication')[0])
+    assert ('--fall-flow' in alone) is enabled and ('--fall-flow' in rules) is enabled
 
 
 def test_disabled_fall_never_starts_uploader(launch_module, fall_config):
@@ -927,6 +991,7 @@ def test_fall_python_uses_dedicated_runtime_even_with_legacy_cuda_dir(
       'fall_pose_allow_spinning': 'true', 'fall_pose_opencv_num_threads': '0'},
      ('cpu', 0, True, 0)),
     ({'fall_pose_execution_provider': 'cuda'}, ('cuda', 2, False, 1)),
+    ({'fall_pose_execution_provider': 'tensorrt'}, ('tensorrt', 2, False, 1)),
 ])
 def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, expected):
     module = _load('fall')
