@@ -5,7 +5,7 @@ import json
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import monotonic, perf_counter
@@ -169,9 +169,8 @@ class DialoguePipeline:
         if (type(barge_in_pre_roll_s) not in (int, float)
                 or not math.isfinite(barge_in_pre_roll_s) or not 0 <= barge_in_pre_roll_s <= 3):
             raise ValueError('barge-in pre-roll must be between zero and three seconds')
-        if barge_in_mode == 'reachy':
-            settings = replace(settings, pre_roll_s=max(settings.pre_roll_s,
-                min(barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s)))
+        self._barge_in_pre_roll_s = max(settings.pre_roll_s, min(
+            barge_in_pre_roll_s, settings.start_timeout_s, settings.max_buffer_s))
         if (type(endpoint_min_silence_s) not in (int, float)
                 or not math.isfinite(endpoint_min_silence_s)
                 or not 0.2 <= endpoint_min_silence_s <= 2.0):
@@ -817,10 +816,10 @@ class DialoguePipeline:
             except Empty:
                 return
 
-    def _reset_audio(self):
+    def _reset_audio(self, *, barge_in=False):
         self._update_ducking()
         self._audio_generation += 1
-        self.command_stream.reset()
+        self.command_stream.reset(pre_roll_s=self._barge_in_pre_roll_s if barge_in else None)
         if self._adaptive_partials:
             self.command_stream.partial_interval_s = self._partial_base_interval
         self._partial_cost_s = None
@@ -1080,6 +1079,7 @@ class DialoguePipeline:
                     self._followup_deadline = None
                     interrupt_reply = self._can_barge_into_reply()
                     if interrupt_reply:
+                        self.command_stream.end_extended_pre_roll()
                         # Detach the old request before STOP can acknowledge. Its
                         # terminal event must never discard the new utterance.
                         self._reply_request_id = None
@@ -1561,7 +1561,7 @@ class DialoguePipeline:
                 and self.session.playback_state == 'playing'
                 and not self.session.session_id and not self._web_talk_blocked(self.clock())
                 and self._barge_reply_playback_id != playback_id):
-            self._reset_audio()
+            self._reset_audio(barge_in=True)
             self._barge_reply_playback_id = playback_id
             self.session.activate()
             self.report('barge_in_ready:reachy')
@@ -1600,6 +1600,7 @@ class DialoguePipeline:
             if keep_onset:
                 # A weak first word can still be in pre-roll before VAD qualifies.
                 # Preserve bounded capture when its owning reply finishes.
+                self.command_stream.end_extended_pre_roll()
                 self._reply_request_id = None
                 self._barge_reply_playback_id = None
                 self._followup_pending = False

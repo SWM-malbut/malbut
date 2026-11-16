@@ -1,6 +1,7 @@
 """Collect consecutive utterances from one continuous mono PCM16 input stream."""
 
 import math
+from collections import deque
 from typing import Callable
 
 from malbut_stt.audio import CapturePCM, CaptureResult, CaptureSettings, UtteranceCollector
@@ -42,21 +43,27 @@ class StreamingUtteranceCollector:
         self.discarding = False
         self.quiet_frames = 0
         self._revision = 0
+        self._extended_pre_roll_frames = None
         self.collector = self._new_collector()
         self._candidate_revision = None
 
     def _new_collector(self) -> UtteranceCollector:
         self._revision += 1
         self._partial_frames = 0
+        self._ordinary_pre_roll_at = None
         if self.start_qualifier is not None:
             self.start_qualifier.reset()
         collector = UtteranceCollector(16000, self.is_speech, self.settings,
                                       start_qualifier=self.start_qualifier)
+        if self._extended_pre_roll_frames is not None:
+            collector.pre_roll = deque(maxlen=self._extended_pre_roll_frames)
         collector.revision = self._revision
         return collector
 
-    def reset(self) -> None:
-        """Drop buffered audio after a device discontinuity or session reset."""
+    def reset(self, *, pre_roll_s=None) -> None:
+        """Drop buffered audio and select the pre-roll for the new capture owner."""
+        self._extended_pre_roll_frames = (math.ceil(pre_roll_s / 0.02)
+                                          if pre_roll_s is not None else None)
         self.pending.clear()
         self.pending_vad.clear()
         self._pending_start_blocked = False
@@ -64,6 +71,12 @@ class StreamingUtteranceCollector:
         self.quiet_frames = 0
         self.collector = self._new_collector()
         self._candidate_revision = None
+
+    def end_extended_pre_roll(self):
+        """Keep the reply's buffered onset until all its samples have aged out."""
+        if self._extended_pre_roll_frames is not None:
+            self._ordinary_pre_roll_at = self.collector.wait_frames + self._extended_pre_roll_frames
+            self._extended_pre_roll_frames = None
 
     def set_next_turn_timing(self, minimum_s, settings, predecode_s):
         """Stage validated command timings until the next unvoiced boundary."""
@@ -127,6 +140,11 @@ class StreamingUtteranceCollector:
                     self._next_turn_timing)
                 self.collector.settings = self.settings
                 self._next_turn_timing = None
+            if (self._ordinary_pre_roll_at is not None
+                    and self.collector.wait_frames + 1 >= self._ordinary_pre_roll_at):
+                self.collector.pre_roll = deque(self.collector.pre_roll,
+                                                maxlen=math.ceil(self.settings.pre_roll_s / 0.02))
+                self._ordinary_pre_roll_at = None
             started = self.collector.started
             result = self.collector.feed(frame, start_blocked=frame_blocked)
             self._revision = self.collector.revision
