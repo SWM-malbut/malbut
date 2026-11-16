@@ -225,20 +225,17 @@ class PersonPoseEstimator:
                 "YOLO26 pose output must contain 57 values per detection"
             )
 
+        # The graph always emits 300 rows and a frame rarely has more than a few
+        # people, so reject rows in one pass instead of testing each in Python.
+        # float64 keeps the comparisons identical to the former per-row floats.
+        scores = predictions[:, 4].astype(np.float64)
+        classes = predictions[:, 5].astype(np.float64)
+        with np.errstate(invalid='ignore'):
+            keep = (np.isfinite(predictions).all(axis=1)
+                    & (np.abs(classes - np.rint(classes)) <= 1e-6) & (np.rint(classes) == 0)
+                    & (scores >= threshold) & (scores <= 1.0))
         poses = []
-        for row in predictions:
-            if not np.all(np.isfinite(row)):
-                continue
-            class_value = float(row[5])
-            class_id = int(round(class_value))
-            confidence = float(row[4])
-            if (
-                abs(class_value - class_id) > 1e-6
-                or class_id != 0
-                or confidence < threshold
-                or confidence > 1.0
-            ):
-                continue
+        for row in predictions[keep]:
             # Undo padding before normalizing against the original RGB image.
             # The legacy stretch path remains unchanged (zero pad, square size).
             adjusted = row.copy()
