@@ -67,7 +67,7 @@ const MAP_FILE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.ya?ml$/;
 
 export type RobotOperation = "start" | "finish" | "cancel" |
   "runtime_start" | "runtime_stop" | "mission_start" | "mission_cancel" |
-  "map_delete" | "manual_move" | "zones_save" |
+  "map_delete" | "manual_move" | "zones_save" | "listening_profile_set" |
   "robot_ping" | "robot_diagnostics" | "debug_mission_start" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
   "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
@@ -86,6 +86,13 @@ export function parseRobotCommand(value: unknown): {
     return Object.keys(payload).length === 0
       ? { operation: operation as RobotOperation, payload }
       : null;
+  }
+  if (operation === "listening_profile_set") {
+    const user = payload.userId;
+    return Object.keys(payload).every((key) => key === "userId" || key === "mode") &&
+      typeof user === "string" && (user === "" || /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,254}$/.test(user)) &&
+      (!("mode" in payload) || (user !== "" && (payload.mode === "default" || payload.mode === "longer")))
+      ? { operation, payload } : null;
   }
   if (operation === "map_delete") {
     return Object.keys(payload).length === 1 && typeof payload.map === "string" && MAP_FILE.test(payload.map)

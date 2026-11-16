@@ -246,3 +246,115 @@ def test_speech_resumed_during_classifier_rejects_old_result_and_keeps_audio(mak
         assert calls[1] == VOICE + QUIET * 20 + TAIL * 10 + QUIET * 100
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('complete,frames', [(True, 75), (False, 150)])
+def test_spoken_profile_applies_from_followup_and_survives_restart(make_pipeline, tmp_path, complete, frames):
+    from malbut_stt.listening_profile import ListeningProfiles
+
+    store = ListeningProfiles(tmp_path / 'listening.db')
+    store.update('person-a')
+    replies = []
+    state = make_pipeline(listening_profiles=store, reply_to_setting=lambda *args: replies.append(args))
+    p = state.pipeline
+    p.feed(VOICE + QUIET * 20)
+    command = p.jobs.get_nowait()
+    answer(p, command, '내가 말할 때 조금 더 기다려 줘.', True)
+    assert not replies and store.current().mode == 'default'
+    p.feed(QUIET * 20)
+    p.poll()
+    assert len(replies) == 1 and not state.transcripts
+    assert replies[0][0] == command[2][0]
+    assert ListeningProfiles(store.path).current().mode == 'longer'
+
+    p.on_playback_status('setting-reply', 'finished', request_id=replies[0][0])
+    p.feed(VOICE + QUIET * 20)
+    job = p.jobs.get_nowait()
+    assert job[0] == 'endpoint'  # Preparation still starts at 0.4 s.
+    answer(p, job, '말 기다리는 시간을 기본으로 바꿔 줘.', complete)
+    p.feed(QUIET * (frames - 21))
+    p.poll()
+    assert len(replies) == 1 and store.current().mode == 'longer'
+    p.feed(QUIET)
+    p.poll()
+    assert len(replies) == 2 and store.current().mode == 'default'
+    assert not state.transcripts
+
+
+def test_changing_person_during_speech_preserves_hold_and_prevents_stale_write(make_pipeline, tmp_path):
+    from malbut_stt.listening_profile import ListeningProfiles
+
+    store = ListeningProfiles(tmp_path / 'listening.db')
+    store.update('person-a')
+    store.update('person-a', 'longer')
+    replies = []
+    state = make_pipeline(listening_profiles=store, reply_to_setting=lambda *args: replies.append(args))
+    p = state.pipeline
+    p.feed(VOICE + QUIET * 20)
+    job = p.jobs.get_nowait()
+    answer(p, job, '말 기다리는 시간을 기본으로 바꿔 줘.', True)
+    store.update('person-b')
+    p.feed(QUIET * 40)  # At 1.2 seconds the original speaker can still continue.
+    p.poll()
+    assert not replies
+    p.feed(TAIL + QUIET * 20)
+    continuation = p.jobs.get_nowait()
+    assert continuation[2][0] == job[2][0]
+    assert continuation[3].endpoint_pcm == VOICE + QUIET * 60 + TAIL + QUIET * 20
+    answer(p, continuation, '말 기다리는 시간을 기본으로 바꿔 줘.', True)
+    p.feed(QUIET * 55)
+    p.poll()
+    assert len(replies) == 1 and '다시' in replies[0][1]
+    assert store.current().user_id == 'person-b' and store.current().mode == 'default'
+    assert store.update('person-a').mode == 'longer'
+
+
+@pytest.mark.parametrize('text,matched', [
+    ('제이크, 조금 더 기다려 주세요.', True), ('잠깐만 기다려 줘.', False),
+    ('조금 더 기다려 주지 마.', False), ('조금 더 기다려 달라고 했어요.', False),
+])
+def test_only_explicit_profile_commands_prompt_for_missing_person(make_pipeline, tmp_path, text, matched):
+    from malbut_stt.listening_profile import ListeningProfiles
+
+    store = ListeningProfiles(tmp_path / 'missing.db')
+    replies = []
+    state = make_pipeline(listening_profiles=store, reply_to_setting=lambda *args: replies.append(args))
+    p = state.pipeline
+    p.feed(VOICE + QUIET * 20)
+    answer(p, p.jobs.get_nowait(), text, True)
+    p.feed(QUIET * 20)
+    p.poll()
+    if matched:
+        assert '사용자를 먼저 선택' in replies[0][1] and not state.transcripts
+    else:
+        assert not replies and state.transcripts[0][1] == text
+    assert not store.path.exists()
+
+
+def test_reselect_person_after_clear_restores_previous_choice(tmp_path):
+    from malbut_stt.listening_profile import ListeningProfiles
+    profiles = ListeningProfiles(tmp_path / 'preferences.db')
+    profiles.update('person-a')
+    profiles.update('person-a', 'longer')
+    assert profiles.update('').mode == 'default'
+    restored = ListeningProfiles(profiles.path)
+    assert not restored.current().user_id
+    assert restored.update('person-b').mode == 'default'
+    assert restored.update('person-a').mode == 'longer'
+
+
+def test_fall_confirmation_speech_cannot_change_personal_wait(make_pipeline, tmp_path):
+    from malbut_stt.listening_profile import ListeningProfiles
+    profiles = ListeningProfiles(tmp_path / 'preferences.db')
+    profiles.update('person-a')
+    replies = []
+    state = make_pipeline(listening_profiles=profiles, reply_to_setting=lambda *args: replies.append(args))
+    p = state.pipeline
+    assert p.start_session('fall-check-1')
+    p.feed(VOICE + QUIET * 20)
+    job = p.jobs.get_nowait()
+    answer(p, job, '조금 더 기다려 줘.', True)
+    p.feed(QUIET * 20)
+    p.poll()
+    assert state.transcripts == [(job[2][0], '조금 더 기다려 줘.')]
+    assert not replies and profiles.current().mode == 'default'

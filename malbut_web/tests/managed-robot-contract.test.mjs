@@ -38,6 +38,9 @@ test("real robot tools accept only bounded map, velocity, Zone and debug request
     ["zones_save", { map: "home.yaml", zones: [zone, { behavior: "avoid", points: [[2, 2], [3, 2], [3, 3]] }] }],
     ["zones_save", { map: "home.yaml", zones: [] }],
     ["zones_save", { map: "home.yaml", zones: [{ id: "zone-1a2b3c4d5e", ...zone }] }],
+    ["listening_profile_set", { userId: "" }],
+    ["listening_profile_set", { userId: "u-family" }],
+    ["listening_profile_set", { userId: "u-family", mode: "longer" }],
     ["robot_ping", {}],
     ["robot_diagnostics", {}],
     ["debug_mission_start", { capability: "get_weather", arguments: { city: "Seoul" } }],
@@ -45,6 +48,10 @@ test("real robot tools accept only bounded map, velocity, Zone and debug request
     ["mission_start", { capability: "relocalize", arguments: { method: 1, x: 1, y: -2, yaw: 0.5 } }],
   ]) assert.deepEqual(parseRobotCommand({ operation, payload }), { operation, payload });
   for (const [operation, payload] of [
+    ["listening_profile_set", { userId: "", mode: "default" }],
+    ["listening_profile_set", { mode: "longer" }],
+    ["listening_profile_set", { userId: "u-family", mode: "slow" }],
+    ["listening_profile_set", { userId: "u-family", seconds: 9 }],
     ["map_delete", { map: "../home.yaml" }],
     ["map_delete", { map: "home.yaml", files: ["home.pgm"] }],
     ["manual_move", { direction: "forward" }],
@@ -113,4 +120,28 @@ test("developer screen reads the robot's Zone FeatureCollection and keeps zone i
   });
   // An older robot's zone list still reads.
   assert.equal(parseZoneDocument({ map: "home.yaml", editable: true, zones: [] }).zones.length, 0);
+});
+
+test("only a device owner can select a registered conversation partner", async () => {
+  const { fallDatabase, moduleLoader } = await import("./helpers/fall-db-harness.mjs");
+  const database = await fallDatabase();
+  const load = moduleLoader();
+  try {
+    await database.db.exec(`INSERT INTO robot_runtime_state
+      (device_id, state, message, localization_state, nav2_json, map_revision_counter, observed_at)
+      VALUES ('robot-a', 'idle', '', 'unavailable', '{"robot_interface":"malbut_manager_v1"}', 0, NOW())`);
+    await load("db/postgres.ts").withPostgresPoolForTest(database.pool, async () => {
+      const { createRobotCommand } = load("db/robot-map.ts");
+      const select = (caller, partner) => createRobotCommand({
+        deviceId: "robot-a", userId: caller, operation: "listening_profile_set", payload: { userId: partner },
+      });
+      await assert.rejects(() => select("u-family", "u-owner"), /FORBIDDEN/);
+      await assert.rejects(() => select("u-owner", "someone-else"), /FORBIDDEN/);
+      const command = await select("u-owner", "u-family");
+      assert.equal(command.status, "queued");
+      assert.deepEqual(command.payload, { userId: "u-family" });
+    });
+  } finally {
+    await database.db.close();
+  }
 });

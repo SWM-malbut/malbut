@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RobotOperation } from "../robot-contract";
 import { record } from "./managed-robot-controls";
 import type { RobotSnapshot } from "./robot-map-panel";
@@ -85,6 +85,10 @@ export function ManagedRobotDebug({ deviceId, snapshot, busy, sendCommand, repor
   return (
     <div className="robot-map-panel-card managed-robot-controls managed-robot-debug">
       <h3>디버깅</h3>
+      <ListeningSettings key={deviceId} deviceId={deviceId}
+        profile={record(snapshot.state?.target?.listeningProfile)}
+        disabled={disabled || command?.status === "queued" || command?.status === "claimed"}
+        sendCommand={sendCommand} />
       <details open>
         <summary>연결</summary>
         <dl>
@@ -155,6 +159,57 @@ export function ManagedRobotDebug({ deviceId, snapshot, busy, sendCommand, repor
         <pre>{pretty(snapshot.state)}</pre>
       </details>
     </div>
+  );
+}
+
+function ListeningSettings({ deviceId, profile, disabled, sendCommand }: {
+  deviceId: string; profile: Record<string, unknown>; disabled: boolean; sendCommand: SendCommand;
+}) {
+  const [members, setMembers] = useState<{ userId: string; name: string }[]>([]);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/devices/${encodeURIComponent(deviceId)}/family`, {
+      cache: "no-store", signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      if (!controller.signal.aborted) {
+        setMembers(data.members);
+        setError("");
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) setError("대화 사용자 목록을 불러오지 못했어요.");
+    });
+    return () => controller.abort();
+  }, [deviceId, reload]);
+
+  const active = typeof profile.userId === "string" ? profile.userId : "";
+  const ready = typeof profile.userId === "string" && members.length > 0 && !disabled;
+  const selectedMember = members.some((member) => member.userId === active);
+  return (
+    <details open>
+      <summary>대화 기다림 설정</summary>
+      <label>현재 대화 사용자
+        <select value={active} disabled={!ready}
+          onChange={(event) => void sendCommand("listening_profile_set", { userId: event.target.value })}>
+          <option value="">선택 안 함</option>
+          {active && !selectedMember && <option value={active}>목록에 없는 사용자</option>}
+          {members.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}
+        </select>
+      </label>
+      <label>말끝 대기 시간
+        <select value={profile.mode === "longer" ? "longer" : "default"} disabled={!ready || !selectedMember}
+          onChange={(event) => void sendCommand("listening_profile_set", { userId: active, mode: event.target.value })}>
+          <option value="default">기본</option>
+          <option value="longer">조금 더 기다리기</option>
+        </select>
+      </label>
+      <small>대화 상대가 바뀌면 여기서 사용자를 선택해 주세요. 대화 중 “내가 말할 때 조금 더 기다려 줘” 또는 “말 기다리는 시간을 기본으로 바꿔 줘”라고 해도 그 사람의 다음 발화부터 적용돼요.</small>
+      {error && <p role="alert">{error} <button onClick={() => setReload(reload + 1)}>다시 시도</button></p>}
+      {typeof profile.userId !== "string" && <small>로봇의 듣기 설정 연결을 기다리고 있어요.</small>}
+    </details>
   );
 }
 

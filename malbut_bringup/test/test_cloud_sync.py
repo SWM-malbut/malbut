@@ -530,3 +530,19 @@ def test_a_timed_out_request_is_reported_as_a_timeout():
     with pytest.raises(CloudError) as result:
         client.request('/api/device/v1/robot/state', 'POST', {})
     assert not result.value.timeout
+
+
+def test_developer_listening_profile_uses_stt_service_and_reports_topic():
+    from malbut_bringup.web_panel import RosBridge
+    sync, bridge, client = _sync()
+    bridge.set_listening_profile = Mock(return_value={'accepted': True})
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'listening_profile_set',
+                   'payload': {'userId': 'person-a', 'mode': 'longer'}})
+    bridge.set_listening_profile.assert_called_once_with('person-a', 'longer')
+    assert sync.pending[COMMAND_ID]['ok']
+    RosBridge._listening_profile(bridge, SimpleNamespace(user_id='person-a', mode='longer'))
+    sync.tick()
+    state = next(call.args[2] for call in client.request.call_args_list
+                 if call.args[0] == '/api/device/v1/robot/state')
+    assert state['target']['listeningProfile'] == {'userId': 'person-a', 'mode': 'longer'}
+    bridge.submit.assert_not_called()
