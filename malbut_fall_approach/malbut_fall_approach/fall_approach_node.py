@@ -23,8 +23,9 @@ from nav2_msgs.msg import Costmap
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import String
@@ -87,7 +88,20 @@ class FallApproachNode(Node):
                          for name, value in settings.items()}
         self.group = ReentrantCallbackGroup()
         self.tf = Buffer()
-        self.tf_listener = TransformListener(self.tf, self)
+        # /tf arrives about 40 times a second. On this node's multi-threaded
+        # executor every message is handed to a worker thread, which doubled the
+        # idle CPU on the robot; a private single-threaded node reads it inline.
+        self.tf_node = Node(
+            f'{self.get_name()}_tf', context=self.context, namespace=self.get_namespace(),
+            use_global_arguments=False, start_parameter_services=False, enable_rosout=False,
+            parameter_overrides=[Parameter(
+                'use_sim_time', value=self.get_parameter('use_sim_time').value)])
+        self.tf_listener = TransformListener(self.tf, self.tf_node)
+        self.tf_executor = SingleThreadedExecutor(context=self.context)
+        self.tf_executor.add_node(self.tf_node)
+        self.tf_thread = threading.Thread(target=self._spin_tf, name='fall_approach_tf',
+                                          daemon=True)
+        self.tf_thread.start()
         self.planner = ActionClient(self, ComputePathToPose, self.settings['compute_path_action'],
                                     callback_group=self.group)
         self.follower = ActionClient(self, FollowPath, self.settings['follow_path_action'],
@@ -454,6 +468,19 @@ class FallApproachNode(Node):
             if self.watch_target != target:
                 return
             self.watch.observe(now, robot, pose)
+
+    def _spin_tf(self):
+        try:
+            self.tf_executor.spin()
+        except Exception:  # Context shut down under the thread while exiting.
+            if self.context.ok():
+                raise
+
+    def destroy_node(self):
+        self.tf_executor.shutdown(timeout_sec=1.0)
+        self.tf_thread.join(timeout=1.0)
+        self.tf_node.destroy_node()
+        return super().destroy_node()
 
     def _pose(self):
         try:
