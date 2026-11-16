@@ -68,6 +68,7 @@ class VoiceProfileRelay:
     """Track independent acknowledgments from the running STT and TTS services."""
 
     def __init__(self, node):
+        """Connect to the local speech parameter services."""
         from rcl_interfaces.srv import SetParametersAtomically
 
         self.stt, self.tts = (
@@ -77,7 +78,7 @@ class VoiceProfileRelay:
         self.desired = None
 
     def receive(self, reply):
-        """A device without an assigned profile keeps its local settings."""
+        """Accept the owner profile supplied in a cloud heartbeat reply."""
         if isinstance(reply, dict) and 'voiceProfile' in reply:
             value = reply['voiceProfile']
             self.desired = value if _valid(value) else None

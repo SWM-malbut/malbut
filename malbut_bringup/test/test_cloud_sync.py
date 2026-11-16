@@ -613,6 +613,7 @@ def test_selected_voice_profile_is_acknowledged_only_after_both_nodes_accept(mon
      'speechVolumePercent': False},
 ])
 def test_invalid_voice_profile_does_not_write_any_parameters(invalid):
+    """Keep local parameters intact for malformed cloud profiles."""
     from malbut_bringup.voice_profile import VoiceProfileRelay
 
     relay = object.__new__(VoiceProfileRelay)
