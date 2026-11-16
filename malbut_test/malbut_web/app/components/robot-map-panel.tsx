@@ -11,6 +11,8 @@ import {
 import type { HomecamDevice } from "./homecam-dashboard";
 import type { ManualVelocity, RobotOperation } from "../robot-contract";
 import { ManagedRobotControls } from "./managed-robot-controls";
+import { OwnerVoiceSettings } from "./owner-voice-settings";
+import type { VoiceSettingsView } from "../voice-profile";
 import { ManagedRobotDebug } from "./managed-robot-debug";
 import { ManagedRobotMap } from "./managed-robot-map";
 import { ManagedRobotTools } from "./managed-robot-tools";
@@ -31,6 +33,7 @@ type RobotDriveModeSnapshot = {
 };
 
 export type RobotSnapshot = {
+  voiceSettings?: VoiceSettingsView;
   online: boolean;
   state: {
     state: string;
@@ -1178,6 +1181,9 @@ export function RobotMapPanel({
                 report={managedDiagnostics?.deviceId === deviceId ? managedDiagnostics.report : null} />}
             </>
               : <div className="robot-map-panel-card"><h3>로봇 연결 대기</h3><p>연결 후 실행 준비와 기능 요청을 사용할 수 있습니다.</p></div>}
+            {isOwner && snapshot?.voiceSettings && <OwnerVoiceSettings key={deviceId} deviceId={deviceId}
+              settings={snapshot.voiceSettings} online={snapshot.online}
+              refresh={() => load(true)} />}
             {isOwner && device && (
               <a
                 className="robot-map-admin-link"

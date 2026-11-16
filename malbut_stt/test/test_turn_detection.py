@@ -162,6 +162,24 @@ def test_old_smart_result_cannot_finish_resumed_voice():
     assert not state.captured
 
 
+@pytest.mark.parametrize('complete,expected_frames', [(True, 100), (False, 250)])
+def test_slow_profile_applies_to_adaptive_decision_and_final_fallback(complete, expected_frames):
+    p, state = pipeline(object())
+    p.adaptive_endpoint = True
+    p.command_stream.set_next_turn_timing(
+        2.0, CaptureSettings(silence_timeout_s=5.0, min_speech_s=.02), .4)
+    p.feed(VOICE + QUIET * 20)
+    kind, generation, token, _ = p.jobs.get_nowait()
+    p.results.put_nowait((kind, generation, token, '네', None, 0., complete))
+    p.poll()
+    p.feed(QUIET * (expected_frames - 21))
+    p.poll()
+    assert not state.captured
+    p.feed(QUIET)
+    p.poll()
+    assert [event.silence_s for event in state.captured] == [expected_frames * .02]
+
+
 def test_smart_complete_cannot_override_incomplete_korean_text():
     p,state=pipeline(object())
     p.feed(VOICE);p.feed(QUIET*40)

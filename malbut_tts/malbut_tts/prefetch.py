@@ -8,6 +8,7 @@ playback status is created here.
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from threading import Event
+from typing import Optional
 
 
 MAX_PREPARED_BYTES = 2 * 1024 * 1024
@@ -25,6 +26,7 @@ class Preparation:
     key: tuple
     text: str
     deadline: float
+    piper_speed: Optional[float] = None
     cancel: Event = field(default_factory=Event)
     state: str = 'queued'
     audio: object = None
@@ -57,7 +59,7 @@ class PrefetchSlot:
         if self.job is not None and self.clock() >= self.job.deadline:
             self.cancel(self.job.key)
 
-    def request(self, key, text):
+    def request(self, key, text, *, piper_speed=None):
         self.expire()
         if key in self.retired:
             return False
@@ -67,7 +69,7 @@ class PrefetchSlot:
             self.cancel()
             if self.job is not None:  # Never queue a second native job.
                 return False
-        self.job = Preparation(key, text, self.clock() + PREPARATION_TTL_S)
+        self.job = Preparation(key, text, self.clock() + PREPARATION_TTL_S, piper_speed)
         return True
 
     def start(self):

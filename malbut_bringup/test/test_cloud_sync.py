@@ -530,3 +530,92 @@ def test_a_timed_out_request_is_reported_as_a_timeout():
     with pytest.raises(CloudError) as result:
         client.request('/api/device/v1/robot/state', 'POST', {})
     assert not result.value.timeout
+
+
+def test_selected_voice_profile_is_acknowledged_only_after_both_nodes_accept(monkeypatch):
+    """Exercise the real heartbeat and client state machine using isolated fake ROS services."""
+    from concurrent.futures import Future
+    from sys import modules
+    from malbut_bringup.voice_profile import VoiceProfileRelay
+
+    monkeypatch.setitem(modules, 'rcl_interfaces.srv', SimpleNamespace(
+        SetParametersAtomically=SimpleNamespace(Request=SimpleNamespace)))
+    monkeypatch.setitem(modules, 'rclpy.parameter', SimpleNamespace(Parameter=lambda name, value:
+                        SimpleNamespace(to_parameter_msg=lambda: (name, value))))
+    clock = [100.0]
+    monkeypatch.setattr('malbut_bringup.voice_profile.time.monotonic', lambda: clock[0])
+    profile = {'endpointMinSilenceS': 1.4, 'silenceTimeoutS': 3, 'piperSpeed': 0.7,
+               'speechVolumePercent': 30}
+    sync, bridge, client = _sync()
+    stt, tts = Mock(), Mock()
+    for service in (stt, tts):
+        service.service_is_ready.return_value = True
+        service.call_async.side_effect = lambda request: Future()
+    bridge.node.create_client.side_effect = (stt, tts)
+    sync.voice = VoiceProfileRelay(bridge.node)
+    sent = []
+
+    def request(path, method='GET', payload=None):
+        if path.endswith('/state'):
+            sent.append(payload.get('appliedVoiceProfile'))
+            return {'voiceProfile': profile.copy()}
+        return {'commands': []}
+
+    def tick():
+        clock[0] += 1
+        sync.tick()
+        return sent[-1]
+
+    def settle(node, success):
+        node.pending.set_result(SimpleNamespace(result=SimpleNamespace(successful=success)))
+
+    client.request.side_effect = request
+    assert tick() is None
+    assert tick() is None
+    assert stt.call_async.call_args.args[0].parameters == [
+        ('voice_profile_version', 1), ('endpoint_min_silence_s', 1.4), ('silence_timeout_s', 3.0)]
+    assert tts.call_async.call_args.args[0].parameters == [
+        ('piper_speed', 0.7), ('speech_volume_percent', 30)]
+    settle(sync.voice.stt, True)
+    settle(sync.voice.tts, False)
+    assert tick() is None
+    assert tick() is None
+    settle(sync.voice.tts, True)
+    assert tick() == profile
+    assert stt.call_async.call_count == 1
+
+    tts.service_is_ready.return_value = False
+    assert tick() is None
+    tts.service_is_ready.return_value = True
+    assert tick() is None
+    settle(sync.voice.tts, True)
+    assert tick() == profile
+
+    # An update while the previous settings are being applied must not ACK the old pair.
+    profile['speechVolumePercent'] = 0
+    tick()
+    assert tick() is None
+    profile['speechVolumePercent'] = 30
+    assert tick() is None
+    assert tick() is None
+    settle(sync.voice.tts, True)
+    assert tick() is None
+    settle(sync.voice.tts, True)
+    assert tick() == profile
+
+
+@pytest.mark.parametrize('invalid', [
+    {}, {'endpointMinSilenceS': 1.6, 'silenceTimeoutS': 1.2, 'piperSpeed': 1,
+         'speechVolumePercent': 30},
+    {'endpointMinSilenceS': 0.8, 'silenceTimeoutS': 2, 'piperSpeed': float('nan'),
+     'speechVolumePercent': 100},
+    {'endpointMinSilenceS': 0.8, 'silenceTimeoutS': 2, 'piperSpeed': 1,
+     'speechVolumePercent': False},
+])
+def test_invalid_voice_profile_does_not_write_any_parameters(invalid):
+    """Keep local parameters intact for malformed cloud profiles."""
+    from malbut_bringup.voice_profile import VoiceProfileRelay
+
+    relay = object.__new__(VoiceProfileRelay)
+    relay.receive({'voiceProfile': invalid})
+    assert relay.advance() is None

@@ -2,7 +2,9 @@
 
 from queue import Queue
 from threading import Condition, Event
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from malbut_tts.runtime import (
@@ -106,6 +108,44 @@ class Harness:
         player = self.players.get(timeout=3)
         self.wait(playback_id, 'playing')
         return player
+
+
+@pytest.mark.parametrize('request_type,audio_id', [
+    (DIALOGUE, ''), (DIALOGUE, 'conversation.delay'),
+    (CONFIRMATION, 'fall.confirmation'), (NOTIFICATION, 'operation.failed'),
+])
+def test_volume_is_fixed_for_each_accepted_request(request_type, audio_id):
+    samples = np.array([0.25, -0.5], dtype=np.float32)
+    resume = Event()
+
+    def generate(text, cancel):
+        yield samples, 24000
+        assert resume.wait(3)
+        yield samples, 24000
+
+    source = SimpleNamespace(generate=generate)
+    volume = 50
+    h = Harness(source, prerecorded=source, voice_settings=lambda: (None, volume))
+    try:
+        first = h.runtime.submit('첫 요청', request_type, audio_id=audio_id)
+        playing = h.active(first)
+        volume = 0
+        resume.set()
+        playing.drain.set()
+        h.wait(first, 'finished')
+        assert len(playing.audio) == 2
+        for audio, _ in playing.audio:
+            np.testing.assert_allclose(audio, [0.125, -0.25])
+        second = h.runtime.submit('다음 요청', request_type, audio_id=audio_id)
+        muted = h.active(second)
+        muted.drain.set()
+        h.wait(second, 'finished')
+        for audio, _ in muted.audio:
+            np.testing.assert_allclose(audio, [0, 0])
+        np.testing.assert_allclose(samples, [0.25, -0.5])
+    finally:
+        resume.set()
+        h.runtime.close()
 
 
 @pytest.fixture

@@ -219,6 +219,9 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
         def declare_parameter(self, name, default):
             self.parameters.setdefault(name, default)
 
+        def add_on_set_parameters_callback(self, callback):
+            self.validate_parameters = callback
+
         def get_parameter(self, name):
             return SimpleNamespace(value=self.parameters[name])
 
@@ -248,6 +251,7 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
     std_messages = ModuleType('std_msgs.msg')
     std_messages.String = lambda data: SimpleNamespace(data=data)
     for name, module in {
+        'rcl_interfaces.msg': SimpleNamespace(SetParametersResult=SimpleNamespace),
         'rclpy': ModuleType('rclpy'), 'rclpy.node': SimpleNamespace(Node=FakeNode),
         'rclpy.qos': SimpleNamespace(
             DurabilityPolicy=SimpleNamespace(VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),

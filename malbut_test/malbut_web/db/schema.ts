@@ -90,6 +90,7 @@ export const fallPushOutbox = pgTable("fall_push_outbox", {
   foreignKey({ columns: [t.deviceId, t.notificationId], foreignColumns: [fallIncidentEvents.deviceId, fallIncidentEvents.eventId] }).onDelete("cascade")]);
 
 export const users = pgTable("users", {
+  voiceProfile: jsonb("voice_profile"),
   id: text("id").primaryKey(),
   displayName: text("display_name"),
   createdAt: timestampText("created_at").notNull().defaultNow(),
@@ -451,6 +452,8 @@ export const robotMapDrafts = pgTable("robot_map_drafts", {
 });
 
 export const robotRuntimeState = pgTable("robot_runtime_state", {
+  appliedVoiceProfile: jsonb("applied_voice_profile"),
+  voiceProfileManaged: boolean("voice_profile_managed").notNull().default(false),
   deviceId: text("device_id")
     .primaryKey()
     .references(() => devices.id, { onDelete: "cascade" }),

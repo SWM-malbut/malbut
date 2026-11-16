@@ -1,4 +1,6 @@
 import { getD1 } from ".";
+import { defaultVoiceProfile, matchesVoiceProfile, type VoiceProfile } from "../app/voice-profile";
+import { canViewHomecam } from "./homecam-validation";
 import type {
   RobotMapUpload,
   RobotOperation,
@@ -39,6 +41,8 @@ const ACTIVE_MAPPING_STATES = new Set([
 ]);
 
 type StateRow = {
+  applied_voice_profile: VoiceProfile | null;
+  voice_profile_managed: boolean;
   state: string;
   message: string;
   pose_x: number | null;
@@ -83,16 +87,31 @@ type CommandRow = {
   result_json: string | null;
 };
 
-export async function storeRobotState(deviceId: string, state: RobotStateUpload) {
+export async function saveOwnerVoiceProfile(deviceId: string, userId: string, profile: VoiceProfile) {
+  const result = await getD1().prepare(
+    `UPDATE users SET voice_profile = ?::jsonb WHERE id = ? AND EXISTS (
+       SELECT 1 FROM device_memberships WHERE device_id = ? AND user_id = users.id AND role = 'owner'
+     )`,
+  ).bind(JSON.stringify(profile), userId, deviceId).run();
+  return result.meta.changes === 1;
+}
+
+export async function storeRobotState(deviceId: string, state: RobotStateUpload, applied: VoiceProfile | null = null) {
   await ensureHomecamSchema();
   const now = new Date().toISOString();
-  await getD1()
+  const result = await getD1()
     .prepare(
-      `INSERT INTO robot_runtime_state
+      `WITH owner_profile AS (
+         SELECT u.voice_profile AS profile
+         FROM device_memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.device_id = ? AND m.role = 'owner'
+         ORDER BY m.created_at, m.user_id LIMIT 1
+       )
+       INSERT INTO robot_runtime_state
        (device_id, state, message, pose_x, pose_y, pose_yaw,
         localization_state, tf_age_s, nav2_json, target_json, drive_mode_json,
-        map_revision_counter, observed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        map_revision_counter, observed_at, updated_at, applied_voice_profile, voice_profile_managed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, (SELECT profile FROM owner_profile) IS NOT NULL)
        ON CONFLICT(device_id) DO UPDATE SET
          state = excluded.state,
          message = excluded.message,
@@ -106,10 +125,13 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
          drive_mode_json = excluded.drive_mode_json,
          map_revision_counter = excluded.map_revision_counter,
          observed_at = excluded.observed_at,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at,
+         applied_voice_profile = excluded.applied_voice_profile,
+         voice_profile_managed = robot_runtime_state.voice_profile_managed OR excluded.voice_profile_managed
+       RETURNING voice_profile_managed, (SELECT profile FROM owner_profile) AS profile`,
     )
     .bind(
-      deviceId,
+      deviceId, deviceId,
       state.state,
       state.message,
       state.pose?.x ?? null,
@@ -125,8 +147,11 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
       state.mapRevision,
       state.observedAt,
       now,
+      applied ? JSON.stringify(applied) : null,
     )
-    .run();
+    .first<{ voice_profile_managed: boolean; profile: VoiceProfile | null }>();
+  // A transferred robot that received personal settings must release the former owner's values.
+  return result?.profile ?? (result?.voice_profile_managed ? defaultVoiceProfile : null);
 }
 
 export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
@@ -186,7 +211,11 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
 
 export async function getRobotSnapshot(deviceId: string, userId: string) {
   await ensureHomecamSchema();
-  if (!(await userCanViewDevice(deviceId, userId))) return null;
+  const membership = await getD1().prepare(
+    `SELECT m.role, u.voice_profile FROM device_memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.device_id = ? AND m.user_id = ?`,
+  ).bind(deviceId, userId).first<{ role: string; voice_profile: VoiceProfile | null }>();
+  if (!membership || !canViewHomecam(membership.role)) return null;
   const [state, savedMap, draftMap, command] = await Promise.all([
     getD1()
       .prepare("SELECT * FROM robot_runtime_state WHERE device_id = ?")
@@ -215,10 +244,17 @@ export async function getRobotSnapshot(deviceId: string, userId: string) {
   ]);
   const mappingActive = Boolean(state && ACTIVE_MAPPING_STATES.has(state.state));
   const map = mappingActive && draftMap ? draftMap : savedMap ?? draftMap;
+  const online = Boolean(state && Date.parse(state.observed_at) >= Date.now() - ROBOT_ONLINE_MS);
+  const profile = membership.voice_profile ?? defaultVoiceProfile;
+  const onlineUntil = state ? Math.min(Date.parse(state.observed_at), Date.parse(state.updated_at)) + ROBOT_ONLINE_MS : 0;
   return {
-    online: Boolean(
-      state && Date.parse(state.observed_at) >= Date.now() - ROBOT_ONLINE_MS,
-    ),
+    online,
+    ...(membership.role === "owner" && { voiceSettings: {
+      configured: membership.voice_profile !== null,
+      profile, onlineUntil,
+      applied: state?.voice_profile_managed || membership.voice_profile
+        ? onlineUntil > Date.now() && matchesVoiceProfile(profile, state?.applied_voice_profile ?? null) : null,
+    } }),
     state: state ? mapState(state) : null,
     map: map ? mapMetadata(map, map === savedMap) : null,
     command: command ? mapCommand(command) : null,
