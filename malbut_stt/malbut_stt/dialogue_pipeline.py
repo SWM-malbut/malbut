@@ -1,6 +1,7 @@
 """Keep continuous capture and local inference outside serialized dialogue events."""
 
 import math
+import sqlite3
 import json
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,7 @@ from time import monotonic, perf_counter
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession, is_conversation_end
 from malbut_stt.endpoint import is_complete_korean_utterance
+from malbut_stt.listening_profile import ListeningProfile, requested_mode
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
 from malbut_stt.transcript_filter import boilerplate_reason
@@ -94,7 +96,7 @@ class DialoguePipeline:
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
                  short_speech_guard=False, followup_timeout_s=10.0,
                  validate_wake_command=None, start_qualifier=None, smart_turn=None,
-                 adaptive_endpoint=False,
+                 adaptive_endpoint=False, listening_profiles=None, reply_to_setting=None,
                  wake_is_speech=None, barge_in_ducking=False, barge_in_mode='legacy',
                  interruption_transcriber=None, barge_in_pre_roll_s=2.0):
         if type(barge_in_ducking) is not bool:
@@ -176,6 +178,14 @@ class DialoguePipeline:
                 or not math.isfinite(endpoint_min_silence_s)
                 or not 0.2 <= endpoint_min_silence_s <= 2.0):
             raise ValueError('endpoint_min_silence_s must be between 0.2 and 2.0 seconds')
+        self._default_floor = endpoint_min_silence_s
+        self._command_settings = settings
+        self._longer_settings = settings
+        if settings.max_buffer_s > 3 and (settings.max_utterance_s is None or settings.max_utterance_s > 3):
+            self._longer_settings = replace(settings, silence_timeout_s=max(settings.silence_timeout_s, 3.0))
+        self.listening_profiles = listening_profiles
+        self.reply_to_setting = reply_to_setting
+        self._listening_profile = ListeningProfile()
         self.endpoint_min_silence_s = endpoint_min_silence_s
         if endpoint_preempt_s is not None and (
                 type(endpoint_preempt_s) not in (int, float)
@@ -515,6 +525,24 @@ class DialoguePipeline:
             self._reply_request_id = utterance_id
             self._followup_pending = self.followup_timeout_s > 0
             self._tail_stream = None
+            mode = requested_mode(text) if self.reply_to_setting is not None else None
+            if mode:
+                profile = self._listening_profile
+                if not profile.user_id:
+                    reply = '개발자 화면에서 현재 대화 사용자를 먼저 선택해 주세요.'
+                else:
+                    try:
+                        self.listening_profiles.update(profile.user_id, mode,
+                                                       expected_revision=profile.revision)
+                        reply = ('다음 말씀부터 조금 더 기다릴게요.' if mode == 'longer'
+                                 else '다음 말씀부터 기본 시간만큼 기다릴게요.')
+                    except ValueError as error:
+                        reply = str(error)
+                    except (OSError, sqlite3.Error):
+                        reply = '기다리는 시간을 저장하지 못했어요. 다시 시도해 주세요.'
+                self._input_status('ended', utterance_id)
+                self.reply_to_setting(utterance_id, reply)
+                return
         self.publish_transcript(utterance_id, text)
 
     def _timing(self, stage, uid, **fields):
@@ -1067,6 +1095,19 @@ class DialoguePipeline:
         stream = self.command_stream if self.session.active else self.wake_stream
         self._refresh_partial_interval()
         start_blocked = busy_at_capture or self._busy or self._pending is not None
+        profile = ListeningProfile()
+        if self.listening_profiles is not None:
+            if not self.session.session_id:
+                try:
+                    profile = self.listening_profiles.current()
+                except (sqlite3.Error, OSError):
+                    self.report('listening_profile_unavailable')
+            if stream is self.command_stream:
+                # The template is for future onsets. An active collector keeps
+                # its own immutable settings throughout a pause or resumption.
+                stream.settings = self._longer_settings if profile.mode == 'longer' else self._command_settings
+                if not stream.collector.started:
+                    stream.collector.settings = stream.settings
         for event in stream.feed(pcm, start_blocked=start_blocked):
             if event.status == 'speech_started':
                 self._discard_capture = (event.start_blocked or self._busy
@@ -1074,6 +1115,9 @@ class DialoguePipeline:
                 if self._discard_capture:
                     self.report('speech_discarded:busy')
                     continue
+                self._listening_profile = profile
+                self.endpoint_min_silence_s = (max(self._default_floor, 1.5)
+                                               if profile.mode == 'longer' else self._default_floor)
                 if self.session.active:
                     self._partial_submitted_frame = None
                     self._command_start_deadline = None
@@ -1186,7 +1230,7 @@ class DialoguePipeline:
             self._endpoint_candidate = None
             return
         # Match the fallback input duration without extending observed silence.
-        target_frames = math.ceil(self.command_stream.settings.silence_timeout_s / 0.02)
+        target_frames = math.ceil(collector.settings.silence_timeout_s / 0.02)
         observed_frames = round(event.silence_s / 0.02)
         padding_frames = max(0, target_frames - observed_frames)
         pcm = event.pcm + bytes(padding_frames * 640)

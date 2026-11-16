@@ -1,0 +1,7 @@
+# Empty mode selects a conversation partner. Empty user_id clears the selection.
+# A nonempty mode changes the preference only if user_id is still selected.
+string user_id
+string mode
+---
+bool accepted
+string message

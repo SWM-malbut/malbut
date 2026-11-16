@@ -335,6 +335,7 @@ class PanelData:
         self.servers = {'manager': False, 'autoslam': False}
         self.system = None
         self.tracking = None
+        self.listening_profile = None
         self.zones = None
         self.patrol = None
         self.fall_approach = None
@@ -423,7 +424,7 @@ class PanelData:
         """Return a thread-safe status copy without exposing tokens or images."""
         with self.lock:
             return copy.deepcopy({
-                'servers': self.servers, 'system': self.system,
+                'servers': self.servers, 'system': self.system, 'listening_profile': self.listening_profile,
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
                 'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
                 'patrol': self.patrol, 'patrol_fall': self.patrol_fall,
@@ -440,7 +441,8 @@ class RosBridge:
                  map_topic='/global_costmap/costmap', subscribe_images=True):
         """Subscribe to state and optional LAN video; prepare nonblocking Actions."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
-        from malbut_interfaces.msg import SystemState
+        from malbut_interfaces.msg import ListeningProfile, SystemState
+        from malbut_interfaces.srv import SetListeningProfile
         from action_msgs.msg import GoalStatusArray
         from action_msgs.srv import CancelGoal
         from geometry_msgs.msg import Twist
@@ -465,6 +467,8 @@ class RosBridge:
         self.to_dict = message_to_ordereddict
         self.twist = Twist
         self.teleop_publisher = self.node.create_publisher(Twist, TELEOP_TOPIC, 10)
+        self.profile_request = SetListeningProfile.Request
+        self.profile_client = self.node.create_client(SetListeningProfile, '/malbut/speech/set_listening_profile')
         self.string = String
         self.closed_falls_publisher = self.node.create_publisher(String, GUARDIAN_CLOSED_TOPIC, 10)
         self.teleop_received = None
@@ -509,6 +513,9 @@ class RosBridge:
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
         self.subscriptions = [
+            self.node.create_subscription(
+                ListeningProfile, '/malbut/speech/listening_profile', self._listening_profile,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(String, '/tracking/person/status',
                                           self._tracking, 1),
             self.node.create_subscription(
@@ -912,6 +919,25 @@ class RosBridge:
         with self.data.lock:
             self.data.system = self.to_dict(message)
             self._observe_fall_stop()
+
+    def _listening_profile(self, message):
+        with self.data.lock:
+            self.data.listening_profile = {'userId': message.user_id, 'mode': message.mode}
+
+    def set_listening_profile(self, user_id, mode):
+        """The cloud worker waits for STT to persist the change on the ROS executor."""
+        if not self.profile_client.service_is_ready():
+            raise RuntimeError('로봇의 듣기 설정이 아직 준비되지 않았어요.')
+        future = self.profile_client.call_async(self.profile_request(user_id=user_id, mode=mode))
+        done = threading.Event()
+        future.add_done_callback(lambda _: done.set())
+        if not done.wait(3):
+            self.profile_client.remove_pending_request(future)
+            raise RuntimeError('로봇의 듣기 설정 응답 시간이 초과됐어요.')
+        response = future.result()
+        if not response.accepted:
+            raise ValueError(response.message)
+        return {'accepted': True}
 
     def _tracking(self, message):
         with self.data.lock:

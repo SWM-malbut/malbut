@@ -4,12 +4,15 @@ from pathlib import Path
 from math import isfinite
 import os
 import sys
+import sqlite3
+from uuid import uuid4
 from time import monotonic
 from typing import Optional, Sequence
 
 from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
 from malbut_stt.chime import play_endpoint_chime, play_failure_chime, play_wake_chime
 from malbut_stt.dialogue_pipeline import DialoguePipeline
+from malbut_stt.listening_profile import ListeningProfiles
 from malbut_stt.fall_check import FallCheckWindow
 from malbut_stt.transcription import LocalWhisperTranscriber
 
@@ -24,11 +27,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
         )
         from malbut_interfaces.msg import (
-            SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
+            ListeningProfile, SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
         )
         from malbut_interfaces.srv import (
             ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
-            ControlWebTalk,
+            ControlWebTalk, SetListeningProfile,
         )
         from std_msgs.msg import String
     except ImportError:
@@ -286,6 +289,20 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             durability=DurabilityPolicy.VOLATILE,
         )
         publisher = node.create_publisher(SpeechTranscript, '/malbut/speech/transcript', qos)
+        profile_state = node.create_publisher(
+            ListeningProfile, '/malbut/speech/listening_profile', QoSProfile(
+                depth=1, history=HistoryPolicy.KEEP_LAST, reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
+        def publish_profile(profile):
+            profile_state.publish(ListeningProfile(user_id=profile.user_id, mode=profile.mode))
+
+        profiles = ListeningProfiles(on_change=publish_profile)
+        try:
+            publish_profile(profiles.current())
+        except (OSError, sqlite3.Error):
+            node.get_logger().warning('listening_profile_unavailable')
+        setting_reply = node.create_publisher(SpeechRequest, '/malbut/speech/response', qos)
         input_publisher = node.create_publisher(
             SpeechInputStatus, '/malbut/speech/input_status', qos)
         control_client = node.create_client(
@@ -499,6 +516,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             wake_is_speech=wake_speech_vad,
             transcriber=transcriber,
             publish_transcript=publish,
+            listening_profiles=profiles,
+            reply_to_setting=lambda uid, text: setting_reply.publish(SpeechRequest(
+                text=text, request_type=SpeechRequest.DIALOGUE, playback_id=uuid4().hex,
+                request_id=uid)),
             publish_control=publish_control,
             stop_speech=lambda playback_id: publish_control(
                 playback_id, 'stop' if playback_id else 'stop_all', web_talk=True),
@@ -573,6 +594,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_subscription(
             SpeechRequest, '/malbut/speech/response', speech_request, qos,
         )
+
+        def set_listening_profile(request, response):
+            try:
+                profiles.update(request.user_id, request.mode or None)
+                response.accepted = True
+            except (OSError, sqlite3.Error, ValueError) as error:
+                response.accepted = False
+                response.message = str(error)
+            return response
+
+        node.create_service(SetListeningProfile, '/malbut/speech/set_listening_profile',
+                            set_listening_profile)
 
         def control_session(request, response):
             from malbut_stt.session_privacy import can_start_session

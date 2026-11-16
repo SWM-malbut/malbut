@@ -48,7 +48,7 @@ ROBOT_INTERFACE = 'malbut_manager_v1'
 # map screen's destination sending (SWM25-237).
 NAVIGATION_OPERATIONS = ('navigation_preview', 'navigation_start', 'navigation_cancel')
 LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'rooms_save', 'zones_apply',
-                    'robot_ping', 'robot_diagnostics', *NAVIGATION_OPERATIONS)
+                    'robot_ping', 'robot_diagnostics', 'listening_profile_set', *NAVIGATION_OPERATIONS)
 # A map upload carries the preview PNG, the User Map and the Zones in one body.
 MAX_MAP_UPLOAD_BYTES = 2 * 1024 * 1024 - 64 * 1024
 # The server accepts device request bodies up to 64 KiB.
@@ -579,6 +579,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             'tracking': bounded_value(snapshot.get('tracking'), 1024),
             'zones': bounded_value(_without_path(snapshot.get('zones')), 1024),
             'manual': bounded_value(snapshot.get('manual'), 512),
+            **({'listeningProfile': snapshot['listening_profile']}
+               if snapshot.get('listening_profile') is not None else {}),
             **(navigation or {}),
         },
         'driveMode': robot_drive_mode(
@@ -754,6 +756,14 @@ class CloudSync:
     def _local(self, operation, payload):
         if not isinstance(payload, dict):
             raise ValueError('Command payload must be an object')
+        if operation == 'listening_profile_set':
+            if set(payload) not in ({'userId'}, {'userId', 'mode'}) or (
+                    'mode' in payload and payload['mode'] not in ('default', 'longer')):
+                raise ValueError('Invalid listening profile request')
+            user = payload['userId']
+            if not isinstance(user, str) or len(user) > 255 or ('mode' in payload and not user):
+                raise ValueError('Invalid listening profile user')
+            return self.bridge.set_listening_profile(user, payload.get('mode', ''))
         runtime = self.bridge.data.snapshot()['runtime']
         if operation == 'map_delete':
             if set(payload) != {'map'}:

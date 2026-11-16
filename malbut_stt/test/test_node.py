@@ -89,13 +89,14 @@ def runtime(monkeypatch, tmp_path):
     monkeypatch.delenv('MALBUT_STT_INCIDENT_CONFIG', raising=False)
     monkeypatch.delenv('MALBUT_STT_SHADOW_VAD_MODEL', raising=False)
     monkeypatch.delenv('MALBUT_STT_SILERO_GATE_MODEL', raising=False)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'cache'))
     monkeypatch.setattr('malbut_stt.incident.DEFAULT_DIRECTORY',
                         str(tmp_path / 'resource_logs' / 'stt_incidents'))
     model = tmp_path / 'local-model'
     model.mkdir()
     state = SimpleNamespace(
-        ok=False, calls={}, logs=[], published=[], statuses=[], closed=[], failure=None,
+        ok=False, calls={}, logs=[], published=[], profile_states=[], statuses=[], closed=[], failure=None,
         cleanup_failure=False, native_cleanup_failure=False,
         shutdown_before_publish=False, callbacks={}, capture_available=True,
         parameters={'wake_model_path': str(model)},
@@ -197,6 +198,8 @@ def runtime(monkeypatch, tmp_path):
 
         def create_publisher(self, message_type, topic, qos):
             state.calls.setdefault('publishers', {})[topic] = (message_type, qos)
+            if topic == '/malbut/speech/listening_profile':
+                return SimpleNamespace(publish=state.profile_states.append)
             if topic == '/malbut/speech/status':
                 return SimpleNamespace(publish=lambda msg: state.statuses.append(
                     (msg.data, state.pipeline.phase)))
@@ -342,15 +345,17 @@ def runtime(monkeypatch, tmp_path):
                 raise RuntimeError('private cleanup device details')
 
     state.messages = SimpleNamespace(
+        ListeningProfile=SimpleNamespace,
         SpeechInputStatus=type('SpeechInputStatus', (SimpleNamespace,), {}),
         SpeechTranscript=type('SpeechTranscript', (SimpleNamespace,), {}),
-        SpeechRequest=type('SpeechRequest', (SimpleNamespace,), {}),
+        SpeechRequest=type('SpeechRequest', (SimpleNamespace,), {'DIALOGUE': 0}),
         SpeechPlaybackStatus=type('SpeechPlaybackStatus', (SimpleNamespace,), {
             key.upper(): key for key in (
                 'accepted', 'playing', 'paused', 'finished', 'failed', 'stopped')
         }),
     )
     state.services = SimpleNamespace(
+        SetListeningProfile=SimpleNamespace(Request=SimpleNamespace, Response=SimpleNamespace),
         ControlWebTalk=SimpleNamespace(
             Request=SimpleNamespace, Response=SimpleNamespace),
         ControlSpeechSession=SimpleNamespace(
@@ -1384,3 +1389,23 @@ def test_explicit_endpoint_silence_floor_reaches_pipeline(runtime, minimum):
     runtime.parameters['endpoint_min_silence_s'] = minimum
     assert main() == 0
     assert runtime.pipeline_args['endpoint_min_silence_s'] == minimum
+
+def test_listening_service_and_spoken_updates_share_one_store_and_report_committed_state(runtime):
+    def on_spin():
+        service = runtime.callbacks['/malbut/speech/set_listening_profile']
+        profiles = runtime.pipeline_args['listening_profiles']
+        def request(user, mode):
+            return service(SimpleNamespace(user_id=user, mode=mode), SimpleNamespace()).accepted
+        assert request('person-a', '') and request('person-a', 'longer')
+        assert not request('person-b', 'default')
+        assert profiles.current().mode == 'longer'
+        profiles.update('person-a', 'default', expected_revision=profiles.current().revision)
+        updates = [(message.user_id, message.mode) for message in runtime.profile_states]
+        assert updates == [('', 'default'), ('person-a', 'default'), ('person-a', 'longer'),
+                           ('person-a', 'default')]
+        runtime.pipeline_args['reply_to_setting']('turn-1', '확인했어요.')
+        topic, reply = runtime.published[-1]
+        assert topic == '/malbut/speech/response' and reply.request_id == 'turn-1' and reply.playback_id
+        raise KeyboardInterrupt
+    runtime.on_spin = on_spin
+    assert main([]) == 0

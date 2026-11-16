@@ -30,7 +30,7 @@ const MANUAL_MOVE_RETENTION_MS = 120_000;
 const MANUAL_SESSION_GAP_MS = 10_000;
 const MANAGED_OPERATIONS = new Set<RobotOperation>([
   "runtime_start", "runtime_stop", "mission_start", "mission_cancel",
-  "map_delete", "manual_move", "zones_save",
+  "map_delete", "manual_move", "zones_save", "listening_profile_set",
   "robot_ping", "robot_diagnostics", "debug_mission_start",
 ]);
 const ACTIVE_MAPPING_STATES = new Set([
@@ -282,6 +282,10 @@ export async function createRobotCommand(input: {
     ? await userCanNavigateDevice(input.deviceId, input.userId)
     : await userCanManageDevice(input.deviceId, input.userId);
   if (!permitted) {
+    throw new Error("FORBIDDEN");
+  }
+  if (input.operation === "listening_profile_set" && input.payload?.userId &&
+      !(await userCanViewDevice(input.deviceId, String(input.payload.userId)))) {
     throw new Error("FORBIDDEN");
   }
   await assertDriveCommandAllowed(input);
