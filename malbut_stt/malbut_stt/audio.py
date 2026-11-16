@@ -160,7 +160,7 @@ class UtteranceCollector:
                         self.candidate_frames = 0
                         self._candidate_start_blocked = False
                     elif (self.start_qualifier is not None
-                          and self.candidate_frames >= math.ceil(self.settings.pre_roll_s / 0.02)):
+                          and self.candidate_frames >= self.pre_roll.maxlen):
                         # A rejected WebRTC run must not retain unbounded PCM
                         # or prevent the idle timeout from ever firing.
                         self.candidate_frames = 0

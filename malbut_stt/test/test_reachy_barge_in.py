@@ -2,7 +2,7 @@
 import pytest
 
 from malbut_stt.audio import CaptureSettings
-from test_dialogue_pipeline import harness, pump, VOICE, QUIET
+from test_dialogue_pipeline import harness, pump, wake_up, VOICE, QUIET
 
 
 def reply(harness, *, aec=True, mode='reachy'):
@@ -11,6 +11,37 @@ def reply(harness, *, aec=True, mode='reachy'):
     p._publish_transcript('old-request', '처음 질문')
     p.on_playback_status('old-playback', 'playing', request_id='old-request')
     return p
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_question_after_wake_chime_uses_ordinary_pre_roll(harness, fallback):
+    chimes = []
+    p = harness.create(barge_in_mode='reachy', barge_in_pre_roll_s=2.0,
+                       settings=CaptureSettings(pre_roll_s=1.0, silence_timeout_s=2.0),
+                       on_wake=lambda: chimes.append('wake'))
+    if fallback:
+        p.recorder.aec_ready = False
+        p.poll()
+        harness.now += 1.01  # Raw capture resumes after the AEC drain.
+    wake_up(harness, p)
+    assert chimes == ['wake']
+    harness.now += .31
+    p.feed(QUIET * 125 + VOICE * 10 + QUIET * 100)
+    pump(p, lambda: bool(harness.transcripts))
+    assert harness.command_calls[0][0] == QUIET * 49 + VOICE * 10 + QUIET * 100
+
+
+@pytest.mark.parametrize('overlap', [True, False])
+def test_extended_history_belongs_to_playing_reply(harness, overlap):
+    p = reply(harness)
+    # A silent collection can reset while a long spoken reply is playing.
+    p.feed(QUIET * 380)
+    if not overlap:
+        p.on_playback_status('old-playback', 'finished', request_id='old-request')
+        p.feed(QUIET * 99)
+    p.feed(VOICE * 10)
+    prefix = 99 if overlap else 14  # 2 s during playback, ordinary 0.3 s after.
+    assert p.command_stream.collector.audio == QUIET * prefix + VOICE * 10
 
 
 def test_reachy_requires_aec(harness):
