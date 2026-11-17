@@ -51,6 +51,11 @@ WAIT_LIMIT_S = 600.0
 # After a close (design 8): forget someone unseen for 30 minutes (FORGET_S, the same
 # as the person tracking); recheck someone closed on the floor every 30 minutes (G).
 RECHECK_S = 1800.0
+# A suspicion joining an open incident is a scene of its own (재감지) only this long after
+# the last scene kept: someone who stays down is seen again every scan (Cloud looks every
+# 60 s), 30 s after the check on 11-17, and up to 30 times before the recheck. The user
+# chose five minutes (2026-11-17).
+REDETECT_S = 300.0
 # One alert per place and level (decision 6, mockup 55 ③): the same level from the same
 # place (1 m) within 10 minutes is noted on the incident that sent it instead.
 GROUP_S, GROUP_M = 600.0, 1.0
@@ -148,6 +153,7 @@ class Incident:
     # The check round: 1, then one more each time the robot checks it again.
     check_round: int = 1
     answer: Optional[str] = None   # okay, help_request, no_response, unclear, failed
+    scene_at: Optional[float] = None  # when a scene of it was last kept (its video, a 재감지)
     # Waiting on the Manager this round: since when, why, how long before.
     waiting_since: Optional[float] = None
     waiting_for: Optional[str] = None
@@ -659,7 +665,7 @@ class FallFlow:
 
     def _open(self, s, now, *, guard=False, look_id=None, guard_reason=None):
         incident = Incident(str(uuid4()), s, s.person, now, place=s.point,
-                            uncertain=s.uncertain)
+                            uncertain=s.uncertain, scene_at=now)
         if s.fall_moment:
             incident.fall_moments.append(s.fall_moment)
         self.incidents[incident.incident_id] = incident
@@ -889,9 +895,15 @@ class FallFlow:
         if s.fall_moment and s.fall_moment not in incident.fall_moments:
             incident.fall_moments.append(s.fall_moment)
             del incident.fall_moments[1:-1]  # The first and the last fall (design 5).
-        # Its moment joins the incident's clip.
+        # Its moment joins the incident's clip: while the robot's video runs, or
+        # REDETECT_S after the last scene. Otherwise it only counts as seen.
+        scene = (incident.clip_open or incident.scene_at is None
+                 or self.now - incident.scene_at >= REDETECT_S)
+        if scene:
+            incident.scene_at = self.now
         self.commands.append(dict(kind='link', sighting_id=s.sighting_id,
-                                  incident_id=incident.incident_id))
+                                  incident_id=incident.incident_id,
+                                  **({} if scene else {'scene': False})))
 
     def _open_match(self, s):
         """That person's open incident (design decision 6). Uncertain who it is: only an
@@ -960,6 +972,7 @@ class FallFlow:
             incident.clip_open = True
         elif incident.clip_open:
             incident.clip_open = False
+            incident.scene_at = self.now
         else:
             return
         self._command('clip', incident, mark=mark, check_round=incident.check_round)

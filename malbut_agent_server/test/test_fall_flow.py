@@ -7,7 +7,8 @@ import math
 import pytest
 
 from malbut_agent_server.fall_rules.fall_flow import (
-    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow, Incident, Sighting,
+    FORGET_S, POSTURE_AGAIN_S, RECHECK_S, REDETECT_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow, Incident,
+    Sighting,
 )
 from malbut_agent_server.fall_rules.person_tracker import SHORT_GONE_S, Frame, Observation
 
@@ -763,6 +764,29 @@ def test_a_suspicion_joining_an_incident_extends_its_clip():
     assert not kinds(robot.frame(person('t1')), 'link')  # Being in view is not clip evidence.
 
 
+def test_a_suspicion_after_the_check_is_a_scene_only_five_minutes_after_the_last():
+    """11-17 10:36: still lying, seen again by Cloud 30 s after the check: 재감지 1회."""
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('help_request')  # The check ends; the incident stays open for the guardian.
+
+    def link(seconds, **fields):
+        robot.wait(seconds)
+        s, out = robot.see('cloud', **fields)
+        command, = kinds(out, 'link')
+        assert (command['sighting_id'], command['incident_id']) == (s.sighting_id, incident)
+        return command.get('scene', True)
+
+    assert link(30) is False                 # Joins the incident, counts as seen: no scene.
+    assert link(REDETECT_S - 31) is False
+    assert link(1) is True                   # Five minutes after the check ended.
+    assert link(60) is False                 # And five minutes after that one.
+    assert link(REDETECT_S - 60) is True
+
+
 def test_someone_merely_in_view_does_not_move_the_incidents_place():
     # 4-4 replay, bed 10-10 20:43: a box 1 m off moved the place; the next Cloud find at
     # the first spot then opened a second incident for the same person.
@@ -862,9 +886,9 @@ def test_a_fall_while_two_are_too_close_is_checked_separately_once():
     robot.filter(s, 'suspect')
     separate = next(i for i in robot.flow.incidents.values() if i.incident_id != first)
     assert separate.uncertain
-    _, out = robot.see(track='b', point=(3.3, 1.0))
+    _, out = robot.see(track='b', point=(3.3, 1.0))  # At once: seen, not a scene of its own.
     assert kinds(out, 'link') == [dict(kind='link', sighting_id=out[0]['sighting_id'],
-                                       incident_id=separate.incident_id)]
+                                       incident_id=separate.incident_id, scene=False)]
     assert len(robot.flow.incidents) == 2  # One more, not one per suspicion.
 
 

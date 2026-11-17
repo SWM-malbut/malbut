@@ -532,7 +532,10 @@ class FallFlowSensor:
             sighting = self._sightings.get(_id(data.get('sighting_id'), optional=False))
             incident_id = _id(data.get('incident_id'), optional=False)
             incident = self._incidents.get(incident_id)
-            if sighting is not None and incident is not None:
+            if data.get('scene') not in (None, True, False):
+                raise ValueError('invalid link')
+            # Not a scene of its own (too soon after the last one kept): only seen.
+            if sighting is not None and incident is not None and data.get('scene') is not False:
                 self._clip_from(incident, sighting)
             # Seen now: for a restarted Agent, whoever is at its place for 30 more minutes.
             if self._journal is not None:
