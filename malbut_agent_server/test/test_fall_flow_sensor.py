@@ -446,6 +446,10 @@ class Looks:
 
     def __init__(self):
         self.observed, self.compared, self.paired, self.wanted = [], [], False, []
+        self.seen = []
+
+    def see(self, at, tracks):
+        self.seen.append((at, tracks))
 
     def due(self, track, at):
         return True
@@ -471,6 +475,7 @@ def test_people_in_view_are_described_and_comparisons_answered(robot):
     advance(sensor, clock, 1)
     poses(sensor, clock)
     assert looks.observed == [(clock.value, [('pose:1:a', BOX)])]
+    assert looks.seen == [(clock.value, ['pose:1:a'])]  # Every frame, for the first look.
     messages(sensor)
     sensor.apply(dict(action='compare', request_id='r1', a=dict(track='pose:1:a', at=90.0),
                       b=dict(track='pose:1:b', at=clock.value)))

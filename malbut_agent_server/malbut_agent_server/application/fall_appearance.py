@@ -14,6 +14,14 @@ taken then, the Agent asked 2 s later and the next pair was due after the 3 s wa
 No identity is decided here. Without the encoder or its model, or without a pair on
 both sides, the answer is "none" and the Agent goes by place alone. Never raises into
 the fall check.
+
+A track gets its first look only after half a second in view (11-17): on the robot a
+detection flickering under new track numbers (220 new tracks in ten minutes) took a
+look each time, 186 ms of CPU apiece, for looks that never became a pair. The price:
+a track now needs 1.5 s in view for its pair, not 1 s. On that day's log (5,721
+tracks, 463 comparisons) the looks halved, 9,682 to 5,023, and the comparisons that
+got a value went from 6 to 1; the four of those lost that had been answered were the
+same person (0.95-0.98), which decides as no answer does.
 """
 
 from collections import OrderedDict, deque
@@ -24,20 +32,30 @@ PAIR_GAP_S = 1.0       # its two looks a second apart (as tested on the Jetson, 
 KEEP_S = 1800.0        # as long as the tracking remembers someone unseen
 MAX_TRACKS = 128
 PER_TRACK = 6
+SEEN_FOR_S = 0.5       # in view this long before a track's first look
+SEEN_GAP_S = 1.0       # unseen longer than this: its time in view counts anew
+ENCODER_THREADS = 2    # per look on the robot: 6 threads 33 ms/184 ms CPU, 2 63 ms/123 ms
 MODEL = '~/.cache/malbut_perception/osnet_ain_x1_0_msmt17.onnx'
 
 
-def _load_encoder(model_path):
+def _load_encoder(model_path, set_threads=None):
     """malbut_reid's OSNet encoder as encode(bgr, pixel boxes) -> vectors (or ImportError).
 
     On the CPU with OpenCV, as REID_SPLIT was set on the Jetson (10-19). The encoder's
     "auto" took TensorRT on the robot: 1.3-1.5 GB more in this process with 485 MB of
     memory left, and minutes of engine building at the first start. On the CPU a look
     took about 47 ms, two per person every five seconds.
+
+    OpenCV's threads are set for the whole process: six of them finished a look
+    sooner but spent half as much CPU again as two (11-17), with the same vectors.
     """
     from malbut_reid.models import BoundingBox, ImageDetection
     from malbut_reid.reid.osnet_encoder import OsNetPersonEncoder
 
+    if set_threads is None:
+        import cv2
+        set_threads = cv2.setNumThreads
+    set_threads(ENCODER_THREADS)
     encoder = OsNetPersonEncoder(model_path, dnn_target='cpu', inference_backend='opencv')
 
     def encode(image, boxes):
@@ -66,6 +84,7 @@ class FallAppearance:
         # YOLO track -> deque[(at, unit vector, first of its pair)]
         self._tracks = OrderedDict()
         self._wanted = {}   # track -> since when a comparison waits for its pair
+        self._in_view = OrderedDict()  # track -> (in view since, last seen)
         self.failures = 0
 
     @property
@@ -82,10 +101,27 @@ class FallAppearance:
                 self._encode = None  # No malbut_reid or model: by place alone.
         return self._encode is not None
 
+    def see(self, at, tracks):
+        """The tracks of one frame: how long each has been in view without a break."""
+        for track in tracks:
+            if not track:
+                continue
+            since, last = self._in_view.get(track, (at, at))
+            if at < last:
+                continue  # An older frame.
+            self._in_view[track] = (at if at - last > SEEN_GAP_S else since, at)
+            self._in_view.move_to_end(track)
+        while self._in_view and (
+                len(self._in_view) > MAX_TRACKS
+                or at - next(iter(self._in_view.values()))[1] > SEEN_GAP_S):
+            self._in_view.popitem(last=False)
+
     def due(self, track, at):
         looks = self._tracks.get(track)
         if not looks:
-            return True
+            # Its first look: not for a detection that flickers and is gone.
+            seen = self._in_view.get(track)
+            return seen is not None and at - seen[0] >= SEEN_FOR_S
         last_at, _, first = looks[-1]
         if first:
             return at - last_at >= PAIR_GAP_S  # The second of the pair.
@@ -102,6 +138,7 @@ class FallAppearance:
 
     def observe(self, at, jpeg, people):
         """``people``: (track, box in 1/1 of the frame) of one frame, its JPEG."""
+        self.see(at, [track for track, _ in people])
         wanted = [(track, box) for track, box in people
                   if track and box is not None and self.due(track, at)]
         if not wanted or not self._ready():

@@ -5,7 +5,8 @@ import sys
 import types
 
 from malbut_agent_server.application.fall_appearance import (
-    EVERY_S, KEEP_S, PAIR_GAP_S, FallAppearance, _load_encoder,
+    ENCODER_THREADS, EVERY_S, KEEP_S, PAIR_GAP_S, SEEN_FOR_S, SEEN_GAP_S, FallAppearance,
+    _load_encoder,
 )
 
 BOX = (0.25, 0.5, 0.5, 1.0)
@@ -32,7 +33,7 @@ def store(*vectors):
 
 def test_a_pair_of_looks_a_second_apart_every_five_seconds_in_pixels():
     seen, calls = store([1.0, 0.0])
-    for at in (100.0, 100.4, 100.0 + PAIR_GAP_S, 103.0, 100.0 + EVERY_S, 104.6,
+    for at in (100.0 - SEEN_FOR_S, 100.0, 100.4, 100.0 + PAIR_GAP_S, 103.0, 100.0 + EVERY_S, 104.6,
                100.0 + EVERY_S + PAIR_GAP_S):
         seen.observe(at, b'jpeg', [('a', BOX)])
     assert calls[0] == [(160.0, 240.0, 320.0, 480.0)]
@@ -42,8 +43,10 @@ def test_a_pair_of_looks_a_second_apart_every_five_seconds_in_pixels():
 
 def test_two_against_two_the_last_pair_before_and_the_first_pair_after():
     seen, _ = store([1.0, 0.0], [0.8, 0.6], [0.0, 1.0], [0.6, 0.8])
+    seen.see(99.5, ['old'])
     for at in (100.0, 101.0):  # The one who left: [1, 0] and [0.8, 0.6].
         seen.observe(at, b'jpeg', [('old', BOX)])
+    seen.see(699.5, ['new'])
     seen.observe(700.0, b'jpeg', [('new', BOX)])
     assert not seen.ready(('new', 700.0))
     assert seen.compare(('old', 101.0), ('new', 700.0)) is None  # One look after: wait.
@@ -58,11 +61,13 @@ def test_a_wanted_pair_is_taken_at_once_not_on_the_five_second_round():
     """10-19 18:28: the pair from the track's first moments was too early for the
     comparison asked 2 s later, and the next pair came after the 3 s wait."""
     seen, _ = store([1.0, 0.0])
+    late = FallAppearance(encode=looks([1.0, 0.0])[0], decode=lambda jpeg: Image())
+    seen.see(99.5, ['b'])
+    late.see(99.5, ['b'])
     for at in (100.0, 101.0):  # Its first pair (a sliver at the screen edge).
         seen.observe(at, b'jpeg', [('b', BOX)])
     asked = 102.2
     assert not seen.ready(('b', asked))
-    late = FallAppearance(encode=looks([1.0, 0.0])[0], decode=lambda jpeg: Image())
     for at in (100.0, 101.0):
         late.observe(at, b'jpeg', [('b', BOX)])
     seen.want('b', asked)
@@ -71,6 +76,38 @@ def test_a_wanted_pair_is_taken_at_once_not_on_the_five_second_round():
         late.observe(at, b'jpeg', [('b', BOX)])
     assert seen.ready(('b', asked)) and seen._wanted == {}  # Within 1.5 s of asking.
     assert not late.ready(('b', asked))  # On the round it would come at 105-106.
+
+
+def test_a_track_gets_its_first_look_after_half_a_second_in_view():
+    """11-17 on the robot: a detection flickering under new track numbers (220 new
+    tracks in ten minutes) took a look each time; none of them lived to a pair."""
+    seen, calls = store([1.0, 0.0])
+    for number, at in enumerate((100.0, 100.25, 100.5, 100.75, 101.0, 101.25)):
+        seen.observe(at, b'jpeg', [('flicker-%d' % number, BOX)])  # One frame each.
+    seen.observe(102.0, b'jpeg', [('brief', BOX)])
+    seen.observe(102.25, b'jpeg', [('brief', BOX)])  # Gone before half a second.
+    assert calls == [] and seen._tracks == {}
+    for at in (110.0, 110.25, 110.0 + SEEN_FOR_S, 111.0, 110.5 + PAIR_GAP_S):
+        seen.observe(at, b'jpeg', [('stays', BOX)])
+    assert [at for at, _, _ in seen._tracks['stays']] == [110.5, 111.5]
+    assert seen.ready(('stays', 110.0))
+
+
+def test_time_in_view_counts_anew_after_a_break_and_a_waiting_comparison_does_not_skip_it():
+    seen, calls = store([1.0, 0.0])
+    seen.observe(100.0, b'jpeg', [('a', BOX)])
+    seen.want('a', 100.0)  # The Agent asks about it at once: still half a second first.
+    seen.observe(100.25, b'jpeg', [('a', BOX)])
+    seen.observe(100.3 + SEEN_GAP_S, b'jpeg', [('a', BOX)])  # Unseen for over a second.
+    assert calls == []
+    seen.observe(100.6 + SEEN_GAP_S, b'jpeg', [('a', BOX)])  # 0.3 s since it came back.
+    assert calls == []
+    seen.observe(100.8 + SEEN_GAP_S, b'jpeg', [('a', BOX)])
+    assert len(calls) == 1
+    seen.see(200.0, ['b'])
+    seen.see(200.6, [])  # A missed frame or two keeps the count (the same track number).
+    seen.observe(200.75, b'jpeg', [('b', BOX)])
+    assert len(calls) == 2
 
 
 def test_without_the_encoder_or_model_the_answer_is_none():
@@ -99,8 +136,10 @@ def test_the_encoder_runs_on_the_cpu_with_opencv(monkeypatch):
     modules['malbut_reid.reid.osnet_encoder'].OsNetPersonEncoder = Encoder
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
-    encode = _load_encoder('model.onnx')
+    threads = []
+    encode = _load_encoder('model.onnx', set_threads=threads.append)
     assert made == dict(path='model.onnx', dnn_target='cpu', inference_backend='opencv')
+    assert threads == [ENCODER_THREADS] and ENCODER_THREADS == 2  # 11-17: 6 cost 184 ms a look.
     assert encode(Image(), [(0, 0, 10, 20)]) == [None]
 
 
@@ -109,13 +148,16 @@ def test_a_broken_frame_loses_a_look_never_the_fall_check():
         raise ValueError('not a jpeg')
     encode, calls = looks([1.0, 0.0])
     seen = FallAppearance(encode=encode, decode=broken)
+    seen.see(99.5, ['a'])
     seen.observe(100.0, b'jpeg', [('a', BOX)])
     assert seen.failures == 1 and calls == []
 
 
 def test_people_unseen_for_30_minutes_are_dropped():
     seen, _ = store([1.0, 0.0])
+    seen.see(99.5, ['a'])
     for at in (100.0, 101.0):
         seen.observe(at, b'jpeg', [('a', BOX)])
+    seen.see(101.5 + KEEP_S, ['b'])
     seen.observe(102.0 + KEEP_S, b'jpeg', [('b', BOX)])
     assert 'a' not in seen._tracks
