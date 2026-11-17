@@ -347,6 +347,7 @@ class FallFlowSensor:
     def _describe(self, frame):
         """What each person in view looks like, every few seconds (ReID, decision 10)."""
         people = [(p.subject_key, p.box) for p in frame.subjects if p.box is not None]
+        self._appearance.see(frame.observed_at, [track for track, _ in people])
         if not any(self._appearance.due(track, frame.observed_at) for track, _ in people):
             return
         shot = self._frames(frame.observed_at, 1.0, 1)
