@@ -41,6 +41,20 @@ ReID only splits (decision 10): someone reappearing where one unseen person was 
 person, uncertain until the VLM says how alike the two looked (two looks against two);
 clearly unlike (below REID_SPLIT) is someone else. It never joins anyone.
 
+One person, one number, when they fill the screen (2026-11-17 09:14, one person lying
+0.8 m from the robot became three incidents and was asked three times):
+  - a new track without a map place whose box lies PART_INSIDE in the box of someone
+    seen in the same frame is another box on that body, not someone new. YOLO gave the
+    lying body a second box for 43 s (0.34-0.45 of the smaller box inside the other;
+    the detector only drops boxes overlapping 0.85). Two people lying that close are
+    checked as one (the user, 11-17: the robot goes there and the guardian is told
+    either way). Measured further away than the person could have gone (as a track
+    whose place jumped), it is someone else after all: not by MERGE_M, the torso place
+    of that still body moved 0.85 m between frames;
+  - a suspicion without a track (Cloud's) is whoever the frames showed under its box at
+    that time, before its own map place: Cloud's place is measured on its box, and was
+    1.3 m from the torso place of the person its box covered by 0.87.
+
 Pure: no ROS, transport or clock. Starting values, to be tuned on recorded days:
 ~/fall-person-tracking-design-20261019.md (decisions 3-5).
 """
@@ -69,6 +83,7 @@ RESOLVE_M = 0.5         # after they part, the one observation near that place i
 # two against two, 10-17 pairs (10-19): 5 of 8 others split, 0 of 9 same people.
 REID_SPLIT = 0.62
 REID_WAIT_S = 5.0       # no answer by then: by place alone
+PART_INSIDE = 0.3       # of the smaller box inside the other: another box on that body
 SETTLE_HITS = 3         # frames a new number is seen in before it counts as someone else
 SOLO_S = 60.0           # uncertain, but only one of them seen, in one place, this long: clear
 LINK_S = 60.0           # two not met again (close, or one taken for the other) this long: apart
@@ -120,6 +135,7 @@ class Person:
     unplaced: bool = False   # made without a map place while uncertain: recovered by place
     hits: int = 0            # frames seen in
     waiting: tuple = ()      # who could be this one, made uncertain once it settles
+    also: Dict[str, float] = field(default_factory=dict)  # other tracks on this body: seen at
 
 
 @dataclass
@@ -157,6 +173,15 @@ def _parts(links):
     return parts
 
 
+def _inside(a, b):
+    """How much of the smaller box lies in the other."""
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    return width * height / min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+
+
 def _iou(a, b):
     width = min(a[2], b[2]) - max(a[0], b[0])
     height = min(a[3], b[3]) - max(a[1], b[1])
@@ -179,6 +204,7 @@ class PersonTracker:
         self.pending: Dict[str, dict] = {}   # ReID request -> who reappeared, and as what
         self._requests: List[dict] = []
         self._checks: Dict[str, object] = {}  # ReID request before a commit -> its answer
+        self._parts: List[tuple] = []  # (observation, person): another box on that body
 
     # ------------------------------------------------------------ queries
 
@@ -208,6 +234,12 @@ class PersonTracker:
             if self._apply(person, obs, t, frame.view, frame.stationary):
                 stood_up.append(person.person_id)
             person.hits += 1
+        for person in self.people.values():
+            person.also = {k: at for k, at in person.also.items() if t - at <= TRACK_GAP_S}
+        parts = {obs.track: person for obs, person in self._parts}
+        for track, person in parts.items():
+            person.also[track] = t
+            person.last_seen = max(person.last_seen, t)
         seen = [(obs, taken[id(obs)]) for obs in frame.people if id(obs) in taken]
         self._settle(seen, t)
         merged = self._recover(seen, t)
@@ -216,6 +248,8 @@ class PersonTracker:
         self._release(seen, t, frame.view)
         # After a release may have swapped two people: each one's track now.
         assignments = {person.track: person.person_id for _, person in seen if person.track}
+        assignments.update((track, person.person_id) for track, person in parts.items()
+                           if track in person.also)
         changed = {k: v for k, v in assignments.items() if self._sent.get(k) != v}
         self._sent.update(changed)
         return FrameResult(assignments, changed, stood_up, merged)
@@ -230,12 +264,34 @@ class PersonTracker:
         """A suspicion, which the VLM sends before its frame: (person, uncertain)."""
         self._forget(at)
         self.expire(at)
+        person = self._shown(obs, at, view)
+        if person is not None:
+            return person.person_id, self.uncertain(person.person_id)
         (_, person), = self._match((obs,), at, view)
         self._apply(person, obs, at, view)
         # Its track's number goes to the VLM with the next frame, which follows at once.
         return person.person_id, self.uncertain(person.person_id)
 
     # ------------------------------------------------------------ matching
+
+    def _shown(self, obs, t, view):
+        """Whose suspicion this is by what the frames show: another track on a body, or
+        a box without a track (Cloud's, which arrives seconds late) over someone's box
+        in that view. None: by track and place, as any observation."""
+        if obs.track:
+            return self._whole(obs.track, t)
+        if obs.box is None:
+            return None
+        shown = [(_iou(obs.box, p.box), p) for p in self.people.values()
+                 if p.box and p.view == view and p.first_seen <= t
+                 and t - p.last_seen <= TRACK_GAP_S]
+        overlap, person = max(shown, key=lambda x: x[0], default=(0.0, None))
+        return person if overlap >= BOX_IOU else None
+
+    def _whole(self, track, t):
+        """The person this track is another box on, seen within a second."""
+        return next((p for p in self.people.values()
+                     if t - p.also.get(track, -math.inf) <= TRACK_GAP_S), None)
 
     def _reach(self, person, t):
         return min(MAX_M, BASE_M + WALK_MPS * max(0.0, t - person.point_at))
@@ -248,8 +304,21 @@ class PersonTracker:
     def _match(self, observations, t, view):
         """Each observation with its person (an existing one or a new one)."""
         result, used, rest = [], set(), []
+        self._parts = []
+        tracks = {obs.track for obs in observations if obs.track}
         # 1. The same YOLO track, unless the place jumped (the track went to someone else).
         for obs in observations:
+            whole = self._whole(obs.track, t) if obs.track else None
+            if whole is not None and whole.track not in tracks:
+                # The body's first box is gone: this one carries the person on.
+                del whole.also[obs.track]
+                whole.track = obs.track
+            elif (whole is not None and obs.point and whole.point
+                  and math.dist(obs.point, whole.point) > self._reach(whole, t)):
+                del whole.also[obs.track]  # Further than they could be: someone else.
+            elif whole is not None:
+                self._parts.append((obs, whole))
+                continue
             person = next((p for p in self.people.values() if obs.track and p.track == obs.track
                            and t - p.last_seen <= TRACK_GAP_S and p.person_id not in used), None)
             if (person is not None and obs.point and person.point
@@ -290,6 +359,14 @@ class PersonTracker:
                           if p.person_id not in used and p.box and p.view == view]
                 best = max(scored, key=lambda x: x[0], default=(0.0, None))
                 person = best[1] if best[0] >= BOX_IOU else None
+            if person is None and obs.point is None and obs.box is not None and obs.track:
+                # A new track inside the box of someone in this frame: on that body.
+                inside, whole = max(((_inside(obs.box, o.box), p) for o, p in result
+                                     if o.box is not None), key=lambda x: x[0],
+                                    default=(0.0, None))
+                if inside >= PART_INSIDE:
+                    self._parts.append((obs, whole))
+                    continue
             if person is None:
                 left.append(obs)
             else:
@@ -636,7 +713,7 @@ class PersonTracker:
     def _swap(self, a, b):
         """The tracking had them the other way round: exchange what each was last seen as."""
         for name in ('track', 'point', 'point_at', 'box', 'view', 'last_seen', 'posture',
-                     'places'):
+                     'places', 'also'):
             value = getattr(a, name)
             setattr(a, name, getattr(b, name))
             setattr(b, name, value)

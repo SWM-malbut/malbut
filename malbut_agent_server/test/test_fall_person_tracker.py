@@ -459,3 +459,60 @@ def test_reid_is_not_asked_when_two_could_be_them(robot):
     robot.wait(60)
     robot.frame(seen('c', (3.0, 1.4)))
     assert robot.tracker.take_requests() == []  # Uncertain; ReID never chooses (only splits).
+
+
+# One person, one number, when they fill the screen (2026-11-17 09:14).
+WHOLE = (0.00, 0.00, 0.34, 0.65)     # the body's first box, at the screen edge
+PART = (0.10, 0.21, 0.95, 0.63)      # 0.44 of WHOLE lies in it (IoU 0.21)
+APART = (0.30, 0.21, 0.95, 0.63)     # 0.08 of WHOLE
+
+
+def test_a_placeless_new_track_inside_someones_box_is_that_body(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), WHOLE))
+    result = robot.frames(1.0, seen('a', None, WHOLE), seen('b', None, PART, 'suspected'))
+    assert result.assignments == {'a': 'test:P1', 'b': 'test:P1'}
+    assert list(robot.tracker.people) == ['test:P1']
+    # Its suspicion is that person's, so it joins their incident.
+    assert robot.tracker.assign(Observation('b', PART, None), robot.t, 0) == ('test:P1', False)
+
+
+def test_a_new_track_barely_touching_a_box_or_with_a_place_is_someone_else(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), WHOLE))
+    result = robot.frame(seen('a', None, WHOLE), seen('b', None, APART),
+                         seen('c', (5.0, 1.0), PART))
+    assert result.assignments == {'a': 'test:P1', 'b': 'test:P2', 'c': 'test:P3'}
+
+
+def test_the_other_box_carries_the_person_on_when_the_first_is_gone(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), WHOLE))
+    robot.frames(1.0, seen('a', None, WHOLE), seen('b', None, PART))
+    result = robot.frames(3.0, seen('b', None, PART))
+    assert result.assignments == {'b': 'test:P1'}
+    assert robot.tracker.people['test:P1'].box == PART
+    back = robot.frame(seen('b', None, PART), seen('a', None, WHOLE))
+    assert back.assignments == {'b': 'test:P1', 'a': 'test:P1'}
+
+
+def test_another_box_measured_further_than_the_person_could_be_is_someone_else(robot):
+    robot.frames(1.0, seen('a', (3.0, 1.0), WHOLE))
+    robot.frames(1.0, seen('a', (3.0, 1.0), WHOLE), seen('b', None, PART))
+    near = robot.frame(seen('a', (3.0, 1.0), WHOLE), seen('b', (3.6, 1.0), PART))
+    assert near.assignments == {'a': 'test:P1', 'b': 'test:P1'}  # Depth wobbles (0.85 m).
+    far = robot.frame(seen('a', (3.0, 1.0), WHOLE), seen('b', (6.0, 1.0), PART))
+    assert far.assignments == {'a': 'test:P1', 'b': 'test:P2'}
+
+
+def test_a_suspicion_without_a_track_is_whoever_the_frames_showed_under_its_box(robot):
+    """Cloud's box covered the lying person; its own place was 1.3 m off and near where
+    someone else had been, and it arrived 2.5 s after it was taken."""
+    robot.frames(1.0, seen('old', (1.7, 1.0), BOX_B))
+    robot.wait(60.0)
+    robot.frames(2.0, seen('a', (3.0, 1.0), BOX_A))
+    taken = robot.t
+    robot.frames(2.6, seen('a', (3.0, 1.0), BOX_A))
+    assert robot.tracker.assign(Observation(None, BOX_A, (1.7, 1.0)), taken, 0) == (
+        'test:P2', False)
+    assert robot.tracker.people['test:P2'].point == (3.0, 1.0)  # Cloud's place is not theirs.
+    # No one under its box, or another view: by its place, as before.
+    assert robot.tracker.assign(Observation(None, BOX_B, (1.7, 1.0)), taken, 0)[0] == 'test:P1'
+    assert robot.tracker.assign(Observation(None, BOX_A, (1.7, 1.0)), robot.t, 1)[0] == 'test:P1'
