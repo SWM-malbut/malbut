@@ -335,6 +335,27 @@ def test_spoken_end_closes_dialogue_until_a_fresh_wake(harness, during_reply, ae
     assert harness.transcripts[-1][1] == '날씨 알려줘'
 
 
+@pytest.mark.parametrize('notice_first', [True, False])
+def test_closing_notice_never_opens_followup(harness, notice_first):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+
+    if not notice_first:
+        pipeline.end_dialogue(uid)
+    pipeline.on_speech_request('closing-notice', request_id='')
+    pipeline.on_playback_status('closing-notice', 'playing', request_id='')
+    pipeline.on_playback_status('closing-notice', 'finished', request_id='')
+    if notice_first:
+        assert pipeline._reply_request_id == uid
+        pipeline.end_dialogue(uid)
+
+    assert not pipeline.session.active and pipeline._reply_request_id is None
+    assert 'waiting_for_followup' not in harness.reports
+
+
 def test_agent_end_closes_only_pending_turn_and_stops_its_notices(harness):
     pipeline = harness.create()
     wake_up(harness, pipeline)

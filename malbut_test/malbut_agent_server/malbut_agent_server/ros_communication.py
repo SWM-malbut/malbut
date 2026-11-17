@@ -304,6 +304,13 @@ def create_communication_node(
             ))
             return True
 
+        def say_dialogue_end(self):
+            """Speak the closing notice without starting a new turn."""
+            # Playback can arrive before the end signal on the other topic. Leave
+            # request_id empty so finishing this notice never opens a follow-up.
+            if not self._in_fall_window:
+                self.say('대화 종료할게요.')
+
         def _receive_input_status(self, message):
             if self._patrol_chat is not None:
                 self._patrol_chat.input_status(message)
@@ -323,6 +330,8 @@ def create_communication_node(
                 self._input_utterance_id = None if unavailable else uid
             elif message.state == SpeechInputStatus.ENDED and uid == self._input_utterance_id:
                 self._input_utterance_id = None
+                if not unavailable:
+                    self.say_dialogue_end()
             elif (message.state in (SpeechInputStatus.FAILED, SpeechInputStatus.FILTERED)
                   and uid == self._input_utterance_id):
                 self._input_utterance_id = None
@@ -544,9 +553,10 @@ def create_communication_node(
                 chat = self._patrol_chat
                 if chat is None or chat.request_id != companion or chat.reply_id != uid:
                     return False
-                chat.end()
+                chat.end_by_user()
             else:
                 self._dialogue_end.publish(String(data=uid))
+                self.say_dialogue_end()
             return True
 
         def _drain_dialogue(self):

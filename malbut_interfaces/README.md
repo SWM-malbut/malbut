@@ -14,7 +14,7 @@
 | Agent → STT → Agent | Service `/malbut/speech/session_control` | [ControlSpeechSession](srv/ControlSpeechSession.srv) | 호출어 없는 청취 세션의 시작·종료·생존 조회 |
 | 홈캠 미디어 → STT → 홈캠 미디어 | Service `/malbut/speech/web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 웹 말하기 중 입력 차단·갱신·종료. 입력 및 이전 인식 결과 차단 후 접수 응답 |
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 발화 시작, 인식 실패·필터링, 사용자의 대화 종료 요청 |
-| Agent → STT | Topic `/malbut/speech/end_dialogue` | `std_msgs/msg/String` | 일반 대화에서 Agent가 종료 의도를 판단하면 답변 대신 원래 발화 ID를 발행한다. STT는 해당 답변을 기다리고 있을 때만 호출어 대기로 복귀한다. QoS는 reliable·transient local이며 최신 ID 한 건을 유지한다. |
+| Agent → STT | Topic `/malbut/speech/end_dialogue` | `std_msgs/msg/String` | 일반 대화에서 Agent가 종료 의도를 판단하면 원래 발화 ID를 발행하고 종료 안내를 한 번 재생 요청한다. STT는 해당 답변을 기다리고 있을 때만 호출어 대기로 복귀한다. QoS는 reliable·transient local이며 최신 ID 한 건을 유지한다. |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |
 | Agent → Manager | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화, 재생·요청 ID, 소유 미션의 하위 `owner_goal_id` |
@@ -24,7 +24,7 @@
 | Manager → TTS | Service `/malbut/tts/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 하위 재생 제어 |
 | TTS → Manager | Topic `/malbut/tts/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 시작·중단·완료·실패 |
 
-`SpeechInputStatus.ENDED`는 일반 대화 또는 순찰 중 일상 대화에서 사용자가 직접 종료를 요청한 발화의 ID를 담는다. Agent는 해당 대기를 정리하고, STT는 호출어 대기로 돌아간다.
+`SpeechInputStatus.ENDED`는 일반 대화 또는 순찰 중 일상 대화에서 사용자가 직접 종료를 요청한 발화의 ID를 담는다. Agent는 해당 대기를 정리하고 “대화 종료할게요.”를 한 번 재생 요청한다. 종료 안내는 원래 발화의 후속 청취를 열지 않는다.
 
 `SpeechInputStatus`의 빈 `session_id`는 일반 대화이며, `STARTED`·`FAILED` 모두
 비어 있지 않은 `utterance_id`를 사용한다. 빈 최종 인식 결과는 전사나 `FAILED` 없이

@@ -186,7 +186,7 @@ def result(uid='uid', pid='pid', decision='addressed'):
             'playback_id': pid, 'decision': decision}
 
 
-def test_semantic_close_signals_only_the_current_turn_without_speaking(node):
+def test_semantic_close_announces_only_the_current_turn_once(node):
     node._receive_speech(SimpleNamespace(session_id='', utterance_id='current',
                                          text='이만 자리에서 일어날 시간이네'))
     for uid in ('stale', 'current', 'current'):
@@ -194,7 +194,8 @@ def test_semantic_close_signals_only_the_current_turn_without_speaking(node):
                                   'text': '편안히 쉬세요.'}]
         node._drain_dialogue()
     assert [msg.data for msg in node.sent[ros_communication.END_DIALOGUE_TOPIC]] == ['current']
-    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    notice, = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert (notice.text, notice.interim, notice.request_id) == ('대화 종료할게요.', False, '')
     assert node._awaiting_reply is None
 
 
@@ -250,6 +251,15 @@ def test_failed_initialization_never_advertises_speech_endpoints(node):
 def input_status(node, uid, state, session_id=''):
     callback, _ = node.subscriptions['/malbut/speech/input_status']
     callback(SpeechInputStatus(session_id=session_id, utterance_id=uid, state=state))
+
+
+def test_direct_close_announces_once_without_starting_an_agent_turn(node):
+    for uid, state in [('old', 'started'), ('current', 'started'), ('old', 'ended'),
+                       ('current', 'ended'), ('current', 'ended')]:
+        input_status(node, uid, state)
+    notice, = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert (notice.text, notice.interim, notice.request_id) == ('대화 종료할게요.', False, '')
+    assert node.dialogue.requests == []
 
 
 def test_recognition_failure_finishes_its_own_request_during_an_earlier_answer(node):
