@@ -15,6 +15,7 @@ from malbut_agent_server.speech_nav2 import NAV2_TOOL_DEFINITIONS
 CATALOG = {
     **NOTICE_TEXTS,
     'conversation.delay': DELAY_NOTICE,
+    'conversation.ended': '대화 종료할게요.',
     'conversation.model_retry': MODEL_RETRY_NOTICE,
     'conversation.weather_retry': WEATHER_RETRY_NOTICE,
     'conversation.unavailable': SERVICE_UNAVAILABLE_NOTICE,

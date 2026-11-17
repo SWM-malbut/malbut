@@ -180,7 +180,9 @@ class RosPatrolConversation:
     def input_status(self, message):
         self.gate.activity()
         if message.session_id and message.session_id == self.session_id:
-            if message.state in ('failed', 'ended'):
+            if message.state == 'ended':
+                self.end_by_user()
+            elif message.state == 'failed':
                 self.end()
             elif message.state == 'started':
                 self.deadline = self.clock() + 60
@@ -220,7 +222,7 @@ class RosPatrolConversation:
         self._stop_listening()
         self.gate.activity()
         if ends_conversation(message.text):
-            self.end()
+            self.end_by_user()
             return True
         context = self.opener.context() if self._first_reply else None
         self._first_reply = False
@@ -308,6 +310,13 @@ class RosPatrolConversation:
                 session_id=self.session_id, active=False))
         self.session_id = ''
         self._control_future = None
+
+    def end_by_user(self):
+        """Acknowledge a user-requested close only while the encounter is safe."""
+        can_speak = self._safe()
+        self.end()
+        if can_speak:
+            self.node.say_dialogue_end()
 
     def end(self):
         self.node.dialogue.end_companion(self.request_id)

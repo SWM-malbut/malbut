@@ -206,7 +206,8 @@ def test_semantic_close_from_companion_worker_only_ends_matching_encounter(robot
         release.set()
         r.pump(lambda: r.chat.phase == 'idle' and (listening_session, False) in r.controls)
         assert not r.agent._awaiting_reply
-        assert not any(message.request_id == uid for message in r.speech)
+        r.pump(lambda: len(r.speech) == 2)
+        assert r.speech[-1].text == '대화 종료할게요.'
         assert ordinary_signals == []
     finally:
         release.set()
@@ -221,7 +222,8 @@ def test_decline_and_late_answer_do_not_start_inference(robot):
     r.transcripts.publish(SpeechTranscript(session_id=session, utterance_id='late', text='응'))
     for _ in range(10):
         r.executor.spin_once(timeout_sec=.01)
-    assert not r.runtime.provider.calls and len(r.speech) == 1
+    r.pump(lambda: len(r.speech) == 2)
+    assert r.speech[-1].text == '대화 종료할게요.' and not r.runtime.provider.calls
 
 
 @pytest.mark.parametrize('text', ['아니요', '됐어', '괜찮아', '고마워'])
@@ -376,7 +378,12 @@ def test_person_leaving_input_failure_or_user_end_close_listening(robot, cause):
         r.inputs.publish(SpeechInputStatus(session_id=session, utterance_id='turn', state=cause))
     r.pump(lambda: (session, False) in r.controls)
     assert r.chat.phase == 'idle'
-    assert len(r.speech) == 1 and not r.runtime.provider.calls
+    if cause == 'ended':
+        r.pump(lambda: len(r.speech) == 2)
+        assert r.speech[-1].text == '대화 종료할게요.'
+    else:
+        assert len(r.speech) == 1
+    assert not r.runtime.provider.calls
 
 
 def test_rejected_microphone_start_does_not_accept_an_answer(robot):
