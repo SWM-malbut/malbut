@@ -564,6 +564,20 @@ def test_a_restarted_agent_hears_how_long_ago_each_open_incident_was_seen(robot)
     sensor.apply(dict(action='flow_hello', flow=True))
     incident, = messages(sensor, 'flow_ready')[0]['open_incidents']
     assert incident['seen_ago'] == 60.0
+    # Too soon to be a scene of its own (재감지 five minutes apart): seen all the same.
+    clips = journal._db.execute('SELECT COUNT(*) FROM incident_clips').fetchone()[0]
+    advance(sensor, clock, 120)
+    sensor._sight('lying', clock.value, box=BOX, point=SPOT, photo=True)
+    soon = messages(sensor, 'fall_sighting')[0]['sighting']
+    sensor.apply(dict(action='link', sighting_id=soon['sighting_id'], incident_id='i1',
+                      scene=False))
+    assert journal._db.execute('SELECT COUNT(*) FROM incident_clips').fetchone()[0] == clips
+    sensor.apply(dict(action='flow_hello', flow=True))
+    incident, = messages(sensor, 'flow_ready')[0]['open_incidents']
+    assert incident['seen_ago'] == 0.0
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='link', sighting_id=soon['sighting_id'], incident_id='i1',
+                          scene='no'))
 
 
 def test_a_guardian_close_is_passed_on_now_and_then(robot):
