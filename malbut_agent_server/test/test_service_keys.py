@@ -234,6 +234,20 @@ def test_health_board_keeps_latest_and_reads_fall_results_once():
     assert board.snapshot()['fall'] == ('invalid', 'cloud_auth_required')
 
 
+def test_fall_payment_failure_replaces_ok_and_reaches_the_web():
+    board = KeyHealthBoard()
+    board.from_fall_status('completed', 'before', '')
+    board.from_fall_status('failed', 'payment', 'cloud_payment_required')
+    assert board.snapshot()['fall'] == ('quota', 'cloud_payment_required')
+    client, sent = client_with({name: {'keyVersion': 0, 'changed': False, 'apiKey': None}
+                                for name in ('openai', 'kma')})
+    client.sync({}, None, board.snapshot())
+    assert json.loads(sent[0].data)['health']['fall'] == {
+        'state': 'quota', 'code': 'cloud_payment_required'}
+    board.from_fall_status('completed', 'recovered', '')
+    assert board.snapshot()['fall'] == ('ok', None)
+
+
 def test_key_sync_needs_the_web_settings_and_defaults_to_the_homecam_device():
     assert settings_from_env({}) is None
     assert settings_from_env({'HOMECAM_BACKEND_URL': 'https://malbut.example'}) is None

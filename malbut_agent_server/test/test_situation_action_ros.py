@@ -355,6 +355,38 @@ def test_confirm_fall_then_assistance_answer(rig, reply, help_needed):
     assert result.result().result.help_needed is help_needed
 
 
+@pytest.mark.parametrize('rig', [True, False], indirect=True)
+def test_missing_final_input_replays_under_the_same_live_action(rig):
+    handle = rig.start('missing-final-input')
+    assert handle.accepted
+    result = handle.get_result_async()
+    rig.spin_until(lambda: rig.agent.situation._session.phase == 'listening')
+    old_session = rig.session_id
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=old_session, utterance_id='cutoff', state='started'))
+    rig.spin_until(lambda: rig.agent.situation._session.phase == 'hearing')
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=old_session, utterance_id='cutoff', state='incomplete'))
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=old_session, utterance_id='', state='failed'))
+    rig.spin_until(lambda: len(rig.spoken) == 2
+                   and rig.agent.situation._session.phase == 'listening')
+    assert not result.done()
+    assert rig.session_id and rig.session_id != old_session
+    assert rig.spoken[0].text == rig.spoken[1].text
+    assert rig.spoken[0].audio_id == rig.spoken[1].audio_id
+    assert rig.spoken[0].owner_goal_id == rig.spoken[1].owner_goal_id
+    assert rig.spoken[0].playback_id != rig.spoken[1].playback_id
+    assert [(request.session_id, request.active) for request in rig.sessions] == [
+        (old_session, True), (old_session, False), (rig.session_id, True)]
+    rig.inputs.publish(SpeechInputStatus(
+        session_id=old_session, utterance_id='', state='failed'))
+    rig.answer('도와줘')
+    rig.spin_until(result.done)
+    assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+    assert result.result().result.help_needed is True
+
+
 def test_audio_failure_is_an_aborted_action_not_user_silence(rig):
     handle = rig.start()
     assert handle.accepted

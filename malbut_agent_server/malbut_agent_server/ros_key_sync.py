@@ -16,7 +16,8 @@ from malbut_agent_server.service_keys import HEALTH_STATES, key_dir
 
 FALL_STATUS_TOPIC = '/malbut/falls/status'
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna'
-_FALL_CODES = {'cloud_auth_required': 'invalid', 'cloud_quota_exhausted': 'quota'}
+_FALL_CODES = {'cloud_auth_required': 'invalid', 'cloud_quota_exhausted': 'quota',
+               'cloud_payment_required': 'quota'}
 
 
 class KeyHealthBoard:

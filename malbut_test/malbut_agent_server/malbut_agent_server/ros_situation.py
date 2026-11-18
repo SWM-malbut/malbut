@@ -323,6 +323,19 @@ class SituationActionServer:
             playback_id=playback_id, **options,
             owner_goal_id=self._key(self._active_goal).hex(),
         ))
+        if self._session is not None and self._session.phase == 'speaking':
+            diagnostic = getattr(self._session.engine, 'reprompt_diagnostic', None)
+            if diagnostic is not None:
+                self.node.get_logger().info('confirmation_reprompt ' + json.dumps(dict(
+                    diagnostic, request_id=self._active_goal.request.request_id,
+                    goal_id=self._key(self._active_goal).hex(), playback_id=playback_id,
+                ), sort_keys=True))
+        elif self._session is not None and self._session.phase == 'replaying':
+            self.node.get_logger().info('confirmation_input_retry ' + json.dumps(dict(
+                request_id=self._active_goal.request.request_id,
+                goal_id=self._key(self._active_goal).hex(), playback_id=playback_id,
+                reason='missing_recent_speech',
+            ), sort_keys=True))
         return True
 
     def stop(self, playback_id):

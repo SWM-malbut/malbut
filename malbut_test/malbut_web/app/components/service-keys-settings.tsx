@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 type Service = "openai" | "kma" | "fall";
-type Problem = "missing" | "invalid" | "quota" | null;
+type Problem = "missing" | "invalid" | "quota" | "payment" | null;
 type KeyView = {
   configured: boolean;
   last4: string | null;
@@ -56,7 +56,7 @@ const asView = (value: unknown): KeyView => {
     keyVersion: typeof raw.keyVersion === "number" ? raw.keyVersion : 0,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
     robotHasCurrent: raw.robotHasCurrent === true,
-    problem: raw.problem === "missing" || raw.problem === "invalid" || raw.problem === "quota" ? raw.problem : null,
+    problem: raw.problem === "missing" || raw.problem === "invalid" || raw.problem === "quota" || raw.problem === "payment" ? raw.problem : null,
   };
 };
 
@@ -182,6 +182,10 @@ export function ServiceKeysSettings({ deviceId, onBack, demo = false }: {
         if (isChecking) {
           state = "저장하기 전에 이 키를 쓸 수 있는지 확인하고 있어요."; tone = "info"; showInput = true;
           if (view.configured) { badge = "사용 중"; badgeTone = "ok"; }
+        } else if (view.problem === "payment" && (!managed || view.configured)) {
+          badge = "쓸 수 없음"; badgeTone = "bad"; tone = "bad";
+          showActions = managed && editing !== card.service; showInput = !managed || editing === card.service;
+          state = `Ollama 계정의 결제 또는 요금제를 확인한 뒤 키를 다시 확인하고 저장해 주세요. ${card.without}`;
         } else if (!managed && (view.problem === "invalid" || view.problem === "quota")) {
           badge = "쓸 수 없음"; badgeTone = "bad"; tone = "bad"; showInput = true;
           state = `말벗에 미리 들어 있는 팀 키를 쓸 수 없어요. ${card.without} 키를 넣어 주세요.`;

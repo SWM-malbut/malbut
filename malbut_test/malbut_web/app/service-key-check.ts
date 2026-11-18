@@ -4,7 +4,7 @@
 // The key is sent only to the service it belongs to and never logged.
 
 export type KeyCheckService = "openai" | "kma" | "fall";
-export type KeyCheck = "ok" | "invalid" | "quota" | "no_model" | "unavailable";
+export type KeyCheck = "ok" | "invalid" | "quota" | "payment" | "no_model" | "unavailable";
 
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna";
 export const DEFAULT_FALL_MODEL = "gemma4:31b";
@@ -54,6 +54,7 @@ async function checkOllama(apiKey: string, model: string): Promise<KeyCheck> {
   });
   if (response.ok || response.status === 400) return "ok";
   if (response.status === 401 || response.status === 403) return "invalid";
+  if (response.status === 402) return "payment";
   if (response.status === 404) return "no_model";
   if (response.status === 429) return "quota";
   return "unavailable";
@@ -117,6 +118,7 @@ export async function checkServiceKey(input: {
 
 /** What the owner reads when a key is not saved (목업 13, 저장 실패). */
 export function keyCheckMessage(service: KeyCheckService, result: Exclude<KeyCheck, "ok">, model: string) {
+  if (result === "payment") return "Ollama 계정의 결제 또는 요금제를 확인해 주세요. 저장하지 않았어요.";
   if (result === "unavailable") return "지금 키를 확인할 수 없어요. 저장하지 않았어요. 잠시 뒤 다시 저장해 주세요.";
   if (result === "no_model") return `이 키로는 말벗이 쓰는 모델(${model})을 쓸 수 없어요. 저장하지 않았어요.`;
   if (result === "quota") {
