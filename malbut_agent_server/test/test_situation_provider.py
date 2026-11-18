@@ -51,6 +51,25 @@ def context(answer=None, history=(), summary='거실 바닥에 사람이 누워 
     )
 
 
+@pytest.mark.parametrize('configured_timeout, expected_timeout', [(5, 10), (7, 10), (30, 30)])
+@pytest.mark.parametrize('failed', [False, True])
+def test_confirmation_timeout_is_local_and_does_not_retry(
+    configured_timeout, expected_timeout, failed,
+):
+    target, calls = provider(
+        ProviderError('network timeout') if failed else None,
+        timeout_seconds=configured_timeout,
+    )
+    if failed:
+        with pytest.raises(ProviderError):
+            target.evaluate(context('잘 모르겠어요'))
+    else:
+        target.evaluate(context('잘 모르겠어요'))
+    assert len(calls) == 1
+    assert calls[0][3] == expected_timeout
+    assert target.provider.timeout_seconds == configured_timeout
+
+
 @pytest.mark.parametrize('situation_type', ['fall', '낙상'])
 def test_first_fall_question_uses_recorded_wording_even_when_transport_is_down(situation_type):
     target, calls = provider(TimeoutError('network unavailable'))
@@ -79,7 +98,7 @@ def test_other_question_generation_uses_summary_and_strict_json_without_normal_t
     assert first.text == question
     url, headers, payload, timeout = calls[0]
     assert url == 'https://api.openai.com/v1/responses'
-    assert timeout == 7
+    assert timeout == 10
     assert payload['max_output_tokens'] == 128
     assert payload['model'] == 'configured-test-model'
     assert payload['instructions'] == INSTRUCTIONS
