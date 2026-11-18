@@ -32,11 +32,11 @@ def question():
 
 def test_packaged_suite_distinguishes_mock_state_flow_from_live_semantic_coverage():
     cases = runner.load_cases()
-    assert len(cases) == 22
+    assert len(cases) == 27
     engine_factory = runner.build_situation_factory(runner.Settings.from_env({}))
     report = runner.run_evaluation(cases, engine_factory)
     assert report['evaluation'] == 'mock_state_flow_only'
-    assert report['counts'] == {'passed': 15, 'failed': 0, 'error': 0, 'skipped_live_only': 7}
+    assert report['counts'] == {'passed': 15, 'failed': 0, 'error': 0, 'skipped_live_only': 12}
     fields = {'id', 'status', 'situation_assessment', 'help_needed', 'question_count'}
     assert all(set(row) == fields for row in report['cases'])
 
@@ -106,7 +106,7 @@ def test_default_cli_ignores_live_environment_and_does_not_read_env_file(monkeyp
     assert runner.main(['--env-file', '/unused/private.env']) == 0
     captured = capsys.readouterr()
     report = json.loads(captured.out)
-    assert report['counts']['skipped_live_only'] == 7
+    assert report['counts']['skipped_live_only'] == 12
     assert 'fake-key' not in captured.out and not captured.err
 
 

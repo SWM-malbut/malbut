@@ -61,11 +61,14 @@ def test_explicit_help_decision_can_finish_while_actual_event_is_unknown(answer,
 
 
 @pytest.mark.parametrize('confirmed', [False, True])
-@pytest.mark.parametrize('situation_type,answer', [
-    ('fall', '도와줘'), ('fall', '도와주세요'), ('smoke', ' 도와주세요!? \n'),
+@pytest.mark.parametrize('situation_type,answer,expected', [
+    ('fall', '도와줘', True), ('fall', '도와주세요', True),
+    ('smoke', ' 도와주세요!? \n', True),
+    ('fall', '도움 필요 없어요', False), ('fall', '도움은 필요 없어요', False),
+    ('smoke', ' 도움은 필요 없어요.!。！ \n', False),
 ])
-def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assessment(
-        confirmed, situation_type, answer):
+def test_standalone_help_decision_bypasses_reasking_provider_and_preserves_assessment(
+        confirmed, situation_type, answer, expected):
     replies = [judgment()]
     if confirmed:
         replies.append(judgment('confirmed_incident'))
@@ -80,10 +83,23 @@ def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assess
     assert final.result is not None
     assert asdict(final.result) == {
         'situation_assessment': 'confirmed_incident' if confirmed else 'unknown',
-        'help_needed': True,
+        'help_needed': expected,
     }
     assert len(provider.contexts) == calls
     assert dialogue._history[-1].answer == answer
+
+
+@pytest.mark.parametrize('answer', [
+    '도움 필요 없어요?', '도움은 필요 없어요？', '"도움 필요 없어요"',
+    '엄마가 도움 필요 없어요라고 했어요', '도움 필요 없다는 건 아니에요',
+    '혼자 움직일 수 있다면 도움 필요 없어요', '넘어졌지만 도움은 필요 없어요',
+    '도움 필요 없어요, 아니 도와주세요', '괜찮아', '도움 필요 없습니다',
+])
+def test_other_refusal_forms_still_use_semantic_provider(answer):
+    provider = ScriptedProvider(judgment(), judgment())
+    dialogue = start(provider)
+    assert dialogue.answer(answer).result is None
+    assert len(provider.contexts) == 2 and provider.contexts[-1].answer == answer
 
 
 @pytest.mark.parametrize('answer', [

@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from malbut_agent_server.situation_dialogue import SituationResult, SituationTurn
+from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+from malbut_agent_server.situation_dialogue import (
+    SituationDialogue, SituationInterpretation, SituationResult, SituationTurn,
+)
 from malbut_agent_server.situation_session import SituationSpeechSession
 
 
@@ -120,6 +123,25 @@ class Harness:
 
 def ending(assessment='unknown', help_needed=True):
     return SituationTurn('확인을 마칠게요.', SituationResult(assessment, help_needed))
+
+
+@pytest.mark.parametrize('answer', ['도움 필요 없어요', '도움은 필요 없어요'])
+def test_standalone_refusal_has_answer_provenance_instead_of_silence(answer):
+    h = Harness()
+    h.engine = SituationDialogue(SimpleNamespace(evaluate=lambda _context:
+        SituationInterpretation('unknown', None, '실제로 넘어지셨나요?')))
+    h.begin_question()
+    h.played()
+    assert h.session.transcript(h.session.session_id, 'u1', answer)
+    h.complete_work()
+    assert h.outcomes == [SituationResult('unknown', False)]
+    assert h.session.no_response is False
+    receipts = ConfirmationAnswers()
+    receipts.remember('refusal', h.outcomes[0], no_response=h.session.no_response)
+    receipts.remember('silence', h.outcomes[0], no_response=True)
+    wire_result = dict(situation_assessment='unknown', help_needed=False)
+    assert receipts.resolve('refusal', wire_result) == 'okay'
+    assert receipts.resolve('silence', wire_result) == 'no_response'
 
 
 def test_answer_timeout_starts_only_at_actual_playback_completion():
