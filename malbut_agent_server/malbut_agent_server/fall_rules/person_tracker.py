@@ -223,6 +223,7 @@ class PersonTracker:
         self._requests: List[dict] = []
         self._checks: Dict[str, object] = {}  # ReID request before a commit -> its answer
         self._parts: List[tuple] = []  # (observation, person): another box on that body
+        self._took: Dict[str, tuple] = {}  # person -> (box, view) of a new box given their number
 
     # ------------------------------------------------------------ queries
 
@@ -233,6 +234,12 @@ class PersonTracker:
     def take_requests(self):
         """ReID comparisons to ask the VLM: request_id, a (before) and b (after)."""
         out, self._requests = self._requests, []
+        return out
+
+    def take_taken(self):
+        """Numbers a newly seen box was given since the last call: person -> (box, view).
+        The same one back, or someone else where they were (the rules cannot tell)."""
+        out, self._took = self._took, {}
         return out
 
     def person_of(self, track):
@@ -249,6 +256,7 @@ class PersonTracker:
         stood_up = []
         for obs, person in self._match(frame.people, t, frame.view):
             taken[id(obs)] = person
+            self._note_taken(person, obs, t, frame.view)
             if self._apply(person, obs, t, frame.view, frame.stationary):
                 stood_up.append(person.person_id)
             person.hits += 1
@@ -285,6 +293,7 @@ class PersonTracker:
         person = self._shown(obs, at, view)
         if person is None:
             (_, person), = self._match((obs,), at, view)
+            self._note_taken(person, obs, at, view)
             self._apply(person, obs, at, view)
         person.hits = max(person.hits, SETTLE_HITS)  # Suspected: someone, not a moment's box.
         # Its track's number goes to the VLM with the next frame, which follows at once.
@@ -495,6 +504,10 @@ class PersonTracker:
             oldest = min(self.people.values(), key=lambda p: p.last_seen)
             self._drop(oldest.person_id)
         return person
+
+    def _note_taken(self, person, obs, t, view):
+        if person.first_seen < t and obs.track != person.track:
+            self._took[person.person_id] = (obs.box, view)
 
     def _apply(self, person, obs, t, view, still=None):
         """Update a matched person; True when they stood up (suspected -> clear or seen

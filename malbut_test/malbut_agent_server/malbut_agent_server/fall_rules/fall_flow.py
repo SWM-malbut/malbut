@@ -34,7 +34,7 @@ from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from .person_tracker import (
-    FORGET_S, REAPPEAR_M, SHORT_GONE_S, Observation, PersonTracker,
+    BOX_IOU, FORGET_S, REAPPEAR_M, SHORT_GONE_S, Observation, PersonTracker, _iou,
 )
 
 STANDOFF_M = 1.0
@@ -194,8 +194,11 @@ class Memory:
     place: Optional[str] = None   # floor or off_floor, for a person
     since: float = 0.0
     incident_id: Optional[str] = None
-    # Filtered 30 minutes ago and never opened: filtered again on the next suspicion.
+    # Filtered 30 minutes ago and never opened, or its number went to a box elsewhere in
+    # the image: filtered again on the next suspicion.
     due: bool = False
+    box: Optional[Tuple[float, float, float, float]] = None  # what Cloud filtered, and in
+    view: Optional[int] = None                               # which view
 
 
 class FallFlow:
@@ -236,6 +239,7 @@ class FallFlow:
         self.now = now  # For the alert grouping (10 minutes).
         result = self.tracker.update(frame)
         self._ask_appearance()
+        self._taken()
         if result.changed:  # For the people boxes on the incident's video.
             self.commands.append(dict(kind='people', at=frame.at, tracks=dict(result.changed)))
         for retired, person in result.merged.items():
@@ -297,6 +301,7 @@ class FallFlow:
         self.now = now  # For the alert grouping (10 minutes).
         person, uncertain = self.tracker.assign(Observation(s.track, s.box, s.point), s.at, s.view)
         self._ask_appearance()
+        self._taken()
         s = replace(s, person=person, uncertain=uncertain)
         checking = self.incidents.get(self.active)
         if (s.fall_seen and checking is not None and checking.person == person
@@ -345,7 +350,9 @@ class FallFlow:
             self._record('candidate_dropped', None, verdict, sighting_id=sighting_id)
             if verdict == 'ordinary':
                 place = OFF_FLOOR if candidate.sighting.on_floor is False else FLOOR
-                self.memory.append(Memory(candidate.person, 'person', place, now))
+                self.memory.append(Memory(candidate.person, 'person', place, now,
+                                          box=candidate.sighting.box,
+                                          view=candidate.sighting.view))
             else:
                 self.memory.append(Memory(candidate.person, 'object', since=now))
             return
@@ -981,6 +988,19 @@ class FallFlow:
                 and s.point and incident.place and not self._at_its_place(incident, s)):
             incident.over = True
         return incident.over
+
+    def _taken(self):
+        """A newly seen box was given a number Cloud filtered as ordinary. Overlapping
+        what was filtered, it is that one back (a bag blinks under new YOLO tracks all
+        day); elsewhere in the image it may be someone else at that place, who must not
+        inherit the memory: the next suspicion is filtered again (11-18)."""
+        for person, (box, view) in self.tracker.take_taken().items():
+            for memory in self.memory:
+                if (memory.person == person and memory.kind == 'person'
+                        and memory.incident_id is None and not memory.due
+                        and (box is None or memory.box is None or view != memory.view
+                             or _iou(box, memory.box) < BOX_IOU)):
+                    memory.due = True
 
     def _candidate_match(self, s):
         if s.uncertain:
