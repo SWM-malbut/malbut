@@ -88,6 +88,19 @@ test("owners and guardians see which keys need checking; the key screen shows th
   });
 });
 
+test("payment remains distinct from quota and only a fresh failed fall report counts", async () => {
+  await withHealth(async ({ problems, report }) => {
+    await report({ fall: { state: "quota", code: "cloud_payment_required" } });
+    assert.deepEqual(await problems(), [{ service: "fall", problem: "payment" }]);
+    await report({ fall: { state: "quota", code: "cloud_payment_required" } }, { minutesAgo: 11 });
+    assert.deepEqual(await problems(), []);
+    await report({ fall: { state: "quota", code: "cloud_quota_exhausted" } });
+    assert.deepEqual(await problems(), [{ service: "fall", problem: "quota" }]);
+    await report({ fall: { state: "ok", code: "cloud_payment_required" } });
+    assert.deepEqual(await problems(), []);
+  });
+});
+
 test("the home notice and the key cards follow mockups 13 and 15", async () => {
   const [notice, screen, dashboard] = await Promise.all([
     readFile(new URL("../app/components/key-health-notice.tsx", import.meta.url), "utf8"),

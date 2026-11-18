@@ -158,6 +158,31 @@ test("saving is limited to ten tries a minute, since each one asks the service",
   });
 });
 
+test("Ollama payment refusal identifies billing and does not save or retry the key", async () => {
+  await withKeys(async ({ h, services, ask }) => {
+    services.reply = () => Response.json({}, { status: 402 });
+    const response = await ask("u-owner", "PUT", "fall", { apiKey: "ollama-key-5678" });
+    assert.equal(response.status, 422);
+    const body = await response.json();
+    assert.equal(body.result, "payment");
+    assert.match(body.error, /Ollama.*결제.*요금제/);
+    assert.match(body.error, /저장하지 않았어요/);
+    assert.equal(services.calls.length, 1);
+    assert.equal((await h.db.query("SELECT count(*)::int AS n FROM fall_cloud_keys WHERE ciphertext IS NOT NULL")).rows[0].n, 0);
+  });
+});
+
+test("the device payment code reaches the owner view through the existing health contract", async () => {
+  await withKeys(async ({ h, robot, ask }) => {
+    const response = await robot({ known: { openai: 0, kma: 0 }, models: { openai: null },
+      health: { fall: { state: "quota", code: "cloud_payment_required" } } });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await h.db.query("SELECT state,code FROM device_key_health WHERE service='fall'")).rows,
+      [{ state: "quota", code: "cloud_payment_required" }]);
+    assert.equal((await (await ask("u-owner", "GET")).json()).fall.problem, "payment");
+  });
+});
+
 test("the robot gets each key once, keeps its own while none is set, and learns of deletions", async () => {
   await withKeys(async ({ h, services, ask, robot, sync }) => {
     assert.deepEqual(await sync(), {

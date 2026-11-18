@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 type Service = "openai" | "kma" | "fall";
-type Problem = { service: Service; problem: "missing" | "invalid" | "quota" };
+type Problem = { service: Service; problem: "missing" | "invalid" | "quota" | "payment" };
 
 const COPY: Record<Service, { name: string; title: string; body: string; urgent: boolean }> = {
   openai: { name: "대화 키", title: "말벗이 지금 대화를 할 수 없어요", body: "대화용 OpenAI 키가 없거나 쓸 수 없어요.", urgent: true },
@@ -14,7 +14,7 @@ const COPY: Record<Service, { name: string; title: string; body: string; urgent:
 
 const asProblems = (value: unknown): Problem[] => Array.isArray(value)
   ? value.filter((item): item is Problem => Boolean(item) && typeof item === "object" &&
-    (item as Problem).service in COPY && ["missing", "invalid", "quota"].includes((item as Problem).problem))
+    (item as Problem).service in COPY && ["missing", "invalid", "quota", "payment"].includes((item as Problem).problem))
   : [];
 
 /** 홈 화면 안내 (목업 15): 키 문제가 있으면 소유자와 보호자에게 알린다. 대화·낙상 AI는 빨강, 날씨는 노랑. */
@@ -49,12 +49,15 @@ export function KeyHealthNotice({ deviceId, isOwner, onOpenKeys, demo = false }:
   const [first, ...others] = problems;
   if (!first) return null;
   const copy = COPY[first.service];
+  const action = first.problem === "payment"
+    ? isOwner ? "Ollama 계정의 결제 또는 요금제를 확인해 주세요." : "소유자에게 Ollama 계정의 결제 또는 요금제를 확인해 달라고 알려 주세요."
+    : isOwner ? "키를 확인해 주세요." : "소유자에게 키를 확인해 달라고 알려 주세요.";
   return (
     <article className={`ui-card ui-key-notice ${copy.urgent ? "is-urgent" : "is-warn"}`} role="alert">
       <span className={`ui-badge ${copy.urgent ? "is-danger" : "is-warn"}`}>{copy.name} 확인 필요</span>
       <strong>{copy.title}</strong>
       {/* 문장마다 줄을 나눔: 문제 / 영향 / 할 일. */}
-      <p className="ui-lines">{copy.body}{"\n"}{isOwner ? "키를 확인해 주세요." : "소유자에게 키를 확인해 달라고 알려 주세요."}</p>
+      <p className="ui-lines">{copy.body}{"\n"}{action}</p>
       {others.length > 0 && <small>{others.map((other) => COPY[other.service].name).join(", ")}도 확인이 필요해요.</small>}
       {isOwner && <button type="button" className="ui-button is-strong" onClick={onOpenKeys}>키 확인하기</button>}
     </article>

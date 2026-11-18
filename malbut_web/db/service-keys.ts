@@ -177,7 +177,7 @@ export async function deleteServiceKeysForNewHousehold(db: SqlExecutor, deviceId
 
 /** The robot reports every minute; anything older says nothing about now. */
 export const HEALTH_FRESH_MS = 10 * 60_000;
-export type KeyProblem = "missing" | "invalid" | "quota";
+export type KeyProblem = "missing" | "invalid" | "quota" | "payment";
 /** Most important first: no conversation, then weaker fall checks, then no weather. */
 const PROBLEM_ORDER: readonly HealthService[] = ["openai", "fall", "kma"];
 
@@ -195,7 +195,7 @@ export async function readKeyProblems(deviceId: string, now = new Date()): Promi
   const [services, fall, health] = await Promise.all([
     pool.query(`SELECT service,key_version,last4,updated_at,robot_key_version FROM device_service_keys WHERE device_id=$1`, [deviceId]),
     pool.query(`SELECT key_version,last4,updated_at,robot_key_version FROM fall_cloud_keys WHERE device_id=$1`, [deviceId]),
-    pool.query(`SELECT service,state,reported_at FROM device_key_health WHERE device_id=$1`, [deviceId]),
+    pool.query(`SELECT service,state,code,reported_at FROM device_key_health WHERE device_id=$1`, [deviceId]),
   ]);
   const keys = new Map<string, KeyRow>(services.rows.map((row) => [row.service as string, row as KeyRow]));
   if (fall.rows[0]) keys.set("fall", fall.rows[0] as KeyRow);
@@ -211,7 +211,10 @@ export async function readKeyProblems(deviceId: string, now = new Date()): Promi
     const aboutThisKey = version === 0 ||
       (key?.robot_key_version === version && reportedAt >= new Date(key.updated_at as string).getTime());
     const state = report?.state as HealthState | undefined;
-    result[service] = fresh && aboutThisKey && state && state !== "ok" ? state : null;
+    // Keep the existing robot/DB health states; the bounded code distinguishes billing from usage.
+    const problem = service === "fall" && state === "quota" && report?.code === "cloud_payment_required"
+      ? "payment" : state;
+    result[service] = fresh && aboutThisKey && problem && problem !== "ok" ? problem : null;
   }
   return result;
 }
