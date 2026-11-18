@@ -607,6 +607,40 @@ test("notification payload: [재발신] keeps level and message; robots cannot s
   assert.equal(parseFallEvent(notice({ notificationLevel: "check", reason: "reopened_by_opinion" })), null);
 });
 
+test("new urgent reminders are not starved by five failed retries per maintenance tick", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    for (let index = 0; index < 5; index += 1) await events.storeFallEvent("robot-a", notice());
+    assert.equal((await review.scheduleFallReminders(Date.now() + 121_000)).created, 5);
+    await h.db.exec(`UPDATE fall_web_notices SET created_at=created_at-INTERVAL '10 minutes',attempt_count=3`);
+    const fresh = notice();
+    await events.storeFallEvent("robot-a", fresh);
+    assert.equal((await review.scheduleFallReminders(Date.now() + 121_000)).created, 1);
+    // The new notice keeps migration-default created_at and next_attempt_at.
+    assert.equal((await h.db.query(`SELECT created_at=next_attempt_at AS default_time
+      FROM fall_web_notices WHERE incident_id=$1`, [fresh.incidentId])).rows[0].default_time, true);
+    // Maintenance's five slots are used by older failures; finish applies real capped backoff.
+    for (let index = 0; index < 5; index += 1) {
+      const claim = await review.claimFallNotice();
+      assert.notEqual(claim.incidentId, fresh.incidentId);
+      assert.equal(await review.finishFallNotice(claim, false, "no_subscribers"), true);
+    }
+    // Move all queue timestamps together to the next minute, relative to SQL
+    // CURRENT_TIMESTAMP. Mocking Date.now() alone does not advance PostgreSQL time.
+    await h.db.exec(`UPDATE fall_web_notices SET created_at=created_at-INTERVAL '61 seconds',
+      next_attempt_at=next_attempt_at-INTERVAL '61 seconds',lease_until=lease_until-INTERVAL '61 seconds'`);
+    const next = await review.claimFallNotice();
+    assert.equal(next.incidentId, fresh.incidentId);
+    assert.equal(await review.finishFallNotice(next, true, null), true);
+    const retry = await review.claimFallNotice();
+    assert.ok(retry);
+    assert.notEqual(retry.incidentId, fresh.incidentId);
+    assert.equal(await review.finishFallNotice(retry, false, "no_subscribers"), true);
+    assert.deepEqual((await h.db.query(`SELECT status,count(*)::int AS count
+      FROM fall_web_notices GROUP BY status ORDER BY status`)).rows,
+    [{ status: "accepted", count: 1 }, { status: "pending", count: 5 }]);
+  });
+});
+
 test("reminder delivery uses the shared push boundary with the [재발신] flag", async () => {
   const root = (await import("node:url")).fileURLToPath(new URL("../", import.meta.url));
   const sent = [], finishes = [];

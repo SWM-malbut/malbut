@@ -765,7 +765,7 @@ export async function claimFallNotice(deviceId?: string, noticeId?: string): Pro
            (${ROBOT_NORMAL_SQL} OR ${ROBOT_CLOSED_SQL}))
          AND (n.lease_until IS NULL OR n.lease_until<=CURRENT_TIMESTAMP)
          AND ($1::text IS NULL OR n.device_id=$1) AND ($2::text IS NULL OR n.notice_id=$2)
-       ORDER BY CASE n.level WHEN 'urgent' THEN 0 ELSE 1 END,n.created_at
+       ORDER BY CASE n.level WHEN 'urgent' THEN 0 ELSE 1 END,n.next_attempt_at,n.created_at
        FOR UPDATE OF n SKIP LOCKED LIMIT 1
      ) UPDATE fall_web_notices p SET lease_id=$3,lease_until=CURRENT_TIMESTAMP+INTERVAL '120 seconds',
        attempt_count=attempt_count+1
