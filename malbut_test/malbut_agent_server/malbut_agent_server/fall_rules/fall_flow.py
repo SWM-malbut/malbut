@@ -164,8 +164,12 @@ class Incident:
     clip_open: bool = False      # this round's clip range is growing (SWM25-268)
     # After a restart: when a suspicion last joined it (None: not known). Unseen for 30
     # minutes, someone at its place is a new incident (SWM25-269: 10-20 15:14 a lying
-    # down joined the 10-19 22:32 incident nobody had closed).
+    # down joined the 10-19 22:32 incident nobody had closed). Left with a person: also
+    # when they were last seen in a frame.
     seen_at: Optional[float] = None
+    # Left with a person who then left the place (seen standing up, unseen REDETECT_S, or
+    # suspected elsewhere): it is over, nothing joins it, the guardian closes it (11-18).
+    over: bool = False
 
     @property
     def fall_seen(self):
@@ -251,6 +255,16 @@ class FallFlow:
                            and m.kind == 'person'), None)
             if memory is not None and not self.tracker.uncertain(person):
                 self._recheck(memory, 'stood_up', now)
+            if not self.tracker.uncertain(person):
+                for incident in self.incidents.values():
+                    if self._left_with(incident, person):
+                        incident.over = True  # Up from where they were left: it is over.
+        for incident in self.incidents.values():
+            if incident.state == 'open' and incident.idle == 'person' and not incident.over:
+                seen = self.tracker.people.get(incident.person) if incident.person else None
+                if seen is not None and seen.last_seen == frame.at:
+                    incident.seen_at = frame.at
+                self._gone(incident, frame.at)
         for incident in list(self.incidents.values()):
             if self._claims_its_place(incident, now):
                 # After a restart: the first one seen for sure at its place (decision 5).
@@ -286,8 +300,11 @@ class FallFlow:
         s = replace(s, person=person, uncertain=uncertain)
         checking = self.incidents.get(self.active)
         if (s.fall_seen and checking is not None and checking.person == person
-                and not uncertain):
-            self._attach(checking, s)  # A fall while being checked joins that check.
+                and (not uncertain or self._at_its_place(checking, s))):
+            # A fall while being checked joins that check: also while who is who is
+            # uncertain, when it is that number at that place (11-18 10:38: one person
+            # lying down once was asked twice).
+            self._attach(checking, s)
             return
         open_incident = None if s.fall_seen else self._open_match(s)
         if open_incident is not None:
@@ -830,6 +847,8 @@ class FallFlow:
     def _idle(self, incident, who, notice, now):
         """Left open for the guardian: nobody verified there, or a person who needs help."""
         incident.idle = who
+        if now is not None:
+            incident.seen_at = now
         incident.step = 'open'
         self._command('left_open', incident, who=who)  # Kept by the VLM for a restart.
         if notice:
@@ -888,6 +907,7 @@ class FallFlow:
         self.memory = [m for m in self.memory if m.incident_id != incident_id]
 
     def _attach(self, incident, s):
+        incident.seen_at = self.now
         if incident.person is None:
             self._bind(incident, s.person)  # After a restart: seen at its place.
         if s.point and not s.uncertain and s.person == incident.person:
@@ -910,7 +930,8 @@ class FallFlow:
         incident opened while uncertain, so another person is never missed (decision 4).
         Nothing joins "the latest incident" any more (10-17 decision A, 사람2 at 21:50)."""
         mine = [i for i in self.incidents.values()
-                if i.state == 'open' and i.person is not None and i.person == s.person]
+                if i.state == 'open' and i.person is not None and i.person == s.person
+                and not self._ended(i, s)]
         if not s.uncertain:
             sure = next((i for i in mine if not i.uncertain), None)
             if sure is not None:
@@ -929,7 +950,37 @@ class FallFlow:
         it was last seen 30 minutes ago or more (FORGET_S, as the tracking forgets)."""
         return (incident.state == 'open' and incident.person is None
                 and incident.place is not None and incident.seen_at is not None
-                and now - incident.seen_at < FORGET_S)
+                and now - incident.seen_at < (REDETECT_S if incident.idle == 'person'
+                                              else FORGET_S))
+
+    @staticmethod
+    def _at_its_place(incident, s):
+        return bool(s.point and incident.place
+                    and math.dist(s.point, incident.place) <= REAPPEAR_M)
+
+    @staticmethod
+    def _left_with(incident, person):
+        return (incident.state == 'open' and incident.idle == 'person'
+                and incident.person == person and not incident.over)
+
+    def _gone(self, incident, now):
+        """Left with a person not seen for REDETECT_S: they left the place, it is over."""
+        if incident.seen_at is not None and now - incident.seen_at >= REDETECT_S:
+            incident.over = True
+
+    def _ended(self, incident, s):
+        """An incident left with a person who has since left the place takes no more
+        suspicions (11-18: gone means it ended, however they left; it stays "could not
+        confirm" for the guardian, and lying down again or elsewhere is a new incident).
+        Elsewhere is by a Pose place only: Cloud's is measured on its box (11-17)."""
+        if incident.idle != 'person':
+            return False
+        if not incident.over:
+            self._gone(incident, self.now)
+        if (not incident.over and s.track and not s.uncertain
+                and s.point and incident.place and not self._at_its_place(incident, s)):
+            incident.over = True
+        return incident.over
 
     def _candidate_match(self, s):
         if s.uncertain:

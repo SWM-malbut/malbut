@@ -308,8 +308,9 @@ def test_a_malformed_pose_frame_is_refused():
 
 def test_reid_questions_go_to_the_vlm_and_answers_back_to_the_rules(rig):
     frame = dict(kind='fall_people', view=0, stationary=True, robot=[0.0, 0.0])
-    event(rig.link, **frame, at=99.0, people=[dict(track='a', box=None, point=[3.0, 1.0],
-                                                   state='unknown')])
+    for at in (99.0, 99.2, 99.4):  # Seen in enough frames to be remembered.
+        event(rig.link, **frame, at=at, people=[dict(track='a', box=None, point=[3.0, 1.0],
+                                                     state='unknown')])
     first = rig.link.flow.tracker.person_of('a')
     event(rig.link, **frame, at=700.0, people=[dict(track='z', box=None, point=[3.2, 1.0],
                                                     state='unknown')])

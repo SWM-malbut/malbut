@@ -8,7 +8,9 @@ then attach an incident to a person, not to a sighting.
 A frame's observations go to people in this order (design decision 3):
   1. the same YOLO track seen within a second, unless the place jumped further than
      the person could have gone (YOLO handed the track to someone else, 10-17 95bd);
-  2. the nearest person seen within five seconds who could have gone that far;
+  2. the nearest person seen within five seconds who could have gone that far, unless
+     someone unseen was at that place (4), or neither place nor box carries them on
+     (a new number, uncertain with them);
   3. without a map place (no depth): the same view's box overlap;
   4. someone unseen for up to 30 minutes within 1 m of where they were last seen;
   5. otherwise a new person.
@@ -54,6 +56,22 @@ One person, one number, when they fill the screen (2026-11-17 09:14, one person 
   - a suspicion without a track (Cloud's) is whoever the frames showed under its box at
     that time, before its own map place: Cloud's place is measured on its box, and was
     1.3 m from the torso place of the person its box covered by 0.87.
+
+A box for a moment is no one, and something new beside someone just gone is not simply
+them (2026-11-18 10:19, one person and a bag under the bed: the bag took the number of
+the person who had just left 0.97 m away, its suspicions joined their incident for 18
+minutes, and they came back as a seventh new number):
+  - a number not seen in SETTLE_HITS frames is forgotten once unseen SHORT_GONE_S, not
+    kept for 30 minutes; a suspicion counts as SETTLE_HITS frames at once. A hanging
+    sleeve made 79 numbers in 63 minutes, and with MAX_PEOPLE reached the oldest were
+    dropped: 298 numbers on three days, 102 of them settled, none 30 minutes unseen;
+  - a new track in reach of someone just seen goes to someone unseen instead who is
+    within REAPPEAR_M and AMBIGUOUS_M nearer: whoever was at that place (the bag's own
+    number 0.02-0.08 m away against the person 0.86-1.01 m away);
+  - a new track in reach of someone just seen, further than AMBIGUOUS_M from them and
+    its box overlapping theirs less than BOX_IOU, is a new number uncertain with them:
+    neither the image nor the place carries them on. Of 5,879 such handovers on five
+    days 5,581 overlapped by half or more; 33 were this far and this unlike.
 
 Pure: no ROS, transport or clock. Starting values, to be tuned on recorded days:
 ~/fall-person-tracking-design-20261019.md (decisions 3-5).
@@ -265,10 +283,10 @@ class PersonTracker:
         self._forget(at)
         self.expire(at)
         person = self._shown(obs, at, view)
-        if person is not None:
-            return person.person_id, self.uncertain(person.person_id)
-        (_, person), = self._match((obs,), at, view)
-        self._apply(person, obs, at, view)
+        if person is None:
+            (_, person), = self._match((obs,), at, view)
+            self._apply(person, obs, at, view)
+        person.hits = max(person.hits, SETTLE_HITS)  # Suspected: someone, not a moment's box.
         # Its track's number goes to the VLM with the next frame, which follows at once.
         return person.person_id, self.uncertain(person.person_id)
 
@@ -336,15 +354,28 @@ class PersonTracker:
             ((math.dist(obs.point, p.point), i, p) for i, obs in enumerate(rest) if obs.point
              for p in recent if p.point and math.dist(obs.point, p.point) <= self._reach(p, t)),
             key=lambda x: (x[0], x[1]))
-        placed = set()
+        placed, later = set(), set()
         for distance, i, person in pairs:
-            if i in placed or person.person_id in used:
+            if i in placed or i in later or person.person_id in used:
                 continue
             obs = rest[i]
+            if person.track != obs.track and self._was_there(obs, distance, t, used):
+                later.add(i)  # Whoever was at that place, not the one who just left (4).
+                continue
+            placed.add(i)
+            if (person.track != obs.track and distance > AMBIGUOUS_M and self._settled(person)
+                    and obs.box and person.box and person.view == view
+                    and _iou(obs.box, person.box) < BOX_IOU):
+                # Neither the place nor the image carries them on: maybe someone else,
+                # uncertain with them once seen in SETTLE_HITS frames (_settle).
+                fresh = self._new(obs, t)
+                fresh.waiting = (person.person_id,)
+                used.add(fresh.person_id)
+                result.append((obs, fresh))
+                continue
             rivals = [p for d, j, p in pairs if j == i and p is not person
                       and p.person_id not in used and d - distance < AMBIGUOUS_M
                       and self._settled(p)]
-            placed.add(i)
             used.add(person.person_id)
             result.append((obs, person))
             if rivals:
@@ -378,6 +409,15 @@ class PersonTracker:
             used.add(person.person_id)
             result.append((obs, person))
         return result
+
+    def _was_there(self, obs, distance, t, used):
+        """Someone unseen was at this place, AMBIGUOUS_M nearer than the one just seen
+        (``distance`` away): the observation is theirs to reappear as."""
+        return any(p.point and t - p.last_seen > SHORT_GONE_S and p.person_id not in used
+                   and self._settled(p)
+                   and math.dist(obs.point, p.point) <= REAPPEAR_M
+                   and distance - math.dist(obs.point, p.point) >= AMBIGUOUS_M
+                   for p in self.people.values())
 
     def _reappear(self, obs, t, view, used):
         gone = [p for p in self.people.values() if p.person_id not in used]
@@ -724,6 +764,8 @@ class PersonTracker:
         for person in list(self.people.values()):
             if t - person.last_seen >= FORGET_S:
                 self._drop(person.person_id)
+            elif not self._settled(person) and t - person.last_seen > SHORT_GONE_S:
+                self._drop(person.person_id)  # A box for a moment: no one to remember.
 
     def _drop(self, person_id):
         self.people.pop(person_id, None)
