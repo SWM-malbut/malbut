@@ -106,3 +106,16 @@ def test_provider_failure_keeps_failure_path_without_a_normal_reprompt_record():
     assert h.session.failure['reason'] == 'model_answer'
     assert h.session.failure['exception_type'] == 'ProviderError'
     assert records == []
+
+
+def test_input_replay_is_distinct_from_a_semantic_reprompt():
+    engine = dialogue(SituationInterpretation('unknown', None, '비공개 질문'))
+    turn = engine.start('request-1', 'fall', '비공개 요약')
+    server, records, _ = speaker(engine)
+    server._session.phase = 'replaying'
+    assert server.speak(turn.text, 'replay-playback')
+    assert len(records) == 1 and records[0].startswith('confirmation_input_retry ')
+    assert json.loads(records[0].split(' ', 1)[1]) == dict(
+        request_id='request-1', goal_id=bytes(range(16)).hex(),
+        playback_id='replay-playback', reason='missing_recent_speech')
+    assert '비공개' not in records[0]

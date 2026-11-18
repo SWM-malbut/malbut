@@ -52,6 +52,8 @@ class SituationSpeechSession:
         self.no_response = False
         self.failure = None
         self._work_method = None
+        self._input_retry_used = False
+        self._input_retry_deadline = None
 
     @property
     def done(self):
@@ -87,6 +89,13 @@ class SituationSpeechSession:
                 closing, self._closing_input = self._closing_input, None
                 if not closing.result().accepted:
                     raise RuntimeError('microphone session closure rejected')
+            if self.phase == 'retrying':
+                self.playback_id = 'confirmation-' + uuid4().hex
+                self.utterance_id = ''
+                self.phase = 'replaying'
+                operation = 'input_retry_speech'
+                if not self.ports.speak(self._turn.text, self.playback_id):
+                    raise RuntimeError('speech publication failed')
             if self._work is not None and self._work.done():
                 operation = 'model_' + self._work_method
                 work, self._work = self._work, None
@@ -118,13 +127,13 @@ class SituationSpeechSession:
                 opening, self._opening = self._opening, None
                 if not opening.result().accepted:
                     raise RuntimeError('microphone session rejected')
-                self._answer_deadline = self.clock() + ANSWER_WAIT_SECONDS
+                self._answer_deadline = self._input_deadline(ANSWER_WAIT_SECONDS)
                 if self._early_started or self._early_answer:
                     # STT can publish a VAD event before its service ACK arrives.
                     # The question has finished; preserve its answer across the ACK race.
                     self.phase = 'hearing'
                     self.utterance_id = self._early_started
-                    self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+                    self._deadline = self._input_deadline(OPERATION_TIMEOUT_SECONDS)
                     if self._early_answer:
                         uid, text = self._early_answer
                         self.transcript(self.session_id, uid, text)
@@ -133,6 +142,9 @@ class SituationSpeechSession:
                     self._deadline = self._answer_deadline
             if self._deadline is not None and self.clock() >= self._deadline:
                 if self.phase == 'listening':
+                    if self._input_retry_deadline is not None:
+                        self.abort('input_retry_no_response')
+                        return
                     # A restarted STT can be reachable while its original
                     # wake-free session is gone. Verify before calling it silence.
                     self.phase = 'checking_silence'
@@ -161,16 +173,16 @@ class SituationSpeechSession:
         if state == 'finished':
             if self.phase == 'closing':
                 self._finish('succeeded', self._outcome)
-            elif self.phase == 'speaking':
+            elif self.phase in ('speaking', 'replaying'):
                 self.session_id = 'confirmation-' + uuid4().hex
                 self._last_session_id = self.session_id
                 self.phase = 'opening'
-                self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+                self._deadline = self._input_deadline(OPERATION_TIMEOUT_SECONDS)
                 try:
                     self._opening = self.ports.open_session(self.session_id)
                 except Exception as error:
                     self.abort('input_open', error)
-        elif state in ('failed', 'stopped') and self.phase in ('speaking', 'closing'):
+        elif state in ('failed', 'stopped') and self.phase in ('speaking', 'replaying', 'closing'):
             # An undelivered question is an operational failure, never an answer.
             self.abort('playback_' + state)
 
@@ -186,7 +198,34 @@ class SituationSpeechSession:
             return
         if utterance_id in self._heard:
             return
+        if state == 'incomplete':
+            current = self.utterance_id if self.phase == 'hearing' else self._early_started
+            if self.phase not in ('hearing', 'opening') or current != utterance_id:
+                return
+            if self.request.situation_type != 'fall' or self._input_retry_used:
+                self.abort('input_failed')
+                return
+            self._input_retry_used = True
+            self._input_retry_deadline = self._deadline
+            self._heard.add(utterance_id)
+            self._clear_verification()
+            if self._opening is not None:
+                self._opening.cancel()
+                self._opening = None
+            self._early_started, self._early_answer = '', None
+            self.phase = 'retrying'
+            try:
+                self._close_input()
+            except Exception as error:
+                self.abort('input_close', error)
+            return
         if state == 'failed':
+            current = self.utterance_id or self._early_started
+            if (self._input_retry_deadline is not None
+                    and self.phase in ('opening', 'listening', 'hearing', 'checking_silence')
+                    and (not current or current == utterance_id)):
+                self.abort('input_retry_failed')
+                return
             # STT rejects non-speech/empty decodes for one utterance, while
             # operational faults fail the session with an empty utterance ID.
             if self.phase == 'opening':
@@ -216,7 +255,7 @@ class SituationSpeechSession:
             self._clear_verification()
             self.utterance_id = utterance_id
             self.phase = 'hearing'
-            self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+            self._deadline = self._input_deadline(OPERATION_TIMEOUT_SECONDS)
 
     def transcript(self, session_id, utterance_id, text):
         if (self.done or not self.session_id or session_id != self.session_id
@@ -242,6 +281,7 @@ class SituationSpeechSession:
         operation = 'input_close'
         try:
             self._close_input()
+            self._input_retry_deadline = None  # A complete answer resumes normal model work.
             operation = 'model_submit'
             self._submit('answer', text)
         except Exception as error:
@@ -251,11 +291,20 @@ class SituationSpeechSession:
 
     def _expire_operation(self):
         """A ready future or late callback cannot renew an expired operation."""
+        if (self._input_retry_deadline is not None
+                and self.clock() >= self._input_retry_deadline):
+            self.abort('input_retry_timeout')
+            return True
         if (self.phase != 'listening' and self._deadline is not None
                 and self.clock() >= self._deadline):
             self.abort('operation_timeout')
             return True
         return False
+
+    def _input_deadline(self, seconds):
+        deadline = self.clock() + seconds
+        return (min(deadline, self._input_retry_deadline)
+                if self._input_retry_deadline is not None else deadline)
 
     def _clear_verification(self):
         if self._verifying is not None:

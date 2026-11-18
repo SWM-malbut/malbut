@@ -1468,6 +1468,16 @@ class DialoguePipeline:
                 self._terminate(failure)
             elif not self.session.session_id:
                 self._fail_command(failure)
+            elif error_name == 'MissingRecentSpeech':
+                # Never publish the incomplete prefix. The fall owner may replay
+                # its pending question once; old owners still receive FAILED.
+                sid = self.session.session_id
+                self.session.discard_utterance(uid)
+                self._utterance_playback_id = None
+                if self.publish_input_status is not None:
+                    self.publish_input_status(sid, uid, 'incomplete')
+                    self.publish_input_status(sid, '', 'failed')
+                self.report(failure)
             else:
                 # Use the existing utterance/session failure distinction:
                 # a rejected candidate is retryable; an operational fault

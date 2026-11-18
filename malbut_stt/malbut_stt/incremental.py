@@ -5,6 +5,10 @@ import math
 from time import monotonic_ns
 
 
+class MissingRecentSpeech(ValueError):
+    """The current decode does not cover the latest VAD-observed speech."""
+
+
 @dataclass(frozen=True)
 class _Segment:
     start: float
@@ -270,7 +274,7 @@ class IncrementalWhisperStream:
                 return current_text
             # Never let a provisional endpoint result containing only old
             # speech become a successful final transcript in the caller.
-            raise ValueError('incremental transcription omitted recent speech')
+            raise MissingRecentSpeech('incremental transcription omitted recent speech')
 
         if reset:
             # Only the suffix backed by this PCM window remains revisable.
