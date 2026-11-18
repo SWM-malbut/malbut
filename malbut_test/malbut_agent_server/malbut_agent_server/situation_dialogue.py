@@ -173,6 +173,11 @@ class SituationDialogue:
         ):
             # ponytail: exact standalone requests only; fall ASR alias stays fall-only.
             interpreted = SituationInterpretation(self.situation_assessment, True, '')
+        elif ''.join(text.split()).rstrip('.!。！') in (
+            '도움필요없어요', '도움은필요없어요',
+        ):
+            # Questions, quotes and compound refusals still need semantic interpretation.
+            interpreted = SituationInterpretation(self.situation_assessment, False, '')
         else:
             interpreted = self._evaluate(context)
         # Providers return a cumulative snapshot. A user may explicitly retract
