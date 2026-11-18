@@ -914,12 +914,12 @@ test("사건 screen: incidents replace general events; demo API only for the loc
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/homecam-header.tsx", import.meta.url), "utf8"),
   ]);
-  for (const text of ['<div className="fall-group">응답 없음</div>',
+  for (const text of ['<div className="fall-group">보호자 의견 대기</div>',
     "이미 쓰러진 모습을 본 때부터라, 넘어지는 순간은 없을 수 있어요.", "의견을 남기면 모두에게 가던 재발신이 멈춰요.",
     "참고 답변 · 판정 결과에는 반영되지 않아요", "자동 판정 기록", "알림 이력"]) {
     assert.ok(panel.includes(text), text);
   }
-  for (const text of ['"응답 없음"', '"AI 판정 실패"', '"검토 전"', '"처리 완료"']) assert.ok(view.includes(text), text);
+  for (const text of ['"보호자 의견 대기"', '"AI 판정 실패"', '"검토 전"', '"처리 완료"']) assert.ok(view.includes(text), text);
   // 처리 완료 needs at least one opinion (anyone's).
   assert.match(panel, /disabled=\{busy === "close" \|\| detail\.opinions\.length === 0\}/);
   // Toggle buttons: pressing the selected label again clears it.

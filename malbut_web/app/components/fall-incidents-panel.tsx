@@ -47,7 +47,7 @@ type IncidentDetail = IncidentSummary & {
 // 목업 56번(SWM25-60): 날짜 칩 한 줄 + 결과 고르는 상자 한 줄.
 const DAYS: Array<[IncidentDay, string]> = [["today", "오늘"], ["yesterday", "어제"], ["week", "최근 7일"]];
 const FILTERS: Array<[IncidentFilter, string]> = [
-  ["all", "전체"], ["check", "우선 확인"], ["help", "도움 요청"], ["okay", "괜찮다고 답함"], ["report", "직접 신고"],
+  ["all", "전체"], ["check", "우선 확인"], ["help", "도움 요청"], ["okay", "응답 · 도움 요청 없음"], ["report", "직접 신고"],
   ["closed", "처리 완료"],
 ];
 const PAGE = 50;
@@ -799,7 +799,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     );
   }
 
-  // List page: "응답 없음", then 오늘 / 어제 / 지난 기록.
+  // List page: "보호자 의견 대기", then 오늘 / 어제 / 지난 기록.
   const first = incidents.filter((i) => i.unacknowledged);
   const rest = incidents.filter((i) => !i.unacknowledged);
   const groups: Array<[string, IncidentSummary[]]> = [];
@@ -829,7 +829,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       {header}
       <div className="fall-page">
         <div className="fall-list-tools">
-          {/* 고른 날짜를 한 번 더 누르면 풀린다. 날짜를 고르면 맨 위 "응답 없음"도 그 날짜 것만. */}
+          {/* 고른 날짜를 한 번 더 누르면 풀린다. 날짜를 고르면 맨 위 "보호자 의견 대기"도 그 날짜 것만. */}
           <div className="fall-chips" role="group" aria-label="날짜">
             <span className="fall-filter-label" aria-hidden="true">날짜</span>
             {DAYS.map(([key, label]) => (
@@ -857,7 +857,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
             <p className="fall-empty">{day || filter !== "all" ? "고른 날짜와 결과에 맞는 사건이 없어요."
               : "표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요."}</p>
           )}
-          {first.length > 0 && <div className="fall-group">응답 없음</div>}
+          {first.length > 0 && <div className="fall-group">보호자 의견 대기</div>}
           {first.map(card)}
           {groups.map(([label, items]) => (
             <div className="fall-group-block" key={label}>

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { moduleLoader } from "./helpers/fall-db-harness.mjs";
 
 const load = moduleLoader();
@@ -15,6 +17,18 @@ const event = (changes = {}) => ({ schemaVersion: 1, eventId: randomUUID(), inci
   bootId: "test-boot", sequence: 1, evidenceRevision: 1, occurredAt: "2026-10-06T05:54:00.641Z",
   eventKind: "analysis_completed", state: "verifying", fallSeen: false,
   assessment: "suspected_fall", answer: null, reason: null, notificationLevel: null, ...changes });
+
+test("the okay filter describes an answer without claiming safety", () => {
+  const source = readFileSync(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8");
+  const code = ts.transpileModule(source, { fileName: "panel.tsx", compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
+  } }).outputText;
+  const mod = { exports: {} }, require = createRequire(import.meta.url);
+  new Function("require", "module", "exports", code)((name) => name.startsWith(".")
+    ? load(`app/components/${name}`) : require(name), mod, mod.exports);
+  const html = renderToStaticMarkup(createElement(mod.exports.FallIncidentsPanel, { deviceId: "robot-a" }));
+  assert.match(html, /<option value="okay">응답 · 도움 요청 없음<\/option>/);
+});
 
 for (const [reason, expected] of [
   ["pose_rapid_posture_change", "급격한 자세 변화"],
@@ -272,7 +286,18 @@ test("incident badges: one status and one review step while open, only 처리 �
     reportedBy: null, reportedByName: null, reportedMomentAt: null, opinionCounts: {} };
   const badges = (change) => view.incidentBadges({ ...base, ...change }).map(([, text]) => text);
   assert.deepEqual(badges({}), ["확인 필요", "검토 전"]);
-  assert.deepEqual(badges({ unacknowledged: true }), ["응답 없음", "검토 전"]);
+  assert.deepEqual(badges({ unacknowledged: true }), ["보호자 의견 대기", "검토 전"]);
+  const { fallCheckResult } = load("app/fall-event-label.ts");
+  for (const [answer, eventKind, title] of [
+    ["help_request", "confirmation_completed", "물어봄 · 도움 필요"],
+    ["no_response", "voice_result", "물어봄 · 대답 없음"],
+  ]) {
+    const incident = { ...base, answer, unacknowledged: true,
+      checkResult: fallCheckResult([event({ eventKind, answer, checkRound: 1 })]) };
+    assert.equal(incident.checkResult.title, title);
+    assert.ok(view.incidentSubtitle(incident).endsWith(title));
+    assert.deepEqual(view.incidentBadges(incident), [["is-alert", "보호자 의견 대기"], ["is-step", "검토 전"]]);
+  }
   assert.deepEqual(badges({ robotCheck: { reason: "x", waited: true, stopped: false, failed: null, revisit: null } }),
     ["긴급", "검토 전"]);
   assert.deepEqual(badges({ category: "normal", answer: "okay" }), ["정상", "검토 전"]);

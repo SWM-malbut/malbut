@@ -50,7 +50,7 @@ export default async function VoiceReferencePage({ params }: {
     help_required: "도움 필요", resolved: "확인 완료" };
   const assessments: Record<string, string> = { observed_fall: "낙상 관찰", suspected_fall: "낙상 의심",
     normal_activity: "일상 활동", unobservable: "관찰 불가" };
-  const answers: Record<string, string> = { help_request: "도움 요청", okay: "괜찮다고 응답", unclear: "응답 불명확",
+  const answers: Record<string, string> = { help_request: "도움 요청", okay: "응답 · 도움 요청 없음", unclear: "응답 불명확",
     no_response: "응답 없음", failed: "음성 확인 실패" };
   return <main className="homecam-settings-card"><h1>음성으로 찾은 낙상 기록</h1>
     <p>상태: {states[incident.state] ?? "확인 필요"}</p>

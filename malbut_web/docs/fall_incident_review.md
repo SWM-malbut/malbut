@@ -44,7 +44,7 @@
 
 | 경로 | 내용 |
 |---|---|
-| `GET /api/devices/{id}/fall-incidents?filter=all\|check\|closed\|normal\|report` | 목록 50개. "아무도 확인하지 않음"이 맨 앞 |
+| `GET /api/devices/{id}/fall-incidents?filter=all\|check\|closed\|normal\|report` | 목록 50개. "보호자 의견 대기"가 맨 앞 |
 | `GET /api/devices/{id}/fall-incidents/{incidentId}` | 사건 + 장면(사람 표시 박스가 있으면 `hasPeople`) + 자동 판정 기록 + 알림 이력 + 의견 + 활동 기록 + 같은 장면의 다른 사건 |
 | `PUT .../{incidentId}/opinion` `{"label":"fall\|suspected_fall\|normal\|null","memo":"..."}` | 내 의견 하나. `null`이면 해제. 메모 500자 이하 |
 | `POST .../{incidentId}/close` `{}` | 처리 완료. 사건이 닫히는 유일한 방법. 의견(누구 것이든)이 하나도 없으면 `409 needs_opinion` |
@@ -86,7 +86,7 @@
 
 - 첫 알림을 서버가 받은 시각부터 센다. 본문 앞에 `[재발신]`, 단계는 올리지 않는다.
 - 로봇이 더 높은 단계 알림을 보내면 낮은 단계 재발신을 멈추고 높은 단계로 새로 센다.
-- 마지막 재발신 뒤 한 간격이 더 지나도 의견이 없으면 `unacknowledged`("아무도 확인하지 않음").
+- 마지막 재발신 뒤 한 간격이 더 지나도 의견이 없으면 `unacknowledged`("보호자 의견 대기"). 음성 질문에 대한 무응답이나 알림 열람 여부를 뜻하지 않는다.
 - 처리 완료하면 남은 재발신을 모두 취소한다.
 - `POST /api/internal/maintenance`가 매분 예약·전송한다(EventBridge 1분). 실제 발송 시각은 최대 1분 늦을 수 있다.
 
