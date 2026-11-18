@@ -29,11 +29,13 @@ class SituationSpeechSession:
         self.finished = finished
         self.on_result = on_result
         self.clock = clock
+        self._started_at = clock()
         self.executor = executor or ThreadPoolExecutor(max_workers=1)
         self._owns_executor = executor is None
         self.engine = None
         self.phase = 'new'
         self.session_id = ''
+        self._last_session_id = ''
         self.playback_id = ''
         self.utterance_id = ''
         self._heard = set()
@@ -48,6 +50,8 @@ class SituationSpeechSession:
         self._early_started = ''
         self._early_answer = None
         self.no_response = False
+        self.failure = None
+        self._work_method = None
 
     @property
     def done(self):
@@ -61,6 +65,7 @@ class SituationSpeechSession:
 
     def _submit(self, method, *args):
         self.phase = 'thinking'
+        self._work_method = method
         self.no_response = method == 'no_response'
         self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
 
@@ -74,6 +79,7 @@ class SituationSpeechSession:
     def tick(self):
         if self.done or self._expire_operation():
             return
+        operation = 'input_close'
         try:
             if self._closing_input is not None:
                 if not self._closing_input.done():
@@ -82,6 +88,7 @@ class SituationSpeechSession:
                 if not closing.result().accepted:
                     raise RuntimeError('microphone session closure rejected')
             if self._work is not None and self._work.done():
+                operation = 'model_' + self._work_method
                 work, self._work = self._work, None
                 self._turn = work.result()
                 self._outcome = self._turn.result
@@ -94,6 +101,7 @@ class SituationSpeechSession:
                     self.phase = 'closing'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
                     if self.on_result is not None:
+                        operation = 'result_record'
                         self.on_result(self._outcome)
                     if self.no_response:
                         # Silence only completes the record; it adds no speech.
@@ -102,9 +110,11 @@ class SituationSpeechSession:
                 else:
                     self.phase = 'speaking'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+                operation = 'speech_publish'
                 if not self.ports.speak(self._turn.text, self.playback_id):
                     raise RuntimeError('speech publication failed')
             if self._opening is not None and self._opening.done():
+                operation = 'input_open'
                 opening, self._opening = self._opening, None
                 if not opening.result().accepted:
                     raise RuntimeError('microphone session rejected')
@@ -127,18 +137,22 @@ class SituationSpeechSession:
                     # wake-free session is gone. Verify before calling it silence.
                     self.phase = 'checking_silence'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+                    operation = 'input_verify'
                     self._verifying = self.ports.verify_session(self.session_id)
                 else:
                     # TTS, STT and model failures cannot fabricate a user's silence.
-                    self._finish('aborted')
+                    self.abort('operation_timeout')
             if self._verifying is not None and self._verifying.done():
+                operation = 'input_verify'
                 verifying, self._verifying = self._verifying, None
                 if not verifying.result().accepted:
                     raise RuntimeError('microphone session no longer active')
+                operation = 'input_close'
                 self._close_input()
+                operation = 'silence_finalize'
                 self._submit('no_response')
-        except Exception:
-            self._finish('aborted')
+        except Exception as error:
+            self.abort(operation, error)
 
     def playback(self, playback_id, state, *, interim=False):
         if (self.done or interim or playback_id != self.playback_id
@@ -149,15 +163,16 @@ class SituationSpeechSession:
                 self._finish('succeeded', self._outcome)
             elif self.phase == 'speaking':
                 self.session_id = 'confirmation-' + uuid4().hex
+                self._last_session_id = self.session_id
                 self.phase = 'opening'
                 self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
                 try:
                     self._opening = self.ports.open_session(self.session_id)
-                except Exception:
-                    self._finish('aborted')
+                except Exception as error:
+                    self.abort('input_open', error)
         elif state in ('failed', 'stopped') and self.phase in ('speaking', 'closing'):
             # An undelivered question is an operational failure, never an answer.
-            self._finish('aborted')
+            self.abort('playback_' + state)
 
     def input_status(self, session_id, utterance_id, state):
         if (self.done or not self.session_id or session_id != self.session_id
@@ -165,7 +180,7 @@ class SituationSpeechSession:
             return
         if state == 'failed' and not utterance_id:
             # The existing empty-ID failure covers the whole listening session.
-            self._finish('aborted')
+            self.abort('input_failed')
             return
         if not isinstance(utterance_id, str) or not utterance_id.strip():
             return
@@ -224,11 +239,13 @@ class SituationSpeechSession:
             return False
         self._heard.add(utterance_id)
         self._clear_verification()
+        operation = 'input_close'
         try:
             self._close_input()
+            operation = 'model_submit'
             self._submit('answer', text)
-        except Exception:
-            self._finish('aborted')
+        except Exception as error:
+            self.abort(operation, error)
             return False
         return True
 
@@ -236,7 +253,7 @@ class SituationSpeechSession:
         """A ready future or late callback cannot renew an expired operation."""
         if (self.phase != 'listening' and self._deadline is not None
                 and self.clock() >= self._deadline):
-            self._finish('aborted')
+            self.abort('operation_timeout')
             return True
         return False
 
@@ -259,7 +276,17 @@ class SituationSpeechSession:
     def cancel(self):
         self._finish('canceled')
 
-    def abort(self):
+    def abort(self, reason='external_abort', error=None):
+        if self.done:
+            return
+        # Keep correlation and failure type, never questions, answers or exception text.
+        self.failure = dict(
+            request_id=self.request.request_id, phase=self.phase, reason=reason,
+            session_id=self.session_id or self._last_session_id, playback_id=self.playback_id,
+            utterance_id=self.utterance_id, model_operation=self._work_method,
+            elapsed_s=round(self.clock() - self._started_at, 3),
+            exception_type=type(error).__name__ if error is not None else None,
+        )
         self._finish('aborted')
 
     def _finish(self, status, result=None):

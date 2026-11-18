@@ -191,6 +191,11 @@ class SituationActionServer:
             self._pending_result = (future, result)
 
         def finish(status, result):
+            if status == 'aborted' and self._session.failure is not None:
+                self.node.get_logger().warning('confirmation_failed ' + json.dumps(dict(
+                    self._session.failure, goal_id=self._key(goal).hex(),
+                    result_committed=receipt.status == 'succeeded',
+                ), sort_keys=True))
             stop_future, self._stop_future = self._stop_future, None
             if stop_future is not None:
                 stop_future.cancel()
@@ -215,8 +220,8 @@ class SituationActionServer:
             self._stop_future = self._playback.call_async(self._control_type.Request(
                 playback_id='', command=self._control_type.Request.STOP_ALL,
             ))
-        except Exception:
-            self._session.abort()
+        except Exception as error:
+            self._session.abort('preemption_request', error)
         goal.execute()
 
     def submit(self, fn, *args, **kwargs):
@@ -256,11 +261,11 @@ class SituationActionServer:
             session.cancel()
             return
         if time.monotonic() - self._started_at >= 600:
-            session.abort()
+            session.abort('dialogue_timeout')
             return
         if self._initializing:
             if time.monotonic() - self._started_at >= 5:
-                session.abort()
+                session.abort('preemption_timeout')
                 return
             if not self._stop_future.done():
                 return
@@ -270,8 +275,8 @@ class SituationActionServer:
                     raise RuntimeError('speech preemption rejected')
                 self._initializing = False
                 session.start()
-            except Exception:
-                session.abort()
+            except Exception as error:
+                session.abort('preemption_response', error)
                 return
         session.tick()
 
@@ -362,7 +367,7 @@ class SituationActionServer:
             return
         self._closed = True
         if self._session is not None:
-            self._session.abort()
+            self._session.abort('server_closed')
         for _, future in tuple(self._contexts.values()):
             if not future.done():
                 future.set_result(('aborted', None))

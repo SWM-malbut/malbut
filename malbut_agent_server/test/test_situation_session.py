@@ -455,6 +455,20 @@ def test_operational_failure_does_not_become_a_no_response(failure):
     assert h.finishes == [('aborted', None)]
     assert h.outcomes == []
     assert [call[0] for call in h.calls] == ['start']
+    diagnostic = h.session.failure
+    assert diagnostic['request_id'] == 'incident-1'
+    assert diagnostic['reason'] == {
+        'provider': 'model_start', 'tts': 'playback_failed', 'stt': 'input_failed',
+        'opening': 'input_open', 'publication': 'speech_publish',
+    }[failure]
+    assert diagnostic['exception_type'] == (
+        'RuntimeError' if failure in ('provider', 'opening', 'publication') else None)
+    assert 'provider failure' not in str(diagnostic)
+    assert '넘어지셨나요' not in str(diagnostic) and '바닥에 누움' not in str(diagnostic)
+    if failure in ('stt', 'opening'):
+        assert diagnostic['session_id'] == h.openings[-1][0]
+    if failure != 'provider':
+        assert diagnostic['playback_id'] == h.session.playback_id
 
 
 def test_session_wide_input_failure_before_speech_is_not_user_silence():
@@ -482,6 +496,9 @@ def test_operation_timeout_does_not_become_user_silence(phase):
     h.session.tick()
     assert h.finishes == [('aborted', None)]
     assert all(call[0] != 'no_response' for call in h.calls)
+    assert h.session.failure['reason'] == 'operation_timeout'
+    assert h.session.failure['phase'] == phase
+    assert h.session.failure['elapsed_s'] == 60
 
 
 @pytest.mark.parametrize('late_by', [0.0, 0.001])
