@@ -1150,7 +1150,9 @@ def test_a_grouped_alert_does_not_count_as_urgent_sent():
 
 def test_a_reappearance_asks_the_vlm_and_an_unlike_answer_splits_off_someone_else():
     robot = Robot()
-    robot.frame(person('a', (3.0, 1.0)))
+    for _ in range(3):  # Seen in enough frames to be remembered.
+        robot.frame(person('a', (3.0, 1.0)))
+        robot.wait(0.2)
     robot.wait(600)
     out = robot.frame(person('z', (3.3, 1.0)))
     compare, = kinds(out, 'compare')
@@ -1164,3 +1166,83 @@ def test_a_reappearance_asks_the_vlm_and_an_unlike_answer_splits_off_someone_els
     new = robot.flow.tracker.person_of('z')
     assert new != compare['a'] and incident.person == new
     assert {'kind': 'people', 'at': compare['b']['at'], 'tracks': {'z': new}} in out
+
+
+# ------------------------------- one check while uncertain, and gone means over (11-18)
+
+
+def left_for_help(robot):
+    """An incident left open with its person: the question got no usable answer."""
+    incident = robot.open(track='t1')
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('help')
+    assert robot.flow.incidents[incident].idle == 'person'
+    return incident
+
+
+def test_a_fall_of_that_number_at_that_place_joins_the_check_even_while_uncertain():
+    """11-18 10:38: lying down once opened two incidents and was asked twice."""
+    robot = Robot()
+    robot.open(track='a', point=(3.0, 1.0))
+    for _ in range(3):  # Too close, seen in three frames: uncertain who is who.
+        robot.frame(person('a', (3.0, 1.0)), person('b', (3.3, 1.0)))
+        robot.now += 0.2
+    _, out = robot.see('motion', track='a', point=(3.1, 1.0), fall_moment='fall-2')
+    assert [c['kind'] for c in out] == ['link'] and len(robot.flow.incidents) == 1
+    # Its place not measured: maybe the other one, checked separately as before.
+    _, out = robot.see('motion', track='a', point=None, fall_moment='fall-3')
+    assert looks(out, 'filter') and not kinds(out, 'link')
+
+
+def test_someone_left_for_the_guardian_and_unseen_five_minutes_is_over():
+    """11-18 10:18: lying down again 18 minutes later only joined the old incident."""
+    robot = Robot()
+    old = left_for_help(robot)
+    robot.wait(REDETECT_S + 1)
+    s, out = robot.see('lying', track='t1')
+    assert looks(out, 'filter') and not kinds(out, 'link')
+    out = robot.filter(s, 'suspect')
+    assert drives(out, 'approach') and robot.active() != old
+    kept = robot.flow.incidents[old]
+    assert kept.state == 'open' and kept.idle == 'person' and kept.over  # The guardian's.
+
+
+def test_someone_left_for_the_guardian_and_still_seen_there_is_not_asked_again():
+    robot = Robot()
+    old = left_for_help(robot)
+    for _ in range(800):  # Lying there, seen twice a second for almost seven minutes.
+        robot.now += 0.5
+        robot.frame(person('t1'))
+    _, out = robot.see('lying', track='t1')
+    assert [c['incident_id'] for c in kinds(out, 'link')] == [old]
+    assert not looks(out, 'filter') and robot.active() is None
+
+
+def test_someone_left_for_the_guardian_who_stood_up_is_over():
+    robot = Robot()
+    old = left_for_help(robot)
+    robot.frame(person('t1', state='suspected'))
+    robot.now += 0.2
+    robot.frame(person('t1', state='clear'))
+    assert robot.flow.incidents[old].over
+    robot.now += 30
+    _, out = robot.see('lying', track='t1')  # Down again half a minute later: a new one.
+    assert looks(out, 'filter') and not kinds(out, 'link')
+
+
+def test_someone_left_for_the_guardian_and_suspected_elsewhere_is_a_new_incident():
+    robot = Robot()
+    old = left_for_help(robot)
+    for step in range(1, 9):  # Seen moving 2 m along the floor.
+        robot.now += 0.2
+        robot.frame(person('t1', (3.0, step * 0.25)))
+    _, out = robot.see('lying', track='t1', point=(3.0, 2.0))
+    assert looks(out, 'filter') and not kinds(out, 'link')
+    assert robot.flow.incidents[old].over
+    # Cloud's place is measured on its box (11-17: 1.3 m off): not "elsewhere" by it.
+    robot = Robot()
+    old = left_for_help(robot)
+    _, out = robot.see('cloud', track=None, point=(3.0, 1.4), box=(0.1, 0.1, 0.9, 0.6))
+    assert not robot.flow.incidents[old].over

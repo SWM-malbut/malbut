@@ -409,7 +409,7 @@ def test_a_suspicion_before_its_frame_is_matched_the_same_way(robot):
 
 def test_no_more_than_64_people_are_remembered(robot):
     for n in range(MAX_PEOPLE + 5):
-        robot.frame(seen(f't{n}', (n * 5.0, 0.0)))
+        robot.frames(3 * DT, seen(f't{n}', (n * 5.0, 0.0)))
         robot.wait(SHORT_GONE_S + 1)
     assert len(robot.tracker.people) == MAX_PEOPLE
     assert 'test:P1' not in robot.tracker.people  # The longest unseen went first.
@@ -516,3 +516,69 @@ def test_a_suspicion_without_a_track_is_whoever_the_frames_showed_under_its_box(
     # No one under its box, or another view: by its place, as before.
     assert robot.tracker.assign(Observation(None, BOX_B, (1.7, 1.0)), taken, 0)[0] == 'test:P1'
     assert robot.tracker.assign(Observation(None, BOX_A, (1.7, 1.0)), robot.t, 1)[0] == 'test:P1'
+
+
+# ------------------------------------------- a moment's box, and who was there (11-18)
+
+BODY = (0.47, 0.25, 1.00, 0.98)   # someone lying near the robot
+BAG = (0.61, 0.29, 0.74, 0.49)    # a bag under the bed taken for a person (overlap 0.07)
+
+
+def test_a_box_for_a_moment_is_forgotten_after_five_seconds(robot):
+    """11-18: a hanging sleeve seen for a frame or two became 79 numbers in 63 minutes."""
+    robot.frame(seen('sleeve', None, box=(0.94, 0.0, 1.0, 0.6)))
+    robot.frames(1.0, seen('a', (3.0, 1.0)))
+    robot.wait(SHORT_GONE_S + 1)
+    robot.frame(seen('b', (9.0, 9.0), box=BOX_B))
+    assert set(robot.tracker.people) == {'test:P2', 'test:P3'}  # The sleeve is no one.
+    robot.wait(600)
+    assert robot.frame(seen('a2', (3.1, 1.0))).assignments == {'a2': 'test:P2'}
+
+
+def test_a_suspicion_counts_as_someone_at_once(robot):
+    person, _ = robot.tracker.assign(seen('fell', (3.0, 1.0)), robot.t, robot.view)
+    robot.wait(600)
+    robot.frame(seen('b', (9.0, 9.0), box=BOX_B))
+    assert person in robot.tracker.people
+    assert robot.frame(seen('fell2', (3.2, 1.0))).assignments == {'fell2': person}
+
+
+def test_something_where_someone_unseen_was_is_them_not_the_one_who_just_left(robot):
+    """11-18 09:16: the bag 0.86 m from the person who had just got up took their number,
+    though its own was 0.08 m away."""
+    robot.frames(1.0, seen('bag', (1.5, -0.45), box=BAG))             # P1
+    robot.wait(90)
+    robot.frames(2.0, seen('lying', (0.6, 0.3), box=BODY))            # P2, in front of it
+    robot.wait(0.5)
+    result = robot.frame(seen('bag2', (1.52, -0.46), box=BAG))        # 1.2 m from P2
+    assert result.assignments == {'bag2': 'test:P1'}
+    assert not robot.tracker.uncertain('test:P2')
+
+
+def test_something_new_beside_someone_just_gone_is_a_number_of_its_own(robot):
+    """11-18 10:19: the bag, never seen before, 0.97 m from the person who left 0.7 s
+    ago, its box barely on theirs."""
+    robot.frames(2.0, seen('lying', (0.8, 0.15), box=BODY))           # P1
+    robot.wait(0.5)
+    first = robot.frame(seen('bag', (1.59, -0.40), box=BAG))
+    assert first.assignments == {'bag': 'test:P2'} and not robot.tracker.uncertain('test:P1')
+    robot.frames(2 * DT, seen('bag', (1.59, -0.40), box=BAG))
+    assert robot.tracker.uncertain('test:P1') and robot.tracker.uncertain('test:P2')
+    # A minute of only the bag in one place: no longer uncertain, each their own number.
+    robot.frames(SOLO_S + REID_WAIT_S + 2, seen('bag', (1.59, -0.40), box=BAG))
+    assert not robot.tracker.uncertain('test:P2')
+    robot.wait(600)
+    back = robot.frame(seen('back', (0.85, 0.2), box=BODY))
+    assert back.assignments == {'back': 'test:P1'}
+
+
+def test_a_new_track_near_or_over_the_one_just_seen_is_still_them(robot):
+    robot.frames(2.0, seen('lying', (0.8, 0.15), box=BODY))
+    robot.wait(0.5)
+    # 0.97 m away but the box still on theirs: they rolled over.
+    rolled = robot.frame(seen('rolled', (1.59, -0.40), box=(0.5, 0.3, 1.0, 0.9)))
+    assert rolled.assignments == {'rolled': 'test:P1'}
+    robot.wait(0.5)
+    # A box elsewhere on screen but within the place's error (0.4 m).
+    near = robot.frame(seen('near', (1.3, -0.15), box=BAG))
+    assert near.assignments == {'near': 'test:P1'}
