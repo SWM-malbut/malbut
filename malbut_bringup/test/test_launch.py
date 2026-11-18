@@ -36,12 +36,6 @@ def launch_module(tmp_path, monkeypatch):
     monkeypatch.delenv('HOMECAM_DEVICE_TOKEN_FILE', raising=False)
     monkeypatch.delenv('HOMECAM_DEVICE_ID', raising=False)
     monkeypatch.setenv('MALBUT_FALL_CONFIG', str(tmp_path / 'unconfigured-fall.json'))
-    for name in ('slam/launch/include/robot.launch.py',):
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('from launch import LaunchDescription\n'
-                        'def generate_launch_description():\n'
-                        '    return LaunchDescription()\n')
     source = ROOT / 'malbut_bringup/launch/robot.launch.py'
     spec = importlib.util.spec_from_file_location('robot_launch', source)
     module = importlib.util.module_from_spec(spec)
@@ -449,6 +443,8 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     assert {item.node_executable for item in actions if isinstance(item, Node)} == {
         'component_container_isolated', 'zone_filter', 'system_manager', 'runtime_control'}
     assert len(_includes(actions)) == 1
+    assert _source_path(_includes(actions)[0]) == str(
+        ROOT / 'malbut_bringup/launch/hardware.launch.py')
     hardware = dict(_includes(actions)[0].launch_arguments)
     assert hardware['robot_name'] == hardware['master_name'] == '/'
     assert hardware['point_cloud_enable'] == hardware['use_joy'] == 'false'
@@ -459,6 +455,87 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     runtime = _parameters(context, _nodes(actions, 'runtime_control')[0])
     assert runtime['initial_map'] == str(ROOT / 'malbut_bringup/config/default_map.yaml')
     assert runtime['default_map'] == runtime['initial_map']
+
+
+@pytest.mark.parametrize('start_hardware', ['true', 'false'])
+def test_robot_preserves_external_hardware_launch(launch_module, tmp_path, start_hardware):
+    """Keep the existing override and opt-out for externally managed hardware."""
+    external = tmp_path / 'external.launch.py'
+    external.write_text('from launch import LaunchDescription\n'
+                        'def generate_launch_description():\n'
+                        '    return LaunchDescription()\n')
+    context = _context(launch_module, hardware_launch_file=str(external),
+                       start_hardware=start_hardware)
+    includes = _includes(launch_module._setup(context))
+    assert [_source_path(item) for item in includes] == (
+        [str(external)] if start_hardware == 'true' else [])
+
+
+def test_hardware_replaces_velocity_controller_and_keeps_vendor_devices(
+        tmp_path, monkeypatch):
+    """Keep sensor, odometry and calibration paths while starting one motor-command owner."""
+    module = _load('hardware')
+    vendor = tmp_path / 'vendor'
+    launch_files = [
+        'simulations/rosorin_description/launch/robot_description.launch.py',
+        'driver/ros_robot_controller/launch/ros_robot_controller.launch.py',
+        'peripherals/launch/imu_filter.launch.py',
+        'driver/servo_controller/launch/servo_controller.launch.py',
+        'peripherals/launch/depth_camera.launch.py',
+        'peripherals/launch/lidar.launch.py',
+    ]
+    for relative in launch_files:
+        path = vendor / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('from launch import LaunchDescription\n'
+                        'def generate_launch_description():\n'
+                        '    return LaunchDescription()\n')
+    config = vendor / 'driver/controller/config'
+    config.mkdir(parents=True)
+    (config / 'ekf.yaml').write_text('odom_frame: namespace/odom\n')
+    (config / 'calibrate_params.yaml').write_text('linear_correction_factor: 1.2\n')
+    monkeypatch.setattr(module, 'VENDOR_ROOT', vendor)
+    context = LaunchContext()
+    actions = module.generate_launch_description().entities[0].execute(context)
+    includes = _includes(actions)
+    assert [_source_path(item) for item in includes] == [
+        str(vendor / relative) for relative in launch_files]
+    arguments = {Path(_source_path(item)).name: dict(item.launch_arguments) for item in includes}
+    assert all(item['use_sim_time'] == 'false' for item in arguments.values())
+    assert arguments['robot_description.launch.py'] == {
+        'use_sim_time': 'false', 'frame_prefix': '', 'use_gui': 'false', 'use_rviz': 'false',
+        'use_namespace': 'false', 'namespace': '',
+    }
+    assert arguments['ros_robot_controller.launch.py']['imu_frame'] == 'imu_link'
+    assert arguments['servo_controller.launch.py']['base_frame'] == 'base_footprint'
+    assert arguments['depth_camera.launch.py'] == {
+        'use_sim_time': 'false', 'depth_camera_name': 'depth_cam', 'tf_prefix': '',
+        'point_cloud_enable': 'false',
+    }
+    assert arguments['lidar.launch.py'] == {
+        'use_sim_time': 'false', 'lidar_frame': 'lidar_frame',
+        'scan_topic': '/scan_raw', 'scan_raw': '/scan_raw',
+    }
+    nodes = [item for item in actions if isinstance(item, Node)]
+    assert {item.node_executable for item in nodes} == {'ekf_node', 'velocity_controller'}
+    assert len(nodes) == 2
+    controller, = _nodes(actions, 'velocity_controller')
+    assert controller.node_package == 'malbut_bringup'
+    assert controller._Node__node_name == 'odom_publisher'
+    calibration, parameters = evaluate_parameters(context, controller._Node__parameters)
+    assert calibration == config / 'calibrate_params.yaml'
+    assert parameters == {
+        'base_frame_id': 'base_footprint', 'odom_frame_id': 'odom', 'pub_odom_topic': True,
+    }
+    ekf, = _nodes(actions, 'ekf_node')
+    ekf_config, ekf_parameters = evaluate_parameters(context, ekf._Node__parameters)
+    assert ekf_config.read_text() == 'odom_frame: odom\n'
+    assert ekf_parameters == {'use_sim_time': False}
+    assert {perform_substitutions(context, source): perform_substitutions(context, target)
+            for source, target in ekf._Node__remappings} == {
+        '/tf': 'tf', '/tf_static': 'tf_static',
+        'odometry/filtered': 'odom', 'cmd_vel': 'controller/cmd_vel',
+    }
 
 
 def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():

@@ -26,7 +26,7 @@ def _setup(context):
     if value('start_hardware') == 'true':
         hardware_path = (_file(value('hardware_launch_file'), 'hardware launch')
                          if value('hardware_launch_file') else _package_file(
-                             'slam', 'launch/include/robot.launch.py'))
+                             'malbut_bringup', 'launch/hardware.launch.py'))
     params = (_file(value('nav2_params_file'), 'Nav2 parameters')
               if value('nav2_params_file') else _package_file(
                   'malbut_bringup', 'config/nav2_params.yaml'))
