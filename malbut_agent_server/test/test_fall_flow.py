@@ -8,9 +8,11 @@ import pytest
 
 from malbut_agent_server.fall_rules.fall_flow import (
     FORGET_S, POSTURE_AGAIN_S, RECHECK_S, REDETECT_S, WAIT_ALERT_S, WAIT_LIMIT_S, FallFlow, Incident,
-    Sighting,
+    Memory, Sighting,
 )
-from malbut_agent_server.fall_rules.person_tracker import SHORT_GONE_S, Frame, Observation
+from malbut_agent_server.fall_rules.person_tracker import (
+    REID_WAIT_S, SHORT_GONE_S, Frame, Observation,
+)
 
 SPOT = (3.0, 0.0)
 FROM = (0.0, 0.0)
@@ -1297,3 +1299,71 @@ def test_someone_left_for_the_guardian_and_suspected_elsewhere_is_a_new_incident
     old = left_for_help(robot)
     _, out = robot.see('cloud', track=None, point=(3.0, 1.4), box=(0.1, 0.1, 0.9, 0.6))
     assert not robot.flow.incidents[old].over
+
+
+BAG = (0.61, 0.29, 0.74, 0.49)
+BODY = (0.05, 0.30, 0.60, 0.60)
+
+
+def _in_view(robot, observation, seconds=3.0, view=0):
+    for _ in range(int(seconds / 0.25)):
+        robot.frame(observation, view=view)
+        robot.wait(0.25)
+
+
+def _bag_filtered(robot):
+    """A bag at SPOT, seen for a while, filtered by Cloud as ordinary: remembered."""
+    _in_view(robot, Observation('y1', BAG, SPOT), 1.0)
+    s, _ = robot.see('lying', track='y1', box=BAG, view=0)
+    robot.filter(s, 'ordinary', 'ordinary')
+    robot.wait(SHORT_GONE_S + 5.0)  # Not detected for a while.
+    return robot.flow.tracker.person_of('y1')
+
+
+def test_someone_given_a_filtered_number_elsewhere_in_the_image_is_filtered_again():
+    # 11-18: a bag Cloud filtered as ordinary keeps its number; someone seen within 1 m of
+    # it while it is not detected is given that number, and lying there was passed over.
+    robot = Robot()
+    bag = _bag_filtered(robot)
+    near = (SPOT[0], SPOT[1] + 0.6)
+    _in_view(robot, Observation('y2', BODY, near), REID_WAIT_S + 1.0)
+    assert robot.flow.tracker.person_of('y2') == bag
+    assert not robot.flow.tracker.uncertain(bag)
+    _, out = robot.see('lying', track='y2', box=BODY, point=near, view=0)
+    assert looks(out, 'filter')  # Not passed over: Cloud looks at who lies there now.
+
+
+def test_a_filtered_thing_back_in_the_same_box_stays_remembered():
+    # The bag under a new YOLO track, in the box Cloud filtered: no new Cloud look.
+    robot = Robot()
+    bag = _bag_filtered(robot)
+    _in_view(robot, Observation('y2', BAG, SPOT), REID_WAIT_S + 1.0)
+    assert robot.flow.tracker.person_of('y2') == bag
+    assert not robot.flow.tracker.uncertain(bag)
+    _, out = robot.see('lying', track='y2', box=BAG, view=0)
+    assert not looks(out, 'filter')
+
+
+def test_a_filtered_number_taken_after_the_robot_moved_is_filtered_again():
+    # Another view: boxes do not compare, so the memory is not trusted.
+    robot = Robot()
+    bag = _bag_filtered(robot)
+    _in_view(robot, Observation('y2', BAG, SPOT), REID_WAIT_S + 1.0, view=1)
+    assert robot.flow.tracker.person_of('y2') == bag
+    assert not robot.flow.tracker.uncertain(bag)
+    _, out = robot.see('lying', track='y2', box=BAG, view=1)
+    assert looks(out, 'filter')
+
+
+def test_a_checked_person_given_their_number_back_is_not_filtered_again():
+    # Only what Cloud filtered alone: someone the robot checked and closed keeps the
+    # 30 minutes (decision 3) under a new YOLO track anywhere in the image.
+    robot = Robot()
+    _in_view(robot, Observation('y1', BODY, SPOT), 1.0)
+    who = robot.flow.tracker.person_of('y1')
+    robot.flow.memory.append(Memory(who, 'person', 'floor', robot.now, 'an-incident'))
+    robot.wait(SHORT_GONE_S + 5.0)
+    _in_view(robot, Observation('y2', BAG, SPOT), REID_WAIT_S + 1.0)
+    assert robot.flow.tracker.person_of('y2') == who
+    _, out = robot.see('lying', track='y2', box=BAG, view=0)
+    assert not looks(out, 'filter')
