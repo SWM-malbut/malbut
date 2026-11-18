@@ -143,7 +143,7 @@ export type BadgeTone = "is-alert" | "is-info" | "is-urgent" | "is-check" | "is-
  */
 export function incidentBadges(i: IncidentSummary): Array<[BadgeTone, string]> {
   if (incidentClosed(i)) return [["is-neutral", "처리 완료"]];
-  const status: [BadgeTone, string] = i.unacknowledged ? ["is-alert", "응답 없음"]
+  const status: [BadgeTone, string] = i.unacknowledged ? ["is-alert", "보호자 의견 대기"]
     : looking(i) ? ["is-info", "확인 중"]
       // 말벗이 직접 확인하지 못하면 언제나 긴급 알림을 보낸다(목업 28번).
       : i.robotCheck ? ["is-urgent", "긴급"]

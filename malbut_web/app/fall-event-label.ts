@@ -26,6 +26,10 @@ const ANSWER: Record<string, string> = {
   help_request: "도움 요청", okay: "괜찮다고 함", unclear: "잘 알아듣지 못함",
   no_response: "대답 없음", failed: "질문 실패",
 };
+const UNKNOWN_ANSWER = "응답함 · 도움 요청 없음";
+// The situation and help decision are independent; okay alone does not establish safety.
+const isUnknownAnswer = (event: FallHistoryEvent) =>
+  event.eventKind === "confirmation_completed" && event.answer === "okay" && event.reason === "unknown";
 const POSE_REASON: Record<string, string> = {
   pose_rapid_posture_change: "급격한 자세 변화",
   pose_sustained_horizontal_posture: "누운 자세 추정",
@@ -293,6 +297,7 @@ function approachLines(event: FallHistoryEvent): string[] | null {
     if (reason === "scene_answer_unassociated") return [line("대답", "괜찮다고 함 · 쓰러진 분인지 모름")];
     if (event.answer === "failed") return [line("말벗", "질문 실패")];
     if (event.answer === "no_response") return [line("대답", "없음")];
+    if (isUnknownAnswer(event)) return [line("대답", UNKNOWN_ANSWER)];
     return [line("대답", event.answer ? ANSWER[event.answer] ?? event.answer : "기록 없음")];
   }
   if (kind === "incident_resolved" && reason === "guardian_closed") return [line("말벗", "보호자가 처리 완료해 확인을 멈춤")];
@@ -545,6 +550,7 @@ export function fallCheckResult(events: FallHistoryEvent[]): FallCheckResult | n
   const ctx = newRound();
   let outcome: { title: string; note: string | null; summary?: string } | null = null;
   let moment: string | null = null, answer: string | null = null, last: FallHistoryEvent | null = null;
+  let unknownAnswer = false;
   const posture = () => {
     const p = ctx.postures.at(-1);
     return p ? FLOW_POSTURE[p] ?? "자세를 확인하지 못함" : null;
@@ -555,7 +561,10 @@ export function fallCheckResult(events: FallHistoryEvent[]): FallCheckResult | n
     const reason = e.reason ?? "";
     const p = ctx.postures.at(-1) ?? null;
     if (e.eventKind === "fall_moment_reviewed") moment = reason;
-    if (e.eventKind === "confirmation_completed" || e.eventKind === "voice_result") answer = e.answer ?? answer;
+    if (e.eventKind === "confirmation_completed" || e.eventKind === "voice_result") {
+      answer = e.answer ?? answer;
+      unknownAnswer = isUnknownAnswer(e);
+    }
     if (e.eventKind === "incident_resolved") {
       if (reason === "guardian_closed") outcome = { title: "처리 완료 뒤에는 이 사건을 다시 열지 않음", note: NOTE.guardian };
       else if (reason === "not_a_person") {
@@ -572,8 +581,9 @@ export function fallCheckResult(events: FallHistoryEvent[]): FallCheckResult | n
         outcome = { title: "바닥에 앉아 활동 중 → 묻지 않음", note: NOTE.floorActive };
       } else if (reason === "response_completed" || reason === "risk_cleared") {
         const off = p !== null && OFF_FLOOR.has(p);
-        outcome = { title: `${posture() ?? "자세를 확인하지 못함"}${off ? " · 넘어진 것으로 보여 물어봄" : ""} · 괜찮다고 답함`,
-          note: off ? NOTE.fallAsked : NOTE.floorOkay, summary: `${posture() ?? "물어봄"} · 괜찮다고 답함` };
+        const response = unknownAnswer ? UNKNOWN_ANSWER : "괜찮다고 답함";
+        outcome = { title: `${posture() ?? "자세를 확인하지 못함"}${off ? " · 넘어진 것으로 보여 물어봄" : ""} · ${response}`,
+          note: off ? NOTE.fallAsked : NOTE.floorOkay, summary: `${posture() ?? "물어봄"} · ${response}` };
       }
     } else if (e.eventKind === "confirmation_completed" && e.answer === "help_request") {
       outcome = { title: `${posture() ?? "물어봄"} · 도움 필요`, note: NOTE.open };

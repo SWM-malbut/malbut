@@ -3,6 +3,7 @@ import test from "node:test";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 
@@ -284,6 +285,15 @@ test("voice detail pages use current user IDs and bind recording/event rows to t
     });
     assert.match(JSON.stringify(await page("recording", "record-a")), /momentAt/);
     assert.match(JSON.stringify(await page("event", "event-a")), /고양이/);
+    for (const [answer, label] of [["okay", "응답 · 도움 요청 없음"],
+      ["help_request", "도움 요청"], ["no_response", "응답 없음"], ["failed", "음성 확인 실패"]]) {
+      await h.db.query(`INSERT INTO fall_incidents
+        (device_id,incident_id,boot_id,evidence_revision,state,assessment,answer,occurred_at)
+        VALUES('robot-a',$1,'boot-a',1,$3,'suspected_fall',$2,CURRENT_TIMESTAMP)`,
+      [answer, answer, answer === "okay" ? "resolved" : answer === "help_request" ? "help_required" : "recheck_required"]);
+      const html = renderToStaticMarkup(await page("fall", answer));
+      assert.ok(html.includes(`음성 응답: ${label}`), html);
+    }
     await assert.rejects(page("recording", "record-b"), /NOT_FOUND/);
     await assert.rejects(page("event", "event-b"), /NOT_FOUND/);
     await assert.rejects(page("recording", "record-b", "robot-b"), /NOT_FOUND/);

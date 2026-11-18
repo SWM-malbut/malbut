@@ -285,6 +285,89 @@ test("the older check keeps its labels (no round on its events)", () => {
   assert.equal(fallCheckResult(older), null);
 });
 
+test("an unknown situation with no help request is an answer, not a safety confirmation", async () => {
+  await withRepo(async ({ events, review }) => {
+    const rows = journal([
+      ["incident_opened", "pose_sustained_horizontal_posture"],
+      ["posture_check_completed", "posture_unconfirmed"],
+      ["question_requested", null],
+      ["confirmation_completed", "unknown", { state: "resolved", answer: "okay" }],
+      ["incident_resolved", "response_completed", { state: "resolved", answer: "okay" }],
+    ]);
+    for (const row of rows) {
+      assert.ok(parseFallEvent(row));
+      await events.storeFallEvent("robot-a", row);
+    }
+    const detail = await review.getFallIncidentDetail("robot-a", rows[0].incidentId);
+    const listed = (await review.listFallIncidentSummaries("robot-a"))[0];
+    assert.deepEqual((await review.listFallIncidentSummaries("robot-a", "okay")).map((i) => i.incidentId),
+      [rows[0].incidentId]);
+    const view = load("app/fall-incident-view.ts");
+    for (const shown of [detail, listed]) {
+      assert.equal(shown.state, "resolved");
+      assert.equal(shown.assessment, "suspected_fall");
+      assert.equal(shown.answer, "okay");
+      assert.equal(shown.category, "check");
+      assert.equal(view.incidentTitle(shown), "낙상 의심");
+      assert.equal(shown.checkResult.title, "자세를 확인하지 못함 · 응답함 · 도움 요청 없음");
+      assert.equal(shown.checkResult.summary, "자세를 확인하지 못함 · 응답함 · 도움 요청 없음");
+      assert.match(view.incidentSubtitle(shown), / · 자세를 확인하지 못함 · 응답함 · 도움 요청 없음$/);
+    }
+    assert.equal(labels(detail.robotEvents)[3], "대답: 응답함 · 도움 요청 없음");
+  });
+});
+
+test("only an explicit unknown confirmation changes the answer wording, within its round", () => {
+  const answered = (reason, change = {}) => journal([
+    ["posture_check_completed", "on_floor"],
+    ["confirmation_completed", reason, { state: "resolved", answer: "okay", ...change }],
+    ["incident_resolved", "response_completed", { state: "resolved", answer: "okay" }],
+  ]);
+  for (const reason of ["resolved", "confirmed_incident", null]) {
+    const rows = answered(reason);
+    assert.equal(labels(rows)[1], "대답: 괜찮다고 함");
+    assert.equal(fallCheckResult(rows).title, "바닥에 있음 · 괜찮다고 답함");
+  }
+  const older = answered(null).map((e) => { const copy = { ...e }; delete copy.checkRound; return copy; });
+  assert.equal(labels(older)[1], "대답: 괜찮다고 함");
+  assert.equal(fallCheckResult(older), null);
+
+  const rechecked = [...answered("unknown"),
+    ...journal([["recheck_started", "floor_recheck"]]), ...answered("resolved")];
+  for (const row of rechecked.slice(3)) row.checkRound = 2;
+  assert.equal(fallCheckResult(rechecked).title, "2회차: 바닥에 있음 · 괜찮다고 답함");
+});
+
+test("a stored question error remains a fault when guardian feedback is pending", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    const rows = journal([
+      ["incident_opened", "pose_sustained_horizontal_posture"],
+      ["question_requested", null],
+      ["agent_check_failed", "question_error", { state: "recheck_required", answer: "failed" }],
+      ["notification_requested", "robot_could_not_confirm", {
+        state: "recheck_required", answer: "failed", notificationLevel: "urgent" }],
+    ]);
+    for (const row of rows) {
+      assert.ok(parseFallEvent(row));
+      await events.storeFallEvent("robot-a", row);
+    }
+    await h.db.query(`UPDATE fall_incidents SET unacknowledged_since=CURRENT_TIMESTAMP
+      WHERE device_id='robot-a' AND incident_id=$1`, [rows[0].incidentId]);
+    const detail = await review.getFallIncidentDetail("robot-a", rows[0].incidentId);
+    const listed = (await review.listFallIncidentSummaries("robot-a"))[0];
+    const view = load("app/fall-incident-view.ts");
+    for (const shown of [detail, listed]) {
+      assert.equal(shown.answer, "failed");
+      assert.equal(shown.reviewState, "open");
+      assert.equal(shown.needsCheck, true);
+      assert.equal(shown.checkResult.title, "질문 중 오류가 나 물을 수 없음");
+      assert.equal(shown.checkResult.summary, "질문 중 오류로 묻지 못함");
+      assert.equal(view.incidentBadges(shown)[0][1], "보호자 의견 대기");
+    }
+    assert.equal(labels(detail.robotEvents)[2], "말벗: 질문 중 오류가 나 물을 수 없음 → 바로 긴급 알림");
+  });
+});
+
 test("a person who walked away is closed by the robot like off the floor (처리 완료)", async () => {
   await withRepo(async ({ events, review }) => {
     const rows = journal([
