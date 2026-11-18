@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from malbut_tts.audio import PlaybackCancelled, StreamingPlayer
 
@@ -20,7 +21,7 @@ def wait_until(predicate):
         time.sleep(0.002)
 
 
-def fake_device():
+def fake_device(high_latency=0.0348):
     """Return a manually advanced callback device with explicit drain."""
     instances = []
 
@@ -84,7 +85,31 @@ def fake_device():
     return SimpleNamespace(
         OutputStream=OutputStream, CallbackStop=CallbackStop,
         CallbackAbort=CallbackAbort,
+        query_devices=lambda device, kind: {'default_high_output_latency': high_latency},
     ), instances
+
+
+@pytest.mark.parametrize('high_latency, expected', [(0.0348, 0.1), (0.1, 0.1), (0.2, 0.2)])
+@pytest.mark.parametrize('device', [None, 17])
+def test_output_latency_floor_preserves_device_high_latency(high_latency, expected, device):
+    """Allow at least 100 ms without reducing the selected device's high latency."""
+    api, instances = fake_device(high_latency)
+    api.query_devices = lambda selected, kind: {
+        'default_high_output_latency': high_latency if selected == device else 0.4,
+    }
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(lambda state: None, Event(), device=device)
+        try:
+            player.write([1, 2, 3, 4], 24000)
+            wait_until(lambda: instances and instances[0].starts == 1)
+            stream = instances[0]
+            requested = stream.options['latency']
+            assert (high_latency if requested == 'high' else requested) == expected
+            assert stream.options['device'] == device
+            assert stream.options['blocksize'] == 0
+        finally:
+            player.stop()
+            player.close()
 
 
 class StreamingPlayerTests(unittest.TestCase):
@@ -134,7 +159,7 @@ class StreamingPlayerTests(unittest.TestCase):
     def test_starts_before_generation_ends_and_waits_for_device_drain(self):
         """PCM plays while more input is possible, and drain gates success."""
         stream = self.start([1, 2, 3, 4])
-        self.assertEqual(stream.options['latency'], 'high')
+        self.assertEqual(stream.options['latency'], 0.1)
         stream.step()
         self.player.write([5, 6, 7, 8], 24000)
         outcome = self.finish_in_thread()
