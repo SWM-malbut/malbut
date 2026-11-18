@@ -70,6 +70,7 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     recorded = tmp_path / 'arguments.json'
     env = {**os.environ, **cloud_env, 'ROS_DISTRO': 'humble',
            'MALBUT_BUILD_SPEECH': '0',
+           'MALBUT_STT_BUILD_DIR': str(tmp_path / 'unused-whisper-build'),
            'MALBUT_BUILD_FALL_POSE': '1',
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BUILD_ARGUMENTS': str(recorded)}
