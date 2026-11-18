@@ -407,7 +407,8 @@ test("a clip the records call playable follows what KVS really holds", async () 
   // 2026-10-09: 연속 녹화 was off, the records still said recording and the clip
   // showed "영상 재생 가능" with nothing in KVS.
   await withRepo(async ({ h, events, review }) => {
-    const recent = (offset) => new Date(Math.floor(Date.now() / 1000) * 1000 - 300_000 + offset).toISOString();
+    const clipTime = Math.floor(Date.now() / 1000) * 1000 - 300_000;
+    const recent = (offset) => new Date(clipTime + offset).toISOString();
     const a = notice();
     await events.storeFallEvent("robot-a", a);
     await review.storeFallClip("robot-a", clip({ incidentId: a.incidentId, startAt: recent(-10_000), endAt: recent(20_000) }));
