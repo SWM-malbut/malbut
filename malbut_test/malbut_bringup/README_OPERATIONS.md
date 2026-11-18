@@ -191,7 +191,9 @@ Bringup과 별도의 `malbut-fall-monitor --execute`를 동시에 실행하지 �
 로컬 검증은 모의 HTTPS 응답·임시 DB만 사용한다. 실제 로봇의 인증, 웹 목록 및 KVS 재생은
 포팅 후 확인해야 한다. 별도 수동 업로더를 중복 실행할 필요는 없다.
 
-제조사 실행은 하드웨어 `slam/launch/include/robot.launch.py` 하나만 include한다.
+기본 `hardware.launch.py`는 제조사 센서·보드·TF launch와 EKF를 재사용한다.
+속도 컨트롤러는 제조사 `Controller`를 상속한 `velocity_controller`를
+기존 노드명 `odom_publisher`로 한 번 실행한다.
 Nav2는 제조사 navigation launch 대신, 공식 `nav2_bringup`이 쓰는 것과 같은 Nav2
 서버를 제조사처럼 하나의 컴포넌트 컨테이너(`nav2_container`)에 직접 구성한다
 ([`nav2_stack.py`](malbut_bringup/nav2_stack.py)). 공식 launch를 그대로 쓰지 않는 이유는
@@ -658,9 +660,14 @@ Bringup 시작/종료는 비활성화한다. 단독 패널과 같은 포트로 �
   음성 준비는 `/malbut/speech/status`, 지도 상태는 `/malbut/localization/state`로 확인한다.
 - 한 응용 노드 종료로 전체 launch를 종료하지 않는다. Ctrl+C 또는 웹 종료는 소유한
   프로세스들에 전달하며, 외부에서 실행한 노드는 종료하지 않는다.
-- 이것만으로 모터 정지를 보장하지는 않는다. 제조사 드라이버는 `/cmd_vel` 수신이
-  끊겨도 마지막 속도를 유지하는 코드이므로 실제 정지 동작은 하드웨어 검증 대상이다.
-  Collision Monitor도 입력이 끊기면 아무것도 보내지 않으므로 이를 대신하지 않는다.
+- 기본 하드웨어의 `velocity_controller`는 `/cmd_vel`, `/controller/cmd_vel`,
+  `/app/cmd_vel`의 마지막 이동 입력 후 `cmd_vel_timeout`(기본 0.5초)이 지나면
+  네 모터의 목표 회전수와 내부 오도메트리 목표 속도를 0으로 만든다.
+  monotonic 시각과 20ms STEADY 타이머를 사용하며, 새 입력이 오면 다시 처리한다.
+  `cmd_vel_timeout`은 노드 시작 시 설정한다. 실제 정지 시간은 실기기로 확인한다.
+- `start_hardware:=false`와 사용자 지정 `hardware_launch_file`은 외부 실행
+  구성을 사용하므로 이 컨트롤러의 적용 여부도 그 구성에 따른다.
+  컨트롤러 프로세스·Jetson 정지 및 직렬 통신 장애에는 보드 측 정지 기능이 필요하다.
 
 준비 이후 요청하기 전에는 추적/순찰을 시작하지 않는다.
 

@@ -754,6 +754,52 @@ def test_a_recheck_is_a_new_round_that_alerts_again():
     assert (alert['reason'], alert['check_round']) == ('robot_could_not_confirm', 2)  # Decision B.
 
 
+@pytest.mark.parametrize('during_check', [False, True])
+def test_help_after_a_wait_alert_is_sent_even_at_the_same_level(during_check):
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    assert notices(robot.wait(WAIT_ALERT_S)) == [('robot_could_not_confirm', 'urgent')]
+    if during_check:
+        robot.flow.voice('help', robot.now)
+        out = robot.take()
+        reason = 'help_requested'
+    else:
+        robot.flow.resumed(incident, robot.now)
+        robot.to_posture()
+        robot.posture(('floor', None))
+        robot.drive('closer')
+        out = robot.ask('help')
+        reason = 'confirmation_help_required'
+    alert, = kinds(out, 'notify')
+    assert (alert['reason'], alert['level'], alert['state'], alert['answer']) == (
+        reason, 'urgent', 'help_required', 'help_request')
+    assert not records(out, 'notification_grouped')
+
+
+def test_a_new_round_can_repeat_an_alert_within_the_place_grouping_window():
+    robot = Robot()
+    incident = robot.open(track='t1')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    for _ in range(int(WAIT_ALERT_S / 2)):
+        out = robot.wait(2)
+        robot.frame(person('t1', state='suspected'))
+    assert notices(out) == [('robot_could_not_confirm', 'urgent')]
+    robot.flow.resumed(incident, robot.now)
+    robot.to_posture()
+    robot.posture(('floor', None))
+    robot.drive('closer')
+    robot.ask('okay')
+    robot.frame(person('t1', state='suspected'))
+    robot.now += 0.2
+    assert records(robot.frame(person('t1', state='clear')), 'recheck_started') == ['stood_up']
+    robot.flow.blocked(incident, 'busy', robot.now)
+    out = robot.wait(WAIT_ALERT_S)
+    alert, = kinds(out, 'notify')
+    assert (alert['reason'], alert['check_round']) == ('robot_could_not_confirm', 2)
+    assert not records(out, 'notification_grouped')
+
+
 def test_a_suspicion_joining_an_incident_extends_its_clip():
     robot = Robot()
     incident = robot.open(track='t1')
@@ -1133,6 +1179,11 @@ def test_later_higher_further_or_placeless_alerts_are_sent():
         ['confirmation_help_required', 'person_may_differ'], [])  # Another level.
     assert grouping(6, place=(5.0, 0.0)) == (['confirmation_help_required'] * 2, [])  # 2 m.
     assert grouping(6, place=None) == (['confirmation_help_required'] * 2, [])
+
+
+def test_a_different_reason_at_the_same_level_is_not_place_grouped():
+    assert grouping(6, reason='robot_could_not_confirm') == (
+        ['confirmation_help_required', 'robot_could_not_confirm'], [])
 
 
 def test_a_grouped_alert_does_not_count_as_urgent_sent():

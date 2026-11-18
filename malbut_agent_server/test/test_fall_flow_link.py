@@ -320,3 +320,42 @@ def test_reid_questions_go_to_the_vlm_and_answers_back_to_the_rules(rig):
     event(rig.link, kind='fall_appearance', request_id=compare['request_id'], similarity=0.3)
     assert rig.link.flow.tracker.person_of('z') != first  # Split off: someone else.
     event(rig.link, kind='fall_appearance', request_id='x', similarity=2.0)  # Refused, logged.
+
+
+@pytest.mark.parametrize('failure,operation,exception_type', [
+    ('transport', 'result_receive', 'RuntimeError'),
+    ('aborted', 'action_result', None),
+    ('invalid_result', 'result_decode', 'ParserError'),
+    ('missing_receipt', 'answer_receipt', 'ValueError'),
+])
+def test_question_failures_keep_correlation_without_result_or_exception_text(
+        rig, failure, operation, exception_type):
+    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
+
+    incident = open_incident(rig)
+    rig.link.confirmation_answers = ConfirmationAnswers()
+    rig.link.flow._ask(rig.link.flow.incidents[incident])
+    rig.link._run()
+    _, arguments = goal_arguments(rig.goals[-1])
+    _, result = accept(rig, rig.goals[-1])
+    decisions(rig.link)
+    if failure == 'transport':
+        result.set_exception(RuntimeError('private exception content'))
+    elif failure == 'missing_receipt':
+        succeed(result, situation_assessment='unknown', help_needed=False)
+    else:
+        result.set_result(SimpleNamespace(status=6 if failure == 'aborted' else 4,
+            result=SimpleNamespace(message='private result content',
+                                   result_yaml='[private result content')))
+    diagnostic, = rig.link.node.get_logger().warning.call_args_list
+    message = diagnostic.args[0]
+    assert message.startswith('fall_question_failed ')
+    assert 'private' not in message
+    data = json.loads(message.split(' ', 1)[1])
+    assert data == dict(incident_id=incident, request_id=arguments['request_id'],
+                       operation=operation, exception_type=exception_type,
+                       action_status=6 if failure == 'aborted' else None)
+    failed, = [d for d in decisions(rig.link, 'record')
+               if d['event'] == 'agent_check_failed']
+    assert failed['reason'] == 'question_error'
+    assert failed['answer'] == 'failed'

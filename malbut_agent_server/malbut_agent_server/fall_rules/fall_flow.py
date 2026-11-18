@@ -56,8 +56,8 @@ RECHECK_S = 1800.0
 # 60 s), 30 s after the check on 11-17, and up to 30 times before the recheck. The user
 # chose five minutes (2026-11-17).
 REDETECT_S = 300.0
-# One alert per place and level (decision 6, mockup 55 ③): the same level from the same
-# place (1 m) within 10 minutes is noted on the incident that sent it instead.
+# Repeated alerts from the same place (1 m) within 10 minutes are grouped (decision 6,
+# mockup 55 ③). A changed reason or a new round of the same incident still alerts.
 GROUP_S, GROUP_M = 600.0, 1.0
 
 FLOOR, OFF_FLOOR = 'floor', 'off_floor'
@@ -203,7 +203,7 @@ class FallFlow:
         self.commands = []
         self.tracker = tracker or PersonTracker()
         self.now = 0.0
-        # Alerts sent lately: (when, level, place, incident) for grouping (decision 6).
+        # Alerts sent lately: (when, level, place, incident, reason, round).
         self.sent: List[tuple] = []
         self.incidents: Dict[str, Incident] = {}
         self.candidates: Dict[str, Candidate] = {}
@@ -1045,6 +1045,8 @@ class FallFlow:
         place = self._target(incident)
         self.sent = [n for n in self.sent if self.now - n[0] <= GROUP_S]
         earlier = next((n for n in reversed(self.sent) if n[1] == level and place and n[2]
+                        and n[4] == reason
+                        and (n[3] != incident.incident_id or n[5] == incident.check_round)
                         and math.dist(place, n[2]) <= GROUP_M), None)
         if earlier is not None:
             # Not sent: "다시 확인함" on the incident that sent it, and on this one.
@@ -1054,6 +1056,7 @@ class FallFlow:
             return
         if level == URGENT:
             incident.urgent_sent = True
-        self.sent.append((self.now, level, place, incident.incident_id))
+        self.sent.append((self.now, level, place, incident.incident_id, reason,
+                          incident.check_round))
         self._command('notify', incident, reason=reason, level=level,
                       **self._web(incident, state))

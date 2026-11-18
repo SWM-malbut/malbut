@@ -447,8 +447,8 @@ class FallFlowLink:
                 feedback_callback=lambda message: self._feedback(step, message))
             self.goal_future = future
             future.add_done_callback(lambda done: self._accepted(step, done))
-        except Exception:
-            self._give_up(step)
+        except Exception as error:
+            self._give_up(step, 'goal_send', error)
 
     def _drive_done(self, step, outcome):
         self.flow.drive_done(step['incident_id'], step['purpose'], outcome, self.clock())
@@ -456,11 +456,19 @@ class FallFlowLink:
     def _asked(self, step, answer, **fields):
         self.flow.asked(step['incident_id'], answer, self.clock(), **fields)
 
-    def _give_up(self, step):
+    def _question_failure(self, step, operation, error=None, *, action_status=None):
+        self.node.get_logger().warning('fall_question_failed ' + json.dumps(dict(
+            incident_id=step['incident_id'], request_id=step.get('request_id'),
+            operation=operation, action_status=action_status,
+            exception_type=type(error).__name__ if error is not None else None,
+        ), sort_keys=True))
+
+    def _give_up(self, step, operation='transport', error=None):
         """A transport failure: a question fails; a drive goes on from where it is."""
         if step['kind'] == 'drive':
             self._drive_done(step, 'failed')
         else:
+            self._question_failure(step, operation, error)
             self._asked(step, 'failed', reason='question_error')
         self._finish_step(step)
 
@@ -497,6 +505,7 @@ class FallFlowLink:
         if step['kind'] == 'drive':
             self._drive_done(step, 'timeout')  # Not there in time: go on from here.
         else:
+            self._question_failure(step, 'mission_timeout')
             self._asked(step, 'failed', reason='question_error')
         self._finish_step(step)
         return True
@@ -535,9 +544,9 @@ class FallFlowLink:
                     return
             try:
                 handle = future.result()
-            except Exception:
+            except Exception as error:
                 if self.step is step and self.goal_future is future:
-                    self._give_up(step)
+                    self._give_up(step, 'goal_response', error)
                     self._run()
                 return
             if self.step is not step or self.goal_future is not future or self.closed:
@@ -554,8 +563,8 @@ class FallFlowLink:
             try:
                 handle.get_result_async().add_done_callback(
                     lambda done: self._done(step, done, handle))
-            except Exception:
-                self._give_up(step)
+            except Exception as error:
+                self._give_up(step, 'result_wait', error)
                 self._run()
 
     def _done(self, step, future, handle):
@@ -571,6 +580,7 @@ class FallFlowLink:
             if self._expire_current():
                 self._run()
                 return
+            operation = 'result_receive'
             try:
                 response = future.result()
                 message = response.result.message
@@ -595,20 +605,25 @@ class FallFlowLink:
                         outcome = 'return_failed'
                     self._drive_done(step, outcome)
                 elif response.status != GoalStatus.STATUS_SUCCEEDED:
+                    self._question_failure(step, 'action_result', action_status=response.status)
                     self._asked(step, 'failed', reason=(
                         'speech_unavailable' if message == SPEECH_UNAVAILABLE
                         else 'question_error'))
                 else:
+                    operation = 'result_decode'
                     result = yaml.safe_load(response.result.result_yaml)
+                    operation = 'answer_receipt'
                     answer = (self.confirmation_answers.resolve(step['request_id'], result)
                               if self.confirmation_answers is not None
                               else 'help' if result['help_needed'] else 'okay')
+                    operation = 'result_apply'
                     self._asked(step, answer,
                                 assessment=result.get('situation_assessment'))
-            except Exception:
+            except Exception as error:
                 if step['kind'] == 'drive':
                     self._drive_done(step, 'failed')
                 else:
+                    self._question_failure(step, operation, error)
                     self._asked(step, 'failed', reason='question_error')
             self._finish_step(step)
             self._run()
