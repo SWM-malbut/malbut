@@ -137,6 +137,15 @@ class SituationDialogue:
         """Expose the completed result without publishing progress."""
         return self._last_turn.result if self._last_turn else None
 
+    @property
+    def reprompt_diagnostic(self):
+        """Explain an unresolved answer without exposing any conversation text."""
+        if not self._history or self.result is not None:
+            return None
+        return dict(situation_assessment=self.situation_assessment, help_needed=None,
+                    stage=self.stage, answer_count=len(self._history),
+                    repeated_question=self._question == self._history[-1].question)
+
     def start(self, request_id, situation_type, summary):
         """Start one confirmation; reject replacing an active conversation."""
         if self.request is not None and self.result is None:
