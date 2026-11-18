@@ -272,9 +272,11 @@ class StreamingPlayer:
                         continue
                 if action == 'create':
                     self._sd = importlib.import_module('sounddevice')
+                    device_info = self._sd.query_devices(self._device, 'output')
+                    latency = max(0.1, device_info['default_high_output_latency'])
                     stream = self._sd.OutputStream(
                         samplerate=self._rate, channels=1, dtype='float32',
-                        blocksize=0, latency='high', device=self._device,
+                        blocksize=0, latency=latency, device=self._device,
                         callback=self._callback,
                         finished_callback=self._finished_callback,
                     )
