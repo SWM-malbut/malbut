@@ -379,6 +379,7 @@ def test_rgb_frames_keep_aligned_depth_and_map_pose_for_scene_places(tmp_path, m
     class Node:
         def __init__(self, name):
             self.subscriptions, self.publishers, self.services = {}, {}, {}
+            self.destroyed = []
 
         def declare_parameter(self, name, default, descriptor):
             return SimpleNamespace(value=params.get(name, default))
@@ -388,6 +389,10 @@ def test_rgb_frames_keep_aligned_depth_and_map_pose_for_scene_places(tmp_path, m
 
         def create_subscription(self, msg, topic, callback, qos):
             self.subscriptions[topic] = callback
+            return topic
+
+        def destroy_subscription(self, subscription):
+            self.destroyed.append(subscription)
 
         def create_publisher(self, msg, topic, qos):
             self.publishers[topic] = publisher = Mock()
@@ -423,8 +428,13 @@ def test_rgb_frames_keep_aligned_depth_and_map_pose_for_scene_places(tmp_path, m
     node._tf.set_transform_static(pose, 'test')
     info = sensor.CameraInfo()
     info.header.frame_id, info.width, info.height = 'camera_optical', 640, 400
+    # An unusable camera info is not kept and the node keeps listening for one.
+    node.subscriptions['/info'](info)
+    assert node._camera_info is None and node.destroyed == []
     info.k = [500.0, 0.0, 320.0, 0.0, 500.0, 200.0, 0.0, 0.0, 1.0]
     node.subscriptions['/info'](info)
+    # One usable camera info is enough: the 12 a second after it are not read.
+    assert node.destroyed == ['/info']
     depth = sensor.Image()
     depth.header.stamp.sec, depth.header.frame_id = 1000, 'camera_optical'
     depth.height, depth.width, depth.step, depth.encoding = 400, 640, 640 * 2, '16UC1'
@@ -544,3 +554,68 @@ def test_with_fall_flow_the_node_reports_and_takes_the_rules_decisions(tmp_path,
     assert sent['runtime_id'] == 'vlm-1' and sent['boot_id'] == node.monitor.boot_id
     # The earlier reply path is not used: the rules ask and decide.
     node.subscriptions['/malbut/falls/runtime/agent_reply'](std.String(data='{}'))
+
+
+class ReadyExecutor:
+    """The executor calls spin_ready makes, with a queue of ready callbacks."""
+
+    def __init__(self, handlers):
+        self.handlers, self.nodes = list(handlers), []
+
+    def add_node(self, node):
+        self.nodes.append(node)
+        return True
+
+    def remove_node(self, node):
+        self.nodes.remove(node)
+
+    def wait_for_ready_callbacks(self, timeout_sec):
+        assert timeout_sec == 0
+        if not self.handlers:
+            raise pytest.importorskip('rclpy.executors').TimeoutException()
+        return self.handlers.pop(0), None, None
+
+
+def ready_callback(ran, name, error=None):
+    def handler():
+        ran.append(name)
+    handler.exception = lambda: error
+    return handler
+
+
+def test_one_loop_turn_runs_every_ready_callback_not_only_the_first():
+    pytest.importorskip('rclpy')
+    from malbut_agent_server.ros_fall_monitor import spin_ready
+    ran = []
+    executor = ReadyExecutor(ready_callback(ran, name)
+                             for name in ('rgb', 'depth', 'camera_info', 'rgb', 'poses'))
+
+    assert spin_ready('node', executor=executor) == 5
+    assert ran == ['rgb', 'depth', 'camera_info', 'rgb', 'poses']
+    assert executor.nodes == []
+    assert spin_ready('node', executor=executor) == 0
+
+
+def test_one_loop_turn_leaves_callbacks_beyond_its_limit_for_the_next():
+    pytest.importorskip('rclpy')
+    from malbut_agent_server.ros_fall_monitor import spin_ready
+    ran = []
+    executor = ReadyExecutor(ready_callback(ran, index) for index in range(5))
+
+    assert spin_ready('node', executor=executor, limit=3) == 3
+    assert ran == [0, 1, 2]
+    assert spin_ready('node', executor=executor, limit=3) == 2
+
+
+def test_a_failed_callback_stops_the_turn_and_releases_the_node():
+    pytest.importorskip('rclpy')
+    from malbut_agent_server.ros_fall_monitor import spin_ready
+    ran = []
+    executor = ReadyExecutor([ready_callback(ran, 'first'),
+                              ready_callback(ran, 'broken', RuntimeError('journal')),
+                              ready_callback(ran, 'later')])
+
+    with pytest.raises(RuntimeError, match='journal'):
+        spin_ready('node', executor=executor)
+    assert ran == ['first', 'broken']
+    assert executor.nodes == []
