@@ -38,6 +38,7 @@ MAPPING_CAPABILITY = 'autoslam'
 # Depth paired with an RGB frame; stored every 4th pixel to bound memory.
 DEPTH_MAX_STAMP_DELTA_S = 0.1
 DEPTH_STEP = 4
+READY_PER_TURN = 32  # Callbacks one loop turn may run before its other duties.
 
 
 def mapping_active(state):
@@ -173,8 +174,8 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 self._tf_listener = TransformListener(self._tf, self)
                 self.create_subscription(Image, depth_topic, self._depths.append,
                                          qos_profile_sensor_data)
-                self.create_subscription(CameraInfo, info_topic, self.on_camera_info,
-                                         qos_profile_sensor_data)
+                self._camera_info_subscription = self.create_subscription(
+                    CameraInfo, info_topic, self.on_camera_info, qos_profile_sensor_data)
             self._status_clock = Clock(clock_type=ClockType.STEADY_TIME)
             self.create_timer(1.0, self.publish_status, clock=self._status_clock)
 
@@ -183,6 +184,9 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             if (message.width > 0 and message.height > 0 and k[0] > 0 and k[4] > 0
                     and all(np.isfinite(k))):
                 self._camera_info = message
+                # The lens does not change while the node runs: one valid message is
+                # enough, and 12 a second each cost a turn of the loop (spin_ready).
+                self.destroy_subscription(self._camera_info_subscription)
 
         def on_system_state(self, message):
             self.guarded('mission_state_invalid', self.control.set_mapping,
@@ -369,6 +373,35 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
     return FallNode()
 
 
+def spin_ready(node, *, executor=None, limit=READY_PER_TURN):
+    """Run every ROS callback that is ready now (at most limit); how many ran.
+
+    One callback a turn fell behind the camera: RGB, depth and camera info each
+    arrive at 12 Hz beside the poses, and a turn sleeps 10 ms. The RGB queue
+    stayed 4-5 frames (0.37 s) deep, so a pose found no frame geometry within
+    0.25 s and a person had no map place (11-18: 91% of people, then 0-7%).
+    """
+    import rclpy
+    from rclpy.executors import ShutdownException, TimeoutException
+
+    executor = rclpy.get_global_executor() if executor is None else executor
+    added, ran = executor.add_node(node), 0
+    try:
+        while ran < limit:
+            try:
+                handler, _, _ = executor.wait_for_ready_callbacks(timeout_sec=0)
+            except (TimeoutException, ShutdownException):
+                break
+            handler()
+            if handler.exception() is not None:
+                raise handler.exception()
+            ran += 1
+    finally:
+        if added:
+            executor.remove_node(node)
+    return ran
+
+
 async def spin_runtime(node, *, key_sync=None, key_sync_interval_s=None, clock=time.monotonic):
     """ROS callbacks and monitor state share one loop; network waits yield it."""
     import rclpy
@@ -385,7 +418,7 @@ async def spin_runtime(node, *, key_sync=None, key_sync_interval_s=None, clock=t
                 if key_fetch is None and clock() >= next_key_sync:
                     key_fetch = asyncio.ensure_future(asyncio.to_thread(key_sync.fetch))
                     next_key_sync = clock() + key_sync_interval_s
-            rclpy.spin_once(node, timeout_sec=0)
+            spin_ready(node)
             node.control.refresh()
             node.monitor.maintain_associations()
             if node.tracking is not None:
