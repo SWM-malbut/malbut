@@ -128,7 +128,8 @@ def _setup(context):
                 '--fall-bridge-runtime-id', fall_ids['bridge'],
                 '--fall-vlm-runtime-id', fall_ids['vlm'],
                 *(['--fall-flow'] if value('fall_flow') == 'true' else []),
-                *(['--no-fall-approach'] if value('fall_flow') == 'true' and not approach_on else [])]))
+                *(['--no-fall-approach']
+                  if value('fall_flow') == 'true' and not approach_on else [])]))
     if approach_on:
         actions.append(Node(
             package='malbut_fall_approach', executable='fall_approach', name='fall_approach',

@@ -20,7 +20,8 @@ from malbut_bringup.launch_support import declarations, file_path, module_action
 ARGUMENTS = [
     'speech_python_executable', 'speech_agent_provider', 'speech_agent_user_id',
     'speech_agent_conversation_db', 'speech_manager_commands', 'speech_prerecorded_audio',
-    'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id', 'fall_flow', 'fall_approach',
+    'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id',
+    'fall_flow', 'fall_approach',
     'rgb_topic', 'robot_frame', 'speech_scene_images_enabled',
 ]
 PARTS = {'agent_speech': 'speech', 'agent_fall_rules': 'fall'}
