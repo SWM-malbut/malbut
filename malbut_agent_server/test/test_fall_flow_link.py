@@ -359,3 +359,18 @@ def test_question_failures_keep_correlation_without_result_or_exception_text(
                if d['event'] == 'agent_check_failed']
     assert failed['reason'] == 'question_error'
     assert failed['answer'] == 'failed'
+
+
+def test_disabled_approach_retries_a_busy_question_without_holding_the_wheels(rig):
+    from malbut_agent_server.fall_rules.fall_confirmation_link import DOWNSTREAM_REJECTED
+
+    rig.link.flow.approach_enabled = False
+    open_incident(rig)
+    answer(rig, 'posture', 'floor')
+    question, = rig.goals
+    assert goal_arguments(question)[0] == 'fall_confirmation'
+    _, result = accept(rig, question)
+    result.set_result(SimpleNamespace(status=6, result=SimpleNamespace(
+        message=DOWNSTREAM_REJECTED, result_yaml='')))
+    assert [goal_arguments(e)[0] for e in rig.goals] == ['fall_confirmation']
+    assert rig.link.status()['waiting_for'] == 'busy'

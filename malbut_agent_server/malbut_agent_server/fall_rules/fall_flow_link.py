@@ -143,7 +143,7 @@ class FallFlowLink:
 
     def __init__(self, node, *, runtime_id='', goal_response_timeout_s=5.0,
                  result_timeout_s=610.0, server_loss_timeout_s=5.0, clock=time.monotonic,
-                 confirmation_answers=None):
+                 confirmation_answers=None, approach_enabled=True):
         from rclpy.action import ActionClient
         from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
         from rclpy.clock import Clock, ClockType
@@ -170,7 +170,7 @@ class FallFlowLink:
             node, ConfirmSituation, '/malbut/agent/confirm_situation', callback_group=self.group)
         self.decisions = node.create_publisher(String, '/malbut/falls/runtime/decision', 10)
         self.status_publisher = node.create_publisher(String, CHECK_STATUS_TOPIC, 10)
-        self.init_state(clock)
+        self.init_state(clock, approach_enabled=approach_enabled)
         self.events = node.create_subscription(
             String, '/malbut/falls/runtime/events', self.on_event, 50, callback_group=self.group)
         self.voice = node.create_subscription(
@@ -183,10 +183,10 @@ class FallFlowLink:
             0.5, self.tick, callback_group=self.group,
             clock=Clock(clock_type=ClockType.STEADY_TIME))
 
-    def init_state(self, clock):
+    def init_state(self, clock, *, approach_enabled=True):
         self.lock = RLock()
         self.clock = clock
-        self.flow = FallFlow()
+        self.flow = FallFlow(approach_enabled=approach_enabled)
         self.closed = False
         self.step = None          # the Manager step to run: drive or ask
         self.goal_future = self.handle = None
@@ -592,7 +592,8 @@ class FallFlowLink:
                     self.handle = None
                     self.accepted_at = self.server_missing_since = None
                     self._wait(why)
-                    if message == DOWNSTREAM_REJECTED and step['kind'] == 'ask':
+                    if (self.flow.approach_enabled and message == DOWNSTREAM_REJECTED
+                            and step['kind'] == 'ask'):
                         self._send_hold(step)  # The Agent cannot ask yet: hold the wheels.
                     self._run()
                     return

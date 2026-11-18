@@ -202,7 +202,8 @@ class Memory:
 
 
 class FallFlow:
-    def __init__(self, tracker=None):
+    def __init__(self, tracker=None, *, approach_enabled=True):
+        self.approach_enabled = approach_enabled
         self.commands = []
         self.tracker = tracker or PersonTracker()
         self.now = 0.0
@@ -745,8 +746,8 @@ class FallFlow:
         self.commands.append(dict(kind='people', incidents={incident.incident_id: person}))
 
     def _approach(self, incident):
-        if self._target(incident) is None:
-            self._posture(incident, None)  # No map place: look and ask from here.
+        if not self.approach_enabled or self._target(incident) is None:
+            self._posture(incident, None)  # Look and ask from here.
             return
         if incident.purpose != 'revisit':  # Going back after waiting is revisit_started.
             self._record('approach_started', incident, None)
@@ -766,7 +767,7 @@ class FallFlow:
     def _reverify(self, incident):
         incident.reverified = True
         origin, target = incident.first.robot, self._target(incident)
-        if origin is None or target is None:
+        if not self.approach_enabled or origin is None or target is None:
             self._idle(incident, 'nobody', 'could_not_compare', None)
             return
         incident.step = 'reverify'
@@ -775,7 +776,7 @@ class FallFlow:
 
     def _view(self, incident):
         incident.step = 'view'
-        if self._target(incident) is None:
+        if not self.approach_enabled or self._target(incident) is None:
             self._posture(incident, None)
             return
         self._command('drive', incident, purpose='view', target=self._target(incident),
@@ -810,7 +811,7 @@ class FallFlow:
 
     def _closer(self, incident):
         incident.step = 'closer'
-        if self._target(incident) is None:
+        if not self.approach_enabled or self._target(incident) is None:
             self._ask(incident)
             return
         self._command('drive', incident, purpose='closer', target=self._target(incident),
@@ -864,7 +865,7 @@ class FallFlow:
 
     def _finish(self, incident, now, *, go_back, why=None):
         self._clip(incident, 'end')  # The judgment: the video ends 5 s later.
-        if go_back:  # why: the approach node's return reason (not_a_person, off_floor).
+        if go_back and self.approach_enabled:  # why: the approach node's return reason (not_a_person, off_floor).
             self._command('drive', incident, purpose='return', reason=why)
         incident.waiting_since = None
         incident.next_look_at = None

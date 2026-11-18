@@ -930,6 +930,8 @@ def test_the_whole_body_look_is_on_by_default_and_needs_the_approach(
 
 @pytest.mark.parametrize('overrides,enabled', [
     ({}, True),  # SWM25-261: the one fall check by default.
+    ({'fall_approach': 'false'}, True),
+    ({'fall_flow': 'false', 'fall_approach': 'false'}, False),
     ({'fall_flow': 'false'}, False),  # The earlier check, kept until the robot is checked.
 ])
 def test_one_fall_flow_switch_reaches_the_monitor_and_the_fall_rules(
@@ -948,6 +950,9 @@ def test_one_fall_flow_switch_reaches_the_monitor_and_the_fall_rules(
     rules = _arguments(rules_context, _nodes(agent._setup(rules_context),
                                              'agent_communication')[0])
     assert ('--fall-flow' in alone) is enabled and ('--fall-flow' in rules) is enabled
+    stationary = enabled and overrides.get('fall_approach') == 'false'
+    assert ('--no-fall-approach' in alone) is stationary
+    assert ('--no-fall-approach' in rules) is stationary
 
 
 def test_disabled_fall_never_starts_uploader(launch_module, fall_config):

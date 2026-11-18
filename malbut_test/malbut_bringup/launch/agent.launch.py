@@ -20,7 +20,7 @@ from malbut_bringup.launch_support import declarations, file_path, module_action
 ARGUMENTS = [
     'speech_python_executable', 'speech_agent_provider', 'speech_agent_user_id',
     'speech_agent_conversation_db', 'speech_manager_commands', 'speech_prerecorded_audio',
-    'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id', 'fall_flow',
+    'fall_manager_runtime_id', 'fall_bridge_runtime_id', 'fall_vlm_runtime_id', 'fall_flow', 'fall_approach',
     'rgb_topic', 'robot_frame', 'speech_scene_images_enabled',
 ]
 PARTS = {'agent_speech': 'speech', 'agent_fall_rules': 'fall'}
@@ -71,6 +71,8 @@ def _setup(context):
         if value('fall_flow') == 'true':
             # The one fall check: the same Bringup switch as the fall monitor's.
             arguments.append('--fall-flow')
+            if value('fall_approach') == 'false':
+                arguments.append('--no-fall-approach')
     # The fall rules live in this process: if it dies, fall checks would stop
     # until Bringup restarts, so it comes back like STT (Agent owner, 2026-10-17).
     agent_config = Path.home() / '.config/malbut/agent.yaml'

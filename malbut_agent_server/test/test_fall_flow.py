@@ -19,8 +19,8 @@ FROM = (0.0, 0.0)
 
 
 class Robot:
-    def __init__(self):
-        self.flow = FallFlow()
+    def __init__(self, *, approach_enabled=True):
+        self.flow = FallFlow(approach_enabled=approach_enabled)
         self.now = 0.0
         self._n = 0
         self.log = []
@@ -1367,3 +1367,21 @@ def test_a_checked_person_given_their_number_back_is_not_filtered_again():
     assert robot.flow.tracker.person_of('y2') == who
     _, out = robot.see('lying', track='y2', box=BAG, view=0)
     assert not looks(out, 'filter')
+
+
+def test_disabled_approach_checks_and_asks_in_place_with_a_known_map_point():
+    robot = Robot(approach_enabled=False)
+    robot.open(track='t1', point=SPOT)
+    assert looks(robot.log, 'posture')
+    assert kinds(robot.posture(('floor', None)), 'ask')
+    assert kinds(robot.ask('help_request'), 'notify')
+    assert robot.only().place == SPOT
+    assert not drives(robot.log)
+
+
+def test_disabled_approach_never_returns_after_closing_without_a_question():
+    robot = Robot(approach_enabled=False)
+    robot.open(track='t1', point=SPOT)
+    out = robot.posture(('standing', None), ('standing', None))
+    assert records(out, 'incident_resolved') == ['off_floor_verified']
+    assert not drives(robot.log)
