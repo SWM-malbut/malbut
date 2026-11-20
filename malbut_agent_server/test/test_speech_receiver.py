@@ -100,6 +100,28 @@ def test_two_connections_accept_the_same_id_only_once(tmp_path):
     assert sorted(results) == ['duplicate', 'received']
 
 
+def test_concurrent_store_init_handles_wal_upgrade_races(tmp_path):
+    """Multiple connections opening a fresh DB concurrently do not lock."""
+    for round_index in range(10):
+        path = str(tmp_path / f'concurrent_{round_index}.sqlite3')
+        start = threading.Barrier(4)
+
+        def open_and_receive():
+            start.wait(timeout=5)
+            store = SpeechReceiptStore(path)
+            try:
+                return store.receive('same-id', '안녕')
+            finally:
+                store.close()
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(open_and_receive) for _ in range(4)]
+            results = [future.result(timeout=10) for future in futures]
+        assert sorted(results) == [
+            'duplicate', 'duplicate', 'duplicate', 'received',
+        ]
+
+
 def test_receive_log_is_json_escaped_and_follows_commit(receipts, tmp_path):
     """A successful event preserves raw text and corresponds to a saved ID."""
     logger = CapturingLogger()
