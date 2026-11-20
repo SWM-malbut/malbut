@@ -147,6 +147,8 @@ class Settings:
     speech_publish_before_save: bool = True
     openai_api_timing_enabled: bool = True
     openai_prompt_cache_enabled: bool = True
+    turn_metrics_capacity: int = 100
+    turn_metrics_snapshot_path: str = ''
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -408,6 +410,17 @@ class Settings:
             speech_publish_before_save=_env_bool(source, 'MALBUT_AGENT_SPEECH_PUBLISH_BEFORE_SAVE', default=True),
             openai_api_timing_enabled=_env_bool(source, 'MALBUT_AGENT_API_TIMING_ENABLED', default=True),
             openai_prompt_cache_enabled=_env_bool(source, 'MALBUT_AGENT_PROMPT_CACHE_ENABLED', default=True),
+            turn_metrics_capacity=_env_int(
+                source,
+                'MALBUT_AGENT_TURN_METRICS_CAPACITY',
+                100,
+                1,
+                1000,
+            ),
+            turn_metrics_snapshot_path=source.get(
+                'MALBUT_AGENT_TURN_METRICS_PATH',
+                '',
+            ).strip(),
             auth_token=source.get(
                 'MALBUT_AGENT_AUTH_TOKEN',
                 '',
@@ -474,6 +487,12 @@ class Settings:
             raise ValueError('MALBUT_AGENT_SPEECH_PREFETCH_ENABLED must be a boolean')
         if type(self.speech_publish_before_save) is not bool:
             raise ValueError('MALBUT_AGENT_SPEECH_PUBLISH_BEFORE_SAVE must be a boolean')
+        if type(self.turn_metrics_capacity) is not int or not (
+            1 <= self.turn_metrics_capacity <= 1000
+        ):
+            raise ValueError('MALBUT_AGENT_TURN_METRICS_CAPACITY must be between 1 and 1000')
+        if not isinstance(self.turn_metrics_snapshot_path, str):
+            raise ValueError('MALBUT_AGENT_TURN_METRICS_PATH must be a string')
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
         if self.tool_mode not in SUPPORTED_TOOL_MODES:

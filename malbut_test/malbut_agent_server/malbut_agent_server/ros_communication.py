@@ -37,6 +37,7 @@ from malbut_agent_server.speech_missions import SpeechMissions
 from malbut_agent_server.ros_situation import (
     SituationActionServer, build_situation_factory,
 )
+from malbut_agent_server.turn_metrics import TurnWaterfallRecorder
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
@@ -192,10 +193,14 @@ def create_communication_node(
                 except ImportError:
                     self._scene = None
                     self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
+                self.turn_metrics = TurnWaterfallRecorder(
+                    capacity=settings.turn_metrics_capacity,
+                )
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
                     on_output=self._dialogue_wake.trigger,
                     publish_before_save=settings.speech_publish_before_save,
+                    turn_metrics=self.turn_metrics,
                     **({'prefetch_enabled': True} if prefetch_enabled else {}),
                     **({'scene_source': self._scene} if self._scene is not None else {}),
                     **({'missions': self.speech_missions}
@@ -607,11 +612,20 @@ def create_communication_node(
                         continue
                     logged = ({key: published[key] for key in ('utterance_id', 'kind')}
                               if getattr(response, '_companion_session', None) else published)
+                    waterfall = getattr(response, '_waterfall', None)
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **logged,
                         **({'prefetch': dict(response._prefetch.metrics)}
                            if getattr(response, '_prefetch', None) is not None else {}),
+                        **({'waterfall': waterfall} if waterfall is not None else {}),
                     }, ensure_ascii=False))
+                    if settings.turn_metrics_snapshot_path and waterfall is not None:
+                        try:
+                            self.turn_metrics.write_snapshot(
+                                settings.turn_metrics_snapshot_path,
+                            )
+                        except Exception:
+                            self.get_logger().warning('turn_metrics_snapshot_write_failed')
 
         def _mission_event(self, event):
             if self.speech_missions is not None:

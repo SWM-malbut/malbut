@@ -133,6 +133,17 @@ class WorkflowTests(unittest.TestCase):
                 body = workflow.split('- name: ' + step, 1)[1].split('\n      - ', 1)[0]
                 self.assertIn("--fall-job '${{ needs.changes.outputs.fall_python }}'", body)
 
+    def test_lint_job_runs_ratchet_ruff_and_mypy_gate(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        lint_body = workflow.split('\n  lint:\n', 1)[1].split('\n  malbut-web:\n', 1)[0]
+        self.assertIn('.github/requirements/lint.txt', lint_body)
+        self.assertIn('.github/scripts/test-ratchet-static-checks.py', lint_body)
+        self.assertIn('.github/scripts/ratchet-static-checks.py', lint_body)
+        lint_requirements = (ROOT / '.github/requirements/lint.txt').read_text()
+        self.assertIn('ruff', lint_requirements)
+        self.assertIn('mypy', lint_requirements)
+        self.assertTrue((ROOT / 'pyproject.toml').is_file())
+
 
 if __name__ == '__main__':
     unittest.main()
