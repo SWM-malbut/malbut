@@ -113,10 +113,12 @@ class ResponseEvents:
         self.blocked = False
         self.completed = None
         self.sequence = -1
+        self._candidate_prepared = False
 
     def _block(self):
         self.blocked = True
         self.text = ''
+        self._candidate_prepared = False
         if self.turn is not None:
             self.turn.fail_attempt()
 
@@ -185,9 +187,11 @@ class ResponseEvents:
                     self._block()
                 else:
                     self.text += delta
-                    if self.response_id is not None and self.turn is not None:
+                    if (self.response_id is not None and self.turn is not None
+                            and not self._candidate_prepared):
                         candidate = message_candidate(self.text)
                         if candidate is not None:
+                            self._candidate_prepared = True
                             self.turn.prepare(candidate)
         elif kind == 'response.completed':
             response = event.get('response')

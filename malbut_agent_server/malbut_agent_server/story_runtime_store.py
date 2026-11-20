@@ -153,7 +153,7 @@ class StoryRuntimeStore:
         return float(value)
 
     @contextmanager
-    def validation_snapshot(self):
+    def validation_snapshot(self, *, read_only_scope=False):
         """Reuse source checks only within one locked SQLite snapshot.
 
         Never retain successful validation across transactions: another process
@@ -161,7 +161,17 @@ class StoryRuntimeStore:
         Writes on this connection also invalidate the snapshot's memo.
         """
         with self.conversations._lock:
-            if self.conversations._connection.in_transaction:
+            conn = self.conversations._connection
+            if conn.in_transaction:
+                if read_only_scope and self._source_cache is None:
+                    # Pure-read validation inside an outer commit transaction
+                    # has no savepoints of its own and still checks total_changes.
+                    self._source_cache = _ValidationSnapshot(conn.total_changes)
+                    try:
+                        yield
+                    finally:
+                        self._source_cache = None
+                    return
                 # A caller-owned transaction can roll back a savepoint without
                 # changing total_changes. Only reuse a snapshot we opened.
                 yield
@@ -172,6 +182,20 @@ class StoryRuntimeStore:
                     yield
                 finally:
                     self._source_cache = None
+
+    @staticmethod
+    def _sync_story_turns(conn, user, story_id, refs):
+        conn.execute('DELETE FROM story_runtime_story_turns WHERE user_id=? AND story_id=?',
+                     (user, story_id))
+        identities = {(ref.conversation_id, ref.session_instance_id, ref.generation, ref.turn_id)
+                      for ref in refs}
+        if identities:
+            conn.executemany(
+                'INSERT OR IGNORE INTO story_runtime_story_turns '
+                '(user_id,conversation_id,session_instance_id,generation,turn_id,story_id) '
+                'VALUES (?,?,?,?,?,?)',
+                [(user, cid, sid, gen, tid, story_id) for cid, sid, gen, tid in identities],
+            )
 
     def _initialize(self):
         definitions = (
@@ -199,6 +223,12 @@ class StoryRuntimeStore:
                 episodes_json TEXT NOT NULL, refs_json TEXT NOT NULL,
                 version INTEGER NOT NULL, updated_at REAL NOT NULL, source_time REAL NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(user_id, story_id))''',
+            '''CREATE TABLE IF NOT EXISTS story_runtime_story_turns (
+                user_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                session_instance_id TEXT NOT NULL, generation INTEGER NOT NULL,
+                turn_id TEXT NOT NULL, story_id TEXT NOT NULL,
+                PRIMARY KEY(user_id, conversation_id, session_instance_id,
+                            generation, turn_id, story_id))''',
             '''CREATE TABLE IF NOT EXISTS story_runtime_replies (
                 user_id TEXT NOT NULL, request_id TEXT NOT NULL,
                 stories_json TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -208,6 +238,10 @@ class StoryRuntimeStore:
                 PRIMARY KEY(user_id, message_key, sha256))''',
             '''CREATE INDEX IF NOT EXISTS story_runtime_jobs_claim_idx
                 ON story_runtime_jobs(user_id,state,available_at,sequence)''',
+            '''CREATE INDEX IF NOT EXISTS story_runtime_jobs_req_idx
+                ON story_runtime_jobs(user_id,request_id,state)''',
+            '''CREATE INDEX IF NOT EXISTS story_runtime_story_turns_story_idx
+                ON story_runtime_story_turns(user_id,story_id)''',
         )
         with self._transaction(True) as conn:
             for sql in definitions:
@@ -217,6 +251,15 @@ class StoryRuntimeStore:
             if 'processed' not in {row[1] for row in conn.execute('PRAGMA table_info(story_runtime_jobs)')}:
                 conn.execute('ALTER TABLE story_runtime_jobs ADD COLUMN processed INTEGER NOT NULL DEFAULT 0')
                 conn.execute("UPDATE story_runtime_jobs SET processed=1 WHERE state='done'")
+            missing = conn.execute(
+                '''SELECT s.user_id, s.story_id, s.refs_json FROM story_runtime_stories s
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM story_runtime_story_turns t
+                       WHERE t.user_id=s.user_id AND t.story_id=s.story_id
+                   )'''
+            ).fetchall()
+            for row in missing:
+                self._sync_story_turns(conn, row['user_id'], row['story_id'], _refs(row['refs_json']))
 
     def close(self):
         """The runtime owns the shared connection and closes it separately."""
@@ -516,8 +559,10 @@ class StoryRuntimeStore:
         # already erased via story_runtime_replies and must never become evidence.
         coverage = {ref.key: ref for ref in _refs(story['refs_json'])}
         coverage.update((ref.key, ref) for ref in refs if ref.role == 'user')
+        updated_refs = list(coverage.values())
         conn.execute('UPDATE story_runtime_stories SET refs_json=? WHERE user_id=? AND story_id=?',
-                     (_refs_json(list(coverage.values())), user, identifier))
+                     (_refs_json(updated_refs), user, identifier))
+        self._sync_story_turns(conn, user, identifier, updated_refs)
         read_sources = [{'id': 'p' + str(i), 'ref': ref.to_dict()} for i, ref in enumerate(original, 1)]
         now = self._now()
         conn.execute("""INSERT INTO story_runtime_jobs
@@ -535,38 +580,64 @@ class StoryRuntimeStore:
         with self._transaction(True) as conn:
             return self._enqueue(conn, user, request_id)
 
+    def _recovery_candidates(self, conn, user, earliest):
+        return conn.execute(
+            """SELECT t.request_id FROM conversation_turns t WHERE t.user_id=?
+               AND t.status='completed' AND (t.created_at>=? OR EXISTS
+               (SELECT 1 FROM story_runtime_scope s WHERE s.user_id=t.user_id
+               AND s.request_id=t.request_id))
+               AND (NOT EXISTS (SELECT 1 FROM story_runtime_jobs j
+                                WHERE j.user_id=t.user_id AND j.request_id=t.request_id
+                                AND j.state='done')
+                    OR EXISTS (SELECT 1 FROM story_runtime_jobs j
+                               WHERE j.user_id=t.user_id AND j.request_id=t.request_id
+                               AND j.state IN ('queued','running','failed')))
+               ORDER BY t.completed_at,t.rowid""",
+            (user, earliest),
+        ).fetchall()
+
     def recover(self, user):
         user = _id(user, 'user_id')
-        with self._transaction(True) as conn:
-            p = self._policy(conn, user)
-            if not p['enabled'] or not p['external_consent']:
-                return 0
-            conn.execute("UPDATE story_runtime_jobs SET state=CASE WHEN attempts>=? THEN 'failed' "
-                         "ELSE 'queued' END,claim=NULL,lease_until=NULL,available_at=? "
-                         "WHERE user_id=? AND state='running' AND lease_until<=?",
-                         (MAX_ATTEMPTS, self._now(), user, self._now()))
-            # This is the persistent shared connection: total_changes covers
-            # our own writers and data_version covers other connections. Keep
-            # checking timed leases above, but do not rebuild every historical
-            # source reference once a second when the database is unchanged.
-            version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
-            if self._recovery_versions.get(user) == version:
-                return 0
-            # An ungranted turn older than every consent window cannot acquire
-            # a grant. Explicit history grants still qualify regardless of age.
-            earliest = min((w['opened_at'] for w in json.loads(p['windows_json'])), default=None)
-            rows = conn.execute(
-                "SELECT t.request_id FROM conversation_turns t WHERE t.user_id=? "
-                "AND t.status='completed' AND (t.created_at>=? OR EXISTS "
-                "(SELECT 1 FROM story_runtime_scope s WHERE s.user_id=t.user_id "
-                "AND s.request_id=t.request_id)) ORDER BY t.completed_at,t.rowid", (user, earliest),
-            ).fetchall()
-            queued = sum(self._enqueue(conn, user, row[0], policy=p) for row in rows)
-            version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
-        # Publish the checkpoint only after the transaction commits. A failed
-        # commit must not hide a completion from the next recovery attempt.
-        self._recovery_versions[user] = version
-        return queued
+        with self.conversations._lock:
+            now = self._now()
+            with self._transaction(False) as conn:
+                p = self._policy(conn, user)
+                if not p['enabled'] or not p['external_consent']:
+                    return 0
+                has_expired = conn.execute(
+                    "SELECT 1 FROM story_runtime_jobs WHERE user_id=? "
+                    "AND state='running' AND lease_until<=? LIMIT 1",
+                    (user, now),
+                ).fetchone() is not None
+                # This is the persistent shared connection: total_changes covers
+                # our own writers and data_version covers other connections. Keep
+                # checking timed leases above, but do not acquire a write lock or
+                # revisit historical sources when nothing changed.
+                version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
+                if not has_expired and self._recovery_versions.get(user) == version:
+                    return 0
+                earliest = min((w['opened_at'] for w in json.loads(p['windows_json'])), default=None)
+                candidates = self._recovery_candidates(conn, user, earliest)
+                if not has_expired and not candidates:
+                    self._recovery_versions[user] = version
+                    return 0
+            with self._transaction(True) as conn:
+                p = self._policy(conn, user)
+                if not p['enabled'] or not p['external_consent']:
+                    return 0
+                now = self._now()
+                conn.execute("UPDATE story_runtime_jobs SET state=CASE WHEN attempts>=? THEN 'failed' "
+                             "ELSE 'queued' END,claim=NULL,lease_until=NULL,available_at=? "
+                             "WHERE user_id=? AND state='running' AND lease_until<=?",
+                             (MAX_ATTEMPTS, now, user, now))
+                earliest = min((w['opened_at'] for w in json.loads(p['windows_json'])), default=None)
+                rows = self._recovery_candidates(conn, user, earliest)
+                queued = sum(self._enqueue(conn, user, row[0], policy=p) for row in rows)
+                version = (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
+            # Publish the checkpoint only after the transaction commits. A failed
+            # commit must not hide a completion from the next recovery attempt.
+            self._recovery_versions[user] = version
+            return queued
 
     def pending_users(self):
         with self._transaction() as conn:
@@ -941,6 +1012,7 @@ class StoryRuntimeStore:
                     title, aliases, current = (prior['title'], json.loads(prior['aliases_json']),
                                                json.loads(prior['current_json']))
                 version = prior['version'] + 1 if prior else 1
+                combined_refs = list(combined.values())
                 conn.execute('''INSERT INTO story_runtime_stories
                     (user_id,story_id,title,aliases_json,current_json,episodes_json,refs_json,
                      version,updated_at,source_time,active) VALUES (?,?,?,?,?,?,?,?,?,?,1)
@@ -949,8 +1021,9 @@ class StoryRuntimeStore:
                     episodes_json=excluded.episodes_json,refs_json=excluded.refs_json,
                     version=excluded.version,updated_at=excluded.updated_at,source_time=excluded.source_time,active=1''',
                              (row['user_id'], story_id, title, _json(aliases), _json(current),
-                              _json(episodes), _refs_json(list(combined.values())), version, now,
+                              _json(episodes), _refs_json(combined_refs), version, now,
                               max(story_source_time, prior['source_time'] if prior else story_source_time)))
+                self._sync_story_turns(conn, row['user_id'], story_id, combined_refs)
                 saved_stories.append({'story_id': story_id, 'version': version})
             if updates:
                 conn.execute('UPDATE story_runtime_policy SET data_revision=data_revision+1 WHERE user_id=?', (row['user_id'],))
@@ -1222,64 +1295,105 @@ class StoryRuntimeStore:
         user, request_id = _id(user, 'user_id'), _id(request_id, 'request_id')
         if not isinstance(turns, (list, tuple)):
             raise StoryMemoryError('invalid conversation context')
-        with self._transaction(True) as conn:
-            if not conn.execute('SELECT 1 FROM conversation_turns WHERE user_id=? '
-                                'AND request_id=?', (user, request_id)).fetchone():
-                return False
-            supplied = {}
-            ancestor_requests = set()
-            for turn in turns:
-                if getattr(turn, 'user_id', None) != user:
-                    raise StoryMemoryError('context belongs to a different user')
-                identity = (turn.conversation_id, turn.session_instance_id,
-                            turn.generation, turn.turn_id)
-                supplied[identity] = turn
-                if turn.assistant_content:
-                    ancestor_requests.add(turn.request_id)
-            summarized = set()
-            if summary is not None:
-                if getattr(summary, 'user_id', None) != user:
-                    raise StoryMemoryError('summary belongs to a different user')
-                for row in conn.execute(
-                    '''SELECT conversation_id,session_instance_id,generation,turn_id,request_id
-                       FROM conversation_turns WHERE user_id=? AND conversation_id=?
-                       AND session_instance_id=? AND generation=? AND status='completed'
-                       AND ordinal BETWEEN ? AND ?''',
-                    (user, summary.conversation_id, summary.session_instance_id,
-                     summary.generation, summary.source_start_ordinal,
-                     summary.source_end_ordinal),
-                ):
-                    summarized.add(tuple(row[:4]))
-                    ancestor_requests.add(row['request_id'])
-            ids = set()
-            for row in conn.execute('SELECT story_id,refs_json FROM story_runtime_stories '
-                                    'WHERE user_id=?', (user,)):
-                for ref in _refs(row['refs_json']):
-                    identity = (ref.conversation_id, ref.session_instance_id,
-                                ref.generation, ref.turn_id)
-                    if identity in summarized:
-                        ids.add(row['story_id'])
-                        break
-                    turn = supplied.get(identity)
-                    if turn is None:
-                        continue
-                    source = read_source(conn, user, ref)
-                    displayed = (turn.user_content if ref.role == 'user'
-                                 else turn.assistant_content) or ''
-                    if source is not None and source.text in displayed:
-                        ids.add(row['story_id'])
-                        break
-            requests = sorted(ancestor_requests | {request_id})
-            for start in range(0, len(requests), 500):
-                batch = requests[start:start + 500]
-                for row in conn.execute(
-                    'SELECT stories_json FROM story_runtime_replies WHERE user_id=? '
-                    'AND request_id IN (' + ','.join('?' for _ in batch) + ')',
-                    [user, *batch],
-                ):
-                    ids.update(json.loads(row['stories_json']))
-            if ids:
+        supplied = {}
+        ancestor_requests = set()
+        for turn in turns:
+            if getattr(turn, 'user_id', None) != user:
+                raise StoryMemoryError('context belongs to a different user')
+            identity = (turn.conversation_id, turn.session_instance_id,
+                        turn.generation, turn.turn_id)
+            supplied[identity] = turn
+            if turn.assistant_content:
+                ancestor_requests.add(turn.request_id)
+        if summary is not None and getattr(summary, 'user_id', None) != user:
+            raise StoryMemoryError('summary belongs to a different user')
+        with self.conversations._lock:
+            with self._transaction(False) as conn:
+                if not conn.execute('SELECT 1 FROM conversation_turns WHERE user_id=? '
+                                    'AND request_id=?', (user, request_id)).fetchone():
+                    return False
+                if not supplied and summary is None:
+                    return True
+                summarized = set()
+                if summary is not None:
+                    for row in conn.execute(
+                        '''SELECT conversation_id,session_instance_id,generation,turn_id,request_id
+                           FROM conversation_turns WHERE user_id=? AND conversation_id=?
+                           AND session_instance_id=? AND generation=? AND status='completed'
+                           AND ordinal BETWEEN ? AND ?''',
+                        (user, summary.conversation_id, summary.session_instance_id,
+                         summary.generation, summary.source_start_ordinal,
+                         summary.source_end_ordinal),
+                    ):
+                        summarized.add(tuple(row[:4]))
+                        ancestor_requests.add(row['request_id'])
+                ids = set()
+                conv_ids = sorted({identity[0] for identity in supplied}
+                                  | {identity[0] for identity in summarized})
+                if conv_ids:
+                    candidate_rows = []
+                    for start in range(0, len(conv_ids), 500):
+                        batch = conv_ids[start:start + 500]
+                        candidate_rows.extend(conn.execute(
+                            'SELECT DISTINCT s.story_id, s.refs_json '
+                            'FROM story_runtime_story_turns t '
+                            'JOIN story_runtime_stories s '
+                            '  ON s.user_id=t.user_id AND s.story_id=t.story_id '
+                            'WHERE t.user_id=? AND t.conversation_id IN ('
+                            + ','.join('?' for _ in batch) + ')',
+                            [user, *batch],
+                        ).fetchall())
+                    seen_stories = set()
+                    for row in candidate_rows:
+                        story_id = row['story_id']
+                        if story_id in seen_stories:
+                            continue
+                        seen_stories.add(story_id)
+                        for ref in _refs(row['refs_json']):
+                            identity = (ref.conversation_id, ref.session_instance_id,
+                                        ref.generation, ref.turn_id)
+                            if identity in summarized:
+                                ids.add(story_id)
+                                break
+                            turn = supplied.get(identity)
+                            if turn is None:
+                                continue
+                            source = read_source(conn, user, ref)
+                            displayed = (turn.user_content if ref.role == 'user'
+                                         else turn.assistant_content) or ''
+                            if source is not None and source.text in displayed:
+                                ids.add(story_id)
+                                break
+                requests = sorted(ancestor_requests | {request_id})
+                for start in range(0, len(requests), 500):
+                    batch = requests[start:start + 500]
+                    for row in conn.execute(
+                        'SELECT stories_json FROM story_runtime_replies WHERE user_id=? '
+                        'AND request_id IN (' + ','.join('?' for _ in batch) + ')',
+                        [user, *batch],
+                    ):
+                        ids.update(json.loads(row['stories_json']))
+                if not ids:
+                    return True
+                sorted_ids_json = _json(sorted(ids))
                 revision = self._policy(conn, user)['revision']
+                existing = conn.execute(
+                    'SELECT stories_json,revision FROM story_runtime_replies '
+                    'WHERE user_id=? AND request_id=?', (user, request_id),
+                ).fetchone()
+                if existing and existing['stories_json'] == sorted_ids_json and existing['revision'] == revision:
+                    return True
+            with self._transaction(True) as conn:
+                if not conn.execute('SELECT 1 FROM conversation_turns WHERE user_id=? '
+                                    'AND request_id=?', (user, request_id)).fetchone():
+                    return False
+                revision = self._policy(conn, user)['revision']
+                existing = conn.execute(
+                    'SELECT stories_json FROM story_runtime_replies '
+                    'WHERE user_id=? AND request_id=?', (user, request_id),
+                ).fetchone()
+                if existing:
+                    ids.update(json.loads(existing['stories_json']))
                 conn.execute('INSERT INTO story_runtime_replies VALUES (?,?,?,?) '
                              'ON CONFLICT(user_id,request_id) DO UPDATE SET '
                              'stories_json=excluded.stories_json,revision=excluded.revision',
@@ -1391,6 +1505,8 @@ class StoryRuntimeStore:
                              ('story-revoked-' + secrets.token_hex(16), user, row['request_id']))
             for story_id in affected_stories:
                 conn.execute('DELETE FROM story_runtime_stories WHERE user_id=? AND story_id=?',
+                             (user, story_id))
+                conn.execute('DELETE FROM story_runtime_story_turns WHERE user_id=? AND story_id=?',
                              (user, story_id))
             for request_id in affected_requests:
                 conn.execute('DELETE FROM story_runtime_replies WHERE user_id=? AND request_id=?',
@@ -1534,16 +1650,21 @@ class StoryRuntimeStore:
                         # Do not leave unreachable sensitive titles/aliases behind.
                         conn.execute('DELETE FROM story_runtime_stories WHERE user_id=? AND story_id=?',
                                      (user, other['story_id']))
+                        conn.execute('DELETE FROM story_runtime_story_turns WHERE user_id=? AND story_id=?',
+                                     (user, other['story_id']))
                         invalidated += 1
                     else:
                         removed_current = len(current) != len(old_current)
                         title = current[0]['text'][:128] if removed_current else other['title']
                         aliases = '[]' if removed_current else other['aliases_json']
+                        remaining_refs = [ref for ref in mapped.values() if ref is not None]
                         conn.execute('UPDATE story_runtime_stories SET refs_json=?,current_json=?,episodes_json=?, '
                                      'title=?,aliases_json=?,version=version+1 WHERE user_id=? AND story_id=?',
-                                     (_refs_json([ref for ref in mapped.values() if ref is not None]),
+                                     (_refs_json(remaining_refs),
                                       _json(current), _json(episodes), title, aliases, user, other['story_id']))
+                        self._sync_story_turns(conn, user, other['story_id'], remaining_refs)
             conn.execute('DELETE FROM story_runtime_stories WHERE user_id=? AND story_id=?', (user, story_id))
+            conn.execute('DELETE FROM story_runtime_story_turns WHERE user_id=? AND story_id=?', (user, story_id))
             for conversation_id in sessions:
                 conn.execute('DELETE FROM conversation_summaries WHERE user_id=? AND conversation_id=?', (user, conversation_id))
             affected_requests = {row['request_id'] for row in changed_turns}

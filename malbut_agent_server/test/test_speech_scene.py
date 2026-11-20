@@ -206,3 +206,58 @@ def test_releasing_raw_pixels_preserves_frozen_image_until_revocation():
     assert image.usable()
     cache.observe_settings(settings(cache.clock(), consent=False))
     assert not image.usable()
+
+
+@pytest.mark.parametrize('utterance,expected', [
+    ('안녕', False),
+    ('안녕. 짧게 한 문장으로 인사해줘.', False),
+    ('오늘 기분이 좋아', False),
+    ('민지 이야기 기억해?', False),
+    ('오늘 날씨 어때?', False),
+    ('고마워', False),
+    ('앞에 뭐가 보여?', True),
+    ('저게 뭐야?', True),
+    ('사진 보고 조금 움직여줘', True),
+    ('왼쪽으로 돌아줘', True),
+    ('뒤로 조금만 가줘', True),
+    ('거실로 가줘', True),
+])
+def test_needs_turn_image_gates_ordinary_vs_visual_and_navigation_turns(utterance, expected):
+    from malbut_agent_server.speech_scene import needs_turn_image
+
+    assert needs_turn_image(utterance, navigation_locations=('거실', '주방')) is expected
+
+
+def test_prepare_text_turn_skips_camera_subscription_and_worker_routes_on_demand():
+    from threading import Event, RLock
+    from malbut_agent_server.speech_dialogue import DialogueWorker
+    from malbut_agent_server.speech_scene import PendingTurnScene, RosSpeechScene
+    from test_speech_dialogue import RuntimeFactory, collect
+
+    source = object.__new__(RosSpeechScene)
+    source.node = SimpleNamespace(count_publishers=lambda _: 0)
+    source.missions = None
+    source._lock = RLock()
+    source._sample_lock = RLock()
+    source._closed = Event()
+    source._sensor_window = lambda: pytest.fail('text turn must not subscribe to camera')
+    source._images = LatestScene(cloud_settings_required=False)
+    source._system = None
+    scene, attachment = source.prepare_text_turn()
+    assert attachment is None
+    assert scene['image'] == {'available': False, 'reason': 'not_requested'}
+
+    calls = []
+    pending = PendingTurnScene(lambda: ({'image': {'available': True}}, None))
+    scene_source = SimpleNamespace(
+        prepare_text_turn=lambda: (calls.append('text') or {'image': {'available': False, 'reason': 'not_requested'}}, None),
+        prepare_turn=lambda: (calls.append('visual') or {'image': {'available': False, 'reason': 'pending_capture'}}, pending),
+    )
+    worker = DialogueWorker(RuntimeFactory(), 'owner', scene_source=scene_source)
+    try:
+        assert worker.submit('u1', '안녕. 짧게 한 문장으로 인사해줘.')
+        assert worker.submit('u2', '앞에 뭐가 보여?')
+        collect(worker, 2)
+        assert calls == ['text', 'visual']
+    finally:
+        worker.close()

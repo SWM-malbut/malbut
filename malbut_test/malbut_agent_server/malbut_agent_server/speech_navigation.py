@@ -6,13 +6,18 @@ content digest before dispatch. Never build a User Map, infer a room centroid,
 or accept model-generated coordinates. Manager/Nav2 still own execution checks.
 """
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import stat
+from threading import Lock
+import time
 import unicodedata
 
 import cv2
@@ -26,6 +31,29 @@ MAX_MAP_IMAGE_BYTES = 64 * 1024 * 1024
 MAX_LOCATIONS = 128
 MAX_LOCATION_CHARS = 128
 MAX_ABS_COORDINATE_M = 10_000.0
+_CACHE_LIMIT = 16
+_STAT_CACHE_GRACE_NS = 50_000_000
+_CACHE_LOCK = Lock()
+_YAML_CACHE: 'OrderedDict[bytes, tuple]' = OrderedDict()
+_IMAGE_STAT_CACHE: 'OrderedDict[tuple, tuple]' = OrderedDict()
+_IMAGE_CONTENT_CACHE: 'OrderedDict[tuple, tuple]' = OrderedDict()
+_USER_MAP_CACHE: 'OrderedDict[bytes, tuple]' = OrderedDict()
+
+
+def _cache_get(cache: OrderedDict, key):
+    with _CACHE_LOCK:
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
+
+
+def _cache_put(cache: OrderedDict, key, value):
+    with _CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _CACHE_LIMIT:
+            cache.popitem(last=False)
 
 
 class NavigationTargetError(ValueError):
@@ -248,30 +276,23 @@ class NavigationTargets:
         if not active_map:
             raise NavigationTargetError('map_unavailable')
         path = _absolute_map(active_map, 'map_unavailable')
-        raw, image_digest, occupancy_revision = self._map_binding(path)
-        metadata = _document(raw)
-        image = cv2.imdecode(np.frombuffer(_read(
-            (path.parent / metadata['image']).resolve(), MAX_MAP_IMAGE_BYTES,
-            'map_unavailable'), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-        if image is None:
-            raise NavigationTargetError('map_unavailable')
+        raw, parsed, image_digest, occupancy_revision, shape = self._load_map_binding(path)
         user_path = path.with_suffix('.user-map.geojson')
         user_raw = _read(user_path, MAX_USER_MAP_BYTES, 'catalog_invalid') if user_path.is_file() else b''
-        try:
-            _, poses, binding = self._catalog(active_map)
-            if binding[1] != raw or binding[2] != image_digest:
-                raise NavigationTargetError('map_changed')
-        except NavigationTargetError as error:
-            if error.code == 'map_changed':
-                raise
+        if user_raw:
+            try:
+                poses = self._parse_poses(user_raw, occupancy_revision)
+            except NavigationTargetError:
+                poses = {}
+        else:
             poses = {}
         revision = hashlib.sha256(raw + image_digest + user_raw).hexdigest()
         return {
             'id': path.name, 'revision': revision, 'frame_id': 'map',
             'occupancy_revision': occupancy_revision,
-            'resolution_m': metadata['resolution'],
-            'origin': metadata['origin'],
-            'width_cells': int(image.shape[1]), 'height_cells': int(image.shape[0]),
+            'resolution_m': parsed['resolution'],
+            'origin': list(parsed['origin']),
+            'width_cells': int(shape[1]), 'height_cells': int(shape[0]),
             'landmarks': [{'location': name, 'x': point[0], 'y': point[1]}
                           for name, point in list(poses.items())[:32]],
         }
@@ -311,12 +332,14 @@ class NavigationTargets:
             raise NavigationTargetError('map_changed')
         return NavigationTarget('', str(path), 'map', x, y, yaw, scene['revision'])
 
-    def _catalog(self, active_map):
-        if not active_map:
-            raise NavigationTargetError('map_unavailable')
-        map_path = _absolute_map(active_map, 'map_unavailable')
-        raw = _read(map_path.with_suffix('.user-map.geojson'), MAX_USER_MAP_BYTES,
-                    'catalog_unavailable')
+    @staticmethod
+    def _parse_poses(raw: bytes, expected_revision: str) -> dict:
+        cached = _cache_get(_USER_MAP_CACHE, raw)
+        if cached is not None:
+            map_revision, items = cached
+            if map_revision != expected_revision:
+                raise NavigationTargetError('map_mismatch')
+            return dict(items)
         try:
             document = json.loads(raw)
         except (ValueError, UnicodeError, RecursionError) as error:
@@ -326,7 +349,50 @@ class NavigationTargets:
                 or document.get('frame_id') != 'map'
                 or not isinstance(document.get('features'), list)):
             raise NavigationTargetError('catalog_invalid')
-        map_raw, image_digest, revision = self._map_binding(map_path)
+        if document.get('map_revision') != expected_revision:
+            raise NavigationTargetError('map_mismatch')
+        poses = {}
+        for feature in document['features']:
+            if not isinstance(feature, dict) or not isinstance(feature.get('properties'), dict):
+                raise NavigationTargetError('catalog_invalid')
+            properties = feature['properties']
+            if properties.get('role') != 'room':
+                continue
+            name = _label(properties.get('name'), 'catalog_invalid')
+            if name in poses:
+                raise NavigationTargetError('target_ambiguous')
+            point = properties.get('representative_point')
+            if not isinstance(point, list) or len(point) != 2:
+                raise NavigationTargetError('catalog_invalid')
+            poses[name] = tuple(_coordinate(value, MAX_ABS_COORDINATE_M) for value in point)
+            if len(poses) > MAX_LOCATIONS:
+                raise NavigationTargetError('catalog_invalid')
+        _cache_put(_USER_MAP_CACHE, raw, (document.get('map_revision'), tuple(poses.items())))
+        return poses
+
+    def _catalog(self, active_map):
+        if not active_map:
+            raise NavigationTargetError('map_unavailable')
+        map_path = _absolute_map(active_map, 'map_unavailable')
+        raw = _read(map_path.with_suffix('.user-map.geojson'), MAX_USER_MAP_BYTES,
+                    'catalog_unavailable')
+        cached = _cache_get(_USER_MAP_CACHE, raw)
+        if cached is not None:
+            map_revision, items = cached
+            map_raw, _, image_digest, revision, _ = self._load_map_binding(map_path)
+            if map_revision != revision:
+                raise NavigationTargetError('map_mismatch')
+            return map_path, dict(items), (raw, map_raw, image_digest)
+        try:
+            document = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError) as error:
+            raise NavigationTargetError('catalog_invalid') from error
+        if (not isinstance(document, dict) or document.get('type') != 'FeatureCollection'
+                or document.get('format') != 'malbut-user-map-v1'
+                or document.get('frame_id') != 'map'
+                or not isinstance(document.get('features'), list)):
+            raise NavigationTargetError('catalog_invalid')
+        map_raw, _, image_digest, revision, _ = self._load_map_binding(map_path)
         if document.get('map_revision') != revision:
             raise NavigationTargetError('map_mismatch')
         poses = {}
@@ -345,29 +411,24 @@ class NavigationTargets:
             poses[name] = tuple(_coordinate(value, MAX_ABS_COORDINATE_M) for value in point)
             if len(poses) > MAX_LOCATIONS:
                 raise NavigationTargetError('catalog_invalid')
+        _cache_put(_USER_MAP_CACHE, raw, (document.get('map_revision'), tuple(poses.items())))
         return map_path, poses, (raw, map_raw, image_digest)
 
     @staticmethod
-    def _map_binding(map_path):
-        map_raw = _read(map_path, MAX_MAP_BYTES, 'catalog_unavailable')
+    def _parse_map_yaml(map_raw: bytes):
+        cached = _cache_get(_YAML_CACHE, map_raw)
+        if cached is not None:
+            return cached
         metadata = _document(map_raw)
         image = metadata.get('image')
         if (not isinstance(image, str) or not image or len(image) > 4096
                 or any(ord(char) < 32 or ord(char) == 127 for char in image)):
             raise NavigationTargetError('catalog_invalid')
-        try:
-            image_path = (map_path.parent / Path(image).expanduser()).resolve(strict=True)
-        except (OSError, RuntimeError, ValueError) as error:
-            raise NavigationTargetError('catalog_unavailable') from error
-        image_raw = _read(image_path, MAX_MAP_IMAGE_BYTES, 'catalog_unavailable')
-        occupancy = cv2.imdecode(np.frombuffer(image_raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-        if occupancy is None:
-            raise NavigationTargetError('catalog_invalid')
         resolution = _coordinate(metadata.get('resolution'), MAX_ABS_COORDINATE_M)
         origin = metadata.get('origin')
         if resolution <= 0 or not isinstance(origin, list) or len(origin) != 3:
             raise NavigationTargetError('catalog_invalid')
-        origin = [_coordinate(value, MAX_ABS_COORDINATE_M) for value in origin]
+        origin = tuple(_coordinate(value, MAX_ABS_COORDINATE_M) for value in origin)
         occupied = _coordinate(metadata.get('occupied_thresh', 0.65), 1.0)
         free = _coordinate(metadata.get('free_thresh', 0.196), 1.0)
         negate = metadata.get('negate', 0)
@@ -375,15 +436,69 @@ class NavigationTargets:
         if (not 0 <= free < occupied <= 1 or mode != 'trinary'
                 or type(negate) not in (bool, int) or negate not in (0, 1)):
             raise NavigationTargetError('catalog_invalid')
-        # Match bringup.user_map's occupancy revision without depending on bringup,
-        # which already depends on Agent. Integration tests use its actual saver.
-        revision_data = {
-            'shape': list(occupancy.shape), 'resolution': resolution, 'origin': origin,
-            'negate': bool(negate), 'occupied_thresh': occupied,
-            'free_thresh': free, 'mode': mode,
+        parsed = {
+            'image': image, 'resolution': resolution, 'origin': origin,
+            'occupied_thresh': occupied, 'free_thresh': free,
+            'negate': bool(negate), 'mode': mode,
         }
-        digest = hashlib.sha256(json.dumps(
-            revision_data, sort_keys=True, separators=(',', ':'),
-        ).encode())
-        digest.update(occupancy.tobytes())
-        return map_raw, hashlib.sha256(image_raw).digest(), 'rev-' + digest.hexdigest()[:12]
+        _cache_put(_YAML_CACHE, map_raw, parsed)
+        return parsed
+
+    @classmethod
+    def _load_map_binding(cls, map_path):
+        map_raw = _read(map_path, MAX_MAP_BYTES, 'catalog_unavailable')
+        parsed = cls._parse_map_yaml(map_raw)
+        try:
+            image_path = (map_path.parent / Path(parsed['image']).expanduser()).resolve(strict=True)
+            st = image_path.stat()
+        except (OSError, RuntimeError, ValueError) as error:
+            raise NavigationTargetError('catalog_unavailable') from error
+        if not stat.S_ISREG(st.st_mode) or not 0 < st.st_size <= MAX_MAP_IMAGE_BYTES:
+            raise NavigationTargetError('catalog_unavailable')
+        revision_key = (
+            parsed['resolution'], parsed['origin'], parsed['negate'],
+            parsed['occupied_thresh'], parsed['free_thresh'], parsed['mode'],
+        )
+        stat_key = (
+            str(image_path), st.st_dev, st.st_ino, st.st_size,
+            st.st_mtime_ns, st.st_ctime_ns, st.st_mode, revision_key,
+        )
+        if (abs(time.time_ns() - st.st_mtime_ns) > _STAT_CACHE_GRACE_NS
+                and os.access(image_path, os.R_OK)):
+            cached = _cache_get(_IMAGE_STAT_CACHE, stat_key)
+            if cached is not None:
+                image_digest, occupancy_revision, shape = cached
+                return map_raw, parsed, image_digest, occupancy_revision, shape
+        image_raw = _read(image_path, MAX_MAP_IMAGE_BYTES, 'catalog_unavailable')
+        image_digest = hashlib.sha256(image_raw).digest()
+        content_key = (image_digest, revision_key)
+        cached_content = _cache_get(_IMAGE_CONTENT_CACHE, content_key)
+        if cached_content is not None:
+            occupancy_revision, shape = cached_content
+        else:
+            occupancy = cv2.imdecode(np.frombuffer(image_raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            if occupancy is None:
+                raise NavigationTargetError('catalog_invalid')
+            shape = tuple(int(dim) for dim in occupancy.shape)
+            # Match bringup.user_map's occupancy revision without depending on bringup,
+            # which already depends on Agent. Integration tests use its actual saver.
+            revision_data = {
+                'shape': list(shape), 'resolution': parsed['resolution'],
+                'origin': list(parsed['origin']), 'negate': parsed['negate'],
+                'occupied_thresh': parsed['occupied_thresh'],
+                'free_thresh': parsed['free_thresh'], 'mode': parsed['mode'],
+            }
+            digest = hashlib.sha256(json.dumps(
+                revision_data, sort_keys=True, separators=(',', ':'),
+            ).encode())
+            digest.update(occupancy.tobytes())
+            occupancy_revision = 'rev-' + digest.hexdigest()[:12]
+            _cache_put(_IMAGE_CONTENT_CACHE, content_key, (occupancy_revision, shape))
+        if abs(time.time_ns() - st.st_mtime_ns) > _STAT_CACHE_GRACE_NS:
+            _cache_put(_IMAGE_STAT_CACHE, stat_key, (image_digest, occupancy_revision, shape))
+        return map_raw, parsed, image_digest, occupancy_revision, shape
+
+    @classmethod
+    def _map_binding(cls, map_path):
+        map_raw, _, image_digest, occupancy_revision, _ = cls._load_map_binding(map_path)
+        return map_raw, image_digest, occupancy_revision

@@ -340,3 +340,27 @@ def test_lost_stream_with_announced_larger_body_cannot_reuse_connection(provider
         assert complete(provider).decision.message == TEXT
         assert server.accepted == 2
     assert [event.operation for event in emitted] == ['prepare', 'cancel']
+
+
+def test_stream_stops_reparsing_candidate_after_first_prefetch(monkeypatch):
+    import malbut_agent_server.providers.response_stream as rs
+
+    calls = 0
+    original = rs.message_candidate
+
+    def counted(text):
+        nonlocal calls
+        calls += 1
+        return original(text)
+
+    monkeypatch.setattr(rs, 'message_candidate', counted)
+    turn = PrefetchTurn('req-1', 'u', lambda _: True)
+    turn.begin_attempt()
+    parser = ResponseEvents(turn)
+    for event in source_events():
+        parser.feed(event)
+    payload = '{"type":"message","message":"첫 문장입니다. ' + '가나다라마바사' * 20 + '"}'
+    chunks = [payload[i:i + 4] for i in range(0, len(payload), 4)]
+    for chunk in chunks:
+        parser.feed(delta(chunk))
+    assert calls < len(chunks) // 2

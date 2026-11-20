@@ -189,7 +189,7 @@ class StoryMemoryService:
 
     def validate_readset(self, user, policy_revision, readset, request_id=None):
         """Fence corrections to the claims actually read, not unrelated writes."""
-        with self.store.validation_snapshot():
+        with self.store.validation_snapshot(read_only_scope=True):
             return self._validate_readset(user, policy_revision, readset, request_id)
 
     def _validate_readset(self, user, policy_revision, readset, request_id=None):
@@ -385,6 +385,8 @@ class StoryMemoryService:
                 users = self.store.pending_users()
                 now = time.monotonic()
                 eligible = []
+                active_work = False
+                next_due = None
                 for user in users:
                     if now - self._last_recovery.get(user, -1e9) >= 1:
                         self.store.recover(user)
@@ -394,13 +396,22 @@ class StoryMemoryService:
                         if not stats.get('queued', 0) and not stats.get('running', 0):
                             self._due.pop(user, None)
                             continue
+                        active_work = True
                         first, last = self._due.setdefault(user, (now, now))
                         due = min(last + self.debounce_seconds, first + self.max_delay_seconds)
                         if user in self._forced or now >= due:
                             eligible.append((due, user))
+                        elif next_due is None or due < next_due:
+                            next_due = due
                 with self._condition:
                     if not eligible:
-                        self._condition.wait(0.2)
+                        if not active_work:
+                            wait_s = 1.0
+                        elif next_due is not None:
+                            wait_s = min(0.2, max(0.01, next_due - now))
+                        else:
+                            wait_s = 0.2
+                        self._condition.wait(wait_s)
                         continue
                 job = None
                 for _due, user in sorted(eligible):

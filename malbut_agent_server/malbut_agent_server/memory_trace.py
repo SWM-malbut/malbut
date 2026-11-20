@@ -18,24 +18,39 @@ _observer = ContextVar('malbut_memory_input_observer', default=None)
 _logger = logging.getLogger(__name__)
 
 
+def initialize_trace_schema(connection):
+    """Create the trace table and index once per store initialization."""
+    connection.execute('''CREATE TABLE IF NOT EXISTS memory_trace_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        wall_time REAL NOT NULL, event TEXT NOT NULL, user_id TEXT NOT NULL,
+        request_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL, data_json TEXT NOT NULL)''')
+    connection.execute('''CREATE INDEX IF NOT EXISTS memory_trace_request_idx
+        ON memory_trace_events(user_id, request_id, sequence)''')
+
+
 def record_trace(connection, event, user_id, *, request_id='', conversation_id='',
                  turn_id='', data=None):
     """Best-effort observation inside an existing transaction; never commit it."""
     try:
         if not connection.in_transaction:
             return False
-        connection.execute('''CREATE TABLE IF NOT EXISTS memory_trace_events (
-            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-            wall_time REAL NOT NULL, event TEXT NOT NULL, user_id TEXT NOT NULL,
-            request_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
-            turn_id TEXT NOT NULL, data_json TEXT NOT NULL)''')
-        connection.execute('''CREATE INDEX IF NOT EXISTS memory_trace_request_idx
-            ON memory_trace_events(user_id, request_id, sequence)''')
-        connection.execute('''INSERT INTO memory_trace_events
-            (wall_time,event,user_id,request_id,conversation_id,turn_id,data_json)
-            VALUES (?,?,?,?,?,?,?)''', (
-                time.time(), event, user_id, request_id, conversation_id, turn_id,
-                json.dumps(data or {}, ensure_ascii=False, allow_nan=False)))
+        encoded = json.dumps(data or {}, ensure_ascii=False, allow_nan=False)
+        params = (
+            time.time(), event, user_id, request_id, conversation_id, turn_id,
+            encoded,
+        )
+        try:
+            connection.execute('''INSERT INTO memory_trace_events
+                (wall_time,event,user_id,request_id,conversation_id,turn_id,data_json)
+                VALUES (?,?,?,?,?,?,?)''', params)
+        except sqlite3.OperationalError as error:
+            if 'no such table' not in str(error).lower():
+                raise
+            initialize_trace_schema(connection)
+            connection.execute('''INSERT INTO memory_trace_events
+                (wall_time,event,user_id,request_id,conversation_id,turn_id,data_json)
+                VALUES (?,?,?,?,?,?,?)''', params)
         return True
     except (sqlite3.Error, ValueError, TypeError):
         _logger.warning('Memory trace unavailable (%s)', event)

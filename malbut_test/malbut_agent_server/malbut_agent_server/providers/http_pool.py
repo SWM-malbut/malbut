@@ -26,7 +26,7 @@ class HTTPConnectionPool:
     socket timeout and discard their connection when returning it.
     """
 
-    def __init__(self, *, max_connections=4, idle_timeout=30.0):
+    def __init__(self, *, max_connections=4, idle_timeout=90.0):
         """Create no socket until a request actually needs one."""
         if type(max_connections) is not int or max_connections < 1:
             raise ValueError('max_connections must be a positive integer')

@@ -6,14 +6,52 @@ import hashlib
 import io
 import math
 import os
+import re
 from threading import Event, RLock
 import time
+import unicodedata
 
 
 MAX_FRAME_AGE_S = 2.0
 MAX_SETTINGS_AGE_S = 30.0
 MAX_JPEG_BYTES = 256 * 1024
 SCENE_INPUT_TIMEOUT_S = 1.0
+_TURN_IMAGE_PATTERN = re.compile(
+    r'카메라|화면|사진|영상|보여|보이|봐줘|봐봐|보세요|살펴|둘러|'
+    r'눈앞|앞에|뒤에|옆에|왼쪽|오른쪽|주변|근처|어디야|어디에|어디있|'
+    r'여기|저기|거기|이쪽|저쪽|그쪽|누구|사람|불켜|불꺼|문열|문닫|'
+    r'장애물|물건|놓여|어지러|깨끗|색깔|무슨색|표정|생겼|'
+    r'이동|가줘|가자|가봐|가줄|와줘|와봐|이리|저리|앞으로|뒤로|후진|'
+    r'회전|돌아|돌려|틀어|움직|비켜|따라|순찰|정찰|지도|맵|탐색|위치|좌표|경유|안내'
+)
+
+
+def needs_turn_image(
+    utterance: str,
+    *,
+    navigation_locations=(),
+    navigation_confirmation: str = '',
+    mapping_name_requested: bool = False,
+) -> bool:
+    """Capture a live RGB frame only when the utterance asks for visual or spatial context."""
+    if navigation_confirmation or mapping_name_requested:
+        return True
+    if not isinstance(utterance, str) or not utterance.strip():
+        return False
+    from malbut_agent_server.companion_dialogue import requests_current_view
+
+    if requests_current_view(utterance):
+        return True
+    normalized = unicodedata.normalize('NFC', utterance)
+    compact = re.sub(r'[\s.!?~。！？,]', '', normalized).lower()
+    if _TURN_IMAGE_PATTERN.search(compact):
+        return True
+    for location in navigation_locations or ():
+        if isinstance(location, str):
+            target = re.sub(r'\s+', '', unicodedata.normalize('NFC', location)).lower()
+            if target and target in compact:
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -277,6 +315,10 @@ class RosSpeechScene:
     def prepare_turn(self):
         return self.snapshot(defer_image=True)
 
+    def prepare_text_turn(self):
+        """Collect map/pose/mission context without subscribing to the RGB camera."""
+        return self.snapshot(defer_image=False, include_image=False)
+
     def prepare_image(self):
         """A guest may request a current view, without the owner's map/missions."""
         return PendingTurnScene(self._image_snapshot)
@@ -289,7 +331,7 @@ class RosSpeechScene:
                 metadata, image = self._images.capture(self._encode)
         return {'image': metadata}, image
 
-    def snapshot(self, *, defer_image=False):
+    def snapshot(self, *, defer_image=False, include_image=True):
         """Bound sensor startup to one second off the ROS thread, then unsubscribe."""
         scene = {'image': {'available': False, 'reason': 'camera_or_consent_unavailable'},
                  'map': None, 'pose': None, 'missions': None}
@@ -298,7 +340,9 @@ class RosSpeechScene:
             if not self._closed.is_set():
                 if self.missions is not None:
                     scene['map'] = self.missions.map_context()
-                if defer_image:
+                if not include_image:
+                    scene['image'] = {'available': False, 'reason': 'not_requested'}
+                elif defer_image:
                     scene['image'] = {'available': False, 'reason': 'pending_capture'}
                     # Refresh pose/map with RGB if the robot moved during lookup.
                     attachment = PendingTurnScene(self.snapshot)

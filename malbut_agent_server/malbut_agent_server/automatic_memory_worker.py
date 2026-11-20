@@ -215,8 +215,10 @@ class AutomaticMemoryWorker:
         self._transaction(finalize)
 
     def _run(self):
+        wait_seconds = 0.0
         while not self.closed:
-            self._wake.wait(0.25)
+            if wait_seconds > 0:
+                self._wake.wait(wait_seconds)
             self._wake.clear()
             while not self.closed:
                 job = None
@@ -237,3 +239,10 @@ class AutomaticMemoryWorker:
                         except Exception:
                             pass  # Expiry bounds an indeterminate DB failure.
                     break
+            if self.closed:
+                break
+            try:
+                delay = self.jobs.next_wakeup_delay()
+                wait_seconds = 2.0 if delay is None else min(max(0.05, delay), 2.0)
+            except Exception:
+                wait_seconds = 1.0
