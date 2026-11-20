@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+import random
 import sqlite3
 import time
 from typing import Optional
@@ -9,6 +10,8 @@ from typing import Optional
 
 class SpeechReceiptStore:
     """Accept each utterance ID once, including across process restarts."""
+
+    _INIT_RETRY_TIMEOUT_SECONDS = 5.0
 
     def __init__(self, db_path: str) -> None:
         """Open a receipt file and add its table non-destructively."""
@@ -18,21 +21,38 @@ class SpeechReceiptStore:
             db_path = str(path)
         self._connection = sqlite3.connect(db_path, timeout=5.0)
         try:
-            if db_path != ':memory:':
-                self._connection.execute('PRAGMA journal_mode=WAL')
-                self._connection.execute('PRAGMA synchronous=NORMAL')
             self._connection.execute('PRAGMA busy_timeout=5000')
-            self._connection.execute(
-                '''CREATE TABLE IF NOT EXISTS speech_receipts (
-                    utterance_id TEXT NOT NULL PRIMARY KEY,
-                    text_sha256 TEXT NOT NULL,
-                    received_at REAL NOT NULL
-                )'''
-            )
-            self._connection.commit()
+            self._initialize_schema(db_path)
         except Exception:
             self._connection.close()
             raise
+
+    def _initialize_schema(self, db_path: str) -> None:
+        """Configure WAL and schema, retrying transient lock-upgrade races."""
+        deadline = time.monotonic() + self._INIT_RETRY_TIMEOUT_SECONDS
+        while True:
+            try:
+                if db_path != ':memory:':
+                    self._connection.execute('PRAGMA journal_mode=WAL')
+                    self._connection.execute('PRAGMA synchronous=NORMAL')
+                self._connection.execute('BEGIN IMMEDIATE')
+                self._connection.execute(
+                    '''CREATE TABLE IF NOT EXISTS speech_receipts (
+                        utterance_id TEXT NOT NULL PRIMARY KEY,
+                        text_sha256 TEXT NOT NULL,
+                        received_at REAL NOT NULL
+                    )'''
+                )
+                self._connection.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if self._connection.in_transaction:
+                    self._connection.rollback()
+                message = str(exc).lower()
+                is_lock_race = 'locked' in message or 'busy' in message
+                if not is_lock_race or time.monotonic() >= deadline:
+                    raise
+                time.sleep(random.uniform(0.005, 0.025))
 
     @staticmethod
     def _digest(utterance_id: str, text: str) -> str:
