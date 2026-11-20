@@ -15,45 +15,33 @@ POINT_SCHEMA = {
 }
 NAV2_TOOL_DEFINITIONS = {
     'request_rotation': (
-        'Request one relative in-place rotation through Manager and Nav2 Spin. '
-        'Use direction left/right and a positive angle_deg; one full turn is 360 degrees. '
-        'Use the requested angle when specified; otherwise choose an appropriate '
-        'approximate angle from the current request, RGB scene and robot/map context. '
-        'Speed and timeout are server-owned. This is not navigation to a map heading.',
+        'Request relative in-place rotation via Manager Nav2 Spin (left/right, angle_deg 1-360; '
+        'use requested angle, otherwise choose an appropriate angle from request/RGB/map context; '
+        'server owns speed/timeout; not absolute map heading).',
         {'direction': {'type': 'string', 'enum': ['left', 'right']},
          'angle_deg': {'type': 'number', 'minimum': 1, 'maximum': 360}},
     ),
     'request_backup': (
-        'Request straight backward motion through Manager and Nav2 BackUp. '
-        'distance_m is between 0.05 and 1 metre. Use the requested distance when specified; '
-        'otherwise choose a modest distance from the current request and scene context. '
-        'A front RGB image does not establish rear clearance, so keep estimates conservative. '
-        'Speed and timeout are server-owned.',
+        'Request straight backward motion via Manager Nav2 BackUp (distance_m 0.05-1.0; '
+        'use requested distance, otherwise choose a modest distance conservatively since front RGB '
+        'does not show rear clearance; server owns speed/timeout).',
         {'distance_m': {'type': 'number', 'minimum': 0.05, 'maximum': 1}},
     ),
     'request_navigation_point': (
-        'Request one map-frame point through Manager NavigateToPose. '
-        'Use map_revision from the current scene context, x/y in metres and optional '
-        'yaw_deg (null uses the configured zero map heading). Use explicit coordinates '
-        'when supplied; otherwise choose or calculate an approximate goal using the '
-        'current pose, registered landmark coordinates and RGB cues together. '
-        'Ground map goals in the supplied map coordinates, not image pixels as metres. '
-        'Map bounds alone do not describe free space or paths. '
-        'Use named navigation when going to a registered room itself.',
+        'Request one map-frame point via Manager NavigateToPose. Copy map_revision from scene context; '
+        'x/y in metres, optional yaw_deg (null=zero heading). Use explicit coords or choose or calculate '
+        'an approximate goal from pose, landmarks, and RGB cues grounded in map coords (never pixels as metres). '
+        'Prefer named navigation for registered rooms.',
         {'map_revision': {'type': 'string', 'maxLength': 128},
          'x': {'type': 'number', 'minimum': -10000, 'maximum': 10000},
          'y': {'type': 'number', 'minimum': -10000, 'maximum': 10000},
          'yaw_deg': {'type': ['number', 'null'], 'minimum': -180, 'maximum': 180}},
     ),
     'request_waypoints': (
-        'Visit an ordered list in ONE Manager mission using existing Nav2 FollowWaypoints. '
-        'Copy map_revision from the current scene context. For each waypoint use either '
-        'an exact registered location with x/y/yaw_deg null, OR location null with '
-        'map x/y and optional yaw_deg. Coordinates may be specified by the user or '
-        'chosen using the current pose, landmark coordinates and RGB cues together. '
-        'Use reasonable approximate goals grounded in the supplied map coordinates. '
-        'This tool is one action even when several places are requested. '
-        'One traversal only, stop on the first failed waypoint; no loops or hidden tasks.',
+        'Visit ordered waypoints in ONE Manager Nav2 FollowWaypoints mission. Copy map_revision from scene context. '
+        'Each item: either exact registered location with x/y/yaw_deg null, OR location null with map x/y '
+        'and optional yaw_deg (explicit or chosen using the current pose, landmarks, and RGB cues). '
+        'Single traversal, stops on first failure; no loops or hidden tasks.',
         {'map_revision': {'type': 'string', 'maxLength': 128},
          'waypoints': {'type': 'array', 'minItems': 1, 'maxItems': 16,
                        'items': POINT_SCHEMA}},

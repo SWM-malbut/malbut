@@ -27,6 +27,7 @@ from malbut_agent_server.endpoint_policy import (
 )
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.memory_contract import (
+    MEMORY_CORE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     MEMORY_PROPOSAL_SCHEMA,
     SOURCE_REVIEW_SCOPE_INSTRUCTIONS,
@@ -34,11 +35,14 @@ from malbut_agent_server.memory_contract import (
 )
 from malbut_agent_server.prompting import (
     CONVERSATION_INSTRUCTIONS,
+    GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS,
+    GROUNDED_WEATHER_SYSTEM_INSTRUCTIONS,
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
     PreparedModelInput,
     SCENE_INSTRUCTIONS,
     prepare_model_input,
+    scene_instructions_for_context,
     system_instructions_for_tools,
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
@@ -456,13 +460,77 @@ class OpenAIResponsesProvider(AgentProvider):
             weather_context=weather_context,
             preserve_conversation=self._preserve_conversation(memory_mode),
         )
+        homecam_result = (
+            'homecam_query_result_untrusted' in (memory_context or {})
+        )
+        patrol_result = (
+            'patrol_observations_untrusted' in (memory_context or {})
+        )
+        tool_free_answer = memory_mode == 'answer_only' and not tools
+        grounded_followup = (
+            tool_free_answer
+            and (
+                weather_context is not None
+                or homecam_result
+                or patrol_result
+            )
+        )
+        grounded_weather_answer = (
+            isinstance(request, SpeechAgentRequest)
+            and tool_free_answer
+            and not request.available_tools
+            and isinstance(weather_context, dict)
+            and not homecam_result
+            and not patrol_result
+            and not include_image
+            and not (memory_context or {}).get('pending_question')
+        )
+        grounded_homecam_answer = (
+            isinstance(request, SpeechAgentRequest)
+            and tool_free_answer
+            and not request.available_tools
+            and homecam_result
+            and not patrol_result
+            and weather_context is None
+            and not include_image
+            and not (memory_context or {}).get('pending_question')
+        )
+        include_weather = (
+            not tool_free_answer
+            or weather_context is not None
+            or any(
+                tool.name in {'get_weather', 'set_weather_location'}
+                for tool in tools
+            )
+        )
+        if grounded_weather_answer:
+            base_instructions = (
+                GROUNDED_WEATHER_SYSTEM_INSTRUCTIONS + '\n\n'
+                + GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS
+            )
+        elif grounded_homecam_answer:
+            base_instructions = (
+                system_instructions_for_tools(
+                    tools,
+                    homecam_result=True,
+                    patrol_result=False,
+                    include_weather=False,
+                ) + '\n\n'
+                + GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS
+            )
+        else:
+            base_instructions = (
+                system_instructions_for_tools(
+                    tools,
+                    homecam_result=homecam_result,
+                    patrol_result=patrol_result,
+                    include_weather=include_weather,
+                ) + '\n\n'
+                + CONVERSATION_INSTRUCTIONS
+            )
         payload: Dict[str, Any] = {
             'model': self.model,
-            'instructions': system_instructions_for_tools(
-                tools, homecam_result='homecam_query_result_untrusted' in (memory_context or {}),
-                patrol_result='patrol_observations_untrusted' in (memory_context or {}),
-            ) + '\n\n'
-            + CONVERSATION_INSTRUCTIONS,
+            'instructions': base_instructions,
             'input': prepared_context.text,
             'parallel_tool_calls': False,
             'tool_choice': 'auto',
@@ -529,13 +597,24 @@ class OpenAIResponsesProvider(AgentProvider):
             payload['text']['format'].update({
                 'name': 'malbut_memory_decision', 'schema': schema,
             })
-            payload['instructions'] += '\n\n' + MEMORY_INSTRUCTIONS
+            payload['instructions'] += '\n\n' + (
+                MEMORY_INSTRUCTIONS
+                if memory_mode == 'source_review'
+                else MEMORY_CORE_INSTRUCTIONS
+            )
         if (isinstance(request, SpeechAgentRequest)
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
             payload['instructions'] += '\n\n' + SPEECH_END_INSTRUCTIONS
         if (getattr(request, 'scene_context', None) is not None
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
-            payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS
+            scene_rules = scene_instructions_for_context(
+                request.scene_context,
+                tools,
+                include_image=include_image,
+                grounded_followup=grounded_followup,
+            )
+            if scene_rules:
+                payload['instructions'] += '\n\n' + scene_rules
         if (memory_mode != 'answer_only'
                 and ((use_prompt_cache and memory_context is not None
                       and memory_mode not in {'automatic_extraction', 'source_review'})
@@ -547,15 +626,29 @@ class OpenAIResponsesProvider(AgentProvider):
             )
         if self.include_reasoning:
             homecam = (memory_context or {}).get('homecam_query_result_untrusted')
-            grounded = (
+            grounded_homecam_effort = (
                 self.semantic_context and not self.is_fallback and self.model == 'gpt-5.6-luna'
                 and self.reasoning_effort == 'low' and isinstance(request, SpeechAgentRequest)
                 and request.confirmed_homecam_read and memory_mode == 'answer_only'
                 and not (tools or request.available_tools) and isinstance(homecam, dict)
                 and homecam.get('tool') in HOMECAM_QUERY_TOOLS and isinstance(homecam.get('data'), dict)
             )
+            grounded_weather_effort = (
+                grounded_weather_answer
+                and self.semantic_context and not self.is_fallback
+                and self.model == 'gpt-5.6-luna'
+                and self.reasoning_effort == 'low'
+                and weather_context.get('status') in {
+                    'fresh', 'stale', 'unavailable', 'location_set',
+                    'location_required', 'location_ambiguous', 'location_not_found',
+                }
+            )
             payload['reasoning'] = {
-                'effort': 'none' if grounded else self.reasoning_effort,
+                'effort': (
+                    'none'
+                    if (grounded_homecam_effort or grounded_weather_effort)
+                    else self.reasoning_effort
+                ),
                 'context': 'current_turn',
             }
         if tools:
