@@ -42,6 +42,7 @@ from malbut_agent_server.semantic_summary import (
 from malbut_agent_server.story_extractor import OpenAIStoryExtractor
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.story_memory_service import StoryMemoryService
+from malbut_agent_server.turn_metrics import TurnWaterfallRecorder
 
 
 RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
@@ -354,6 +355,9 @@ def build_orchestrator(
             story_provider=story_provider,
             weather_executor=weather_executor,
             weather_location_executor=weather_location_executor,
+            turn_metrics=TurnWaterfallRecorder(
+                capacity=settings.turn_metrics_capacity,
+            ),
         )
         runtime.speech_addressee = speech_addressee
         from malbut_agent_server.homecam_query import HomecamQueryClient, configure_homecam_queries

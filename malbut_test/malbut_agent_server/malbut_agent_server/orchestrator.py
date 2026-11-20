@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import CancelledError
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Sequence
 
@@ -53,6 +54,12 @@ from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import (
     HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS, validate_tool_arguments,
+)
+from malbut_agent_server.turn_metrics import (
+    TurnWaterfallRecorder,
+    TurnWaterfallTrace,
+    current_turn_trace,
+    turn_trace_scope,
 )
 from malbut_agent_server.schemas import (
     copy_request,
@@ -478,6 +485,7 @@ class AgentOrchestrator:
         context_compactor=None,
         story_memory=None,
         story_provider=None,
+        turn_metrics: TurnWaterfallRecorder | None = None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -523,6 +531,7 @@ class AgentOrchestrator:
             AutomaticMemoryWorker(self, self.automatic_memory_jobs)
             if background_memory else None
         )
+        self.turn_metrics = turn_metrics or TurnWaterfallRecorder()
         self._closed = False
         self._deferred_conversation_recovery = recover_abandoned_turns(conversation_store)
 
@@ -700,21 +709,51 @@ class AgentOrchestrator:
                 'server_clarification must be a ServerClarification'
             )
         fingerprint = self._request_fingerprint(request)
-        with self._handle_lock:
-            if self._closed:
-                raise RuntimeError('orchestrator is closed')
-            begin = self.conversation_store.begin_turn(
-                user_id=request.user_id,
-                conversation_id=request.conversation_id,
-                turn_id=request.turn_id,
+        outer_trace = current_turn_trace()
+        owns_trace = outer_trace is None
+        trace = (
+            outer_trace
+            if outer_trace is not None
+            else TurnWaterfallTrace(
+                channel='orchestrator',
                 request_id=request.request_id,
-                request_fingerprint=fingerprint,
-                user_content=request.utterance,
-                max_user_content_chars=request.max_utterance_chars,
-                before_new_turn=lambda conn: self._admit_memory_turn(
-                    conn, request,
-                ),
+                conversation_id=request.conversation_id,
             )
+        )
+        trace.set_metadata(
+            request_id=request.request_id,
+            conversation_id=request.conversation_id,
+        )
+        with turn_trace_scope(trace), self._handle_lock:
+            if self._closed:
+                if owns_trace:
+                    trace.finalize(self.turn_metrics, outcome='error')
+                raise RuntimeError('orchestrator is closed')
+            try:
+                with trace.measure('begin_turn_ms'):
+                    begin = self.conversation_store.begin_turn(
+                        user_id=request.user_id,
+                        conversation_id=request.conversation_id,
+                        turn_id=request.turn_id,
+                        request_id=request.request_id,
+                        request_fingerprint=fingerprint,
+                        user_content=request.utterance,
+                        max_user_content_chars=request.max_utterance_chars,
+                        before_new_turn=lambda conn: self._admit_memory_turn(
+                            conn, request,
+                        ),
+                    )
+            except Exception as error:
+                if owns_trace:
+                    trace.finalize(
+                        self.turn_metrics,
+                        outcome=(
+                            'cancelled'
+                            if isinstance(error, CancelledError)
+                            else 'error'
+                        ),
+                    )
+                raise
             if begin.cached_response is not None:
                 guard = self._memory_guard(request.user_id, request.request_id)
                 guard()
@@ -724,36 +763,52 @@ class AgentOrchestrator:
                 result.clock = self._state_clock
                 result.memory_validator = guard
                 self.start_background_memory()
+                trace.set_flag('cached_response', True)
+                trace.set_metadata(
+                    outcome='cached',
+                    decision_type=result.decision.type,
+                    tool_name=(
+                        result.raw_decision.tool_name
+                        or result.decision.tool_name
+                    ),
+                    safety_code=result.safety.code,
+                )
+                trace.attach_provider_result(result.provider_result)
+                if owns_trace:
+                    trace.finalize(self.turn_metrics, outcome='cached')
                 return result
             token = begin.token
             if token is None:
+                if owns_trace:
+                    trace.finalize(self.turn_metrics, outcome='error')
                 raise RuntimeError(
                     'conversation begin returned no token'
                 )
             committed = False
             try:
-                memory_snapshot = self.personal_memory.snapshot(
-                    request, token, begin.history, begin.summary,
-                    memory_limit=self.memory_limit,
-                    defer_facts=(isinstance(request, SpeechAgentRequest)
-                                 and self.provider is self.story_provider
-                                 and getattr(self.story_provider, 'on_demand_speech', False)),
-                )
-                effective_request = self._effective_request(
-                    request,
-                    memory_snapshot.history,
-                    token,
-                    utterance_resolver,
-                )
-                if self.context_compactor is not None:
-                    self.context_compactor.schedule(
-                        token, begin.summary, memory_snapshot.history,
-                        memory_snapshot.summary, memory_snapshot.state,
-                        effective_request.utterance,
+                with trace.measure('memory_snapshot_ms'):
+                    memory_snapshot = self.personal_memory.snapshot(
+                        request, token, begin.history, begin.summary,
+                        memory_limit=self.memory_limit,
+                        defer_facts=(isinstance(request, SpeechAgentRequest)
+                                     and self.provider is self.story_provider
+                                     and getattr(self.story_provider, 'on_demand_speech', False)),
                     )
-                from malbut_agent_server.conversation_recall import recall_originals
+                    effective_request = self._effective_request(
+                        request,
+                        memory_snapshot.history,
+                        token,
+                        utterance_resolver,
+                    )
+                    if self.context_compactor is not None:
+                        self.context_compactor.schedule(
+                            token, begin.summary, memory_snapshot.history,
+                            memory_snapshot.summary, memory_snapshot.state,
+                            effective_request.utterance,
+                        )
+                    from malbut_agent_server.conversation_recall import recall_originals
 
-                recall_originals(self.personal_memory, request, token, memory_snapshot)
+                    recall_originals(self.personal_memory, request, token, memory_snapshot)
                 result = self._handle_uncached(
                     request,
                     effective_request,
@@ -763,6 +818,7 @@ class AgentOrchestrator:
                     proposal_verifier,
                     server_clarification,
                     memory_snapshot,
+                    trace=trace,
                 )
                 worker = self.automatic_memory_worker
                 extract = (
@@ -860,45 +916,57 @@ class AgentOrchestrator:
                 if publish or read_version is not None:
                     completion_arguments['before_commit'] = before_commit
 
-                with self.conversation_store._lock:
-                    # Policy/erasure writes use this same lock. Keep validation
-                    # and the completed response commit in one protected window.
-                    self._assert_story_binding(request.user_id, request.request_id,
-                                               result.story_binding)
-                    session, _turn = self.conversation_store.complete_turn(
-                        token,
-                        assistant_content=result.decision.message,
-                        response=result.to_persisted_dict(),
-                        commit_callback=commit_memory,
-                        **completion_arguments,
+                with trace.measure('commit_ms'):
+                    with self.conversation_store._lock:
+                        # Policy/erasure writes use this same lock. Keep validation
+                        # and the completed response commit in one protected window.
+                        self._assert_story_binding(request.user_id, request.request_id,
+                                                   result.story_binding)
+                        session, _turn = self.conversation_store.complete_turn(
+                            token,
+                            assistant_content=result.decision.message,
+                            response=result.to_persisted_dict(),
+                            commit_callback=commit_memory,
+                            **completion_arguments,
+                        )
+                    committed = True
+                    if (
+                        session.generation
+                        != result.conversation_generation
+                        or session.revision
+                        != result.conversation_revision
+                    ):
+                        raise RuntimeError(
+                            'conversation commit metadata did not match'
+                        )
+                    result.memory_validator = self._memory_guard(
+                        request.user_id, request.request_id,
                     )
-                committed = True
-                if (
-                    session.generation
-                    != result.conversation_generation
-                    or session.revision
-                    != result.conversation_revision
-                ):
-                    raise RuntimeError(
-                        'conversation commit metadata did not match'
-                    )
-                result.memory_validator = self._memory_guard(
-                    request.user_id, request.request_id,
-                )
-                self.start_background_memory()
-                if self.story_memory is not None:
-                    try:
-                        self.story_memory.after_turn(request.user_id, request.request_id)
-                    except Exception:
-                        # The completed reply already owns durable raw sources.
-                        # Recovery fills an enqueue gap without replaying inference.
-                        self.story_memory.note_enqueue_failure(request.user_id)
-                if not result.speech_published:
-                    result.memory_validator()
+                    self.start_background_memory()
+                    if self.story_memory is not None:
+                        try:
+                            self.story_memory.after_turn(request.user_id, request.request_id)
+                        except Exception:
+                            # The completed reply already owns durable raw sources.
+                            # Recovery fills an enqueue gap without replaying inference.
+                            self.story_memory.note_enqueue_failure(request.user_id)
+                    if not result.speech_published:
+                        result.memory_validator()
+                if owns_trace:
+                    trace.finalize(self.turn_metrics, outcome='ok')
                 return result
             except Exception as error:
                 if not committed:
                     self.conversation_store.fail_turn(token)
+                if owns_trace:
+                    trace.finalize(
+                        self.turn_metrics,
+                        outcome=(
+                            'cancelled'
+                            if isinstance(error, CancelledError)
+                            else 'error'
+                        ),
+                    )
                 if (
                     isinstance(error, ValidationError)
                     and str(error) == 'memory_changed'
@@ -961,6 +1029,7 @@ class AgentOrchestrator:
         ] | None,
         server_clarification: ServerClarification | None,
         memory_snapshot,
+        trace: TurnWaterfallTrace | None = None,
     ) -> OrchestrationResult:
         """Call one provider without holding a SQLite transaction."""
         effective_value = effective_request.to_dict()
@@ -1022,16 +1091,17 @@ class AgentOrchestrator:
                         token, memory_snapshot, focus, self.memory_limit, previous_name_id=previous_name_id,
                     )
                 memory_arguments['fact_lookup'] = recall_facts
-            provider_result = self.provider.complete(
-                model_request,
-                memories,
-                copy.deepcopy(list(conversation_turns)),
-                tool_specs,
-                conversation_summary=copy.deepcopy(
-                    conversation_summary
-                ),
-                **memory_arguments,
-            )
+            with (trace.measure('provider_ms') if trace is not None else nullcontext()):
+                provider_result = self.provider.complete(
+                    model_request,
+                    memories,
+                    copy.deepcopy(list(conversation_turns)),
+                    tool_specs,
+                    conversation_summary=copy.deepcopy(
+                        conversation_summary
+                    ),
+                    **memory_arguments,
+                )
             if memory_snapshot.facts_deferred:
                 memories = memory_snapshot.memories
         else:
@@ -1049,6 +1119,8 @@ class AgentOrchestrator:
             raise ProviderError(
                 'provider returned invalid metadata'
             ) from error
+        if trace is not None:
+            trace.attach_provider_result(provider_result)
         if self._separate_memory_extraction(request, memory_snapshot):
             # No foreground proposal can bypass the C extraction path,
             # even when an injected/older provider ignores the mode hint.
@@ -1088,43 +1160,44 @@ class AgentOrchestrator:
             raise ProviderError(
                 'provider returned an invalid decision'
             ) from error
-        early_rejection = (
-            proposal_verifier(copy.deepcopy(raw_decision))
-            if proposal_verifier is not None
-            else None
-        )
-        if early_rejection is not None:
-            if not isinstance(early_rejection, SafetyResult):
-                raise TypeError(
-                    'proposal_verifier must return SafetyResult or None'
-                )
-            if early_rejection.allowed is not False:
-                raise ValueError(
-                    'proposal_verifier may only return a rejection'
-                )
-            state_trusted = False
-            state_evidence_id = None
-            state_observed_at = None
-            safety = early_rejection
-        else:
-            if server_clarification is None and raw_decision.tool_name not in {
-                'get_weather', 'set_weather_location',
-            }:
-                (
-                    safety_request,
-                    state_trusted,
-                    state_evidence_id,
-                    state_observed_at,
-                ) = self._fresh_safety_request(safety_request)
-            else:
+        with (trace.measure('safety_ms') if trace is not None else nullcontext()):
+            early_rejection = (
+                proposal_verifier(copy.deepcopy(raw_decision))
+                if proposal_verifier is not None
+                else None
+            )
+            if early_rejection is not None:
+                if not isinstance(early_rejection, SafetyResult):
+                    raise TypeError(
+                        'proposal_verifier must return SafetyResult or None'
+                    )
+                if early_rejection.allowed is not False:
+                    raise ValueError(
+                        'proposal_verifier may only return a rejection'
+                    )
                 state_trusted = False
                 state_evidence_id = None
                 state_observed_at = None
-            safety = self.safety_policy.evaluate(
-                safety_request,
-                raw_decision,
-                state_trusted=state_trusted,
-            )
+                safety = early_rejection
+            else:
+                if server_clarification is None and raw_decision.tool_name not in {
+                    'get_weather', 'set_weather_location',
+                }:
+                    (
+                        safety_request,
+                        state_trusted,
+                        state_evidence_id,
+                        state_observed_at,
+                    ) = self._fresh_safety_request(safety_request)
+                else:
+                    state_trusted = False
+                    state_evidence_id = None
+                    state_observed_at = None
+                safety = self.safety_policy.evaluate(
+                    safety_request,
+                    raw_decision,
+                    state_trusted=state_trusted,
+                )
         decision = raw_decision
         if not safety.allowed:
             decision = AgentDecision(
@@ -1138,14 +1211,15 @@ class AgentOrchestrator:
         elif raw_decision.type == 'tool_call' and raw_decision.tool_name in {
             'get_weather', 'set_weather_location',
         }:
-            provider_result = self._answer_weather(
-                model_request, memories, conversation_turns, conversation_summary, provider_result,
-                memory_context={
-                    'mode': 'answer_only',
-                    'enabled': memory_snapshot.state['enabled'],
-                    'response_settings': memory_snapshot.context['response_settings'],
-                },
-            )
+            with (trace.measure('tool_followup_ms') if trace is not None else nullcontext()):
+                provider_result = self._answer_weather(
+                    model_request, memories, conversation_turns, conversation_summary, provider_result,
+                    memory_context={
+                        'mode': 'answer_only',
+                        'enabled': memory_snapshot.state['enabled'],
+                        'response_settings': memory_snapshot.context['response_settings'],
+                    },
+                )
             decision = provider_result.decision
         elif raw_decision.type == 'tool_call' and safety.code == 'manager_request':
             # Persist the proposal as a request, never a model-invented completion.
@@ -1157,24 +1231,33 @@ class AgentOrchestrator:
         elif raw_decision.type == 'tool_call' and raw_decision.tool_name in PATROL_QUERY_TOOLS:
             from malbut_agent_server.patrol_query import answer_patrol
 
-            provider_result = answer_patrol(
-                self, model_request, memories, conversation_turns, conversation_summary,
-                provider_result, memory_context={
-                    'mode': 'answer_only', 'enabled': memory_snapshot.state['enabled'],
-                    'response_settings': memory_snapshot.context['response_settings'],
-                })
+            with (trace.measure('tool_followup_ms') if trace is not None else nullcontext()):
+                provider_result = answer_patrol(
+                    self, model_request, memories, conversation_turns, conversation_summary,
+                    provider_result, memory_context={
+                        'mode': 'answer_only', 'enabled': memory_snapshot.state['enabled'],
+                        'response_settings': memory_snapshot.context['response_settings'],
+                    })
             decision = provider_result.decision
         elif raw_decision.type == 'tool_call' and raw_decision.tool_name in HOMECAM_QUERY_TOOLS:
-            provider_result = self._answer_homecam(
-                model_request, memories, conversation_turns, conversation_summary,
-                provider_result,
-                memory_context={
-                    'mode': 'answer_only',
-                    'enabled': memory_snapshot.state['enabled'],
-                    'response_settings': memory_snapshot.context['response_settings'],
-                },
-            )
+            with (trace.measure('tool_followup_ms') if trace is not None else nullcontext()):
+                provider_result = self._answer_homecam(
+                    model_request, memories, conversation_turns, conversation_summary,
+                    provider_result,
+                    memory_context={
+                        'mode': 'answer_only',
+                        'enabled': memory_snapshot.state['enabled'],
+                        'response_settings': memory_snapshot.context['response_settings'],
+                    },
+                )
             decision = provider_result.decision
+        if trace is not None:
+            trace.attach_provider_result(provider_result)
+            trace.set_metadata(
+                decision_type=decision.type,
+                tool_name=raw_decision.tool_name or decision.tool_name,
+                safety_code=safety.code,
+            )
         issued_at = float(self._state_clock())
         expires_at = (
             issued_at + decision.expires_in_ms / 1000.0

@@ -4,6 +4,7 @@ import hmac
 import json
 import threading
 import time
+import urllib.parse
 from collections import deque
 from http import HTTPStatus
 from http.server import (
@@ -43,6 +44,10 @@ from malbut_agent_server.schemas import (
     validate_user_id,
 )
 from malbut_agent_server.story_http import StoryHTTPBoundary, StoryHTTPError
+from malbut_agent_server.turn_metrics import (
+    TurnWaterfallTrace,
+    turn_trace_scope,
+)
 
 if TYPE_CHECKING:
     from malbut_agent_server.text_turn import TextTurnService
@@ -210,7 +215,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         del format_string, args
 
     def do_GET(self) -> None:
-        """Serve health publicly and capabilities behind local auth."""
+        """Serve health publicly and diagnostics/capabilities behind local auth."""
         if self.path == '/healthz':
             self._send_json(
                 HTTPStatus.OK,
@@ -220,7 +225,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if self.path != '/v1/tools/capabilities':
+        parsed = urllib.parse.urlsplit(self.path)
+        is_capabilities = (
+            parsed.path == '/v1/tools/capabilities' and not parsed.query
+        )
+        is_turn_metrics = parsed.path == '/v1/observability/turns'
+        if not is_capabilities and not is_turn_metrics:
             self._send_error(
                 HTTPStatus.NOT_FOUND,
                 'not_found',
@@ -243,10 +253,47 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 'Request rate limit exceeded.',
             )
             return
+        if is_capabilities:
+            self._send_json(
+                HTTPStatus.OK,
+                self.server.tool_gateway.registry.to_dict(),
+            )
+            return
+        try:
+            limit = self._parse_observability_limit(parsed.query)
+        except ValidationError as error:
+            self._send_error(
+                HTTPStatus.BAD_REQUEST,
+                'validation_error',
+                str(error),
+            )
+            return
         self._send_json(
             HTTPStatus.OK,
-            self.server.tool_gateway.registry.to_dict(),
+            self.server.orchestrator.turn_metrics.snapshot(limit=limit),
         )
+
+    def _parse_observability_limit(self, query_string: str) -> int:
+        if not query_string:
+            return 20
+        params = urllib.parse.parse_qs(query_string, keep_blank_values=True)
+        unknown = set(params) - {'limit'}
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise ValidationError(f'unknown query parameters: {names}')
+        values = params.get('limit', [])
+        if len(values) != 1:
+            raise ValidationError('limit must be specified once')
+        try:
+            limit = int(values[0])
+        except ValueError as error:
+            raise ValidationError('limit must be a positive integer') from error
+        capacity = self.server.orchestrator.turn_metrics.capacity
+        if not 1 <= limit <= capacity:
+            raise ValidationError(
+                f'limit must be between 1 and {capacity}'
+            )
+        return limit
 
     def do_POST(self) -> None:
         """Route JSON-only mutation and query endpoints."""
@@ -489,7 +536,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     def _handle_agent(self, body: Dict[str, Any]) -> None:
         request = AgentRequest.from_dict(body)
         self._require_allowed_user(request.user_id)
-        result = self.server.orchestrator.handle(request)
+        trace = TurnWaterfallTrace(
+            channel='http',
+            request_id=request.request_id,
+            conversation_id=request.conversation_id,
+        )
+        try:
+            with turn_trace_scope(trace):
+                result = self.server.orchestrator.handle(request)
+        except Exception:
+            trace.finalize(self.server.orchestrator.turn_metrics, outcome='error')
+            raise
+        trace.finalize(self.server.orchestrator.turn_metrics)
         self._send_json(HTTPStatus.OK, result.to_dict())
 
     def _handle_text_turn(self, body: Dict[str, Any]) -> None:
