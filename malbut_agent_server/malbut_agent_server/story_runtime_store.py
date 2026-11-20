@@ -18,7 +18,7 @@ import unicodedata
 
 from .schemas import ValidationError
 from .story_memory import StoryEntry, StoryMemoryError, _entries, _id, _json, _text
-from .story_memory_sources import SourceRef, make_source_ref, read_source
+from .story_memory_sources import SourceRef, SourceText, make_source_ref, read_source
 from .memory_trace import record_trace
 
 
@@ -670,38 +670,65 @@ class StoryRuntimeStore:
         return guards
 
     def _resolve_uncached(self, conn, user, ref):
-        source = read_source(conn, user, ref)
-        if source is None:
-            return None
+        if not isinstance(ref, SourceRef):
+            raise ValueError('ref must be a SourceRef')
+        if ref.role not in ('user', 'assistant'):
+            raise ValueError('role must be user or assistant')
         identity = (ref.conversation_id, ref.session_instance_id, ref.generation, ref.turn_id)
-        row = conn.execute(
-            '''SELECT t.request_id FROM conversation_turns t
-               JOIN story_runtime_scope s ON s.user_id=t.user_id AND s.request_id=t.request_id
-               WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
-                 AND t.generation=? AND t.turn_id=? AND s.identity_json=?
-                 AND NOT EXISTS (SELECT 1 FROM story_runtime_exclusions
-                                 WHERE user_id=t.user_id AND message_key=? AND sha256=?)''',
-            (user, *identity, _json(identity), _message_key(ref), ref.sha256),
-        ).fetchone()
+        has_stamps, tombstones = self._fact_guards(conn, user)
+        if has_stamps:
+            row = conn.execute(
+                '''SELECT t.request_id, t.user_content, t.assistant_content,
+                          t.created_at, t.completed_at, m.dependencies_json
+                   FROM conversation_turns t
+                   JOIN story_runtime_scope s
+                     ON s.user_id=t.user_id AND s.request_id=t.request_id
+                   LEFT JOIN memory_turn_state m
+                     ON m.user_id=t.user_id AND m.request_id=t.request_id
+                   WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
+                     AND t.generation=? AND t.turn_id=? AND t.status='completed'
+                     AND s.identity_json=?
+                     AND NOT EXISTS (SELECT 1 FROM story_runtime_exclusions
+                                     WHERE user_id=t.user_id AND message_key=? AND sha256=?)''',
+                (user, *identity, _json(identity), _message_key(ref), ref.sha256),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                '''SELECT t.request_id, t.user_content, t.assistant_content,
+                          t.created_at, t.completed_at, NULL AS dependencies_json
+                   FROM conversation_turns t
+                   JOIN story_runtime_scope s
+                     ON s.user_id=t.user_id AND s.request_id=t.request_id
+                   WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
+                     AND t.generation=? AND t.turn_id=? AND t.status='completed'
+                     AND s.identity_json=?
+                     AND NOT EXISTS (SELECT 1 FROM story_runtime_exclusions
+                                     WHERE user_id=t.user_id AND message_key=? AND sha256=?)''',
+                (user, *identity, _json(identity), _message_key(ref), ref.sha256),
+            ).fetchone()
         if row is None:
+            return None
+        content = row['user_content'] if ref.role == 'user' else row['assistant_content']
+        if not isinstance(content, str) or not content:
+            return None
+        created_at, completed_at = row['created_at'], row['completed_at']
+        if any(not isinstance(value, (int, float)) or not math.isfinite(value)
+               for value in (created_at, completed_at)):
+            return None
+        if (ref.end > len(content)
+                or hashlib.sha256(content.encode('utf-8')).hexdigest() != ref.sha256):
             return None
         # Fact deletion can retain raw text. Revoke both its exact source and
         # turns stamped as depending on it. Story-only markers have no source.
         source_key = dict(conversation_id=ref.conversation_id,
                           session_instance_id=ref.session_instance_id, generation=ref.generation,
                           turn_id=ref.turn_id, request_id=row['request_id'])
-        has_stamps, tombstones = self._fact_guards(conn, user)
-        dependencies = set()
-        if has_stamps:
-            stamp = conn.execute('SELECT dependencies_json FROM memory_turn_state '
-                                 'WHERE user_id=? AND request_id=?',
-                                 (user, row['request_id'])).fetchone()
-            if stamp is not None:
-                dependencies = set(json.loads(stamp[0]))
+        dependencies = (set(json.loads(row['dependencies_json']))
+                        if row['dependencies_json'] is not None else set())
         if any(revoked and (revoked == source_key or memory_id in dependencies)
                for memory_id, revoked in tombstones):
             return None
-        return source
+        return SourceText(ref, content[ref.start:ref.end], float(created_at), float(completed_at))
 
     def _story_valid(self, conn, user, row):
         return bool(row['active'] and all(self._resolve(conn, user, ref) is not None
@@ -1103,9 +1130,14 @@ class StoryRuntimeStore:
         return (decision == ('tool_call', tool, 'manager_request')
                 or (tool == 'cancel_voice_mission' and decision == ('message', None, 'not_an_action')))
 
+    def db_version(self):
+        """Return a connection-local + cross-connection change token."""
+        with self._transaction() as conn:
+            return (conn.total_changes, conn.execute('PRAGMA data_version').fetchone()[0])
+
     def pending_story_ids(self, user, request_id=None):
         """Return possible extraction targets, or None when their scope is unknown."""
-        with self._transaction() as conn:
+        with self.validation_snapshot(read_only_scope=True), self._transaction() as conn:
             jobs = conn.execute(
                 "SELECT request_id,sources_json FROM story_runtime_jobs "
                 "WHERE user_id=? AND state IN ('queued','running')", (user,),
@@ -1133,7 +1165,7 @@ class StoryRuntimeStore:
             return {row['story_id'] for row in self._candidate_rows(
                 conn, user, ' '.join(texts), limit=None, extraction=True)}
 
-    def failed_story_ids(self, user, request_id=None):
+    def failed_story_ids(self, user, request_id=None, *, candidate_ids=None):
         """Quarantine affected stories, not every story owned by a failed job's user.
 
         Use the failed turn's user text, not its assistant reply or the broad
@@ -1144,7 +1176,7 @@ class StoryRuntimeStore:
         No failed extraction output is trusted, and this works on existing DBs.
         """
         user = _id(user, 'user_id')
-        with self._transaction() as conn:
+        with self.validation_snapshot(read_only_scope=True), self._transaction() as conn:
             jobs = [job for job in conn.execute(
                 "SELECT * FROM story_runtime_jobs WHERE user_id=? AND state='failed'", (user,))
                 if request_id is None or job['request_id'] != request_id]
@@ -1153,6 +1185,8 @@ class StoryRuntimeStore:
             stories = {row['story_id']: row for row in conn.execute(
                 'SELECT story_id, title, aliases_json, active, refs_json '
                 'FROM story_runtime_stories WHERE user_id=? AND active=1', (user,))}
+            fallback_targets = (stories if candidate_ids is None
+                                else [sid for sid in candidate_ids if sid in stories])
             validity = {}
 
             def valid_ids(identifiers):
@@ -1187,7 +1221,7 @@ class StoryRuntimeStore:
                 refs = [ref for ref in _refs(job['sources_json']) if ref.role == 'user']
                 sources = [self._resolve(conn, user, ref) for ref in refs]
                 if not sources or any(source is None for source in sources):
-                    blocked.update(valid_ids(stories))
+                    blocked.update(valid_ids(fallback_targets))
                     continue
                 text = ' '.join(source.text for source in sources)
                 direct = matching(text)
@@ -1215,7 +1249,7 @@ class StoryRuntimeStore:
                             contextual.update(valid_ids(json.loads(reply[0])))
                 blocked.update(contextual)
                 if not direct and not contextual:
-                    blocked.update(valid_ids(stories))
+                    blocked.update(valid_ids(fallback_targets))
             return blocked
 
     def candidates(self, user, query, limit=5, *, exclude_ids=()):
@@ -1223,7 +1257,7 @@ class StoryRuntimeStore:
         query = _text(query, 'query', 20000)
         if type(limit) is not int or not 1 <= limit <= 20:
             raise StoryMemoryError('invalid candidate limit')
-        with self._transaction() as conn:
+        with self.validation_snapshot(read_only_scope=True), self._transaction() as conn:
             if not self._policy(conn, user)['enabled']:
                 return []
             result = []
