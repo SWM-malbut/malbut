@@ -570,9 +570,22 @@ class DialogueWorker:
                     scene, image = None, None
                     if self._scene_source is not None:
                         try:
-                            prepare = getattr(self._scene_source, 'prepare_turn',
-                                              self._scene_source.snapshot)
-                            scene, image = prepare()
+                            from malbut_agent_server.speech_scene import needs_turn_image
+
+                            want_image = needs_turn_image(
+                                text,
+                                navigation_locations=locations or (),
+                                navigation_confirmation=(confirmation.proposal.location
+                                                         if confirmation is not None else ''),
+                                mapping_name_requested=mapping_question is not None,
+                            )
+                            if not want_image and hasattr(self._scene_source, 'prepare_text_turn'):
+                                scene, image = self._scene_source.prepare_text_turn()
+                            else:
+                                prepare = getattr(self._scene_source, 'prepare_turn', None)
+                                if prepare is None:
+                                    prepare = self._scene_source.snapshot
+                                scene, image = prepare()
                         except Exception:
                             scene = {'image': {'available': False}, 'map': None, 'pose': None}
                     opener = getattr(progress, 'opener_context', None)

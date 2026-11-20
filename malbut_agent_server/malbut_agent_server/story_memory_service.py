@@ -189,7 +189,7 @@ class StoryMemoryService:
 
     def validate_readset(self, user, policy_revision, readset, request_id=None):
         """Fence corrections to the claims actually read, not unrelated writes."""
-        with self.store.validation_snapshot():
+        with self.store.validation_snapshot(read_only_scope=True):
             return self._validate_readset(user, policy_revision, readset, request_id)
 
     def _validate_readset(self, user, policy_revision, readset, request_id=None):
@@ -212,7 +212,8 @@ class StoryMemoryService:
             pending = self.store.pending_story_ids(user, request_id)
             if pending is None or required.keys() & pending:
                 return False
-            if required.keys() & self.store.failed_story_ids(user, request_id=request_id):
+            if required.keys() & self.store.failed_story_ids(
+                    user, request_id=request_id, candidate_ids=required):
                 return False
             # list_stories reads valid source-backed stories in one snapshot.
             existing = {story['story_id']: {self._entry_hash(entry)
@@ -262,25 +263,28 @@ class StoryMemoryService:
         if self.store.recover(user):
             self._schedule(user)
             self._start()
-        stats = self.store.stats(user)
-        result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
-        result['failed'] = int(stats.get('failed', 0))
-        blocked = self.store.failed_story_ids(user) if result['failed'] else set()
-        if result['pending']:
-            pending = self.store.pending_story_ids(user)
-            if pending is None:
-                result['status'] = 'updating'
-                return result
-            blocked.update(pending)
-        stories = self.store.candidates(user, utterance, limit=3, exclude_ids=blocked)
-        # A short deictic follow-up may use the latest two turns to identify the
-        # topic. This affects local matching, never transmits an entire archive.
-        if not stories and re.search(r'그(?:거|것|때| 이야기)|이어서|계속|지난번', utterance):
-            recent = list(recent_turns)[-2:]
-            text = ' '.join(getattr(turn, 'user_content', '') for turn in recent)
-            if text:
-                stories = self.store.candidates(user, utterance + ' ' + text[-3000:],
-                                                limit=3, exclude_ids=blocked)
+        with self.store.validation_snapshot(read_only_scope=True):
+            stats = self.store.stats(user)
+            result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
+            result['failed'] = int(stats.get('failed', 0))
+            blocked_failed = self.store.failed_story_ids(user) if result['failed'] else set()
+            pending = set()
+            if result['pending']:
+                pending = self.store.pending_story_ids(user)
+                if pending is None:
+                    result['status'] = 'updating'
+                    return result
+            excluded = blocked_failed | pending
+            stories = self.store.candidates(user, utterance, limit=3, exclude_ids=excluded)
+            # A short deictic follow-up may use the latest two turns to identify the
+            # topic. This affects local matching, never transmits an entire archive.
+            if not stories and re.search(r'그(?:거|것|때| 이야기)|이어서|계속|지난번', utterance):
+                recent = list(recent_turns)[-2:]
+                text = ' '.join(getattr(turn, 'user_content', '') for turn in recent)
+                if text:
+                    stories = self.store.candidates(user, utterance + ' ' + text[-3000:],
+                                                    limit=3, exclude_ids=excluded)
+            v1 = self.store.db_version()
         result['stories'] = [self._context_story(story) for story in stories]
         result['readset'] = [
             {'story_id': story['story_id'],
@@ -306,23 +310,25 @@ class StoryMemoryService:
                     remaining -= len(text)
                     if remaining <= 0:
                         break
-        stats = self.store.stats(user)
-        result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
-        result['failed'] = int(stats.get('failed', 0))
-        blocked = self.store.failed_story_ids(user) if result['failed'] else set()
-        pending = self.store.pending_story_ids(user) if result['pending'] else set()
-        for field in ('stories', 'evidence', 'readset'):
-            result[field] = [item for item in result[field] if pending is not None
-                             and item['story_id'] not in pending and item['story_id'] not in blocked]
-        if result['pending'] and not result['stories']:
-            result['status'] = 'updating'
-        elif result['failed']:
-            result['blocked_story_count'] = len(blocked)
-            result['status'] = 'partial_update_failed' if result['stories'] else 'update_failed'
-        if not self.validate_readset(user, policy['revision'], result['readset']):
-            # Caller validates again immediately before/after external inference.
-            result['stories'], result['evidence'], result['readset'] = [], [], []
-        return result
+        with self.store.validation_snapshot(read_only_scope=True):
+            if self.store.db_version() != v1:
+                stats = self.store.stats(user)
+                result['pending'] = int(stats.get('queued', 0)) + int(stats.get('running', 0))
+                result['failed'] = int(stats.get('failed', 0))
+                blocked_failed = self.store.failed_story_ids(user) if result['failed'] else set()
+                pending = self.store.pending_story_ids(user) if result['pending'] else set()
+            for field in ('stories', 'evidence', 'readset'):
+                result[field] = [item for item in result[field] if pending is not None
+                                 and item['story_id'] not in pending and item['story_id'] not in blocked_failed]
+            if result['pending'] and not result['stories']:
+                result['status'] = 'updating'
+            elif result['failed']:
+                result['blocked_story_count'] = len(blocked_failed)
+                result['status'] = 'partial_update_failed' if result['stories'] else 'update_failed'
+            if not self.validate_readset(user, policy['revision'], result['readset']):
+                # Caller validates again immediately before/after external inference.
+                result['stories'], result['evidence'], result['readset'] = [], [], []
+            return result
 
     def forget(self, user, story_id, timeout=45):
         self._open()
@@ -385,6 +391,8 @@ class StoryMemoryService:
                 users = self.store.pending_users()
                 now = time.monotonic()
                 eligible = []
+                active_work = False
+                next_due = None
                 for user in users:
                     if now - self._last_recovery.get(user, -1e9) >= 1:
                         self.store.recover(user)
@@ -394,13 +402,22 @@ class StoryMemoryService:
                         if not stats.get('queued', 0) and not stats.get('running', 0):
                             self._due.pop(user, None)
                             continue
+                        active_work = True
                         first, last = self._due.setdefault(user, (now, now))
                         due = min(last + self.debounce_seconds, first + self.max_delay_seconds)
                         if user in self._forced or now >= due:
                             eligible.append((due, user))
+                        elif next_due is None or due < next_due:
+                            next_due = due
                 with self._condition:
                     if not eligible:
-                        self._condition.wait(0.2)
+                        if not active_work:
+                            wait_s = 1.0
+                        elif next_due is not None:
+                            wait_s = min(0.2, max(0.01, next_due - now))
+                        else:
+                            wait_s = 0.2
+                        self._condition.wait(wait_s)
                         continue
                 job = None
                 for _due, user in sorted(eligible):

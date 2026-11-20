@@ -911,52 +911,66 @@ class PersonalMemory:
         # ponytail: privacy checks scan this generation's raw lineage even after
         # compaction; batch/cache dependencies if long-session latency warrants.
         invalid = self.memory.invalidated_ids(user_id, connection=conn)
+        params = (
+            user_id,
+            token.conversation_id,
+            token.session_instance_id,
+            token.generation,
+            token.ordinal,
+        )
         rows = conn.execute(
-            '''SELECT t.* FROM conversation_turns t
-            WHERE user_id=? AND conversation_id=? AND session_instance_id=?
-            AND generation=? AND status='completed' AND ordinal<?
-            ORDER BY ordinal''',
-            (
-                user_id,
-                token.conversation_id,
-                token.session_instance_id,
-                token.generation,
-                token.ordinal,
-            ),
+            '''SELECT t.request_id, t.created_at, s.dependencies_json,
+                CASE WHEN s.request_id IS NULL THEN t.response_json ELSE NULL END
+                    AS legacy_response_json
+            FROM conversation_turns t
+            LEFT JOIN memory_turn_state s
+                ON s.user_id=t.user_id AND s.request_id=t.request_id
+            WHERE t.user_id=? AND t.conversation_id=? AND t.session_instance_id=?
+            AND t.generation=? AND t.status='completed' AND t.ordinal<?
+            ORDER BY t.ordinal''',
+            params,
         ).fetchall()
         deps = set()
         redacted = False
-        eligible = []
+        blocked_requests = set()
         legacy_dependencies = set()
         for row in rows:
-            item = self.conversations._turn_from_row(row)
-            stamp = conn.execute(
-                '''SELECT dependencies_json FROM memory_turn_state
-                WHERE user_id=? AND request_id=?''',
-                (user_id, item.request_id),
-            ).fetchone()
-            if stamp:
-                item_deps = set(json.loads(stamp[0]))
+            if row['dependencies_json'] is not None:
+                item_deps = set(json.loads(row['dependencies_json']))
             else:
+                legacy_raw = row['legacy_response_json']
+                legacy_response = json.loads(legacy_raw) if legacy_raw else {}
                 legacy_dependencies.update(
-                    self._legacy_dependencies(item.response)
+                    self._legacy_dependencies(legacy_response)
                 )
                 item_deps = set(legacy_dependencies)
             blocked = (
-                item.created_at <= state['legacy_cutoff']
+                row['created_at'] <= state['legacy_cutoff']
                 or bool(item_deps & invalid)
                 or (not state['enabled'] and bool(item_deps))
             )
             if blocked:
                 redacted = True
+                blocked_requests.add(row['request_id'])
+            else:
+                deps.update(item_deps)
+        if not redacted:
+            return history, summary, deps
+        full_rows = conn.execute(
+            '''SELECT t.* FROM conversation_turns t
+            WHERE user_id=? AND conversation_id=? AND session_instance_id=?
+            AND generation=? AND status='completed' AND ordinal<?
+            ORDER BY ordinal''',
+            params,
+        ).fetchall()
+        eligible = []
+        for row in full_rows:
+            item = self.conversations._turn_from_row(row)
+            if item.request_id in blocked_requests:
                 item = replace(
                     item, user_content='', assistant_content='', response={}
                 )
-            else:
-                deps.update(item_deps)
             eligible.append(usable_turn(item))
-        if not redacted:
-            return history, summary, deps
         if self.conversations.semantic_context:
             if summary is not None:
                 row = conn.execute(

@@ -6,17 +6,18 @@ import threading
 import time
 from dataclasses import replace
 
-from malbut_agent_server.semantic_summary import count_tokens
+from malbut_agent_server.semantic_summary import (
+    count_tokens, is_default_token_counter, serialize_for_token_count,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def conversation_tokens(summary, turns, utterance='', counter=count_tokens):
-    """Estimate the dialogue portion, including its serialized metadata."""
+def _dialogue_payload(summary, turns, utterance=''):
     from malbut_agent_server.prompting import _history_payload, _summary_payload
 
-    return counter({
+    return {
         'conversation_history_untrusted': _history_payload(
             turns, set(), preserve=True,
         ),
@@ -24,7 +25,12 @@ def conversation_tokens(summary, turns, utterance='', counter=count_tokens):
             summary, set(), preserve=True,
         ),
         'current_user_utterance': utterance,
-    })
+    }
+
+
+def conversation_tokens(summary, turns, utterance='', counter=count_tokens):
+    """Estimate the dialogue portion, including its serialized metadata."""
+    return counter(_dialogue_payload(summary, turns, utterance))
 
 
 class BackgroundContextCompactor:
@@ -54,10 +60,21 @@ class BackgroundContextCompactor:
                     or (self._thread and self._thread.is_alive())
                     or time.monotonic() < self._retry_after):
                 return False
-            estimate = conversation_tokens(
-                summary, history, utterance, self.counter,
-            )
-            if estimate < self.token_budget * 0.9 or len(history) < 2:
+            if len(history) < 2:
+                return False
+            threshold = self.token_budget * 0.9
+            if is_default_token_counter(self.counter):
+                encoded = serialize_for_token_count(
+                    _dialogue_payload(summary, history, utterance),
+                )
+                if len(encoded.encode('utf-8')) < threshold:
+                    return False
+                estimate = self.counter(encoded)
+            else:
+                estimate = conversation_tokens(
+                    summary, history, utterance, self.counter,
+                )
+            if estimate < threshold:
                 return False
             # Keep whole recent exchanges near 10% of the dialogue budget,
             # always retaining the last exchange even if it alone is larger.

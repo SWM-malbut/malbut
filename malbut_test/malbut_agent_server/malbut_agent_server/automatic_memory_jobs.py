@@ -87,6 +87,9 @@ class AutomaticMemoryJobs:
                 conn.execute('''CREATE INDEX IF NOT EXISTS
                     automatic_memory_jobs_pending_idx
                     ON automatic_memory_jobs (state, created_at)''')
+                conn.execute('''CREATE INDEX IF NOT EXISTS
+                    automatic_memory_jobs_state_expires_idx
+                    ON automatic_memory_jobs (state, expires_at)''')
                 columns = {
                     row['name'] for row in conn.execute(
                         'PRAGMA table_info(automatic_memory_jobs)',
@@ -241,12 +244,34 @@ class AutomaticMemoryJobs:
             ))
         return cursor.rowcount == 1
 
+    def next_wakeup_delay(self):
+        """Return seconds until a running lease expires, or None when idle."""
+        with self.conversations._lock:
+            conn = self.conversations._connection
+            if conn.in_transaction:
+                return None
+            now = self._now()
+            row = conn.execute(
+                "SELECT MIN(expires_at) FROM automatic_memory_jobs "
+                "WHERE state IN ('queued', 'running')"
+            ).fetchone()
+            if row is None or row[0] is None:
+                return None
+            return max(0.0, row[0] - now)
+
     def claim_next(self):
         """Claim one queued job; never take over an unexpired running job."""
         with self.conversations._lock:
             conn = self.conversations._connection
             if conn.in_transaction:
                 raise RuntimeError('claim_next requires no transaction')
+            now = self._now()
+            if conn.execute(
+                "SELECT 1 FROM automatic_memory_jobs "
+                "WHERE state='queued' OR (state='running' AND expires_at<=?) LIMIT 1",
+                (now,),
+            ).fetchone() is None:
+                return None
             conn.execute('BEGIN IMMEDIATE')
             try:
                 now = self._now()

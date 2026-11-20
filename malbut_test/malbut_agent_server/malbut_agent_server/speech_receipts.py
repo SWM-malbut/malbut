@@ -18,6 +18,10 @@ class SpeechReceiptStore:
             db_path = str(path)
         self._connection = sqlite3.connect(db_path, timeout=5.0)
         try:
+            if db_path != ':memory:':
+                self._connection.execute('PRAGMA journal_mode=WAL')
+                self._connection.execute('PRAGMA synchronous=NORMAL')
+            self._connection.execute('PRAGMA busy_timeout=5000')
             self._connection.execute(
                 '''CREATE TABLE IF NOT EXISTS speech_receipts (
                     utterance_id TEXT NOT NULL PRIMARY KEY,

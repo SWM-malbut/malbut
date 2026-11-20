@@ -267,3 +267,34 @@ def test_navigation_name_similarity_requires_one_close_source_candidate(
     utterance, location, locations, expected,
 ):
     assert matches_navigation_location(utterance, location, locations) is expected
+
+
+def test_warm_map_binding_reuses_decoded_raster_but_detects_edits(catalog, monkeypatch):
+    import os
+    import time
+    import cv2
+
+    path, map_path, image, document = catalog
+    past = time.time() - 10.0
+    os.utime(image, (past, past))
+    os.utime(map_path, (past, past))
+    targets = NavigationTargets()
+    # Warm cache once
+    initial = targets.scene(str(map_path))
+    decodes = []
+    original_imdecode = cv2.imdecode
+
+    def tracked_imdecode(*args, **kwargs):
+        decodes.append(1)
+        return original_imdecode(*args, **kwargs)
+
+    monkeypatch.setattr(cv2, 'imdecode', tracked_imdecode)
+    assert targets.names(str(map_path)) == ('거실',)
+    assert targets.resolve('거실', str(map_path)).location == '거실'
+    assert targets.scene(str(map_path)) == initial
+    assert decodes == []
+    # Modifying image bytes invalidates immediately, even at same byte length.
+    original_bytes = image.read_bytes()
+    image.write_bytes(original_bytes[:-1] + (b'\x01' if original_bytes[-1:] != b'\x01' else b'\x02'))
+    fails('map_mismatch', targets, '거실', str(map_path))
+    assert len(decodes) == 1

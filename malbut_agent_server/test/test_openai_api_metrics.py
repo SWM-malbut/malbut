@@ -167,3 +167,23 @@ def test_cache_optout_and_unsupported_models_keep_original_payload():
     provider.close()
     assert Settings.from_env({}).openai_api_timing_enabled
     assert not Settings.from_env({'MALBUT_AGENT_PROMPT_CACHE_ENABLED': 'false'}).openai_prompt_cache_enabled
+
+
+def test_prompt_cache_developer_prefix_stays_stable_across_story_toggle():
+    provider = OpenAIResponsesProvider(
+        'offline', 'gpt-5.6-luna', semantic_context=True, prompt_cache_enabled=True,
+    )
+    try:
+        without_story = provider.build_payload(
+            _request(), [], [], [], memory_context={'enabled': True, 'mode': 'answer_only'},
+        )
+        with_story = provider.build_payload(
+            _request(), [], [], [],
+            memory_context={
+                'enabled': True, 'mode': 'answer_only',
+                'story_memory_untrusted': {'stories': [{'story_id': 's1', 'title': '전시', 'current': []}]},
+            },
+        )
+        assert without_story['input'][0]['content'][0]['text'] == with_story['input'][0]['content'][0]['text']
+    finally:
+        provider.close()

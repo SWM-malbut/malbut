@@ -211,8 +211,11 @@ class SQLiteMemoryStore:
         with self._lock:
             if self.database_path != ':memory:':
                 self._connection.execute('PRAGMA journal_mode=WAL')
+                self._connection.execute('PRAGMA synchronous=NORMAL')
             self._connection.execute('PRAGMA foreign_keys=ON')
             self._connection.execute('PRAGMA busy_timeout=5000')
+            from malbut_agent_server.memory_trace import initialize_trace_schema
+            initialize_trace_schema(self._connection)
             initialize_memory_schema(self._connection)
             self._connection.commit()
 

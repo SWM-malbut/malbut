@@ -483,9 +483,15 @@ class OpenAIResponsesProvider(AgentProvider):
                 },
             },
         }
+        preserve = self._preserve_conversation(memory_mode)
+        use_prompt_cache = False
+        if preserve and self.prompt_cache_enabled:
+            from malbut_agent_server.providers.prompt_cache import supports_breakpoints
+
+            use_prompt_cache = supports_breakpoints(self.model)
         if memory_mode == 'answer_only':
             payload['instructions'] += '\n\n' + ANSWER_ONLY_INSTRUCTIONS
-            if (memory_context.get('story_memory_untrusted') or {}).get('stories'):
+            if use_prompt_cache or (memory_context.get('story_memory_untrusted') or {}).get('stories'):
                 payload['instructions'] += (
                     '\n저장된 이름이나 표식을 답할 때 이름 자체의 끝 글자를 보존하고 조사·어미를 이름에 붙이지 마세요. '
                     '기록이 이름을 따로 구분하지 않고 서술한 경우, 이름만 새로 잘라 따옴표를 붙이지 말고 '
@@ -530,7 +536,10 @@ class OpenAIResponsesProvider(AgentProvider):
         if (getattr(request, 'scene_context', None) is not None
                 and memory_mode not in {'automatic_extraction', 'source_review'}):
             payload['instructions'] += '\n\n' + SCENE_INSTRUCTIONS
-        if (memory_context or {}).get('pet_name_spelling') and memory_mode != 'answer_only':
+        if (memory_mode != 'answer_only'
+                and ((use_prompt_cache and memory_context is not None
+                      and memory_mode not in {'automatic_extraction', 'source_review'})
+                     or (memory_context or {}).get('pet_name_spelling'))):
             payload['instructions'] += (
                 '\n반려동물 이름 선언에서 evidence에는 원문을 그대로 두고, facts의 value에는 '
                 'pet_name_spelling.name_before_copula에 분리된 이름을 쓰세요. '
@@ -616,13 +625,11 @@ class OpenAIResponsesProvider(AgentProvider):
                 from malbut_agent_server.context_compaction import count_tokens
 
                 counter = count_tokens
-            input_tokens = counter(payload)
-            if type(input_tokens) is not int or input_tokens < 0:
-                raise ValueError(
-                    'token_counter must return a non-negative integer',
-                )
+            from malbut_agent_server.semantic_summary import exceeds_token_budget
+
             # Local estimates include schemas; reserve API envelope overhead too.
-            if input_tokens + 1024 + (512 if include_image else 0) > self.max_input_tokens:
+            budget_limit = self.max_input_tokens - 1024 - (512 if include_image else 0)
+            if exceeds_token_budget(payload, budget_limit, counter):
                 from malbut_agent_server.providers.reliable import (
                     ContextBudgetExceeded,
                 )

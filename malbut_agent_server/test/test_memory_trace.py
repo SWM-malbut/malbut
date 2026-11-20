@@ -167,3 +167,16 @@ def test_failure_trace_is_attributed_to_each_batch_member_without_raw_error(tmp_
             assert 'synthetic-private-error-body' not in json.dumps(rows)
     finally:
         runtime.close()
+
+
+def test_warm_record_trace_executes_no_ddl_statements(tmp_path):
+    store = SQLiteMemoryStore(str(tmp_path / 'warm-trace.sqlite3'))
+    statements = []
+    store._connection.set_trace_callback(statements.append)
+    try:
+        with store._transaction(write=True) as conn:
+            assert record_trace(conn, 'warm_event', 'alice', request_id='r1', data={'ok': True})
+    finally:
+        store._connection.set_trace_callback(None)
+        store.close()
+    assert not any(sql.strip().upper().startswith('CREATE ') for sql in statements)

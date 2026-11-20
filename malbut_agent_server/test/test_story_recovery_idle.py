@@ -59,3 +59,33 @@ def test_recovery_finds_same_connection_completion_after_idle(tmp_path):
         assert reclaimed is not None and reclaimed['claim'] != job['claim']
     finally:
         runtime.close()
+
+
+def test_incremental_recovery_and_idle_background_polling_avoid_write_locks(tmp_path):
+    from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
+
+    runtime = RuntimeHarness(tmp_path / 'memory.sqlite3')
+    try:
+        runtime.allow()
+        for _ in range(10):
+            token = runtime.complete()
+            assert runtime.store.enqueue_completed('alice', token.request_id)
+        while (job := runtime.store.claim('alice', batch_size=3)) is not None:
+            assert runtime.store.commit(job, [])
+        jobs = AutomaticMemoryJobs(runtime.conversations)
+        # Complete one new turn without enqueuing; recover should only enqueue that turn.
+        runtime.complete('새로 끝난 대화야.')
+        statements = []
+        runtime.conversations._connection.set_trace_callback(statements.append)
+        assert runtime.store.recover('alice') == 1
+        scope_lookups = [s for s in statements if 'FROM story_runtime_scope WHERE' in s]
+        assert len(scope_lookups) == 1
+        # Idle recover and idle automatic-memory claim must not open BEGIN IMMEDIATE.
+        idle_statements = []
+        runtime.conversations._connection.set_trace_callback(idle_statements.append)
+        assert runtime.store.recover('alice') == 0
+        assert jobs.claim_next() is None
+        runtime.conversations._connection.set_trace_callback(None)
+        assert not any('BEGIN IMMEDIATE' in s for s in idle_statements)
+    finally:
+        runtime.close()

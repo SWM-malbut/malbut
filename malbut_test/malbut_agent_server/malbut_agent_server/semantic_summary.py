@@ -1,7 +1,9 @@
 """OpenAI semantic summaries and local estimates of their token budget."""
 
+from collections import OrderedDict
 from functools import lru_cache
 import json
+from threading import Lock
 from typing import Any, Optional, Sequence, TYPE_CHECKING
 
 from malbut_agent_server.endpoint_policy import (
@@ -64,16 +66,109 @@ def _encoding() -> Any:
         return tiktoken.get_encoding('o200k_base')
 
 
+def serialize_for_token_count(value: Any) -> str:
+    """Serialize compact JSON using the exact format counted by ``count_tokens``."""
+    return value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, separators=(',', ':'), allow_nan=False,
+    )
+
+
 def count_tokens(value: Any) -> int:
     """Estimate text/compact JSON locally; exclude API protocol overhead.
 
     The fallback o200k encoding is an estimate, not provider-reported usage.
     No token-count API request is made.
     """
-    text = value if isinstance(value, str) else json.dumps(
-        value, ensure_ascii=False, separators=(',', ':'), allow_nan=False,
-    )
+    text = serialize_for_token_count(value)
     return len(_encoding().encode(text, disallowed_special=()))
+
+
+_DEFAULT_COUNT_TOKENS = count_tokens
+_TOKEN_CACHE_LOCK = Lock()
+_TOKEN_STR_CACHE: 'OrderedDict[str, int]' = OrderedDict()
+_TOKEN_CACHE_MAX_ENTRIES = 512
+_TOKEN_CACHE_MAX_CHARS = 65536
+
+
+def _cached_str_tokens(text: str) -> int:
+    if len(text) > _TOKEN_CACHE_MAX_CHARS:
+        return len(_encoding().encode(text, disallowed_special=()))
+    with _TOKEN_CACHE_LOCK:
+        cached = _TOKEN_STR_CACHE.get(text)
+        if cached is not None:
+            _TOKEN_STR_CACHE.move_to_end(text)
+            return cached
+    count = len(_encoding().encode(text, disallowed_special=()))
+    with _TOKEN_CACHE_LOCK:
+        _TOKEN_STR_CACHE[text] = count
+        _TOKEN_STR_CACHE.move_to_end(text)
+        while len(_TOKEN_STR_CACHE) > _TOKEN_CACHE_MAX_ENTRIES:
+            _TOKEN_STR_CACHE.popitem(last=False)
+    return count
+
+
+def _payload_token_upper_bound(payload: dict) -> int:
+    """Compute a strictly conservative upper bound reusing cached static sections."""
+    total = 16
+    for key, val in payload.items():
+        total += len(key.encode('utf-8')) + 8
+        if key in ('tools', 'text'):
+            total += _cached_str_tokens(serialize_for_token_count(val)) + 16
+        elif key == 'instructions' and isinstance(val, str):
+            total += _cached_str_tokens(json.dumps(val, ensure_ascii=False)) + 16
+        elif key == 'input' and isinstance(val, list):
+            for msg in val:
+                if not isinstance(msg, dict) or not isinstance(msg.get('content'), list):
+                    total += len(serialize_for_token_count(msg).encode('utf-8')) + 16
+                    continue
+                role = msg.get('role')
+                blocks = msg['content']
+                total += 24
+                last_index = len(blocks) - 1
+                for idx, block in enumerate(blocks):
+                    if (isinstance(block, dict) and block.get('type') == 'input_text'
+                            and isinstance(block.get('text'), str)):
+                        text = block['text']
+                        encoded_text = json.dumps(text, ensure_ascii=False)
+                        # Cache developer instructions and stable history blocks;
+                        # bound the volatile trailing user block cheaply by UTF-8 bytes.
+                        if role == 'developer' or idx < last_index:
+                            total += _cached_str_tokens(encoded_text) + 32
+                        else:
+                            total += len(encoded_text.encode('utf-8')) + 32
+                    else:
+                        total += len(serialize_for_token_count(block).encode('utf-8')) + 16
+        else:
+            total += len(serialize_for_token_count(val).encode('utf-8')) + 8
+    return total
+
+
+def is_default_token_counter(counter: Any) -> bool:
+    """Return True only when ``counter`` is the unpatched default BPE counter."""
+    return counter is _DEFAULT_COUNT_TOKENS and count_tokens is _DEFAULT_COUNT_TOKENS
+
+
+def exceeds_token_budget(value: Any, limit: float, counter: Any = None) -> bool:
+    """Check ``count_tokens(value) > limit`` using cached static-section bounds.
+
+    Byte-level BPE (o200k_base) emits at most one token per UTF-8 byte, so
+    a conservative upper bound below ``limit`` guarantees ``tokens <= limit``
+    without re-encoding static instructions/tools/history on every turn.
+    Whenever the upper bound exceeds ``limit``, the exact full encoding runs.
+    """
+    if counter is None:
+        counter = count_tokens
+    if is_default_token_counter(counter):
+        if isinstance(value, dict) and _payload_token_upper_bound(value) <= limit:
+            return False
+        text = serialize_for_token_count(value)
+        if len(text.encode('utf-8')) <= limit:
+            return False
+        return len(_encoding().encode(text, disallowed_special=())) > limit
+    tokens = counter(value)
+    if type(tokens) is not int or tokens < 0:
+        raise ValueError('token_counter must return a non-negative integer')
+    return tokens > limit
 
 
 class OpenAISemanticSummarizer:
