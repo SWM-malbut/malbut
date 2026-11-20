@@ -55,6 +55,7 @@ _ALLOWED_FLAGS = frozenset({
     'image_captured',
     'delivery_before_save',
     'prefetch_hit',
+    'offline_fallback',
 })
 
 _current_trace: ContextVar[Optional['TurnWaterfallTrace']] = ContextVar(

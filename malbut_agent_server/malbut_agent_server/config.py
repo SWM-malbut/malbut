@@ -1,5 +1,6 @@
 """Environment-based settings with explicit OpenAI safety bounds."""
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +71,27 @@ def _env_int(
     except ValueError as error:
         raise ValueError(f'{key} must be an integer') from error
     if result < minimum or result > maximum:
+        raise ValueError(
+            f'{key} must be between {minimum} and {maximum}'
+        )
+    return result
+
+
+def _env_float(
+    environ: Mapping[str, str],
+    key: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    value = environ.get(key)
+    if value is None:
+        return default
+    try:
+        result = float(value)
+    except ValueError as error:
+        raise ValueError(f'{key} must be a number') from error
+    if not math.isfinite(result) or result < minimum or result > maximum:
         raise ValueError(
             f'{key} must be between {minimum} and {maximum}'
         )
@@ -149,6 +171,8 @@ class Settings:
     openai_prompt_cache_enabled: bool = True
     turn_metrics_capacity: int = 100
     turn_metrics_snapshot_path: str = ''
+    offline_safety_fallback_enabled: bool = True
+    offline_stop_timeout_seconds: float = 3.0
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -421,6 +445,18 @@ class Settings:
                 'MALBUT_AGENT_TURN_METRICS_PATH',
                 '',
             ).strip(),
+            offline_safety_fallback_enabled=_env_bool(
+                source,
+                'MALBUT_AGENT_OFFLINE_SAFETY_FALLBACK_ENABLED',
+                default=True,
+            ),
+            offline_stop_timeout_seconds=_env_float(
+                source,
+                'MALBUT_AGENT_OFFLINE_STOP_TIMEOUT_SECONDS',
+                3.0,
+                0.5,
+                15.0,
+            ),
             auth_token=source.get(
                 'MALBUT_AGENT_AUTH_TOKEN',
                 '',
@@ -493,6 +529,19 @@ class Settings:
             raise ValueError('MALBUT_AGENT_TURN_METRICS_CAPACITY must be between 1 and 1000')
         if not isinstance(self.turn_metrics_snapshot_path, str):
             raise ValueError('MALBUT_AGENT_TURN_METRICS_PATH must be a string')
+        if type(self.offline_safety_fallback_enabled) is not bool:
+            raise ValueError(
+                'MALBUT_AGENT_OFFLINE_SAFETY_FALLBACK_ENABLED must be a boolean'
+            )
+        if (
+            isinstance(self.offline_stop_timeout_seconds, bool)
+            or not isinstance(self.offline_stop_timeout_seconds, (int, float))
+            or not math.isfinite(float(self.offline_stop_timeout_seconds))
+            or not (0.5 <= float(self.offline_stop_timeout_seconds) <= 15.0)
+        ):
+            raise ValueError(
+                'MALBUT_AGENT_OFFLINE_STOP_TIMEOUT_SECONDS must be between 0.5 and 15.0'
+            )
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
         if self.tool_mode not in SUPPORTED_TOOL_MODES:

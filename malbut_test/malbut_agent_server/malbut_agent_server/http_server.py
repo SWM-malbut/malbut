@@ -268,10 +268,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 str(error),
             )
             return
-        self._send_json(
-            HTTPStatus.OK,
-            self.server.orchestrator.turn_metrics.snapshot(limit=limit),
-        )
+        snapshot = self.server.orchestrator.turn_metrics.snapshot(limit=limit)
+        snapshot['provider_health'] = self.server.orchestrator.provider_health()
+        self._send_json(HTTPStatus.OK, snapshot)
 
     def _parse_observability_limit(self, query_string: str) -> int:
         if not query_string:

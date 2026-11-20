@@ -358,6 +358,10 @@ def build_orchestrator(
             turn_metrics=TurnWaterfallRecorder(
                 capacity=settings.turn_metrics_capacity,
             ),
+            offline_safety_fallback_enabled=(
+                settings.offline_safety_fallback_enabled
+            ),
+            offline_stop_timeout_seconds=settings.offline_stop_timeout_seconds,
         )
         runtime.speech_addressee = speech_addressee
         from malbut_agent_server.homecam_query import HomecamQueryClient, configure_homecam_queries
