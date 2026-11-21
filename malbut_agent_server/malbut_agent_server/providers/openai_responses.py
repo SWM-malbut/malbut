@@ -1,15 +1,17 @@
 """OpenAI Responses API adapter using only the Python standard library."""
 
+from collections import OrderedDict
 import copy
 import base64
 import hashlib
 import http.client
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
 import weakref
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional
 
 from malbut_agent_server.automatic_memory_extractor import (
@@ -37,9 +39,12 @@ from malbut_agent_server.prompting import (
     CONVERSATION_INSTRUCTIONS,
     GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS,
     GROUNDED_WEATHER_SYSTEM_INSTRUCTIONS,
+    HOMECAM_RESULT_INSTRUCTIONS,
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
+    PATROL_RESULT_INSTRUCTIONS,
     PreparedModelInput,
+    WEATHER_SYSTEM_INSTRUCTIONS,
     prepare_model_input,
     scene_instructions_for_context,
     system_instructions_for_tools,
@@ -63,7 +68,13 @@ from malbut_agent_server.schemas import (
     ProviderAPITiming,
 )
 from malbut_agent_server.weather import basic_forecast_day
-from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, ToolSpec
+from malbut_agent_server.tools import (
+    HOMECAM_QUERY_TOOLS,
+    PATROL_QUERY_TOOLS,
+    PERSONAL_RECALL_TOOL,
+    STORY_RECALL_TOOL,
+    ToolSpec,
+)
 from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS, mapping_name_binding
 
 
@@ -154,6 +165,93 @@ def _insufficient_quota(error: urllib.error.HTTPError) -> bool:
     )
 
 
+_TWO_PASS_READONLY_TOOLS = frozenset({
+    'get_weather',
+    'set_weather_location',
+    STORY_RECALL_TOOL.name,
+    PERSONAL_RECALL_TOOL.name,
+    *HOMECAM_QUERY_TOOLS,
+    *PATROL_QUERY_TOOLS,
+})
+_TWO_PASS_FOLLOWUP_DIRECTIVE = (
+    '이전 단계의 조회가 완료되었습니다. 이제 도구를 호출하지 말고(tool_choice=none) '
+    '아래 첨부된 조회 결과와 대화 맥락만 근거로 최종 한국어 답변만 반환하세요. '
+    '추가 실행이나 기억 저장을 시도하지 않습니다.'
+)
+_TWO_PASS_PREFIX_CACHE_MAX = 16
+
+
+@dataclass(frozen=True)
+class _TwoPassPrefix:
+    """Content-free Call-1 static prefix metadata reusable by a tool_choice=none Call-2."""
+
+    tools: tuple[Dict[str, Any], ...]
+    developer_instructions: str
+    text_format: Dict[str, Any]
+    prompt_cache_key: str
+    model: str
+    include_weather: bool
+    has_homecam_rules: bool
+    has_patrol_rules: bool
+
+
+class PooledOpenAITransport:
+    """Keep-Alive pooled JSON transport for auxiliary official OpenAI clients."""
+
+    def __init__(self, *, max_connections: int = 2) -> None:
+        self._http_pool = HTTPConnectionPool(max_connections=max_connections)
+        self._finalizer = weakref.finalize(self, self._http_pool.close)
+
+    @property
+    def pool(self) -> HTTPConnectionPool:
+        return self._http_pool
+
+    def close(self) -> None:
+        """Close idle connections and reject subsequent requests."""
+        self._finalizer()
+
+    def __call__(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout_seconds: float,
+    ) -> Dict[str, Any]:
+        try:
+            self._http_pool.check_open()
+            if (OpenAIResponsesProvider._urllib_transport is not _DEFAULT_URLLIB_TRANSPORT
+                    or uses_environment_proxy(url)):
+                return OpenAIResponsesProvider._urllib_transport(
+                    url, headers, payload, timeout_seconds,
+                )
+            body = json.dumps(
+                payload, ensure_ascii=True, separators=(',', ':'),
+            ).encode('utf-8')
+            response_body = self._http_pool.post(
+                url, headers, body, timeout_seconds, MAX_PROVIDER_RESPONSE_BYTES,
+            )
+        except urllib.error.HTTPError as error:
+            try:
+                if error.code == 429 and _insufficient_quota(error):
+                    raise NormalizedProviderError(
+                        ProviderFailureCode.QUOTA,
+                    ) from error
+                raise ProviderError(
+                    f'OpenAI request failed with HTTP status {error.code}',
+                ) from error
+            finally:
+                error.close()
+        except http.client.HTTPException as error:
+            raise ProviderError(
+                'OpenAI request failed due to a network error',
+            ) from urllib.error.URLError(error)
+        except OSError as error:
+            raise ProviderError(
+                'OpenAI request failed due to a network error',
+            ) from error
+        return OpenAIResponsesProvider._decode_response_body(response_body)
+
+
 class OpenAIResponsesProvider(AgentProvider):
     """Provider that maps Responses API output into an AgentDecision."""
 
@@ -240,6 +338,71 @@ class OpenAIResponsesProvider(AgentProvider):
             if self._http_pool is not None else None
         )
         self.transport = transport if transport is not None else self._pooled_transport
+        self._prefix_lock = threading.Lock()
+        self._two_pass_prefixes: 'OrderedDict[tuple[str, str], _TwoPassPrefix]' = OrderedDict()
+
+    def _record_two_pass_prefix(
+        self,
+        user_id: str,
+        request_id: str,
+        payload: Dict[str, Any],
+        *,
+        include_weather: bool,
+        has_homecam_rules: bool,
+        has_patrol_rules: bool,
+    ) -> None:
+        """Cache content-free Call-1 static prefix for an immediate Call-2 hit."""
+        tools_payload = payload.get('tools')
+        prompt_cache_key = payload.get('prompt_cache_key')
+        input_messages = payload.get('input')
+        text_section = payload.get('text')
+        if (not isinstance(tools_payload, list) or not tools_payload
+                or not isinstance(prompt_cache_key, str)
+                or not isinstance(input_messages, list) or not input_messages
+                or not isinstance(text_section, dict)):
+            return
+        text_format = text_section.get('format')
+        if (not isinstance(text_format, dict)
+                or text_format.get('name') != 'malbut_text_decision'):
+            return
+        schema_props = (text_format.get('schema') or {}).get('properties') or {}
+        if 'memory_proposal' in schema_props or 'clarification_for' in schema_props:
+            return
+        dev_msg = input_messages[0]
+        if (not isinstance(dev_msg, dict) or dev_msg.get('role') != 'developer'
+                or not isinstance(dev_msg.get('content'), list)
+                or not dev_msg['content']):
+            return
+        dev_text = dev_msg['content'][0].get('text')
+        if not isinstance(dev_text, str):
+            return
+        prefix = _TwoPassPrefix(
+            tools=tuple(copy.deepcopy(tools_payload)),
+            developer_instructions=dev_text,
+            text_format=copy.deepcopy(text_section),
+            prompt_cache_key=prompt_cache_key,
+            model=self.model,
+            include_weather=include_weather,
+            has_homecam_rules=has_homecam_rules,
+            has_patrol_rules=has_patrol_rules,
+        )
+        key = (user_id, request_id)
+        with self._prefix_lock:
+            self._two_pass_prefixes[key] = prefix
+            self._two_pass_prefixes.move_to_end(key)
+            while len(self._two_pass_prefixes) > _TWO_PASS_PREFIX_CACHE_MAX:
+                self._two_pass_prefixes.popitem(last=False)
+
+    def _pop_two_pass_prefix(
+        self,
+        user_id: str,
+        request_id: str,
+    ) -> Optional[_TwoPassPrefix]:
+        with self._prefix_lock:
+            prefix = self._two_pass_prefixes.pop((user_id, request_id), None)
+        if prefix is None or prefix.model != self.model:
+            return None
+        return prefix
 
     def close(self) -> None:
         """Release owned idle connections; injected transports stay caller-owned."""
@@ -294,9 +457,18 @@ class OpenAIResponsesProvider(AgentProvider):
                 ProviderFailureCode.MISSING_CREDENTIALS
             )
         memory_mode = memory_context.get('mode') if memory_context else None
+        two_pass_prefix = None
+        if (not tools and not request.available_tools
+                and memory_mode == 'answer_only'
+                and self.prompt_cache_enabled
+                and self._preserve_conversation(memory_mode)):
+            two_pass_prefix = self._pop_two_pass_prefix(
+                request.user_id, request.request_id,
+            )
         prepared, payload, forecast_selection = self._prepare_payload(
             request, memories, conversation_turns, tools, conversation_summary,
             memory_context=memory_context, weather_context=weather_context,
+            two_pass_prefix=two_pass_prefix,
         )
         headers = {
             'Authorization': f'Bearer {api_key}',
@@ -362,6 +534,8 @@ class OpenAIResponsesProvider(AgentProvider):
                 mapping_clarification='clarification_for' in payload['text']['format']['schema']['properties'],
             )
             decision.validate()
+            if payload.get('tool_choice') == 'none' and decision.type == 'tool_call':
+                raise ProviderError('provider returned a tool call when tool_choice was none')
             if forecast_selection and decision.type == 'tool_call' and decision.tool_name != 'get_weather':
                 raise ProviderError('forecast selection returned an unoffered tool')
         except (ProviderError, ValueError, TypeError) as error:
@@ -372,6 +546,25 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ProviderError(
                 'OpenAI returned an invalid normalized decision'
             ) from error
+        if (not forecast_selection and decision.type == 'tool_call'
+                and decision.tool_name in _TWO_PASS_READONLY_TOOLS
+                and self.prompt_cache_enabled
+                and self._preserve_conversation(memory_mode)):
+            self._record_two_pass_prefix(
+                request.user_id,
+                request.request_id,
+                payload,
+                include_weather=(
+                    not (memory_mode == 'answer_only' and not tools)
+                    or weather_context is not None
+                    or any(
+                        tool.name in {'get_weather', 'set_weather_location'}
+                        for tool in tools
+                    )
+                ),
+                has_homecam_rules='homecam_query_result_untrusted' in (memory_context or {}),
+                has_patrol_rules='patrol_observations_untrusted' in (memory_context or {}),
+            )
         if prefetch is not None:
             prefetch.approve_provider(decision)
         return ProviderResult(
@@ -415,7 +608,8 @@ class OpenAIResponsesProvider(AgentProvider):
         return payload
 
     def _prepare_payload(self, request, memories, conversation_turns, tools, conversation_summary,
-                         *, prepared=None, memory_context=None, weather_context=None):
+                         *, prepared=None, memory_context=None, weather_context=None,
+                         two_pass_prefix=None):
         memory_mode = memory_context.get('mode') if memory_context else None
         weather_tool = None
         if (isinstance(request, SpeechAgentRequest) and weather_context is None
@@ -502,6 +696,16 @@ class OpenAIResponsesProvider(AgentProvider):
             and not include_image
             and not (memory_context or {}).get('pending_question')
         )
+        grounded_patrol_answer = (
+            isinstance(request, SpeechAgentRequest)
+            and tool_free_answer
+            and not request.available_tools
+            and patrol_result
+            and not homecam_result
+            and weather_context is None
+            and not include_image
+            and not (memory_context or {}).get('pending_question')
+        )
         include_weather = (
             not tool_free_answer
             or weather_context is not None
@@ -521,6 +725,16 @@ class OpenAIResponsesProvider(AgentProvider):
                     tools,
                     homecam_result=True,
                     patrol_result=False,
+                    include_weather=False,
+                ) + '\n\n'
+                + GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS
+            )
+        elif grounded_patrol_answer:
+            base_instructions = (
+                system_instructions_for_tools(
+                    tools,
+                    homecam_result=False,
+                    patrol_result=True,
                     include_weather=False,
                 ) + '\n\n'
                 + GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS
@@ -633,6 +847,7 @@ class OpenAIResponsesProvider(AgentProvider):
             )
         if self.include_reasoning:
             homecam = (memory_context or {}).get('homecam_query_result_untrusted')
+            patrol_obs = (memory_context or {}).get('patrol_observations_untrusted')
             grounded_homecam_effort = (
                 self.semantic_context and not self.is_fallback and self.model == 'gpt-5.6-luna'
                 and self.reasoning_effort == 'low' and isinstance(request, SpeechAgentRequest)
@@ -650,19 +865,36 @@ class OpenAIResponsesProvider(AgentProvider):
                     'location_required', 'location_ambiguous', 'location_not_found',
                 }
             )
+            grounded_patrol_effort = (
+                grounded_patrol_answer
+                and self.semantic_context and not self.is_fallback
+                and self.model == 'gpt-5.6-luna'
+                and self.reasoning_effort == 'low'
+                and isinstance(patrol_obs, dict)
+            )
             payload['reasoning'] = {
                 'effort': (
                     'none'
-                    if (grounded_homecam_effort or grounded_weather_effort)
+                    if (grounded_homecam_effort or grounded_weather_effort or grounded_patrol_effort)
                     else self.reasoning_effort
                 ),
                 'context': 'current_turn',
             }
+        reuse_two_pass = (
+            two_pass_prefix is not None
+            and tool_free_answer
+            and use_prompt_cache
+            and not request.available_tools
+            and weather_tool is None
+        )
         if tools:
             payload['tools'] = [
                 tool.to_openai_dict()
                 for tool in tools
             ]
+        elif reuse_two_pass:
+            payload['tools'] = copy.deepcopy(list(two_pass_prefix.tools))
+            payload['tool_choice'] = 'none'
         else:
             payload.pop('tool_choice')
         if (isinstance(request, SpeechAgentRequest)
@@ -695,31 +927,48 @@ class OpenAIResponsesProvider(AgentProvider):
             if self.include_reasoning and self.model.startswith('gpt-5.6'):
                 payload['reasoning']['effort'] = 'none'
         if self._preserve_conversation(memory_mode):
-            # Steer generation; character clipping can drop conditions or
-            # force a syntactically valid response to end mid-sentence.
-            if self.model.startswith('gpt-5'):
-                payload['text']['verbosity'] = 'low'
-            schema = copy.deepcopy(payload['text']['format']['schema'])
-            schema['properties']['message'].update({
-                'description': (
-                    '이번에 말할 완결된 한국어 응답 한 구간. 자세한 설명은 하나의 '
-                    '핵심 개념만 설명 두세 문장, 150~250자로 설명한 뒤 다음 개념을 계속 들을지 묻는다. '
-                    '요청된 필수 조건과 안전 주의사항은 빠뜨리지 않는다.'
-                ),
-            })
-            if (memory_context or {}).get('response_settings', {}).get('response_mode') == 'listen_only':
-                schema['properties']['message']['description'] += (
-                    ' 듣기 모드에서는 현재 경험·감정에 직접 반응한다. 이전 답변에서 '
-                    '이미 듣겠다고 했으면 그 약속이나 편하게 말하라는 안내를 반복하지 않는다.'
-                )
-            payload['text']['format']['schema'] = schema
+            followup_developer: Optional[str] = None
+            if reuse_two_pass:
+                payload['instructions'] = two_pass_prefix.developer_instructions
+                payload['text'] = copy.deepcopy(two_pass_prefix.text_format)
+                delta_parts = [_TWO_PASS_FOLLOWUP_DIRECTIVE]
+                if homecam_result and not two_pass_prefix.has_homecam_rules:
+                    delta_parts.append(HOMECAM_RESULT_INSTRUCTIONS)
+                if patrol_result and not two_pass_prefix.has_patrol_rules:
+                    delta_parts.append(PATROL_RESULT_INSTRUCTIONS)
+                if weather_context is not None and not two_pass_prefix.include_weather:
+                    delta_parts.append(WEATHER_SYSTEM_INSTRUCTIONS)
+                followup_developer = '\n\n'.join(delta_parts)
+            else:
+                # Steer generation; character clipping can drop conditions or
+                # force a syntactically valid response to end mid-sentence.
+                if self.model.startswith('gpt-5'):
+                    payload['text']['verbosity'] = 'low'
+                schema = copy.deepcopy(payload['text']['format']['schema'])
+                schema['properties']['message'].update({
+                    'description': (
+                        '이번에 말할 완결된 한국어 응답 한 구간. 자세한 설명은 하나의 '
+                        '핵심 개념만 설명 두세 문장, 150~250자로 설명한 뒤 다음 개념을 계속 들을지 묻는다. '
+                        '요청된 필수 조건과 안전 주의사항은 빠뜨리지 않는다.'
+                    ),
+                })
+                if (memory_context or {}).get('response_settings', {}).get('response_mode') == 'listen_only':
+                    schema['properties']['message']['description'] += (
+                        ' 듣기 모드에서는 현재 경험·감정에 직접 반응한다. 이전 답변에서 '
+                        '이미 듣겠다고 했으면 그 약속이나 편하게 말하라는 안내를 반복하지 않는다.'
+                    )
+                payload['text']['format']['schema'] = schema
             payload['truncation'] = 'disabled'
             if self.prompt_cache_enabled:
                 from malbut_agent_server.providers.prompt_cache import (
                     arrange_cached_input, supports_breakpoints,
                 )
                 if supports_breakpoints(self.model):
-                    arrange_cached_input(payload, request.user_id)
+                    arrange_cached_input(
+                        payload,
+                        request.user_id,
+                        followup_developer_instructions=followup_developer,
+                    )
             counter = self.token_counter
             if counter is None:
                 from malbut_agent_server.context_compaction import count_tokens
@@ -730,6 +979,14 @@ class OpenAIResponsesProvider(AgentProvider):
             # Local estimates include schemas; reserve API envelope overhead too.
             budget_limit = self.max_input_tokens - 1024 - (512 if include_image else 0)
             if exceeds_token_budget(payload, budget_limit, counter):
+                if reuse_two_pass:
+                    # Retaining Call-1 tool schemas for cache reuse must never
+                    # trigger a false budget failure; fall back to compact Call-2.
+                    return self._prepare_payload(
+                        request, memories, conversation_turns, tools, conversation_summary,
+                        prepared=prepared_context, memory_context=memory_context,
+                        weather_context=weather_context, two_pass_prefix=None,
+                    )
                 from malbut_agent_server.providers.reliable import (
                     ContextBudgetExceeded,
                 )
@@ -743,7 +1000,7 @@ class OpenAIResponsesProvider(AgentProvider):
             return self._prepare_payload(
                 replace(request, turn_image=None), memories, conversation_turns,
                 tools, conversation_summary, memory_context=memory_context,
-                weather_context=weather_context,
+                weather_context=weather_context, two_pass_prefix=two_pass_prefix,
             )
         if include_image:
             # Count only the text/schema above, not the Base64 representation.
@@ -752,7 +1009,10 @@ class OpenAIResponsesProvider(AgentProvider):
                 payload['input'] = [{'role': 'user', 'content': [
                     {'type': 'input_text', 'text': payload['input']},
                 ]}]
-            payload['input'][-1]['content'].append(
+            user_message = next(
+                msg for msg in reversed(payload['input']) if msg.get('role') == 'user'
+            )
+            user_message['content'].append(
                 {'type': 'input_image', 'detail': 'low',
                  'image_url': 'data:image/jpeg;base64,' + base64.b64encode(image.jpeg).decode('ascii')},
             )
@@ -1095,3 +1355,6 @@ class OpenAIResponsesProvider(AgentProvider):
         if not isinstance(decoded, dict):
             raise ProviderError('OpenAI response must be an object')
         return decoded
+
+
+_DEFAULT_URLLIB_TRANSPORT = OpenAIResponsesProvider._urllib_transport

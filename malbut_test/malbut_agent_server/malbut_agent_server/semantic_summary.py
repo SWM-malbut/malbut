@@ -185,7 +185,7 @@ class OpenAISemanticSummarizer:
     ) -> None:
         # Lazy import avoids a cycle with the provider's token accounting.
         from malbut_agent_server.providers.openai_responses import (
-            OpenAIResponsesProvider, REASONING_EFFORTS,
+            PooledOpenAITransport, REASONING_EFFORTS,
         )
 
         if isinstance(api_key, str):
@@ -213,9 +213,17 @@ class OpenAISemanticSummarizer:
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
         self.reasoning_effort = reasoning_effort.strip().lower()
-        if transport is None:
-            transport = OpenAIResponsesProvider._urllib_transport
-        self.transport = transport
+        self._owned_transport: Optional[PooledOpenAITransport] = (
+            PooledOpenAITransport() if transport is None else None
+        )
+        self.transport = (
+            self._owned_transport if self._owned_transport is not None else transport
+        )
+
+    def close(self) -> None:
+        """Release owned idle connections; injected transports stay caller-owned."""
+        if self._owned_transport is not None:
+            self._owned_transport.close()
 
     @property
     def _api_key(self) -> str:

@@ -9,7 +9,8 @@ import threading
 from malbut_agent_server.endpoint_policy import is_official_openai_base_url
 from malbut_agent_server.patrol_memory import read_capture, read_capture_bundle, validate_analysis
 from malbut_agent_server.patrol_spatial import localize_objects
-from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.providers.base import close_providers
+from malbut_agent_server.providers.openai_responses import PooledOpenAITransport
 from malbut_agent_server.service_keys import key_value
 
 
@@ -68,7 +69,15 @@ class OpenAIPatrolObserver:
             raise ValueError('patrol analysis requires the configured official OpenAI endpoint')
         self.key, self.model = key, model
         self.base_url = base_url.rstrip('/')
-        self.transport = transport or OpenAIResponsesProvider._urllib_transport
+        self._owned_transport = PooledOpenAITransport() if transport is None else None
+        self.transport = (
+            self._owned_transport if self._owned_transport is not None else transport
+        )
+
+    def close(self):
+        """Release owned idle connections; injected transports stay caller-owned."""
+        if self._owned_transport is not None:
+            self._owned_transport.close()
 
     def available(self):
         return bool(key_value(self.key))
@@ -260,3 +269,4 @@ class PatrolObservationWorker:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=95.0)
+        close_providers(self.observer)

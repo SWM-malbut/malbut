@@ -241,6 +241,7 @@ class AgentOrchestrator:
                 getattr(self.automatic_memory_extractor, 'provider', None),
                 getattr(getattr(self, 'speech_addressee', None), 'provider', None),
                 getattr(self, 'companion_provider', None),
+                getattr(self, 'homecam_executor', None),
             )
         finally:
             try:
