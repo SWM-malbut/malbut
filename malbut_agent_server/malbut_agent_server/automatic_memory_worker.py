@@ -56,16 +56,8 @@ class AutomaticMemoryWorker:
 
     def _transaction(self, callback):
         runtime = self.runtime
-        with runtime._handle_lock, runtime.conversation_store._lock:
-            conn = runtime.conversation_store._connection
-            conn.execute('BEGIN IMMEDIATE')
-            try:
-                result = callback(conn)
-                conn.commit()
-                return result
-            except Exception:
-                conn.rollback()
-                raise
+        with runtime._handle_lock, runtime.conversation_store.transaction() as conn:
+            return callback(conn)
 
     def _admit(self, conn, job):
         if self.closed or not self.jobs.valid(conn, job):

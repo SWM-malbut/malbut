@@ -1,60 +1,38 @@
 """Conversation, memory, provider, and deterministic safety orchestration."""
 
 import copy
-import hashlib
-import json
 import math
-import re
 import threading
 import time
 import uuid
 from concurrent.futures import CancelledError
 from contextlib import nullcontext
-from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Dict, List, Sequence
+from dataclasses import replace
+from typing import Any, Callable, Dict, Sequence
 
+from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
+from malbut_agent_server.automatic_memory_policy import (
+    automatic_candidate,
+    automatic_deferred,
+    automatic_request,
+)
+from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
 from malbut_agent_server.conversation import (
     BeginTurnToken,
     ConversationSummary,
     ConversationTurn,
     SQLiteConversationStore,
 )
-from malbut_agent_server.conversation_progress import (
-    announce_function_start, claim_retry, conversation_request,
-    SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
-)
-from malbut_agent_server.conversation_preferences import CHOICES, DEFAULTS
 from malbut_agent_server.conversation_ownership import (
-    owned_conversation_request, recover_abandoned_turns,
+    owned_conversation_request,
+    recover_abandoned_turns,
 )
+from malbut_agent_server.conversation_progress import conversation_request
 from malbut_agent_server.gateway import (
     CapabilityRegistry,
     production_registry,
 )
-from malbut_agent_server.homecam_query import record_existence_reply
 from malbut_agent_server.memory import SQLiteMemoryStore
-from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
-from malbut_agent_server.automatic_memory_policy import (
-    automatic_candidate, automatic_deferred, automatic_request,
-)
-from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
-from malbut_agent_server.personal_memory import (
-    PersonalMemory, direct_source, explicit_memory_management, local_intent,
-    negated_management, requested_operation, reply as memory_reply,
-)
-from malbut_agent_server.providers.base import (
-    AgentProvider,
-    ProviderError,
-    accepts_memory_context,
-    accepts_weather_context,
-)
-from malbut_agent_server.prompting import bounded_weather_context
-from malbut_agent_server.weather import current_temperature_reply, daily_forecast_reply
-from malbut_agent_server.robot_state_source import RobotStateSource
-from malbut_agent_server.safety import SafetyPolicy, SafetyResult
-from malbut_agent_server.tools import (
-    HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS, validate_tool_arguments,
-)
 from malbut_agent_server.offline_fallback import (
     DEFAULT_OFFLINE_STOP_TIMEOUT_SECONDS,
     is_provider_outage_result,
@@ -63,411 +41,61 @@ from malbut_agent_server.offline_fallback import (
     provider_circuit_summary,
     resolve_offline_speech_fallback,
 )
+from malbut_agent_server.orchestration import (
+    ExpiredDecisionError,
+    MemoryChangedError,
+    OrchestrationResult,
+    ServerClarification,
+    StoryReplyBinding,
+    admit_memory_turn,
+    answer_homecam,
+    answer_weather,
+    assert_reply_fresh,
+    assert_story_binding,
+    can_deliver_before_save,
+    effective_request as resolve_effective_request,
+    fresh_safety_request,
+    request_fingerprint,
+    thanks_after_answer,
+)
+from malbut_agent_server.personal_memory import (
+    PersonalMemory,
+    explicit_memory_management,
+    reply as memory_reply,
+)
+from malbut_agent_server.providers.base import (
+    AgentProvider,
+    ProviderError,
+    accepts_memory_context,
+    accepts_weather_context,
+)
+from malbut_agent_server.robot_state_source import RobotStateSource
+from malbut_agent_server.safety import SafetyPolicy, SafetyResult
+from malbut_agent_server.schemas import (
+    AgentDecision,
+    AgentRequest,
+    ProviderResult,
+    RobotState,
+    SpeechAgentRequest,
+    ValidationError,
+    copy_request,
+)
+from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS
 from malbut_agent_server.turn_metrics import (
     TurnWaterfallRecorder,
     TurnWaterfallTrace,
     current_turn_trace,
     turn_trace_scope,
 )
-from malbut_agent_server.schemas import (
-    copy_request,
-    AgentDecision,
-    AgentRequest,
-    ContextMetrics,
-    ProviderResult,
-    ProviderUsage,
-    RobotState,
-    SpeechAgentRequest,
-    ValidationError,
-)
 
-
-class ExpiredDecisionError(ValidationError):
-    """Raised when an action request ID refers to an expired decision."""
-
-
-class MemoryChangedError(ValidationError):
-    """Raised when memory changes while a model request is in flight."""
-
-
-@dataclass(frozen=True)
-class StoryReplyBinding:
-    """Immutable, content-free provenance for a persisted conversational reply."""
-
-    policy_revision: int
-    readset: tuple
-
-    @classmethod
-    def from_dict(cls, value):
-        if (type(value) is not dict or set(value) != {'policy_revision', 'readset'}
-                or type(value['policy_revision']) is not int or value['policy_revision'] < 0
-                or type(value['readset']) is not list or len(value['readset']) > 20):
-            raise ValueError('invalid story binding')
-        entries, seen = [], set()
-        for item in value['readset']:
-            if type(item) is not dict or set(item) != {'story_id', 'entry_hashes'}:
-                raise ValueError('invalid story readset')
-            identifier, hashes = item['story_id'], item['entry_hashes']
-            if (type(identifier) is not str or not identifier or len(identifier) > 256
-                    or identifier != identifier.strip() or identifier in seen
-                    or any(ord(char) < 32 or ord(char) == 127 for char in identifier)
-                    or type(hashes) is not list or not 1 <= len(hashes) <= 64
-                    or any(type(digest) is not str or re.fullmatch(r'[0-9a-f]{64}', digest) is None
-                           for digest in hashes) or len(set(hashes)) != len(hashes)):
-                raise ValueError('invalid story readset')
-            seen.add(identifier)
-            entries.append((identifier, tuple(hashes)))
-        return cls(value['policy_revision'], tuple(entries))
-
-    def to_dict(self):
-        return {'policy_revision': self.policy_revision,
-                'readset': [{'story_id': identifier, 'entry_hashes': list(hashes)}
-                            for identifier, hashes in self.readset]}
-
-
-@dataclass(frozen=True)
-class ServerClarification:
-    """One non-action clarification produced by trusted server policy."""
-
-    message: str
-    code: str
-    policy_revision: str
-
-    def __post_init__(self) -> None:
-        """Keep this DTO incapable of carrying Tool or execution fields."""
-        for name, maximum in (
-            ('message', 2000),
-            ('code', 128),
-            ('policy_revision', 128),
-        ):
-            value = getattr(self, name)
-            if (
-                type(value) is not str
-                or not value
-                or value != value.strip()
-                or len(value) > maximum
-                or any(
-                    ord(character) < 32 or ord(character) == 127
-                    for character in value
-                )
-            ):
-                raise ValueError(f'{name} is invalid')
-        for name in ('code', 'policy_revision'):
-            value = getattr(self, name)
-            if any(
-                not (
-                    character.isascii()
-                    and (
-                        character.isalnum()
-                        or character in {'_', '-', '.'}
-                    )
-                )
-                for character in value
-            ):
-                raise ValueError(f'{name} is invalid')
-
-    def to_decision(self) -> AgentDecision:
-        """Project the policy result into the existing non-action wire type."""
-        return AgentDecision(
-            type='clarification',
-            message=self.message,
-            reason=f'server:{self.code}',
-            confidence=1.0,
-        )
-
-
-@dataclass
-class OrchestrationResult:
-    """Auditable provider proposal and final locally checked decision."""
-
-    request_id: str
-    conversation_id: str
-    turn_id: str
-    conversation_generation: int
-    conversation_revision: int
-    conversation_ordinal: int
-    raw_decision: AgentDecision
-    decision: AgentDecision
-    safety: SafetyResult
-    provider_result: ProviderResult
-    memory_ids: List[str]
-    decision_id: str
-    issued_at: float
-    expires_at: float
-    state_trusted: bool
-    memory_revision: int
-    memory_validator: Callable[[], None] | None = field(
-        default=None, repr=False, compare=False,
-    )
-    story_binding: StoryReplyBinding | None = field(default=None, repr=False)
-    state_evidence_id: str | None = None
-    state_observed_at: float | None = None
-    safety_policy_revision: str | None = None
-    clock: Callable[[], float] = field(
-        default=time.time,
-        repr=False,
-        compare=False,
-    )
-    speech_published: bool = field(default=False, repr=False, compare=False)
-
-    def to_dict(
-        self,
-        include_raw_decision: bool = False,
-    ) -> Dict[str, Any]:
-        """Return the stable HTTP response contract."""
-        if self.memory_validator is not None:
-            self.memory_validator()
-        now = float(self.clock())
-        if not math.isfinite(now):
-            raise RuntimeError('orchestration clock is invalid')
-        decision_is_fresh = now < self.expires_at
-        proposal_authorized = (
-            self.state_trusted
-            and self.safety.allowed
-            and self.decision.type == 'tool_call'
-            and decision_is_fresh
-        )
-        result = {
-            'request_id': self.request_id,
-            'conversation': {
-                'conversation_id': self.conversation_id,
-                'turn_id': self.turn_id,
-                'generation': self.conversation_generation,
-                'revision': self.conversation_revision,
-                'ordinal': self.conversation_ordinal,
-            },
-            'decision': self.decision.to_dict(),
-            'safety': self.safety.to_dict(),
-            'provider': self.provider_result.to_dict(),
-            'memory': {
-                'retrieved_count': len(self.memory_ids),
-                'ids': list(self.memory_ids),
-            },
-            'execution': {
-                'decision_id': self.decision_id,
-                'issued_at': self.issued_at,
-                'expires_at': self.expires_at,
-                # A policy-approved model proposal is still not an
-                # executable SWM25-74 authorization.
-                'authorized': False,
-                'proposal_authorized': proposal_authorized,
-                'state_trusted': self.state_trusted,
-                'fresh': decision_is_fresh,
-                'consume_once': False,
-                'tool_call_id': None,
-            },
-        }
-        if include_raw_decision:
-            result['raw_decision'] = self.raw_decision.to_dict()
-        return result
-
-    def to_persisted_dict(self) -> Dict[str, Any]:
-        """Persist the final safe response and required metadata."""
-        value = {
-            'schema_version': 2,
-            'public': self.to_dict(include_raw_decision=False),
-            'memory_revision': self.memory_revision,
-        }
-        if self.story_binding is not None:
-            value['story_binding'] = self.story_binding.to_dict()
-        if (self.raw_decision.type == 'tool_call'
-                and self.raw_decision.tool_name in {'get_weather', 'set_weather_location'}
-                and self.safety.allowed and self.decision.type != 'tool_call'):
-            value['weather_tool_decision'] = self.raw_decision.to_dict()
-        provenance = (
-            self.state_evidence_id,
-            self.state_observed_at,
-            self.safety_policy_revision,
-        )
-        if all(item is None for item in provenance):
-            return value
-        if any(item is None for item in provenance):
-            raise RuntimeError('safety provenance is incomplete')
-        if (
-            not math.isfinite(float(self.issued_at))
-            or not math.isfinite(float(self.expires_at))
-            or not math.isfinite(float(self.state_observed_at))
-            or self.expires_at <= self.issued_at
-            or self.state_observed_at > self.issued_at
-        ):
-            raise RuntimeError('safety provenance timing is invalid')
-        value['schema_version'] = 3
-        value['safety_binding'] = {
-            'state_evidence_id': self.state_evidence_id,
-            'state_observed_at': self.state_observed_at,
-            'safety_policy_revision': self.safety_policy_revision,
-        }
-        return value
-
-    @classmethod
-    def from_persisted_dict(
-        cls,
-        value: Dict[str, Any],
-    ) -> 'OrchestrationResult':
-        """Reconstruct an idempotent response without another model call."""
-        try:
-            schema_version = value.get('schema_version')
-            if schema_version not in {1, 2, 3}:
-                raise ValueError('unsupported persisted response schema')
-            state_evidence_id = None
-            state_observed_at = None
-            safety_policy_revision = None
-            story_binding = (StoryReplyBinding.from_dict(value['story_binding'])
-                             if 'story_binding' in value else None)
-            if schema_version == 3:
-                if frozenset(value) - {'story_binding'} != frozenset({
-                    'schema_version',
-                    'public',
-                    'memory_revision',
-                    'safety_binding',
-                }):
-                    raise ValueError('invalid persisted response shape')
-                binding = value['safety_binding']
-                if type(binding) is not dict or frozenset(binding) != (
-                    frozenset({
-                        'state_evidence_id',
-                        'state_observed_at',
-                        'safety_policy_revision',
-                    })
-                ):
-                    raise ValueError('invalid safety binding shape')
-                state_evidence_id = cls._private_identifier(
-                    binding['state_evidence_id'],
-                    'state_evidence_id',
-                )
-                if type(binding['state_observed_at']) not in {int, float}:
-                    raise ValueError('invalid state_observed_at')
-                state_observed_at = float(
-                    binding['state_observed_at']
-                )
-                if (
-                    not math.isfinite(state_observed_at)
-                    or state_observed_at < 0
-                ):
-                    raise ValueError('invalid state_observed_at')
-                safety_policy_revision = cls._private_identifier(
-                    binding['safety_policy_revision'],
-                    'safety_policy_revision',
-                )
-            public = value['public']
-            conversation = public['conversation']
-            decision = cls._decision_from_dict(public['decision'])
-            raw_decision = decision
-            if 'weather_tool_decision' in value:
-                raw_decision = cls._decision_from_dict(value['weather_tool_decision'])
-                if (raw_decision.type != 'tool_call'
-                        or raw_decision.tool_name not in {'get_weather', 'set_weather_location'}
-                        or decision.type == 'tool_call'):
-                    raise ValueError('invalid persisted weather Tool decision')
-                validate_tool_arguments(raw_decision.tool_name, raw_decision.arguments)
-            safety_value = public['safety']
-            provider_value = public['provider']
-            usage_value = provider_value['usage']
-            execution = public['execution']
-            memory = public['memory']
-            issued_at = float(execution['issued_at'])
-            expires_at = float(execution['expires_at'])
-            if schema_version == 3 and (
-                not math.isfinite(issued_at)
-                or not math.isfinite(expires_at)
-                or expires_at <= issued_at
-                or state_observed_at > issued_at
-            ):
-                raise ValueError('invalid persisted execution timing')
-            provider_result = ProviderResult(
-                decision=decision,
-                provider=str(provider_value['provider']),
-                model=str(provider_value['model']),
-                latency_ms=float(provider_value['latency_ms']),
-                usage=ProviderUsage(
-                    input_tokens=usage_value.get('input_tokens'),
-                    output_tokens=usage_value.get('output_tokens'),
-                    total_tokens=usage_value.get('total_tokens'),
-                ),
-                response_id=provider_value.get('response_id'),
-                input_chars=provider_value.get('input_chars'),
-                context_metrics=(
-                    ContextMetrics.from_dict(
-                        provider_value['context']
-                    )
-                    if provider_value.get('context') is not None
-                    else None
-                ),
-            )
-            return cls(
-                request_id=str(public['request_id']),
-                conversation_id=str(
-                    conversation['conversation_id']
-                ),
-                turn_id=str(conversation['turn_id']),
-                conversation_generation=int(
-                    conversation['generation']
-                ),
-                conversation_revision=int(
-                    conversation['revision']
-                ),
-                conversation_ordinal=int(
-                    conversation['ordinal']
-                ),
-                raw_decision=raw_decision,
-                decision=decision,
-                safety=SafetyResult(
-                    allowed=bool(safety_value['allowed']),
-                    code=str(safety_value['code']),
-                    reason=str(safety_value['reason']),
-                ),
-                provider_result=provider_result,
-                memory_ids=[
-                    str(memory_id)
-                    for memory_id in memory['ids']
-                ],
-                decision_id=str(execution['decision_id']),
-                issued_at=issued_at,
-                expires_at=expires_at,
-                state_trusted=bool(execution['state_trusted']),
-                memory_revision=int(value['memory_revision']),
-                story_binding=story_binding,
-                state_evidence_id=state_evidence_id,
-                state_observed_at=state_observed_at,
-                safety_policy_revision=safety_policy_revision,
-            )
-        except (
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as error:
-            raise RuntimeError(
-                'stored orchestration response is invalid'
-            ) from error
-
-    @staticmethod
-    def _decision_from_dict(value: Dict[str, Any]) -> AgentDecision:
-        decision = AgentDecision(
-            type=value['type'],
-            message=value['message'],
-            tool_name=value.get('tool_name'),
-            arguments=dict(value.get('arguments', {})),
-            reason=value.get('reason', ''),
-            confidence=value.get('confidence'),
-            expires_in_ms=value.get('expires_in_ms', 5000),
-            clarification_for=value.get('clarification_for'),
-        )
-        decision.validate()
-        return decision
-
-    @staticmethod
-    def _private_identifier(value: Any, field_name: str) -> str:
-        if (
-            type(value) is not str
-            or not value.strip()
-            or len(value.strip()) > 128
-            or any(
-                ord(character) < 32 or ord(character) == 127
-                for character in value.strip()
-            )
-        ):
-            raise ValueError(f'invalid {field_name}')
-        return value.strip()
+__all__ = [
+    'AgentOrchestrator',
+    'ExpiredDecisionError',
+    'MemoryChangedError',
+    'OrchestrationResult',
+    'ServerClarification',
+    'StoryReplyBinding',
+]
 
 
 class AgentOrchestrator:
@@ -627,76 +255,27 @@ class AgentOrchestrator:
         return validate
 
     def _assert_story_binding(self, user_id, request_id, binding):
-        if binding is None:
-            return
-        if self.story_memory is None:
-            raise MemoryChangedError('story memory is unavailable; submit a new turn')
-        value = binding.to_dict()
-        if not self.story_memory.validate_reply_binding(
-            user_id, value['policy_revision'], value['readset'], request_id=request_id,
-        ):
-            raise MemoryChangedError('memory changed; submit a new turn')
+        assert_story_binding(self.story_memory, user_id, request_id, binding)
 
     def assert_reply_fresh(self, user_id, request_id):
         """Check durable fact and story provenance, including delayed/cache use."""
-        if self._closed:
-            raise MemoryChangedError('orchestrator is closed')
-        try:
-            with self.conversation_store._lock:
-                self.personal_memory.assert_fresh(user_id, request_id)
-                if self.story_memory is not None:
-                    record = self.story_memory.store.reply_record(user_id, request_id)
-                else:
-                    row = self.conversation_store._connection.execute(
-                        'SELECT response_json FROM conversation_turns '
-                        "WHERE user_id=? AND request_id=? AND status='completed'",
-                        (user_id, request_id),
-                    ).fetchone()
-                    record = ({'response': json.loads(row[0]), 'has_story_dependencies': False}
-                              if row is not None and row[0] is not None else None)
-                if record is None:
-                    raise MemoryChangedError('reply is unavailable; submit a new turn')
-                restored = OrchestrationResult.from_persisted_dict(record['response'])
-                if record['has_story_dependencies'] and restored.story_binding is None:
-                    raise MemoryChangedError('legacy story reply cannot be verified; submit a new turn')
-                self._assert_story_binding(user_id, request_id, restored.story_binding)
-        except (ValidationError, ValueError, RuntimeError) as error:
-            if isinstance(error, MemoryChangedError):
-                raise
-            raise MemoryChangedError('memory changed; submit a new turn') from error
+        assert_reply_fresh(
+            closed=self._closed,
+            conversation_store=self.conversation_store,
+            personal_memory=self.personal_memory,
+            story_memory=self.story_memory,
+            user_id=user_id,
+            request_id=request_id,
+        )
 
     def _admit_memory_turn(self, connection, request):
-        """Ordinary turns preserve jobs; explicit memory intent fences them.
-
-        This runs after request-cache/conflict checks in the turn reservation
-        transaction. Bump even for no-match deletion so an older in-flight
-        provider cannot enqueue its stale source after this request finishes.
-        """
-        text = request.utterance
-        # Existing extraction eligibility is deliberately broad. Its
-        # "기억하" stem also matches read-only questions like "기억하니?";
-        # those must not become cancellation merely by mentioning memory.
-        remember_instruction = re.sub(
-            r'(기억|저장)(하고\s*있|하니|하나요|하는지|했니|했나요|했는지'
-            r'|해(?:요)?\s*(?=[?？]))',
-            '', text,
+        """Ordinary turns preserve jobs; explicit memory intent fences them."""
+        admit_memory_turn(
+            self.automatic_memory_jobs,
+            self.memory_store,
+            connection,
+            request,
         )
-        if direct_source(text) and (
-            local_intent(text) is not None
-            or (negated_management(text) and re.search(
-                r'(기억|저장)(을|은|는)?\s*(하지|말아|말고|말라|않|금지)'
-                r'|안\s*(기억|저장)', text,
-            ))
-            or any(requested_operation(text, operation)
-                   for operation in ('correct', 'forget'))
-            or requested_operation(remember_instruction, 'remember')
-        ):
-            self.automatic_memory_jobs.invalidate_user(
-                connection, request.user_id, reason='memory_control',
-            )
-            self.memory_store.invalidate_answers(
-                request.user_id, connection=connection,
-            )
 
     @conversation_request
     @owned_conversation_request
@@ -864,7 +443,7 @@ class AgentOrchestrator:
                         request, memory_snapshot, result,
                         self.memory_source_reviewer,
                     )
-                completion_arguments = {}
+                completion_arguments: Dict[str, Any] = {}
                 if confirmation_factory is not None:
                     safety_provenance = (
                         result.state_evidence_id,
@@ -903,19 +482,9 @@ class AgentOrchestrator:
                 )
 
                 def deliver_committing_reply():
-                    # Memory management/configuration and action receipts must
-                    # never claim success before persistence. commit_memory may
-                    # also replace a model's unsupported completion claim.
-                    if (result.raw_decision.type == 'tool_call'
-                            or result.decision.type not in {'message', 'clarification', 'refusal'}
-                            or result.decision.reason == 'personal_memory'
-                            or result.decision.clarification_for == 'mapping_name'
-                            or result.safety.code == 'navigation_confirmation_required'
-                            or result.provider_result.memory_proposal is not None
-                            or memory_snapshot.pending is not None
-                            or memory_snapshot.source.get('settings_edit')
-                            or explicit_memory_management(request.utterance)
-                            or confirmation_factory is not None):
+                    if not can_deliver_before_save(
+                        request, memory_snapshot, result, confirmation_factory,
+                    ):
                         return
                     self.personal_memory.assert_fresh(request.user_id, request.request_id)
                     self._assert_story_binding(request.user_id, request.request_id,
@@ -934,8 +503,12 @@ class AgentOrchestrator:
                             and result.safety.allowed and result.safety.code == 'not_an_action'
                             and result.provider_result.memory_proposal is None):
                         self.story_memory.store.checkpoint_source_read(
-                            self.conversation_store._connection, request.user_id, request.request_id,
-                            result.story_binding.policy_revision, result.story_binding.readset, read_version,
+                            self.conversation_store.database.connection,
+                            request.user_id,
+                            request.request_id,
+                            result.story_binding.policy_revision,
+                            result.story_binding.readset,
+                            read_version,
                         )
                     if publish:
                         deliver_committing_reply()
@@ -944,7 +517,7 @@ class AgentOrchestrator:
                     completion_arguments['before_commit'] = before_commit
 
                 with trace.measure('commit_ms'):
-                    with self.conversation_store._lock:
+                    with self.conversation_store.locked():
                         # Policy/erasure writes use this same lock. Keep validation
                         # and the completed response commit in one protected window.
                         self._assert_story_binding(request.user_id, request.request_id,
@@ -1014,35 +587,7 @@ class AgentOrchestrator:
 
     def _thanks_after_answer(self, request, snapshot, token):
         """A bare thank-you after a settled voice answer keeps the session open."""
-        # Later turns may carry free-form instructions outside the saved response settings.
-        if (not isinstance(request, SpeechAgentRequest) or token.ordinal != 2
-                or not re.fullmatch(r'\s*(?:고마워요?|고맙습니다|감사해요?|감사합니다)[.!。！]?\s*', request.utterance)
-                or request.navigation_confirmation or request.mapping_name_requested or snapshot.pending
-                or not snapshot.history):
-            return None
-        previous = snapshot.history[-1]
-        receipt = previous.response.get('public', {})
-        decision = receipt.get('decision', {})
-        settings = snapshot.context.get('response_settings', {})
-        tone = settings.get('tone')
-        # STT may omit punctuation. A complete Korean count question still has
-        # an explicit interrogative, without interpreting an arbitrary clause.
-        question = re.fullmatch(
-            r'[^.!?。！？,，\n]+[?？]|(?:[가-힣]+(?:에는|은|는)\s+)?[가-힣]+[이가은는]\s*몇\s*개\s*(?:있어(?:요)?|야|예요|인가요)',
-            previous.user_content.strip())
-        if (previous.ordinal != 1 or not question or re.search(r'(?:앞으로|하고|말고)\s', previous.user_content)
-                or not re.search(r'[가-힣]', previous.assistant_content or '') or decision.get('type') != 'message'
-                or (decision.get('reason') or '').replace('_', ' ') not in {'general knowledge', '일반 지식 답변'}
-                or decision.get('message') != previous.assistant_content
-                or receipt.get('safety', {}).get('code') != 'not_an_action'
-                or 'weather_tool_decision' in previous.response
-                or re.search(r'[?？]|(?:주세요|할까요|실래요|해줄래|알려줘)[.!。！]?$', previous.assistant_content)
-                or tone not in CHOICES['tone'] or settings != dict(DEFAULTS, tone=tone, response_mode='natural')
-                or self.conversation_store.pending_confirmation(request.user_id, request.conversation_id)):
-            return None
-        text = '천만에요.' if tone == '편안한 존댓말' else '도움이 됐다니 기뻐.'
-        return ProviderResult(AgentDecision('message', text, reason='courtesy_response'),
-                              'malbut-dialogue', 'standalone-thanks', 0, memory_supported=True)
+        return thanks_after_answer(self.conversation_store, request, snapshot, token)
 
     def _handle_uncached(
         self,
@@ -1100,7 +645,7 @@ class AgentOrchestrator:
             tool_specs = self.capability_registry.select_specs(
                 model_request.available_tools
             )
-            memory_arguments = {}
+            memory_arguments: Dict[str, Any] = {}
             if accepts_memory_context(self.provider):
                 memory_context = copy.deepcopy(memory_snapshot.context)
                 if set(PATROL_QUERY_TOOLS).intersection(model_request.available_tools):
@@ -1378,63 +923,15 @@ class AgentOrchestrator:
 
     def _answer_homecam(self, request, memories, turns, summary, first_result, *, memory_context):
         """Read cloud metadata directly, then answer with no executable Tools."""
-        executor = getattr(self, 'homecam_executor', None)
-        try:
-            if executor is None or not accepts_memory_context(self.provider):
-                raise RuntimeError('homecam query unavailable')
-            announce_function_start(first_result.decision.tool_name)
-            result = executor(first_result.decision.tool_name, first_result.decision.arguments)
-        except CancelledError:
-            raise
-        except Exception:
-            result = {'success': False, 'code': 'UNAVAILABLE', 'result': {}}
-        if not result['success']:
-            message = ('웹에서 소유자의 음성 홈캠 조회 허용이 필요해요.'
-                       if result['code'] == 'VOICE_DELEGATION_REQUIRED'
-                       else '홈캠 정보를 조회하지 못했어요. 잠시 후 다시 요청해 주세요.')
-            return replace(first_result, decision=AgentDecision(
-                'message', message, reason='homecam_unavailable',
-            ), memory_proposal=None)
-        confirmed = (result['success'] is True and result.get('code') == 'OK'
-                     and isinstance(result['result'], dict))
-        settings = (memory_context or {}).get('response_settings')
-        if (confirmed and isinstance(request, SpeechAgentRequest)
-                and settings == dict(DEFAULTS, response_mode='natural')):
-            reply = record_existence_reply(
-                request.utterance, first_result.decision.tool_name, result['result'],
-            )
-            if reply is not None:
-                return replace(first_result, decision=AgentDecision(
-                    'message', reply, reason='homecam_record_existence',
-                ), memory_proposal=None)
-        context = copy.deepcopy(memory_context)
-        # This is current-query data, not a remembered fact or workflow journal.
-        context['homecam_query_result_untrusted'] = {
-            'tool': first_result.decision.tool_name, 'data': result['result'],
-        }
-        value = request.to_dict()
-        value['available_tools'] = []
-        followup = copy_request(request, value)
-        if isinstance(followup, SpeechAgentRequest):
-            followup = replace(followup, confirmed_homecam_read=confirmed)
-        answer = self.provider.complete(
-            followup, list(memories), copy.deepcopy(list(turns)), [],
-            conversation_summary=copy.deepcopy(summary), memory_context=context,
-        )
-        answer.validate()
-        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
-            return replace(first_result, decision=AgentDecision(
-                'refusal', '홈캠 조회 결과로 답변을 만들지 못했어요.',
-                reason='homecam_followup_tool_forbidden',
-            ), memory_proposal=None)
-        return replace(
-            answer, latency_ms=first_result.latency_ms + answer.latency_ms,
-            usage=ProviderUsage(**{
-                name: (getattr(first_result.usage, name) + getattr(answer.usage, name)
-                       if getattr(first_result.usage, name) is not None
-                       and getattr(answer.usage, name) is not None else None)
-                for name in ('input_tokens', 'output_tokens', 'total_tokens')
-            }),
+        return answer_homecam(
+            self.provider,
+            getattr(self, 'homecam_executor', None),
+            request,
+            memories,
+            turns,
+            summary,
+            first_result,
+            memory_context=memory_context,
         )
 
     def _answer_weather(
@@ -1442,119 +939,17 @@ class AgentOrchestrator:
         *, memory_context=None,
     ) -> ProviderResult:
         """Execute one Manager read after the model's Tool choice, then answer without Tools."""
-        from malbut_agent_server.mission_audio import CATALOG
-
-        setting_location = first_result.decision.tool_name == 'set_weather_location'
-        executor = self.weather_location_executor if setting_location else self.weather_executor
-        if executor is None or not accepts_weather_context(self.provider):
-            return replace(first_result, decision=AgentDecision(
-                type='message', message=(SERVICE_UNAVAILABLE_NOTICE if setting_location
-                                         else CATALOG['weather.fetch_failed']),
-                reason='weather_unavailable', confidence=1.0,
-            ), memory_proposal=None)
-        announce_function_start(first_result.decision.tool_name)
-        for attempt in range(2):
-            try:
-                if setting_location:
-                    weather = executor(request.request_id, first_result.decision.arguments['location'])
-                else:
-                    # A new read ID avoids replaying the Manager's failed receipt.
-                    read_id = request.request_id if attempt == 0 else str(uuid.uuid4())
-                    weather = executor(read_id)
-                weather = bounded_weather_context(weather)
-            except CancelledError:
-                raise
-            except Exception:
-                weather = {'status': 'unavailable'}
-            if (setting_location or weather['status'] != 'unavailable' or attempt
-                    or not claim_retry(WEATHER_RETRY_NOTICE)):
-                break
-        notice_id = weather.get('notice_id')
-        if not setting_location:
-            if weather['status'] == 'location_required':
-                notice_id = 'weather.location_required'
-            elif weather['status'] == 'unavailable' and notice_id != 'weather.location_required':
-                notice_id = 'weather.fetch_failed'
-        if (weather['status'] in {'unavailable', 'location_required'}
-                and isinstance(notice_id, str) and notice_id in {
-                    'operation.failed', 'operation.unavailable', 'operation.unknown',
-                    'weather.location_required', 'weather.fetch_failed'}):
-            return replace(first_result, decision=AgentDecision(
-                type='message', message=CATALOG[notice_id], reason=notice_id,
-                confidence=1.0,
-            ), memory_proposal=None)
-        if setting_location:
-            # A committed setting needs a receipt even if a second model call would fail.
-            status = weather['status']
-            location = weather.get('location')
-            if status == 'location_set' and isinstance(location, str) and location.strip():
-                decision = AgentDecision(
-                    'message', CATALOG['set_weather_location.succeeded'],
-                    reason='weather_location_saved', confidence=1.0,
-                )
-            elif status == 'location_ambiguous':
-                decision = AgentDecision(
-                    'clarification', '어느 지역인가요? ' + ', '.join(weather['candidates'])
-                    + ' 중에서 시·구·동을 알려주세요.', reason='weather_location_ambiguous',
-                )
-            elif status == 'location_not_found':
-                decision = AgentDecision(
-                    'clarification', '지역을 찾지 못했어요. 시·구·동을 더 자세히 알려주세요.',
-                    reason='weather_location_not_found',
-                )
-            else:
-                decision = AgentDecision(
-                    'message', '날씨 조회 위치를 저장하지 못했어요. 잠시 후 다시 알려주세요.',
-                    reason='weather_location_unavailable',
-                )
-            return replace(first_result, decision=decision, memory_proposal=None)
-        settings = (memory_context or {}).get('response_settings', {})
-        for render, reason in ((daily_forecast_reply, 'weather_daily_forecast'),
-                               (current_temperature_reply, 'weather_current_temperature')):
-            reply = render(request.utterance, weather, settings)
-            if reply is not None:
-                return replace(first_result, decision=AgentDecision(
-                    'message', reply, reason=reason, confidence=1.0,
-                ), memory_proposal=None)
-        value = request.to_dict()
-        value['available_tools'] = []
-        answer = self.provider.complete(
-            copy_request(request, value), list(memories),
-            copy.deepcopy(list(conversation_turns)), [],
-            conversation_summary=copy.deepcopy(conversation_summary),
-            weather_context=weather,
-            **({'memory_context': copy.deepcopy(memory_context)}
-               if memory_context is not None and accepts_memory_context(self.provider) else {}),
-        )
-        answer.validate()
-        if (weather['status'] == 'fresh'
-                and answer.provider == 'reliable-fallback'
-                and answer.model == 'safe-non-action'
-                and answer.decision.reason == 'provider_unavailable'):
-            answer = replace(answer, decision=AgentDecision(
-                type='message',
-                message=SERVICE_UNAVAILABLE_NOTICE,
-                reason='weather_answer_unavailable', confidence=1.0,
-            ), memory_proposal=None)
-        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
-            answer = replace(answer, decision=AgentDecision(
-                type='refusal', message='날씨 조회 결과로 답변을 만들지 못했어요.',
-                reason='weather_followup_tool_forbidden', confidence=1.0,
-            ), memory_proposal=None)
-
-        def combined(name):
-            first = getattr(first_result.usage, name)
-            second = getattr(answer.usage, name)
-            return first + second if first is not None and second is not None else None
-
-        return replace(
-            answer, latency_ms=first_result.latency_ms + answer.latency_ms,
-            usage=ProviderUsage(**{name: combined(name) for name in (
-                'input_tokens', 'output_tokens', 'total_tokens',
-            )}),
-            input_chars=(first_result.input_chars + answer.input_chars
-                         if first_result.input_chars is not None and answer.input_chars is not None
-                         else None),
+        return answer_weather(
+            self.provider,
+            self.weather_executor,
+            self.weather_location_executor,
+            request,
+            memories,
+            conversation_turns,
+            conversation_summary,
+            first_result,
+            memory_context=memory_context,
+            weather_context_checker=accepts_weather_context,
         )
 
     @staticmethod
@@ -1568,65 +963,23 @@ class AgentOrchestrator:
         ] | None,
     ) -> AgentRequest:
         """Resolve one server-owned utterance without changing authority."""
-        if utterance_resolver is None:
-            return request
-        resolved = utterance_resolver(
-            copy.deepcopy(request),
-            copy.deepcopy(tuple(conversation_turns)),
-            copy.deepcopy(token),
+        return resolve_effective_request(
+            request, conversation_turns, token, utterance_resolver,
         )
-        if resolved is None:
-            return request
-        if type(resolved) is not str:
-            raise TypeError('utterance_resolver must return str or None')
-        value = request.to_dict()
-        value['utterance'] = resolved
-        return copy_request(request, value)
 
     def _fresh_safety_request(
         self,
         request: AgentRequest,
     ) -> tuple[AgentRequest, bool, str | None, float | None]:
         """Read independent server-owned evidence, or preserve legacy mode."""
-        source = self.robot_state_source
-        if source is None:
-            return request, self.trusted_robot_state, None, None
-        try:
-            evidence = source.read()
-            now = float(self._state_clock())
-            age = now - float(evidence.observed_at)
-            trusted = (
-                evidence.trusted
-                and age >= 0
-                and age <= self.robot_state_max_age_seconds
-            )
-            state = evidence.state
-            if age < 0:
-                evidence_id = None
-                observed_at = None
-            else:
-                evidence_id = evidence.evidence_id
-                observed_at = float(evidence.observed_at)
-        except Exception:
-            trusted = False
-            state = RobotState()
-            evidence_id = None
-            observed_at = None
-        value = request.to_dict()
-        value['robot_state'] = state.to_dict()
-        return (
-            copy_request(request, value),
-            trusted,
-            evidence_id,
-            observed_at,
+        return fresh_safety_request(
+            self.robot_state_source,
+            self.trusted_robot_state,
+            self.robot_state_max_age_seconds,
+            self._state_clock,
+            request,
         )
 
     @staticmethod
     def _request_fingerprint(request: AgentRequest) -> str:
-        encoded = json.dumps(
-            request.to_dict(),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(',', ':'),
-        ).encode('utf-8')
-        return hashlib.sha256(encoded).hexdigest()
+        return request_fingerprint(request)

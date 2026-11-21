@@ -202,9 +202,9 @@ class SQLiteConversationStore:
                 )
             ),
         )
-        advance_hook = (
-            lambda token, now: self._advance_summary_locked(token, now)
-        )
+        def advance_hook(token, now):
+            return self._advance_summary_locked(token, now)
+
         self._compaction = CompactionRepository(
             self._db,
             self._sessions,
@@ -230,6 +230,19 @@ class SQLiteConversationStore:
             self._config,
             advance_summary_hook=advance_hook,
         )
+
+    @property
+    def database(self) -> ConversationDatabase:
+        """Expose the shared SQLite Unit-of-Work boundary for sibling stores."""
+        return self._db
+
+    def locked(self):
+        """Acquire the shared SQLite RLock without opening a write transaction."""
+        return self._db.locked()
+
+    def transaction(self, *, write: bool = True):
+        """Run one atomic transaction on the shared SQLite connection."""
+        return self._db.transaction(write=write)
 
     @property
     def semantic_context(self) -> bool:

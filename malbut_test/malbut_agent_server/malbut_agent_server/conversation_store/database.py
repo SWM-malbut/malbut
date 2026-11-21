@@ -85,9 +85,10 @@ class ConversationDatabase:
             yield self.connection
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Run one atomic BEGIN IMMEDIATE transaction under the shared RLock.
+    def transaction(self, *, write: bool = True) -> Iterator[sqlite3.Connection]:
+        """Run one atomic transaction under the shared RLock.
 
+        Uses ``BEGIN IMMEDIATE`` when ``write`` is True, else ``BEGIN``.
         Supports reentrant callers that already started a transaction on the
         same thread without prematurely committing or rolling back the outer
         transaction.
@@ -95,7 +96,10 @@ class ConversationDatabase:
         with self.lock:
             owns_transaction = not self.connection.in_transaction
             if owns_transaction:
-                self.begin_immediate()
+                if write:
+                    self.begin_immediate()
+                else:
+                    self.connection.execute('BEGIN')
             try:
                 yield self.connection
             except BaseException:
