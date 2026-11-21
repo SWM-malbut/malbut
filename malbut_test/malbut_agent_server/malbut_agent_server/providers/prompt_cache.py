@@ -11,30 +11,32 @@ def supports_breakpoints(model):
 
 
 def _profile_fingerprint(payload, instructions):
-    """Build a content-free digest of the static tool/schema/instruction profile."""
-    tool_names = [
-        str(tool.get('name', ''))
-        for tool in (payload.get('tools') or ())
-        if isinstance(tool, dict)
-    ]
+    """Classify the static request into a coarse sticky cache-routing tier.
+
+    Over-fragmenting prompt_cache_key on minor per-turn instruction toggles
+    scatters traffic across backend shards and adds cold-shard latency. Keep
+    heavy full-tool calls on one sticky key while isolating compact tool
+    fast-paths, tool-free follow-ups, and background extraction.
+    """
+    _ = instructions
+    tool_count = sum(
+        1 for tool in (payload.get('tools') or ()) if isinstance(tool, dict)
+    )
     text_format = (payload.get('text') or {}).get('format')
     schema_name = (
         str(text_format.get('name', ''))
         if isinstance(text_format, dict)
         else ''
     )
-    descriptor = json.dumps(
-        {
-            'tools': tool_names,
-            'schema': schema_name,
-            'instructions_sha256': hashlib.sha256(
-                instructions.encode('utf-8')
-            ).hexdigest(),
-        },
-        ensure_ascii=False,
-        separators=(',', ':'),
-    )
-    return hashlib.sha256(descriptor.encode('utf-8')).hexdigest()[:16]
+    if schema_name == 'malbut_memory_extraction':
+        tier = 'background_extraction'
+    elif tool_count >= 5:
+        tier = 'full_tools'
+    elif tool_count > 0:
+        tier = 'compact_tools'
+    else:
+        tier = 'tool_free'
+    return hashlib.sha256(tier.encode('utf-8')).hexdigest()[:16]
 
 
 def arrange_cached_input(payload, user_id, *, followup_developer_instructions=None):
