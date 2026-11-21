@@ -364,7 +364,8 @@ def test_invalid_pulse_profile_fails_before_creating_nodes(speech, tmp_path, mon
     assert created == []
 
 
-def test_default_stt_model_path_prefers_q8_when_present_and_falls_back_to_f16(tmp_path, monkeypatch):
+def test_default_stt_model_path_prefers_q8_when_present_and_falls_back_to_f16(
+        tmp_path, monkeypatch):
     from malbut_bringup.launch_support import _default_stt_model_path
 
     monkeypatch.delenv('MALBUT_STT_MODEL_PATH', raising=False)
