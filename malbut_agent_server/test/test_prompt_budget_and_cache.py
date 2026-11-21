@@ -137,6 +137,13 @@ def test_prompt_cache_key_isolates_distinct_profiles_and_stabilizes_same_profile
         )
 
         assert turn1['prompt_cache_key'] == turn2['prompt_cache_key']
+        # Minor per-turn instruction/recall-tool toggles within full-tool calls
+        # must stay on the same sticky shard instead of fragmenting Call 1 keys.
+        mem_turn = provider.build_payload(
+            _speech_request('안녕 오늘 기분 어때?', available_tools=names, scene_context=scene, user_id='private-owner'),
+            [], [], tools, memory_context={'enabled': True, 'response_settings': {}},
+        )
+        assert mem_turn['prompt_cache_key'] == turn1['prompt_cache_key']
         assert len({
             turn1['prompt_cache_key'],
             weather1['prompt_cache_key'],
@@ -316,16 +323,20 @@ def test_live_speech_profiles_stay_within_token_budgets() -> None:
             'homecam_query_result_untrusted': {'tool': 'get_homecam_status', 'data': {'online': True}},
         }
 
+        # Tool schemas keep clear natural-sentence descriptions (verified by
+        # Jetson 2x2 factorial ablation to avoid +250ms extra reasoning latency
+        # caused by telegraphic schema compression) while trimmed instructions
+        # still keep full-speech static tokens ~22% below pre-PR410 baselines.
         budgets = [
-            ('full_speech_memory', 9200, provider.build_payload(
+            ('full_speech_memory', 10200, provider.build_payload(
                 _speech_request('안녕 오늘 기분 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'enabled': True, 'response_settings': {}},
             )),
-            ('full_speech_answer_only', 8000, provider.build_payload(
+            ('full_speech_answer_only', 9000, provider.build_payload(
                 _speech_request('안녕 오늘 기분 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'mode': 'answer_only', 'enabled': True, 'response_settings': {}},
             )),
-            ('weather_call_1', 750, provider.build_payload(
+            ('weather_call_1', 850, provider.build_payload(
                 _speech_request('오늘 날씨 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'mode': 'answer_only', 'enabled': True, 'response_settings': {}},
             )),
