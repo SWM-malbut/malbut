@@ -78,7 +78,7 @@ def test_legacy_does_not_need_models(tmp_path):
         load_guards('mistyped',tmp_path)
 
 
-@pytest.mark.parametrize('mode', ['hybrid', 'adaptive'])
+@pytest.mark.parametrize('mode', ['hybrid', 'adaptive', 'adaptive_fused'])
 def test_semantic_modes_load_smart_without_a_second_onset_filter(monkeypatch, tmp_path, mode):
     from malbut_stt import turn_detection
     smart = object()

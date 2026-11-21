@@ -246,3 +246,65 @@ def test_speech_resumed_during_classifier_rejects_old_result_and_keeps_audio(mak
         assert calls[1] == VOICE + QUIET * 20 + TAIL * 10 + QUIET * 100
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('complete,text,frames', [
+    # Explicit Korean final ending completes at 0.8 s even when Smart Turn under-fires.
+    (False, '오늘 기온이 몇 도야?', 40),
+    (None, '거실로 이동해 주세요.', 40),
+    (False, '결과가 생각보다 괜찮더라.', 40),
+    # Explicit mid-sentence connective/postposition vetoes Smart Turn false positive.
+    (True, '비가 오면', 100),
+    (True, '이유는 설명하지 말고', 100),
+    (True, '거실에서', 100),
+    (True, '멈춰 줘. 그리고', 100),
+    # Neutral short answer relies on Smart Turn acoustic prediction.
+    (True, '삼각형', 40),
+    (False, '삼각형', 100),
+    (None, '네', 100),
+])
+def test_fused_endpoint_combines_korean_endings_veto_and_smart_turn(
+        make_pipeline, complete, text, frames):
+    state = make_pipeline(adaptive_endpoint=False, fused_endpoint=True)
+    p = state.pipeline
+    p.feed(VOICE + QUIET * 20)
+    job = p.jobs.get_nowait()
+    assert job[0] == 'endpoint'
+    answer(p, job, text, complete)
+    p.feed(QUIET * (frames - 21))
+    p.poll()
+    assert not state.transcripts and not state.chimes
+    p.feed(QUIET)
+    p.poll()
+    assert state.transcripts == [(job[2][0], text)]
+    assert len(state.chimes) == 1 and p.jobs.empty()
+
+
+def test_fused_endpoint_preserves_resumed_speech_after_vetoed_pause(make_pipeline):
+    state = make_pipeline(adaptive_endpoint=False, fused_endpoint=True)
+    p = state.pipeline
+    p.feed(VOICE + QUIET * 20)
+    old = p.jobs.get_nowait()
+    # Smart Turn falsely predicts complete on a mid-sentence pause; lexical veto holds.
+    answer(p, old, '이유는 설명하지 말고', True)
+    p.feed(QUIET * 50)  # 1.4 s total pause — would have cut off without veto.
+    p.poll()
+    assert not state.transcripts
+    p.feed(TAIL * 10 + QUIET * 20)
+    p.poll()
+    new = p.jobs.get_nowait()
+    assert new[2][0] == old[2][0] and new[2][1] != old[2][1]
+    assert new[3].endpoint_pcm == VOICE + QUIET * 70 + TAIL * 10 + QUIET * 20
+    answer(p, new, '이유는 설명하지 말고 색깔 두 개만 말해 줘.', False)
+    p.feed(QUIET * 20)
+    p.poll()
+    assert state.transcripts == [(old[2][0], '이유는 설명하지 말고 색깔 두 개만 말해 줘.')]
+
+
+def test_fused_endpoint_validation(make_pipeline):
+    with pytest.raises(ValueError, match='fused_endpoint'):
+        make_pipeline(adaptive_endpoint=False, fused_endpoint='true')
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        make_pipeline(adaptive_endpoint=True, fused_endpoint=True)
+    with pytest.raises(ValueError, match='fused_endpoint requires Smart Turn'):
+        make_pipeline(adaptive_endpoint=False, fused_endpoint=True, smart_turn=None)

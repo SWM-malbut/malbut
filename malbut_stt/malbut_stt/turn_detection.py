@@ -124,7 +124,8 @@ def load_guards(mode, model_directory):
     if mode == 'reachy_start':
         directory = Path(model_directory).expanduser()
         return ReachyStartFilter(directory/'silero-v6.2.3.onnx'), None
-    if mode not in ('hybrid', 'adaptive'):
-        raise ValueError('turn_detection must be legacy or hybrid or reachy_start or adaptive')
+    if mode not in ('hybrid', 'adaptive', 'adaptive_fused'):
+        raise ValueError(
+            'turn_detection must be legacy or hybrid or reachy_start or adaptive or adaptive_fused')
     directory = Path(model_directory).expanduser()
     return None, SmartTurnGuard(directory/SMART_TURN_FILENAME)

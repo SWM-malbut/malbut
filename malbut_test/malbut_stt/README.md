@@ -93,6 +93,9 @@ ROS의 `compute_type` 파라미터로 `float32`를 선택할 수 있습니다.
 실행 중 완결 판단만 실패하면 해당 후보는 2초 fallback을 사용합니다.
 `turn_detection: legacy`를 명시하면 기존 종결어미 방식(기본 1.8초)을 사용하고,
 `hybrid`는 종결어미와 Smart Turn이 모두 완결로 판단해야 일찍 종료합니다.
+`adaptive_fused`([Jetson 설정](config/jetson.yaml) 기본값)는 한국어 명시적 종결어미는 `endpoint_min_silence_s`(0.8초)로 확정하고,
+명시적 미완결 접속·조사(`~고`, `~면`, `~서`, `~는데`, `에서`, `그리고` 등)는 Smart Turn 판정과 무관하게 `silence_timeout_s`(2초)로 보호하며,
+중립 단답(`삼각형`, `네` 등)은 Smart Turn 음향 판정을 따릅니다. 또한 `endpoint_preempt_s`(기본 0.4초)로 무음 진입 시 진행 중인 speech-time partial을 즉시 선점·취소합니다.
 이 동작은 [Hugging Face speech-to-speech의 완결 800ms/미완결 2초 보호](https://github.com/huggingface/speech-to-speech#smart-turn-endpointing)를
 현재 STT 수집기에 적용한 것입니다. Agent는 확정 전사 뒤에 호출하며, 미완성 발화로
 LLM 답변이나 TTS를 미리 생성하지 않습니다.
@@ -836,7 +839,8 @@ ros2 run malbut_stt stt --ros-args \
 | `followup_timeout_s` | `10.0` | 최종 답변 재생 완료 후 호출어 없이 다음 발화 시작을 기다리는 시간; `0.0`은 비활성 |
 | `silence_timeout_s` | `2.0` | 문장 종료 판단이 불확실할 때 기다리는 무음 시간 |
 | `endpoint_predecode_s` | `0.4` | 후보 전사를 시작하는 무음 시간; 전사 완료와 최소 무음 조건을 모두 충족해야 확정 |
-| `endpoint_min_silence_s` | `1.8` | 완성 문장을 확정할 최소 무음(0.2~2.0초); 미완성 문장은 기존 2초 대기 |
+| `endpoint_preempt_s` | `0.8` (`adaptive_fused`: `0.4`) | 무음 진입 시 진행 중인 speech-time partial 추론을 선점·취소하는 기준 시간(0.2~1.0초) |
+| `endpoint_min_silence_s` | `1.8` (`adaptive`/`adaptive_fused`: `0.8`) | 완성 문장을 확정할 최소 무음(0.2~2.0초); 미완성 문장은 기존 2초 대기 |
 | `max_utterance_s` | `0.0` | 기본은 전체 발화 시간 제한 없음; 양수로 명시한 경우에만 해당 시간 제한 적용 |
 | `max_buffer_s` | `60.0` | 미처리·겹침 확인용 PCM 보관 상한; 확정한 앞부분은 비우므로 발화 전체 길이와 무관 |
 | `pre_roll_s` | `0.3` | 발화 시작 직전 보존할 소리 |

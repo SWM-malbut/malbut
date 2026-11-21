@@ -362,3 +362,20 @@ def test_invalid_pulse_profile_fails_before_creating_nodes(speech, tmp_path, mon
             RuntimeError, match='STT audio configuration requires a nonempty aec_source'):
         speech._setup(_context(speech))
     assert created == []
+
+
+def test_default_stt_model_path_prefers_q8_when_present_and_falls_back_to_f16(
+        tmp_path, monkeypatch):
+    from malbut_bringup.launch_support import _default_stt_model_path
+
+    monkeypatch.delenv('MALBUT_STT_MODEL_PATH', raising=False)
+    cache = tmp_path / 'malbut_speech'
+    models = cache / 'models'
+    models.mkdir(parents=True)
+    f16 = models / 'ggml-small.bin'
+    q8 = models / 'ggml-small-q8_0.bin'
+    assert _default_stt_model_path(cache) == str(f16)
+    q8.write_bytes(b'q8')
+    assert _default_stt_model_path(cache) == str(q8)
+    monkeypatch.setenv('MALBUT_STT_MODEL_PATH', '/custom/model.bin')
+    assert _default_stt_model_path(cache) == '/custom/model.bin'
