@@ -1,5 +1,7 @@
 """Read-only Homecam tools in the Agent process, independent of ROS Manager."""
 
+import http.client
+import io
 import json
 import os
 from pathlib import Path
@@ -8,8 +10,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from uuid import uuid4
+import weakref
 
 from malbut_agent_server.gateway import CapabilityRegistry, PROPOSAL_ONLY, ToolCapability
+from malbut_agent_server.providers.http_pool import HTTPConnectionPool
 from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, TOOL_SPECS, validate_tool_arguments
 
 
@@ -63,6 +67,31 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _PooledHomecamOpener:
+    """Direct HTTPS keep-alive opener matching ProxyHandler({}) + _NoRedirect."""
+
+    def __init__(self, pool):
+        self._pool = pool
+
+    def open(self, request, timeout=8.0):
+        headers = dict(request.header_items())
+        try:
+            body = self._pool.post(
+                request.full_url,
+                headers,
+                request.data or b'',
+                timeout,
+                65536,
+                error_body_statuses=frozenset({401, 403}),
+                error_body_max_bytes=65537,
+            )
+        except urllib.error.HTTPError:
+            raise
+        except (http.client.HTTPException, OSError):
+            raise RuntimeError('Homecam query unavailable') from None
+        return io.BytesIO(body)
+
+
 class HomecamQueryClient:
     """Fixed queries only; owner delegation is checked by the existing API."""
 
@@ -74,9 +103,19 @@ class HomecamQueryClient:
             raise ValueError('Homecam requires an HTTPS origin')
         self._url = base_url.rstrip('/') + '/api/device/v1/agent/operate'
         self._token_file = Path(token_file).expanduser()
-        self._opener = opener or urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _NoRedirect(),
+        self._http_pool = HTTPConnectionPool(max_connections=2) if opener is None else None
+        self._pool_finalizer = (
+            weakref.finalize(self, self._http_pool.close)
+            if self._http_pool is not None else None
         )
+        self._opener = (
+            opener if opener is not None else _PooledHomecamOpener(self._http_pool)
+        )
+
+    def close(self):
+        """Close owned idle connections; injected openers stay caller-owned."""
+        if self._pool_finalizer is not None:
+            self._pool_finalizer()
 
     @classmethod
     def from_env(cls, environ=None):

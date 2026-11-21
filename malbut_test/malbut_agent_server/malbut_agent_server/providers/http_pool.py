@@ -105,7 +105,18 @@ class HTTPConnectionPool:
                     return connection
                 self._condition.wait(remaining)
 
-    def post(self, url, headers, body, timeout, max_bytes, *, reader=None):
+    def post(
+        self,
+        url,
+        headers,
+        body,
+        timeout,
+        max_bytes,
+        *,
+        reader=None,
+        error_body_statuses=frozenset({429}),
+        error_body_max_bytes=4097,
+    ):
         """Send exactly one POST and return a complete, size-bounded body."""
         parsed = urllib.parse.urlsplit(url)
         if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
@@ -122,14 +133,15 @@ class HTTPConnectionPool:
             response = connection.getresponse()
             try:
                 if not 200 <= response.status < 300:
-                    # Only quota classification needs an error body. Redirects
-                    # are never followed, even on the same origin.
+                    # Only selected error statuses retain a bounded body (e.g.
+                    # OpenAI 429 quota classification, Homecam 401/403 codes).
+                    # Redirects are never followed, even on the same origin.
                     detail = b''
-                    if response.status == 429:
+                    if response.status in error_body_statuses:
                         try:
-                            detail = response.read(4097)
+                            detail = response.read(error_body_max_bytes)
                         except (OSError, http.client.HTTPException):
-                            pass  # A broken quota body must not erase HTTP 429.
+                            pass  # A broken error body must not erase the HTTP status.
                     raise urllib.error.HTTPError(
                         url, response.status, response.reason,
                         response.headers, io.BytesIO(detail),

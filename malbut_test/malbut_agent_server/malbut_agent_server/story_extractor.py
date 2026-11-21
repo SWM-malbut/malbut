@@ -216,6 +216,10 @@ class OpenAIStoryExtractor:
             raise ValueError('max_input_chars must be >= 1024')
         self.max_input_chars = max_input_chars
 
+    def close(self):
+        """Release any owned HTTP connection pool."""
+        self.backend.close()
+
     def extract(self, stories, sources):
         if not isinstance(stories, (list, tuple)) or not isinstance(sources, (list, tuple)):
             raise StoryExtractionError('invalid extraction inputs')

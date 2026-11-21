@@ -494,4 +494,9 @@ class StoryMemoryService:
             self._claimed_job = None
         # An uncooperative remote call may finish later. _process checks stop
         # before touching storage again; its durable claim can recover later.
-        self.store.close()
+        from malbut_agent_server.providers.base import close_providers
+
+        try:
+            close_providers(self.extractor)
+        finally:
+            self.store.close()

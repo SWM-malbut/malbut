@@ -146,3 +146,6 @@ class BackgroundContextCompactor:
             thread = self._thread
         if thread is not None:
             thread.join(timeout=1)
+        from malbut_agent_server.providers.base import close_providers
+
+        close_providers(self.summarizer)

@@ -9,6 +9,17 @@ def _reject_constant(_value):
     raise ValueError('non-finite JSON')
 
 
+_JSON_DECODER = json.JSONDecoder(parse_constant=_reject_constant)
+
+
+def _skip_ws(text, at):
+    """Advance past ASCII/Unicode whitespace without slicing the tail string."""
+    length = len(text)
+    while at < length and text[at].isspace():
+        at += 1
+    return at
+
+
 def _string_prefix(text, start):
     """Decode a JSON string prefix only through complete escapes/code points."""
     if start >= len(text) or text[start] != '"':
@@ -39,6 +50,53 @@ def _string_prefix(text, start):
     return json.loads(text[start:at] + '"'), False
 
 
+def _candidate_impossible(text):
+    """Return True once the streamed prefix guarantees no preview can ever match."""
+    at = _skip_ws(text, 0)
+    if at >= len(text):
+        return False
+    if text[at] != '{':
+        return True
+    at += 1
+    seen = set()
+    try:
+        while at < len(text):
+            at = _skip_ws(text, at)
+            if at >= len(text):
+                return False
+            key, at = _JSON_DECODER.raw_decode(text, at)
+            if not isinstance(key, str) or key in seen:
+                return True
+            seen.add(key)
+            at = _skip_ws(text, at)
+            if at >= len(text):
+                return False
+            if text[at] != ':':
+                return True
+            at = _skip_ws(text, at + 1)
+            if at >= len(text):
+                return False
+            if key == 'message':
+                # If 'message' arrives before 'type' or its string closes empty,
+                # message_candidate can never return a candidate for this stream.
+                if 'type' not in seen:
+                    return True
+                prefix, closed = _string_prefix(text, at)
+                return bool(closed and not prefix)
+            value, at = _JSON_DECODER.raw_decode(text, at)
+            if key == 'type' and value != 'message':
+                return True
+            at = _skip_ws(text, at)
+            if at >= len(text):
+                return False
+            if text[at] != ',':
+                return True
+            at += 1
+    except (ValueError, UnicodeError, IndexError):
+        return False
+    return False
+
+
 def message_candidate(text):
     """Read a top-level message string, not nested/tool text or JSON regexes.
 
@@ -46,24 +104,22 @@ def message_candidate(text):
     splitter sees the same trailing whitespace as the final full message.
     A closed message string can prepare its complete text instead.
     """
-    decoder = json.JSONDecoder(parse_constant=_reject_constant)
     try:
-        at = len(text) - len(text.lstrip())
+        at = _skip_ws(text, 0)
         if at >= len(text) or text[at] != '{':
             return None
         at += 1
         message_type, seen = None, set()
         while at < len(text):
-            at += len(text[at:]) - len(text[at:].lstrip())
-            key, at = decoder.raw_decode(text, at)
+            at = _skip_ws(text, at)
+            key, at = _JSON_DECODER.raw_decode(text, at)
             if not isinstance(key, str) or key in seen:
                 return None
             seen.add(key)
-            at += len(text[at:]) - len(text[at:].lstrip())
+            at = _skip_ws(text, at)
             if at >= len(text) or text[at] != ':':
                 return None
-            at += 1
-            at += len(text[at:]) - len(text[at:].lstrip())
+            at = _skip_ws(text, at + 1)
             if key == 'message':
                 if message_type != 'message':
                     return None
@@ -88,10 +144,10 @@ def message_candidate(text):
                         if tail < len(prefix):
                             return prefix[:tail + 1]
                 return None
-            value, at = decoder.raw_decode(text, at)
+            value, at = _JSON_DECODER.raw_decode(text, at)
             if key == 'type':
                 message_type = value
-            at += len(text[at:]) - len(text[at:].lstrip())
+            at = _skip_ws(text, at)
             if at >= len(text) or text[at] != ',':
                 return None
             at += 1
@@ -114,11 +170,13 @@ class ResponseEvents:
         self.completed = None
         self.sequence = -1
         self._candidate_prepared = False
+        self._candidate_disabled = False
 
     def _block(self):
         self.blocked = True
         self.text = ''
         self._candidate_prepared = False
+        self._candidate_disabled = True
         if self.turn is not None:
             self.turn.fail_attempt()
 
@@ -188,11 +246,14 @@ class ResponseEvents:
                 else:
                     self.text += delta
                     if (self.response_id is not None and self.turn is not None
-                            and not self._candidate_prepared):
+                            and not self._candidate_prepared
+                            and not self._candidate_disabled):
                         candidate = message_candidate(self.text)
                         if candidate is not None:
                             self._candidate_prepared = True
                             self.turn.prepare(candidate)
+                        elif _candidate_impossible(self.text):
+                            self._candidate_disabled = True
         elif kind == 'response.completed':
             response = event.get('response')
             if (self.completed is not None or not isinstance(response, dict)

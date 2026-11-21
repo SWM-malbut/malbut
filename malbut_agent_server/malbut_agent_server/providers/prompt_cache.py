@@ -37,12 +37,17 @@ def _profile_fingerprint(payload, instructions):
     return hashlib.sha256(descriptor.encode('utf-8')).hexdigest()[:16]
 
 
-def arrange_cached_input(payload, user_id):
+def arrange_cached_input(payload, user_id, *, followup_developer_instructions=None):
     """Keep one untrusted JSON object, split only between complete values.
 
     Each history entry keeps its own content block as the conversation grows.
     Stable context keys including ``conversation_summary_untrusted`` sit before
     the history array so summaries stay inside the cached prefix until updated.
+    ``available_tools`` sits in the trailing block so a tool-disabled second
+    pass with ``tool_choice='none'`` reuses the exact Call-1 leading + history
+    prefix. Optional ``followup_developer_instructions`` are appended after the
+    cached user message so grounding rules stay authoritative without breaking
+    the prefix hash.
     The last two entries have explicit breakpoints; with developer + implicit
     user boundaries this remains within the four-write limit. Deletions and
     corrections change the actual input, so they cannot reuse an old prefix.
@@ -62,12 +67,14 @@ def arrange_cached_input(payload, user_id):
     history = context.get('conversation_history_untrusted')
     if not isinstance(history, list):
         return
-    encode = lambda value: json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+    def encode(value):
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
     leading = {
         key: context[key]
         for key in (
             'context_policy',
-            'available_tools',
             'conversation_summary_untrusted',
         )
         if key in context
@@ -84,13 +91,19 @@ def arrange_cached_input(payload, user_id):
         blocks.append(block)
     blocks.append({'type': 'input_text', 'text': ']' + (',' + encode(rest)[1:] if rest else '}')})
     instructions = payload.pop('instructions')
-    payload['input'] = [
+    messages = [
         {'role': 'developer', 'content': [
             {'type': 'input_text', 'text': instructions,
              'prompt_cache_breakpoint': {'mode': 'explicit'}},
         ]},
         {'role': 'user', 'content': blocks},
     ]
+    if followup_developer_instructions:
+        messages.append({
+            'role': 'developer',
+            'content': [{'type': 'input_text', 'text': followup_developer_instructions}],
+        })
+    payload['input'] = messages
     # Routing hint only; every request still includes fresh validated content.
     # Include the static profile fingerprint so distinct tool/instruction
     # profiles (e.g. full speech, weather fast-path, tool-free follow-ups)
