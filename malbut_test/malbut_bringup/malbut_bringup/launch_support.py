@@ -12,6 +12,16 @@ from launch.actions import (
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
+def _default_stt_model_path(speech_cache: Path) -> str:
+    env_path = os.environ.get('MALBUT_STT_MODEL_PATH')
+    if env_path:
+        return env_path
+    q8_model = speech_cache / 'models/ggml-small-q8_0.bin'
+    if q8_model.is_file():
+        return str(q8_model)
+    return str(speech_cache / 'models/ggml-small.bin')
+
+
 def defaults():
     cache_root = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')).expanduser()
     cache = cache_root / 'malbut_perception'
@@ -83,8 +93,7 @@ def defaults():
             'MALBUT_FALL_POSE_PYTHON', str(pose_python)),
         'speech': 'true',
         'speech_python_executable': str(speech_runtime / 'bin/python'),
-        'stt_model_path': os.environ.get(
-            'MALBUT_STT_MODEL_PATH', str(speech_cache / 'models/ggml-small.bin')),
+        'stt_model_path': _default_stt_model_path(speech_cache),
         'stt_library_path': os.environ.get(
             'MALBUT_STT_LIBRARY_PATH', str(stt_build / 'bin/libmalbut_whisper.so')),
         'speech_input_device': '0',

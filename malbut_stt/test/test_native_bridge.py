@@ -38,12 +38,13 @@ struct whisper_full_params {
     float temperature, temperature_inc;
     bool print_realtime, print_progress, print_timestamps, print_special;
     bool token_timestamps, vad, suppress_nst;
+    int audio_ctx;
     bool (*abort_callback)(void *);
     void *abort_callback_user_data;
     bool (*encoder_begin_callback)(whisper_context *, whisper_state *, void *);
     void *encoder_begin_callback_user_data;
 };
-inline std::atomic<int> mode{0}, entered{0}, freed{0};
+inline std::atomic<int> mode{0}, entered{0}, freed{0}, last_audio_ctx{-1};
 inline whisper_context_params whisper_context_default_params() { return {}; }
 inline whisper_context *whisper_init_from_file_with_params(
         const char *, whisper_context_params) { return new whisper_context; }
@@ -67,8 +68,10 @@ BACKEND = r'''
 extern "C" void test_set_mode(int value) { mode = value; entered = 0; }
 extern "C" int test_entered() { return entered; }
 extern "C" int test_freed() { return freed; }
+extern "C" int test_last_audio_ctx() { return last_audio_ctx; }
 int whisper_full(whisper_context *ctx, whisper_full_params p, const float * samples, int) {
     if (!p.suppress_nst) return 48;
+    last_audio_ctx = p.audio_ctx;
     entered = 1;
     if (mode == 2) {
         // Model a backend step that only returns after its callback deadline.
@@ -119,6 +122,7 @@ def bridge(tmp_path_factory):
     control.test_set_mode.argtypes = [ctypes.c_int]
     control.test_set_mode.restype = None
     control.test_entered.restype = control.test_freed.restype = ctypes.c_int
+    control.test_last_audio_ctx.restype = ctypes.c_int
     return model, library, control
 
 
@@ -242,3 +246,18 @@ def test_nonfinite_native_score_is_serializable_without_inventing_a_value(bridge
     assert window['avg_logprobs'] is None
     assert window['nonfinite_fields'] == {'avg_logprobs': '-inf'}
     json.dumps(info.native_decode, allow_nan=False)
+
+
+@pytest.mark.parametrize('duration_s,expected_ctx', [
+    (0.5, 512), (4.0, 512), (8.5, 512),
+    (9.0, 768), (13.5, 768),
+    (14.0, 1024), (18.5, 1024),
+    (19.0, 0), (28.0, 0),
+])
+def test_audio_ctx_uses_256_aligned_tiers_with_headroom(bridge, duration_s, expected_ctx):
+    model, library, control = bridge
+    control.test_set_mode(0)
+    samples = np.ones(int(duration_s * 16000), dtype=np.float32) * 0.01
+    with CppWhisperTranscriber(model, library) as transcriber:
+        transcriber.model.transcribe(samples, **DECODE_OPTIONS)
+    assert control.test_last_audio_ctx() == expected_ctx

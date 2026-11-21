@@ -50,6 +50,17 @@ bool abort_decode(void * data) {
 whisper_context * unwrap(void * context) {
     return static_cast<Bridge *>(context)->context;
 }
+
+// Shrink encoder/cross-attention context to 256-aligned tiers (matching
+// GGML_PAD(..., 256) in whisper.cpp Flash Attention) with >= 1.5 s headroom.
+// Never drop below 512: 256 degraded Korean CER on Jetson CUDA.
+int select_audio_ctx(int sample_count) {
+    const double duration_s = sample_count / 16000.0;
+    if (duration_s <= 8.5) return 512;
+    if (duration_s <= 13.5) return 768;
+    if (duration_s <= 18.5) return 1024;
+    return 0;  // Full 30 s (1500 frames).
+}
 }
 
 extern "C" {
@@ -107,6 +118,7 @@ int mb_whisper_transcribe(void * context, const float * samples, int count,
     params.print_special = false;
     params.token_timestamps = false;
     params.vad = false;
+    params.audio_ctx = select_audio_ctx(count);
     params.abort_callback = abort_decode;
     params.abort_callback_user_data = &decode;
     params.encoder_begin_callback = [](whisper_context *, whisper_state *, void * data) {

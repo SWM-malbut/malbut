@@ -7,7 +7,7 @@ import pytest
 
 from malbut_stt.audio import CaptureSettings
 from malbut_stt.dialogue_pipeline import DialoguePipeline
-from malbut_stt.endpoint import is_complete_korean_utterance
+from malbut_stt.endpoint import is_complete_korean_utterance, is_incomplete_korean_fragment
 from malbut_stt.streaming import StreamingUtteranceCollector
 
 
@@ -29,9 +29,34 @@ QUIET = bytes(640)
     '오늘 기분이 좋다', '나는 이게 좋아', '정말 좋아요', '지금 뭐해?',
     '알겠지?', '한번 해봐라', '좋아져!',
     '제 이름은 제이크입니다.', '정말입니까?',
+    '내 이름이 뭐였지?', '전에 알려준 이름이 뭐였더라?', '결과가 생각보다 괜찮더라.',
+    '오늘은 여기까지 하고 그만하자', '다시 끝말잇기로 돌아가자', '상상만 해보자',
+    '오래 걷고 싶지는 않아.', '잘못 생각했을 것 같아.', '점심에 뭘 먹었는지 알아?',
+    '이제 그만 따라와', '고마워!', '고양이 이름을 기억해?', '이름이 기억나?',
+    '실제로 움직이지는 마', '내 얘기를 들어주었으면 해.', '오늘 기온이 몇 도야?',
+    '내일 최고 기온은 몇 도래?',
 ])
 def test_explicit_korean_final_endings_can_shorten_the_wait(text):
     assert is_complete_korean_utterance(text)
+
+
+@pytest.mark.parametrize('text', [
+    '비가 오면', '이유는 설명하지 말고', '거실에서', '지금 문을 닫고!',
+    '조금 기다렸다가', '이게 필요한데요.', '나는 사과하고요', '멈춰 줘. 그리고',
+    '말해 주세요라는', '장난감 상자부터', '오른쪽으로', '해결책보다',
+    '빨간 상자를', '잠깐만', '혹시', '그런데', '너무 느려서', '기분이 좋아도',
+    '괜찮더라도', '기억나는데',
+])
+def test_incomplete_korean_fragments_trigger_mid_sentence_veto(text):
+    assert is_incomplete_korean_fragment(text)
+
+
+@pytest.mark.parametrize('text', [
+    '', '삼각형', '네', '아니요', '고양이', '라면', '냉면', '가을', '망고', '순서',
+    '거실로 이동해 주세요.', '고마워!', '내 이름이 뭐였지?',
+])
+def test_short_answers_and_complete_sentences_are_not_vetoed_as_fragments(text):
+    assert not is_incomplete_korean_fragment(text)
 
 
 @pytest.mark.parametrize('text', [

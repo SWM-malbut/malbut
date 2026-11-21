@@ -97,12 +97,17 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.declare_parameter('voice_profile_version', 1, ignore_override=True)
         turn_detection = parameter('turn_detection', 'adaptive')
         endpoint_min_silence_s = parameter(
-            'endpoint_min_silence_s', 0.8 if turn_detection == 'adaptive' else 1.8)
+            'endpoint_min_silence_s',
+            0.8 if turn_detection in ('adaptive', 'adaptive_fused') else 1.8)
+        endpoint_preempt_s = parameter(
+            'endpoint_preempt_s',
+            0.4 if turn_detection == 'adaptive_fused' else 0.8)
         turn_model_directory = parameter('turn_model_directory', str(
             Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
             / 'malbut_speech/models'))
-        if turn_detection not in ('legacy', 'hybrid', 'reachy_start', 'adaptive'):
-            raise ValueError('turn_detection must be legacy or hybrid or reachy_start or adaptive')
+        if turn_detection not in ('legacy', 'hybrid', 'reachy_start', 'adaptive', 'adaptive_fused'):
+            raise ValueError(
+                'turn_detection must be legacy or hybrid or reachy_start or adaptive or adaptive_fused')
         if (type(max_utterance_s) not in (float, int)
                 or not isfinite(max_utterance_s) or max_utterance_s < 0):
             raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
@@ -127,6 +132,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 or not isfinite(endpoint_min_silence_s)
                 or not 0.2 <= endpoint_min_silence_s <= 2.0):
             raise ValueError('endpoint_min_silence_s must be between 0.2 and 2.0 seconds')
+        if (type(endpoint_preempt_s) not in (int, float)
+                or not isfinite(endpoint_preempt_s)
+                or not 0.2 <= endpoint_preempt_s <= 1.0):
+            raise ValueError('endpoint_preempt_s must be between 0.2 and 1.0 seconds')
         settings = CaptureSettings(
             start_timeout_s=parameter('start_timeout_s', 5.0),
             silence_timeout_s=parameter('silence_timeout_s', 2.0),
@@ -187,7 +196,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         try:
             start_qualifier, smart_turn = load_guards(turn_detection, turn_model_directory)
         except Exception as error:
-            if turn_detection != 'adaptive':
+            if turn_detection not in ('adaptive', 'adaptive_fused'):
                 raise
             # The new default must not prevent listening on installations that
             # have not provisioned the optional, pinned local model/runtime.
@@ -199,9 +208,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             node.get_logger().warning(
                 'stt_turn_detection:adaptive_unavailable:' + type(error).__name__
                 + ',fallback=legacy,min_silence_s=' + str(endpoint_min_silence_s))
-        if turn_detection == 'adaptive':
+        if turn_detection in ('adaptive', 'adaptive_fused'):
             node.get_logger().info(
-                f'stt_turn_detection:adaptive,vad=silero,smart_turn=completion,'
+                f'stt_turn_detection:{turn_detection},vad=silero,smart_turn=completion,'
                 f'min_silence_s={endpoint_min_silence_s},'
                 f'fallback_s={settings.silence_timeout_s}')
         elif turn_detection == 'hybrid':
@@ -529,11 +538,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 if silero_gate is not None else None),
             start_qualifier=start_qualifier, smart_turn=smart_turn,
             adaptive_endpoint=turn_detection == 'adaptive',
+            fused_endpoint=turn_detection == 'adaptive_fused',
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),
             endpoint_min_silence_s=(endpoint_min_silence_s
                                    if settings.silence_timeout_s > 1.0 else 1.0),
+            endpoint_preempt_s=endpoint_preempt_s,
         )
 
         timing_names = ('endpoint_min_silence_s', 'silence_timeout_s')

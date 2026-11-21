@@ -12,7 +12,7 @@ from time import monotonic, perf_counter
 
 from malbut_stt.audio import CapturePCM, CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession, is_conversation_end
-from malbut_stt.endpoint import is_complete_korean_utterance
+from malbut_stt.endpoint import is_complete_korean_utterance, is_incomplete_korean_fragment
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
 from malbut_stt.transcript_filter import boilerplate_reason
@@ -94,7 +94,7 @@ class DialoguePipeline:
                  stop_speech=None, on_failure=None, chime_tail_s=0.3,
                  short_speech_guard=False, followup_timeout_s=10.0,
                  validate_wake_command=None, start_qualifier=None, smart_turn=None,
-                 adaptive_endpoint=False,
+                 adaptive_endpoint=False, fused_endpoint=False,
                  wake_is_speech=None, barge_in_ducking=False, barge_in_mode='legacy',
                  interruption_transcriber=None, barge_in_pre_roll_s=2.0):
         if type(barge_in_ducking) is not bool:
@@ -128,9 +128,16 @@ class DialoguePipeline:
         self.validate_wake_command = validate_wake_command
         if type(adaptive_endpoint) is not bool:
             raise ValueError('adaptive_endpoint must be a boolean')
+        if type(fused_endpoint) is not bool:
+            raise ValueError('fused_endpoint must be a boolean')
+        if adaptive_endpoint and fused_endpoint:
+            raise ValueError('adaptive_endpoint and fused_endpoint are mutually exclusive')
         if adaptive_endpoint and smart_turn is None:
             raise ValueError('adaptive_endpoint requires Smart Turn')
+        if fused_endpoint and smart_turn is None:
+            raise ValueError('fused_endpoint requires Smart Turn')
         self.adaptive_endpoint = adaptive_endpoint
+        self.fused_endpoint = fused_endpoint
         self.smart_turn = smart_turn
         self._smart_turn_result = None
         self.recorder_factory = recorder_factory
@@ -673,7 +680,7 @@ class DialoguePipeline:
             return None
 
     def _infer(self):
-        if self.adaptive_endpoint:
+        if self.adaptive_endpoint or self.fused_endpoint:
             # Only one endpoint is in flight. Keep the small CPU classifier
             # beside Whisper so its cost does not delay the start of ASR.
             with ThreadPoolExecutor(max_workers=1, thread_name_prefix='stt-turn') as pool:
@@ -1403,14 +1410,24 @@ class DialoguePipeline:
             self._trace_job('endpoint_cache_discarded', 'endpoint', generation, (uid, revision),
                             reason='capture_or_revision_changed')
             return
-        # Adaptive mode trusts the acoustic model, including short answers that
-        # have no Korean sentence ending. False/missing predictions keep the
-        # full fallback. Hybrid mode retains its additional lexical guard.
-        complete = (self._smart_turn_result == ((generation, uid, revision), True)
-                    if self.adaptive_endpoint else
-                    is_complete_korean_utterance(text) and (
-                        self.smart_turn is None or self._smart_turn_result == (
-                            (generation, uid, revision), True)))
+        # Fused mode combines explicit Korean sentence endings (complete),
+        # explicit mid-sentence connectives/postpositions (veto to fallback),
+        # and Smart Turn acoustic completion for neutral short answers.
+        # Adaptive mode trusts the acoustic model directly. Hybrid mode retains
+        # the conjunction of lexical ending and Smart Turn.
+        if self.fused_endpoint:
+            if is_complete_korean_utterance(text):
+                complete = True
+            elif is_incomplete_korean_fragment(text):
+                complete = False
+            else:
+                complete = self._smart_turn_result == ((generation, uid, revision), True)
+        elif self.adaptive_endpoint:
+            complete = self._smart_turn_result == ((generation, uid, revision), True)
+        else:
+            complete = is_complete_korean_utterance(text) and (
+                self.smart_turn is None or self._smart_turn_result == (
+                    (generation, uid, revision), True))
         observed_silence_s = self.command_stream.collector.silent_frames * 0.02
         if (observed_silence_s >= self.command_stream.endpoint_min_silence_s
                 and self._usable_text(text, error_name) and complete):

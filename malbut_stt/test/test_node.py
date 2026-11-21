@@ -56,9 +56,42 @@ def test_default_adaptive_mode_uses_acoustic_completion_and_eight_tenths(runtime
     assert calls == ['adaptive']
     assert runtime.pipeline_args['smart_turn'] is smart
     assert runtime.pipeline_args['adaptive_endpoint'] is True
+    assert runtime.pipeline_args['fused_endpoint'] is False
     assert runtime.pipeline_args['endpoint_min_silence_s'] == .8
     assert runtime.pipeline_args['endpoint_predecode_s'] == .4
+    assert runtime.pipeline_args['endpoint_preempt_s'] == .8
     assert runtime.pipeline_args['settings'].silence_timeout_s == 2.
+
+
+def test_adaptive_fused_mode_wires_fused_endpoint_and_fast_preempt(runtime, monkeypatch):
+    runtime.parameters['turn_detection'] = 'adaptive_fused'
+    smart = object()
+    calls = []
+    def load(mode, directory):
+        calls.append(mode)
+        return None, smart
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', load)
+    assert main([]) == 0
+    assert calls == ['adaptive_fused']
+    assert runtime.pipeline_args['smart_turn'] is smart
+    assert runtime.pipeline_args['adaptive_endpoint'] is False
+    assert runtime.pipeline_args['fused_endpoint'] is True
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == .8
+    assert runtime.pipeline_args['endpoint_predecode_s'] == .4
+    assert runtime.pipeline_args['endpoint_preempt_s'] == .4
+    assert runtime.pipeline_args['settings'].silence_timeout_s == 2.
+
+
+def test_unavailable_adaptive_fused_model_falls_back_to_legacy(runtime, monkeypatch):
+    runtime.parameters['turn_detection'] = 'adaptive_fused'
+    def load(*_):
+        raise FileNotFoundError('missing smart turn')
+    monkeypatch.setattr('malbut_stt.turn_detection.load_guards', load)
+    assert main([]) == 0
+    assert runtime.pipeline_args['smart_turn'] is None
+    assert runtime.pipeline_args['adaptive_endpoint'] is False
+    assert runtime.pipeline_args['fused_endpoint'] is False
+    assert runtime.pipeline_args['endpoint_min_silence_s'] == 1.8
 
 
 @pytest.mark.parametrize('error', [FileNotFoundError, ImportError, ValueError, RuntimeError])
