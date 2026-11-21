@@ -40,7 +40,6 @@ from malbut_agent_server.prompting import (
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
     PreparedModelInput,
-    SCENE_INSTRUCTIONS,
     prepare_model_input,
     scene_instructions_for_context,
     system_instructions_for_tools,
@@ -69,7 +68,7 @@ from malbut_agent_server.speech_mapping import MAPPING_NAME_INSTRUCTIONS, mappin
 
 
 Transport = Callable[
-    [str, Dict[str, str], Dict[str, Any], int],
+    [str, Dict[str, str], Dict[str, Any], float],
     Dict[str, Any],
 ]
 MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -321,18 +320,26 @@ class OpenAIResponsesProvider(AgentProvider):
         def observe(name):
             events.setdefault(name + '_ms', (time.perf_counter() - started) * 1000)
 
+        from malbut_agent_server.offline_fallback import current_timeout_cap
+
+        timeout_cap = current_timeout_cap()
+        effective_timeout = (
+            min(float(self.timeout_seconds), timeout_cap)
+            if timeout_cap is not None
+            else self.timeout_seconds
+        )
         try:
             url = f'{self.base_url}/responses'
             if ((prefetch is not None or self.api_timing_enabled) and self._http_pool is not None
                     and self.transport == self._pooled_transport
                     and not uses_environment_proxy(url)):
                 response = self._pooled_transport(
-                    url, headers, dict(payload, stream=True), self.timeout_seconds,
+                    url, headers, dict(payload, stream=True), effective_timeout,
                     stream_turn=prefetch,
                     observer=observe if self.api_timing_enabled else None,
                 )
             else:
-                response = self.transport(url, headers, payload, self.timeout_seconds)
+                response = self.transport(url, headers, payload, effective_timeout)
         except Exception as error:
             if prefetch is not None:
                 prefetch.fail_attempt()
@@ -981,7 +988,7 @@ class OpenAIResponsesProvider(AgentProvider):
         url: str,
         headers: Dict[str, str],
         payload: Dict[str, Any],
-        timeout_seconds: int,
+        timeout_seconds: float,
     ) -> Dict[str, Any]:
         # Keep image-heavy JSON in a one-byte string even with Unicode prompts.
         # JSON escapes preserve text while avoiding a widened base64 buffer.

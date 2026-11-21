@@ -55,6 +55,14 @@ from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import (
     HOMECAM_QUERY_TOOLS, PATROL_QUERY_TOOLS, validate_tool_arguments,
 )
+from malbut_agent_server.offline_fallback import (
+    DEFAULT_OFFLINE_STOP_TIMEOUT_SECONDS,
+    is_provider_outage_result,
+    is_urgent_stop_utterance,
+    offline_stop_budget_scope,
+    provider_circuit_summary,
+    resolve_offline_speech_fallback,
+)
 from malbut_agent_server.turn_metrics import (
     TurnWaterfallRecorder,
     TurnWaterfallTrace,
@@ -486,6 +494,8 @@ class AgentOrchestrator:
         story_memory=None,
         story_provider=None,
         turn_metrics: TurnWaterfallRecorder | None = None,
+        offline_safety_fallback_enabled: bool = True,
+        offline_stop_timeout_seconds: float = DEFAULT_OFFLINE_STOP_TIMEOUT_SECONDS,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -532,6 +542,19 @@ class AgentOrchestrator:
             if background_memory else None
         )
         self.turn_metrics = turn_metrics or TurnWaterfallRecorder()
+        if type(offline_safety_fallback_enabled) is not bool:
+            raise TypeError('offline_safety_fallback_enabled must be a boolean')
+        if (
+            isinstance(offline_stop_timeout_seconds, bool)
+            or not isinstance(offline_stop_timeout_seconds, (int, float))
+            or not math.isfinite(float(offline_stop_timeout_seconds))
+            or not (0.5 <= float(offline_stop_timeout_seconds) <= 15.0)
+        ):
+            raise ValueError(
+                'offline_stop_timeout_seconds must be between 0.5 and 15.0'
+            )
+        self.offline_safety_fallback_enabled = offline_safety_fallback_enabled
+        self.offline_stop_timeout_seconds = float(offline_stop_timeout_seconds)
         self._closed = False
         self._deferred_conversation_recovery = recover_abandoned_turns(conversation_store)
 
@@ -541,6 +564,10 @@ class AgentOrchestrator:
             self.automatic_memory_worker.start()
         if self.story_memory is not None and not self._closed:
             self.story_memory.start()
+
+    def provider_health(self) -> Dict[str, Any]:
+        """Return content-free circuit states for observability boundaries."""
+        return provider_circuit_summary(self.provider)
 
     def stop_background_memory(self):
         """Drain the owned worker before callers close the shared stores."""
@@ -1091,17 +1118,62 @@ class AgentOrchestrator:
                         token, memory_snapshot, focus, self.memory_limit, previous_name_id=previous_name_id,
                     )
                 memory_arguments['fact_lookup'] = recall_facts
-            with (trace.measure('provider_ms') if trace is not None else nullcontext()):
-                provider_result = self.provider.complete(
-                    model_request,
-                    memories,
-                    copy.deepcopy(list(conversation_turns)),
-                    tool_specs,
-                    conversation_summary=copy.deepcopy(
-                        conversation_summary
-                    ),
-                    **memory_arguments,
-                )
+            allow_offline_fallback = (
+                self.offline_safety_fallback_enabled
+                and isinstance(model_request, SpeechAgentRequest)
+                and not model_request.mapping_name_requested
+                and memory_snapshot.pending is None
+                and not memory_snapshot.source.get('settings_edit')
+                and not explicit_memory_management(request.utterance)
+            )
+            use_stop_budget = (
+                allow_offline_fallback
+                and 'cancel_voice_mission' in model_request.available_tools
+                and not model_request.navigation_confirmation
+                and is_urgent_stop_utterance(model_request.utterance)
+            )
+            budget_ctx = (
+                offline_stop_budget_scope(self.offline_stop_timeout_seconds)
+                if use_stop_budget
+                else nullcontext()
+            )
+            with (trace.measure('provider_ms') if trace is not None else nullcontext()), budget_ctx:
+                try:
+                    provider_result = self.provider.complete(
+                        model_request,
+                        memories,
+                        copy.deepcopy(list(conversation_turns)),
+                        tool_specs,
+                        conversation_summary=copy.deepcopy(
+                            conversation_summary
+                        ),
+                        **memory_arguments,
+                    )
+                except (ProviderError, TimeoutError, OSError):
+                    if not allow_offline_fallback:
+                        raise
+                    offline_result = resolve_offline_speech_fallback(
+                        model_request,
+                        model_request.available_tools,
+                    )
+                    if offline_result is None:
+                        raise
+                    provider_result = offline_result
+                    if trace is not None:
+                        trace.set_flag('offline_fallback', True)
+                else:
+                    if allow_offline_fallback and is_provider_outage_result(provider_result):
+                        offline_result = resolve_offline_speech_fallback(
+                            model_request,
+                            model_request.available_tools,
+                        )
+                        if offline_result is not None:
+                            provider_result = replace(
+                                offline_result,
+                                latency_ms=provider_result.latency_ms,
+                            )
+                            if trace is not None:
+                                trace.set_flag('offline_fallback', True)
             if memory_snapshot.facts_deferred:
                 memories = memory_snapshot.memories
         else:

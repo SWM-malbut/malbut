@@ -115,6 +115,8 @@ def test_rai_fields_append_after_legacy_positional_contract() -> None:
         'openai_prompt_cache_enabled',
         'turn_metrics_capacity',
         'turn_metrics_snapshot_path',
+        'offline_safety_fallback_enabled',
+        'offline_stop_timeout_seconds',
     )
 
 

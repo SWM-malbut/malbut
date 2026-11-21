@@ -19,6 +19,10 @@ from malbut_agent_server.conversation_progress import (
     claim_retry, in_request, MODEL_RETRY_NOTICE, SERVICE_UNAVAILABLE_NOTICE,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.offline_fallback import (
+    current_timeout_cap,
+    retries_suppressed,
+)
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
@@ -518,7 +522,14 @@ class ReliableProvider(AgentProvider):
         memory_context: Optional[dict] = None,
         weather_context: Optional[dict] = None,
         attempt_metrics: Optional[dict] = None,
+        attempt_timeout: Optional[float] = None,
+        allow_retries: bool = True,
     ) -> Tuple[Optional[ProviderResult], ProviderFailure]:
+        effective_attempt_timeout = (
+            self._attempt_timeout_seconds
+            if attempt_timeout is None
+            else attempt_timeout
+        )
         context_arguments = (
             {'memory_context': memory_context}
             if memory_context is not None
@@ -528,10 +539,12 @@ class ReliableProvider(AgentProvider):
         if weather_context is not None and accepts_weather_context(provider):
             context_arguments['weather_context'] = weather_context
         failure = _FAILURES[ProviderFailureCode.UNKNOWN]
-        for attempt in range(self._max_retries + 1):
+        max_attempts = (self._max_retries + 1) if allow_retries else 1
+        for attempt in range(max_attempts):
             if (
-                deadline - self._clock()
-                < self._attempt_timeout_seconds
+                attempt > 0
+                and deadline - self._clock()
+                < effective_attempt_timeout
             ):
                 break
             caught_error: Optional[BaseException] = None
@@ -569,8 +582,9 @@ class ReliableProvider(AgentProvider):
                 failure = classify_exception(error)
 
             can_retry = (
-                (failure.transient or (in_request()
-                 and failure.code is ProviderFailureCode.INVALID_RESPONSE))
+                allow_retries
+                and (failure.transient or (in_request()
+                     and failure.code is ProviderFailureCode.INVALID_RESPONSE))
                 and attempt < self._max_retries
             )
             if not can_retry:
@@ -583,7 +597,7 @@ class ReliableProvider(AgentProvider):
             if (
                 self._clock()
                 + delay
-                + self._attempt_timeout_seconds
+                + effective_attempt_timeout
                 > deadline
             ):
                 break
@@ -608,13 +622,26 @@ class ReliableProvider(AgentProvider):
         """Return the first valid result or a safe non-action response."""
         self._reset_circuits_on_new_key()
         started_at = self._clock()
-        deadline = started_at + self._total_timeout_seconds
+        timeout_cap = current_timeout_cap()
+        suppress = retries_suppressed()
+        effective_attempt_timeout = (
+            min(self._attempt_timeout_seconds, timeout_cap)
+            if timeout_cap is not None
+            else self._attempt_timeout_seconds
+        )
+        effective_total_timeout = (
+            min(self._total_timeout_seconds, timeout_cap)
+            if timeout_cap is not None
+            else self._total_timeout_seconds
+        )
+        deadline = started_at + effective_total_timeout
         attempted = False
         attempt_metrics = {'attempt_count': 0, 'retry_delay_ms': 0.0}
         for index, provider in enumerate(self._providers):
             if (
-                deadline - self._clock()
-                < self._attempt_timeout_seconds
+                attempted
+                and deadline - self._clock()
+                < effective_attempt_timeout
             ):
                 break
             if not self._admit_provider(index):
@@ -633,6 +660,8 @@ class ReliableProvider(AgentProvider):
                 memory_context,
                 weather_context,
                 attempt_metrics,
+                attempt_timeout=effective_attempt_timeout,
+                allow_retries=not suppress,
             )
             if result is not None:
                 self._record_success(index)
@@ -646,7 +675,7 @@ class ReliableProvider(AgentProvider):
                 return replace(result, latency_ms=elapsed_ms, api_timing=timing)
             self._record_failure(index, failure)
             # Every fallback model uses the same key: trying it cannot help.
-            if failure.code in _KEY_FAILURES:
+            if failure.code in _KEY_FAILURES or suppress:
                 break
 
         elapsed_ms = max(
