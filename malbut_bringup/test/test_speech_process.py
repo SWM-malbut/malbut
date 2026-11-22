@@ -240,7 +240,60 @@ def test_refreshes_xfm_route_and_exits_if_physical_source_disappears(microphone_
         sources.write_text('[]')
         code, output = finish(process)
         assert code == 75
-        assert 'speech_microphone_lost' in output
+        assert 'speech_microphone_lost reason=missing' in output
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            finish(process)
+
+
+def test_transient_pactl_failure_retries_once_before_exiting_75(microphone_gate, tmp_path):
+    start, available, model_started, env = microphone_gate
+    mode = tmp_path / 'pactl_mode'
+    calls = tmp_path / 'pactl_calls'
+    mode.write_text('ok')
+    sources = json.dumps([{
+        'name': 'alsa_input.xfm.reconnected',
+        'properties': {'device.product.name': 'XFM-DP-V0.0.18'},
+    }])
+    pactl = tmp_path / 'pactl'
+    pactl.write_text(
+        f'#!{sys.executable}\n'
+        'from pathlib import Path\nimport sys\n'
+        f'mode_file = Path({str(mode)!r})\n'
+        f'calls_file = Path({str(calls)!r})\n'
+        'state = mode_file.read_text().strip()\n'
+        'with calls_file.open("a") as fh:\n'
+        '    fh.write(state + "\\n")\n'
+        'if state == "fail_once":\n'
+        '    mode_file.write_text("ok")\n'
+        '    sys.exit(1)\n'
+        'if state == "fail_always":\n'
+        '    sys.exit(1)\n'
+        f'print({sources!r})\n'
+    )
+    pactl.chmod(0o755)
+    env.update(PATH=str(tmp_path) + os.pathsep + env.get('PATH', ''),
+               MALBUT_SHARED_MICROPHONE='stale.source', PULSE_SOURCE='stale.source')
+    available.touch()
+    process = start('import time; print("child_ready", flush=True); time.sleep(30)')
+    try:
+        wait_line(process, 'child_ready')
+        assert model_started.exists()
+        mode.write_text('fail_once')
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            if calls.exists() and calls.read_text().splitlines()[-2:] == ['fail_once', 'ok']:
+                break
+            assert process.poll() is None, 'single pactl hiccup must not kill STT'
+            time.sleep(0.05)
+        else:
+            pytest.fail('expected recovery poll after single pactl failure')
+        assert process.poll() is None
+        mode.write_text('fail_always')
+        code, output = finish(process)
+        assert code == 75
+        assert 'speech_microphone_lost reason=pulse_unavailable' in output
     finally:
         if process.poll() is None:
             process.terminate()

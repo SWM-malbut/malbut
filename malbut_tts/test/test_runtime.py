@@ -645,6 +645,61 @@ def test_device_failure_is_not_finished(h):
     assert (pid, 'finished') not in h.events
 
 
+def test_device_failure_logs_chained_cause(caplog):
+    """Chained PortAudio/device causes appear in playback and cleanup failure logs."""
+    import logging
+
+    class FailingPlayer:
+        def __init__(self, on_state, cancel_event):
+            self._cause = OSError('Input/output error')
+
+        def write(self, audio, sample_rate):
+            raise RuntimeError('Audio playback failed.') from self._cause
+
+        def finish(self):
+            pass
+
+        def close(self):
+            raise RuntimeError('Could not stop audio cleanly.') from self._cause
+
+    class SingleChunkSynthesizer:
+        def generate(self, text, cancel_event):
+            yield [0.1, 0.2], 24000
+
+    done = Event()
+    events = []
+
+    def on_status(pid, state, interim, req):
+        events.append((pid, state))
+        if state == 'failed':
+            done.set()
+
+    logger = logging.getLogger('test_tts_chained_cause')
+    runtime = SpeechRuntime(
+        SingleChunkSynthesizer(),
+        FailingPlayer,
+        on_status,
+        logger=logger,
+    )
+    try:
+        with caplog.at_level(logging.ERROR, logger='test_tts_chained_cause'):
+            pid = runtime.submit('answer')
+            assert done.wait(2)
+            assert (pid, 'failed') in events
+    finally:
+        runtime.close()
+    assert any(
+        'tts_playback_failed:' in record.message
+        and 'OSError: Input/output error' in record.message
+        for record in caplog.records
+    )
+    assert any(
+        'tts_cleanup_failed:' in record.message
+        and 'OSError: Input/output error' in record.message
+        for record in caplog.records
+    )
+
+
 def test_stop_device_failure_keeps_service_response_and_reports_failed(h):
     """A failed device abort is not a successful stop or a lost response."""
     pid = h.runtime.submit('answer')

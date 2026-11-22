@@ -119,6 +119,7 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
             ready = oom = finished = False
             shutdown_deadline = None
             source_check_at = time.monotonic() + 1.0
+            source_unavailable_streak = 0
             pending = tail = b''
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
@@ -132,13 +133,24 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
                         return 124
                     if (microphone_device == 0 and environment.get('MALBUT_SHARED_MICROPHONE')
                             and shutdown_deadline is None and time.monotonic() >= source_check_at):
-                        from malbut_bringup.speech_audio import shared_xfm_source
+                        from malbut_bringup.speech_audio import (
+                            PulseAudioUnavailableError, shared_xfm_source,
+                        )
+                        lost_reason = None
                         try:
                             source = shared_xfm_source(environment)
+                        except PulseAudioUnavailableError:
+                            source_unavailable_streak += 1
+                            if source_unavailable_streak >= 2:
+                                lost_reason = 'pulse_unavailable'
                         except RuntimeError:
-                            source = None
-                        if source != environment['MALBUT_SHARED_MICROPHONE']:
-                            print('speech_microphone_lost', flush=True)
+                            lost_reason = 'missing'
+                        else:
+                            source_unavailable_streak = 0
+                            if source != environment['MALBUT_SHARED_MICROPHONE']:
+                                lost_reason = 'changed'
+                        if lost_reason is not None:
+                            print(f'speech_microphone_lost reason={lost_reason}', flush=True)
                             _stop(process)
                             return 75
                         source_check_at = time.monotonic() + 1.0

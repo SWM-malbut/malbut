@@ -33,7 +33,7 @@ def test_resolves_xfm_by_identity_not_device_order(monkeypatch):
 def test_no_arbitrary_fallback_when_xfm_missing_or_ambiguous(monkeypatch, sources):
     monkeypatch.setattr(subprocess, 'run', Mock(
         return_value=SimpleNamespace(stdout=json.dumps(sources))))
-    with pytest.raises(RuntimeError, match='requires one XFM-DP'):
+    with pytest.raises(speech_audio.SharedMicrophoneNotFoundError, match='requires one XFM-DP'):
         shared_xfm_source({})
 
 
@@ -43,7 +43,7 @@ def test_no_arbitrary_fallback_when_xfm_missing_or_ambiguous(monkeypatch, source
 ])
 def test_audio_server_failure_is_actionable(monkeypatch, error):
     monkeypatch.setattr(subprocess, 'run', Mock(side_effect=error))
-    with pytest.raises(RuntimeError, match='desktop audio user'):
+    with pytest.raises(speech_audio.PulseAudioUnavailableError, match='desktop audio user'):
         shared_xfm_source({})
 
 

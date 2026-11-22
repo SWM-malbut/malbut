@@ -449,3 +449,169 @@ def test_duck_changes_pcm_without_consuming_or_mutating_queued_audio():
             assert states == ['playing']
         finally:
             player.close()
+
+
+def test_transient_portaudio_open_error_retries_and_plays_all_pcm():
+    """Temporary USB/PulseAudio sink absence during open recovers without dropping PCM."""
+    api, instances = fake_device()
+
+    class PortAudioError(RuntimeError):
+        pass
+
+    api.PortAudioError = PortAudioError
+    real_stream = api.OutputStream
+    attempts = []
+
+    def flaky_stream(**kwargs):
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise PortAudioError('Error opening OutputStream: No such entity')
+        return real_stream(**kwargs)
+
+    api.OutputStream = flaky_stream
+    states, cancel = [], Event()
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            states.append, cancel, device='pulse',
+            open_retry_timeout_s=1.0, open_retry_interval_s=0.01,
+        )
+        try:
+            player.write([1, 2, 3, 4], 24000)
+            wait_until(lambda: states == ['playing'])
+            assert len(attempts) == 3
+            stream = instances[0]
+            outcome = []
+            thread = Thread(target=lambda: outcome.append(player.finish()))
+            thread.start()
+            wait_until(lambda: player._input_done)
+            stream.step()
+            stream.drain()
+            thread.join(2)
+            assert not thread.is_alive()
+            assert outcome == [None]
+            assert stream.output == [1.0, 2.0, 3.0, 4.0]
+        finally:
+            player.close()
+
+
+def test_transient_portaudio_start_error_closes_stream_and_retries():
+    """A half-open stream that fails start() is closed before retrying."""
+    api, instances = fake_device()
+
+    class PortAudioError(RuntimeError):
+        pass
+
+    api.PortAudioError = PortAudioError
+    original_start = api.OutputStream.start
+    starts = []
+
+    def flaky_start(stream):
+        starts.append(stream)
+        if len(starts) == 1:
+            raise PortAudioError('device unavailable during start')
+        original_start(stream)
+
+    api.OutputStream.start = flaky_start
+    states, cancel = [], Event()
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            states.append, cancel, device='pulse',
+            open_retry_timeout_s=1.0, open_retry_interval_s=0.01,
+        )
+        try:
+            player.write([1, 2, 3, 4], 24000)
+            wait_until(lambda: states == ['playing'])
+            assert len(instances) == 2
+            assert instances[0].closed
+            assert instances[1].active
+        finally:
+            player.stop()
+
+
+def test_persistent_portaudio_open_error_fails_after_timeout_with_cause():
+    """Permanent speaker loss stops retrying at the deadline and preserves the cause."""
+    api, _ = fake_device()
+
+    class PortAudioError(RuntimeError):
+        pass
+
+    api.PortAudioError = PortAudioError
+    attempts = []
+
+    def failing_stream(**kwargs):
+        attempts.append(1)
+        raise PortAudioError('No such entity')
+
+    api.OutputStream = failing_stream
+    states, cancel = [], Event()
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            states.append, cancel, device='pulse',
+            open_retry_timeout_s=0.05, open_retry_interval_s=0.01,
+        )
+        player.write([1, 2, 3, 4], 24000)
+        with pytest.raises(RuntimeError, match='playback failed') as exc_info:
+            player.finish()
+        assert isinstance(exc_info.value.__cause__, PortAudioError)
+        assert len(attempts) >= 2
+        assert states == []
+        with pytest.raises(RuntimeError, match='stop audio cleanly') as close_exc:
+            player.close()
+        assert isinstance(close_exc.value.__cause__, PortAudioError)
+
+
+def test_cancellation_during_open_retry_exits_promptly_without_error():
+    """Stopping a request while waiting for USB audio never blocks for the full retry window."""
+    api, _ = fake_device()
+
+    class PortAudioError(RuntimeError):
+        pass
+
+    api.PortAudioError = PortAudioError
+    entered = Event()
+
+    def failing_stream(**kwargs):
+        entered.set()
+        raise PortAudioError('No such entity')
+
+    api.OutputStream = failing_stream
+    cancel = Event()
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            lambda state: None, cancel, device='pulse',
+            open_retry_timeout_s=10.0, open_retry_interval_s=0.5,
+        )
+        player.write([1, 2, 3, 4], 24000)
+        assert entered.wait(2)
+        started = time.monotonic()
+        player.stop()
+        assert time.monotonic() - started < 1.0
+
+
+def test_non_portaudio_open_error_fails_immediately_without_retry():
+    """Configuration or programming errors never enter the transient device retry loop."""
+    api, _ = fake_device()
+
+    class PortAudioError(RuntimeError):
+        pass
+
+    api.PortAudioError = PortAudioError
+    attempts = []
+
+    def bad_stream(**kwargs):
+        attempts.append(1)
+        raise ValueError('invalid device specification')
+
+    api.OutputStream = bad_stream
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            lambda state: None, Event(), device='bad',
+            open_retry_timeout_s=5.0, open_retry_interval_s=0.1,
+        )
+        player.write([1, 2, 3, 4], 24000)
+        with pytest.raises(RuntimeError, match='playback failed') as exc_info:
+            player.finish()
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert len(attempts) == 1
+        with pytest.raises(RuntimeError, match='stop audio cleanly'):
+            player.close()
