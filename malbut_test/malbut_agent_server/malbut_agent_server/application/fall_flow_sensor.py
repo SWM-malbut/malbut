@@ -1017,7 +1017,24 @@ class FallFlowSensor:
         while len(self._analyses) > 128:
             self._analyses.popitem(last=False)
 
+    def _provider_blocked(self):
+        probe = getattr(self._provider, 'blocked_reason', None)
+        return probe() if callable(probe) else None
+
     async def _run_look(self, look):
+        if not self._cloud_allowed():
+            self._answer(look, 'guard', reason=self._guard_reason())
+            return
+        blocked = self._provider_blocked()
+        if blocked is not None:
+            # Locally blocked provider (auth/billing/quota cooldown) makes zero HTTP calls;
+            # answer immediately instead of starving max_calls_per_minute.
+            purpose = {'filter': 'incident', 'arrival': 'arrival_check',
+                       'departure': 'departure_check',
+                       'posture': 'posture_check'}.get(look.what, look.what)
+            self._analysis = AnalysisStatus('failed', str(uuid4()), purpose, blocked)
+            self._failed(look, blocked)
+            return
         now = self._now()
         if self._rate_limited(now):
             self._looks.appendleft(look)  # Within the minute's budget: wait, not fail.
@@ -1155,6 +1172,11 @@ class FallFlowSensor:
             return False
         if self._guard_reason() is not None or self._rate_limited(now):
             self._scan_anchor = now
+            return False
+        blocked = self._provider_blocked()
+        if blocked is not None:
+            self._scan_anchor = now
+            self._analysis = AnalysisStatus('failed', str(uuid4()), 'crosscheck', blocked)
             return False
         try:
             window = self.buffer.window(end=now, duration_s=self.policy.clip_window_s,

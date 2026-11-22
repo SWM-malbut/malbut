@@ -814,3 +814,49 @@ def test_restored_incident_link_keeps_original_boot_id_and_advances_people_revis
         assert journal.people_revision('i1', 0) == 2
     finally:
         journal.close()
+
+
+def test_locally_blocked_provider_answers_immediately_without_rate_limit_starvation(tmp_path):
+    clock = Clock()
+
+    class BlockedCloud(Cloud):
+        def __init__(self):
+            super().__init__()
+            self.blocked = 'cloud_payment_required'
+
+        def blocked_reason(self):
+            return self.blocked
+
+    cloud = BlockedCloud()
+    journal = SqliteFallJournal(tmp_path / 'events.sqlite', device_id='robot',
+                                wall_clock=lambda: 1_760_000_000.0)
+    try:
+        tight = FallRuntimePolicy.agreed(
+            retry_interval_s=3, max_person_observation_age_s=2, clip_window_s=10,
+            max_frame_age_s=2, max_calls_per_minute=2, max_incidents=10, max_images=12)
+        sensor = FallFlowSensor(
+            device_id='robot', boot_id='boot-1', policy=tight,
+            buffer=FallFrameBuffer(retention_s=30, max_bytes=100000, max_frames=200),
+            provider=cloud, journal=journal, clock=clock, place_locator=Places())
+        sensor.configure(enabled=True, camera_enabled=True, cloud_consent=True, connected=True)
+        advance(sensor, clock, 3)
+
+        # Even with max_calls_per_minute=2, ten locally blocked looks answer immediately
+        # without touching the network or exhausting the HTTP call budget.
+        for idx in range(10):
+            res = look(sensor, 'filter', sighting_id=f's-{idx}')
+            assert (res['verdict'], res['reason']) == ('failed', 'cloud_payment_required')
+        assert cloud.calls == []
+        assert len(sensor._calls) == 0
+
+        # Periodic scan during local block also skips without burning rate-limit slots.
+        sensor._scan_anchor = clock.value - 61
+        assert asyncio.run(sensor.run_once()) is False
+        assert len(sensor._calls) == 0
+
+        # Once the block clears, the full rate-limit budget is immediately usable.
+        cloud.blocked = None
+        ok = look(sensor, 'filter', sighting_id='s-ok')
+        assert ok['verdict'] == 'suspect' and len(cloud.calls) == 1
+    finally:
+        journal.close()

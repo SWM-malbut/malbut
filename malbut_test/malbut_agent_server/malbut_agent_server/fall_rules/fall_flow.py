@@ -66,6 +66,10 @@ POSTURE_PLACE = {'floor': FLOOR, 'floor_active': FLOOR, 'unclear': FLOOR,
 DROPS = ('not_person', 'reflection', 'ordinary')
 WAITING_FOR = ('manual_drive', 'busy')
 FAILURES = ('speech_unavailable', 'question_error', 'time_limit')
+# Persistent Cloud account/billing/quota blocks where follow-up view/posture looks will also fail.
+CLOUD_UNAVAILABLE = frozenset({
+    'cloud_auth_required', 'cloud_payment_required', 'cloud_quota_exhausted',
+})
 
 # The web's words for what happened (fall_events.json reasonsByKind).
 OPEN_REASON = {'low': 'pose_sustained_low_posture', 'lying': 'pose_sustained_horizontal_posture',
@@ -378,6 +382,14 @@ class FallFlow:
             return
         at_view = incident.compare_at_view
         if verdict == 'failed':
+            if reason in CLOUD_UNAVAILABLE:
+                # Cloud auth/billing/quota is blocked: avoid backing out for view and
+                # sending doomed arrival/posture calls before asking the person.
+                if at_view:
+                    self._closer(incident)
+                else:
+                    self._ask(incident)
+                return
             verdict = 'person_unsure'  # Cannot compare by Cloud: keep checking the person.
         if verdict == 'same_person':
             self._to_view_or_posture(incident, at_view, now)
@@ -643,6 +655,9 @@ class FallFlow:
                     self.active = None
                     self._enqueue(incident, 'revisit')
                     self._next(now)
+                    if self.active != incident.incident_id and incident.waiting_since is not None:
+                        incident.waited += max(0.0, now - incident.waiting_since)
+                        incident.waiting_since = None
         for memory in list(self.memory):
             person = self.tracker.people.get(memory.person)
             if person is None or now - person.last_seen >= FORGET_S:

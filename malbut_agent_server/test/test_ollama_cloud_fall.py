@@ -323,7 +323,56 @@ def test_auth_block_stays_blocked_until_key_is_replaced(monkeypatch):
                                        clock=lambda: now[0])
     with pytest.raises(CloudFallProviderError, match='cloud_auth_required'):
         asyncio.run(provider.analyze(request()))
+    assert provider.blocked_reason() == 'cloud_auth_required'
     now[0] += 3600.0
+    assert provider.blocked_reason() == 'cloud_auth_required'
     with pytest.raises(CloudFallProviderError, match='cloud_auth_required'):
         asyncio.run(provider.analyze(request()))
     assert len(calls) == 1
+    provider.replace_key('new-token')
+    assert provider.blocked_reason() is None
+
+
+def test_blocked_reason_reports_cooldown_and_clears_on_expiry(monkeypatch):
+    import sys
+    import types
+
+    now = [500.0]
+
+    class FakeResponse:
+        status = 402
+        headers = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    fake = types.SimpleNamespace(ClientSession=FakeSession, ClientTimeout=lambda **kw: None,
+                                 DummyCookieJar=lambda: None, ClientError=OSError)
+    monkeypatch.setitem(sys.modules, 'aiohttp', fake)
+
+    provider = OllamaCloudFallProvider(model='gemma4:31b', api_key='secret-token',
+                                       clock=lambda: now[0], payment_cooldown_s=300.0)
+    assert provider.blocked_reason() is None
+    with pytest.raises(CloudFallProviderError, match='cloud_payment_required'):
+        asyncio.run(provider.analyze(request()))
+    assert provider.blocked_reason() == 'cloud_payment_required'
+    now[0] += 299.0
+    assert provider.blocked_reason() == 'cloud_payment_required'
+    now[0] += 1.0
+    assert provider.blocked_reason() is None

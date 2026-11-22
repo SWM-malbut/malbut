@@ -173,56 +173,73 @@ class SituationActionServer:
             future.set_result((receipt.status, receipt.outcome))
             goal.execute()
             return
-        self._active_goal = goal
-        receipt = _ConfirmationReceipt(_fingerprint(goal.request))
-        self._recent[goal.request.request_id] = receipt
-        while len(self._recent) > MAX_CONFIRMATION_RECEIPTS:
-            self._recent.popitem(last=False)
-        self._started_at = time.monotonic()
-
-        def report(result):
-            # Keep the judgment, but let Manager admit the closing utterance
-            # before ending its parent Action (and releasing mission ownership).
-            receipt.outcome = result
-            receipt.no_response = self._session.no_response
-            self.answers.remember(goal.request.request_id, result,
-                                  no_response=receipt.no_response)
-            receipt.status = 'succeeded'
-            self._pending_result = (future, result)
-
-        def finish(status, result):
-            if status == 'aborted' and self._session.failure is not None:
-                self.node.get_logger().warning('confirmation_failed ' + json.dumps(dict(
-                    self._session.failure, goal_id=self._key(goal).hex(),
-                    result_committed=receipt.status == 'succeeded',
-                ), sort_keys=True))
-            stop_future, self._stop_future = self._stop_future, None
-            if stop_future is not None:
-                stop_future.cancel()
-            if receipt.status is None:
-                receipt.status, receipt.outcome = status, result
-            if not future.done():
-                future.set_result((receipt.status, receipt.outcome))
-            self._pending_result = None
-            self._session = None
-            self._active_goal = None
-            self._reserved = False
-            self._initializing = False
-            self.on_end()
-
-        self._session = SituationSpeechSession(
-            goal.request, self.engine_factory, self, finish,
-            executor=self, on_result=report,
-        )
-        self._initializing = True
         try:
-            self.on_begin()
-            self._stop_future = self._playback.call_async(self._control_type.Request(
-                playback_id='', command=self._control_type.Request.STOP_ALL,
-            ))
-        except Exception as error:
-            self._session.abort('preemption_request', error)
-        goal.execute()
+            self._active_goal = goal
+            receipt = _ConfirmationReceipt(_fingerprint(goal.request))
+            self._recent[goal.request.request_id] = receipt
+            while len(self._recent) > MAX_CONFIRMATION_RECEIPTS:
+                self._recent.popitem(last=False)
+            self._started_at = time.monotonic()
+
+            def report(result):
+                # Keep the judgment, but let Manager admit the closing utterance
+                # before ending its parent Action (and releasing mission ownership).
+                receipt.outcome = result
+                receipt.no_response = self._session.no_response
+                self.answers.remember(goal.request.request_id, result,
+                                      no_response=receipt.no_response)
+                receipt.status = 'succeeded'
+                self._pending_result = (future, result)
+
+            def finish(status, result):
+                if status == 'aborted' and self._session.failure is not None:
+                    self.node.get_logger().warning('confirmation_failed ' + json.dumps(dict(
+                        self._session.failure, goal_id=self._key(goal).hex(),
+                        result_committed=receipt.status == 'succeeded',
+                    ), sort_keys=True))
+                stop_future, self._stop_future = self._stop_future, None
+                if stop_future is not None:
+                    stop_future.cancel()
+                if receipt.status is None:
+                    receipt.status, receipt.outcome = status, result
+                if not future.done():
+                    future.set_result((receipt.status, receipt.outcome))
+                self._pending_result = None
+                self._session = None
+                self._active_goal = None
+                self._reserved = False
+                self._initializing = False
+                self.on_end()
+
+            self._session = SituationSpeechSession(
+                goal.request, self.engine_factory, self, finish,
+                executor=self, on_result=report,
+            )
+            self._initializing = True
+            try:
+                self.on_begin()
+                self._stop_future = self._playback.call_async(self._control_type.Request(
+                    playback_id='', command=self._control_type.Request.STOP_ALL,
+                ))
+            except Exception as error:
+                self._session.abort('preemption_request', error)
+            goal.execute()
+        except Exception:
+            if self._session is not None:
+                self._session.abort('accepted_setup')
+            else:
+                self._pending_result = None
+                self._active_goal = None
+                self._reserved = False
+                self._initializing = False
+                if (receipt is not None
+                        and self._recent.get(goal.request.request_id) is receipt
+                        and receipt.status is None):
+                    self._recent.pop(goal.request.request_id, None)
+                if not future.done():
+                    future.set_result(('aborted', None))
+            self._contexts.pop(key, None)
+            raise
 
     def submit(self, fn, *args, **kwargs):
         future = self._pool.submit(fn, *args, **kwargs)
@@ -267,7 +284,7 @@ class SituationActionServer:
             if time.monotonic() - self._started_at >= 5:
                 session.abort('preemption_timeout')
                 return
-            if not self._stop_future.done():
+            if self._stop_future is None or not self._stop_future.done():
                 return
             stop_future, self._stop_future = self._stop_future, None
             try:

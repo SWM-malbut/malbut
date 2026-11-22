@@ -567,3 +567,46 @@ def test_manager_keeps_closing_speech_after_confirmation_result(rig, mission_man
                        and not mission_manager._speech.playbacks)
     finally:
         client.destroy()
+
+
+def test_accepted_setup_failure_releases_reservation_for_subsequent_goals(rig, monkeypatch):
+    from malbut_agent_server import ros_situation
+
+    server = rig.agent.situation
+    original_session = ros_situation.SituationSpeechSession
+    boom = [True]
+
+    def flaky_session(*args, **kwargs):
+        if boom[0]:
+            boom[0] = False
+            raise RuntimeError('setup boom')
+        return original_session(*args, **kwargs)
+
+    monkeypatch.setattr(ros_situation, 'SituationSpeechSession', flaky_session)
+    goal = SimpleNamespace(
+        goal_id=SimpleNamespace(uuid=uuid4().bytes),
+        request=ConfirmSituation.Goal(
+            request_id='setup-failure-retry',
+            situation_type='fall',
+            summary='거실 바닥에 누워 있는 사람이 관측됨',
+        ),
+        execute=lambda: None,
+    )
+    server._reserved = True
+    with pytest.raises(RuntimeError, match='setup boom'):
+        server._accepted(goal)
+
+    assert not server.active
+    assert not server._contexts
+    assert 'setup-failure-retry' not in server._recent
+
+    handle = rig.start('setup-failure-retry')
+    assert handle.accepted
+    rig.spin_until(lambda: server._session is not None
+                   and server._session.phase == 'listening')
+    result = handle.get_result_async()
+    rig.answer('그냥 누워 있는 거야')
+    rig.spin_until(lambda: result.done() and not server.active)
+    assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+    assert result.result().result.situation_assessment == 'resolved'
+    assert result.result().result.help_needed is False
