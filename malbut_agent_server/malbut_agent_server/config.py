@@ -173,6 +173,7 @@ class Settings:
     turn_metrics_snapshot_path: str = ''
     offline_safety_fallback_enabled: bool = True
     offline_stop_timeout_seconds: float = 3.0
+    openai_fast_turn_reasoning_effort: str = 'none'
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -211,6 +212,8 @@ class Settings:
             f'openai_base_url={self.openai_base_url!r}, '
             'openai_reasoning_effort='
             f'{self.openai_reasoning_effort!r}, '
+            'openai_fast_turn_reasoning_effort='
+            f'{self.openai_fast_turn_reasoning_effort!r}, '
             'openai_max_output_tokens='
             f'{self.openai_max_output_tokens!r}, '
             f'tool_mode={self.tool_mode!r}, '
@@ -423,6 +426,10 @@ class Settings:
                 'OPENAI_REASONING_EFFORT',
                 'low',
             ).strip().lower(),
+            openai_fast_turn_reasoning_effort=source.get(
+                'MALBUT_AGENT_FAST_TURN_REASONING_EFFORT',
+                'none',
+            ).strip().lower(),
             openai_max_output_tokens=_env_int(
                 source,
                 'OPENAI_MAX_OUTPUT_TOKENS',
@@ -615,6 +622,13 @@ class Settings:
         if self.openai_reasoning_effort not in REASONING_EFFORTS:
             raise ValueError(
                 'OPENAI_REASONING_EFFORT is unsupported'
+            )
+        if (
+            self.openai_fast_turn_reasoning_effort
+            and self.openai_fast_turn_reasoning_effort not in REASONING_EFFORTS
+        ):
+            raise ValueError(
+                'MALBUT_AGENT_FAST_TURN_REASONING_EFFORT is unsupported'
             )
         if (
             self.openai_summary_reasoning_effort

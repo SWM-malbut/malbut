@@ -221,6 +221,22 @@ def test_releasing_raw_pixels_preserves_frozen_image_until_revocation():
     ('왼쪽으로 돌아줘', True),
     ('뒤로 조금만 가줘', True),
     ('거실로 가줘', True),
+    ('거실로 가자', True),
+    ('지금 내가 입은 옷 색깔도 알 수 있어?', True),
+    ('저 상자 색깔이 뭐야?', True),
+    ('새 지도를 만들어줘', True),
+    ('집을 가볍게 한 바퀴 순찰해줘', True),
+    ('오늘 여기 기온이 몇도야?', False),
+    ('기본 날씨 위치를 경기도 수원시 팔달구 우만1동으로 바꿔줘.', False),
+    ('그럼, 내일 거기 최고 기온은 몇 도래?', False),
+    ('홈캠 카메라랑 모니터링이 지금 켜져 있어?', False),
+    ('최근에 홈캠에서 사람을 감지했는지도 조회해줘.', False),
+    ('지난 순찰 사진에서 리모컨을 어디서 봤어?', False),
+    ('그 순찰에서 안경도 봤어?', False),
+    ('자, 오늘은 대화 여기까지만 하고 그만하자', False),
+    ('좋아 다시 끝말잇기로 돌아가자 내가 아까 처음 제시한 단어가 뭐였지?', False),
+    ('그럼, 책이 든 상자 색깔만 짧게 말해줘.', False),
+    ('장난감 상자부터 책 상자 순서로 색깔 두 개만 말해줘.', False),
 ])
 def test_needs_turn_image_gates_ordinary_vs_visual_and_navigation_turns(utterance, expected):
     from malbut_agent_server.speech_scene import needs_turn_image

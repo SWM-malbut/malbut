@@ -85,6 +85,17 @@ def provider():
     ('{"type":"message","message":"안녕. \\uD83D\\uDE', None),
     ('{"type":"message","message":"안녕. \\x', None),
     ('{"type":"tool_call","message":"실행. 다', None),
+    ('{"type":"refusal","message":"거절. 다', None),
+    ('{"type":"clarification","message":"어느 방으로 갈까요? 거', '어느 방으로 갈까요? 거'),
+    ('{"type":"clarification","message":"어느 방으로 갈까요?"', '어느 방으로 갈까요?'),
+    (
+        '{"type":"message","message":"카페 대신 공원에서 잠깐 쉬는 일정으로 바꾸고, 걷기는 부담 없는 정도로 짧',
+        '카페 대신 공원에서 잠깐 쉬는 일정으로 바꾸고, 걷기는 부담 없는 정도로 짧',
+    ),
+    (
+        '{"type":"message","message":"최근 홈캠 기록에 따르면 2026년 11월 22일 0시 3분경 사람 감지',
+        None,
+    ),
     ('{"message":"안녕. 다', None),
     ('{"nested":{"type":"message","message":"안녕. 다', None),
     ('{"type":"message","nested":{"message":"중첩."},"message":"인사. 다', '인사. 다'),

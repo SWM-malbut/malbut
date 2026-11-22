@@ -290,3 +290,26 @@ def test_offline_failure_notice_stays_exact_before_and_after_retry_publication(n
     finally:
         release.set()
         worker.close()
+
+
+def test_delayed_function_start_suppresses_fast_calls_and_fires_on_slow_calls():
+    import time
+
+    fast_notices = []
+    with progress.request_scope(lambda text, _state: fast_notices.append(text)):
+        with progress.delayed_function_start('get_homecam_falls', delay_s=0.5):
+            pass
+    assert fast_notices == []
+
+    slow_notices = []
+    fired = threading.Event()
+
+    def on_notice(text, _state):
+        slow_notices.append(text)
+        fired.set()
+
+    with progress.request_scope(on_notice):
+        with progress.delayed_function_start('get_homecam_falls', delay_s=0.02):
+            assert fired.wait(2.0)
+            time.sleep(0.03)
+    assert slow_notices == [FUNCTION_STARTS['get_homecam_falls']]

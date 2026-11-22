@@ -1,8 +1,15 @@
 """Bounded Responses SSE decoding with non-authoritative message previews."""
 
 import json
+import re
 
 from malbut_agent_server.providers.base import ProviderError
+
+_PREFETCHABLE_DECISION_TYPES = frozenset({'message', 'clarification'})
+# Default LivePiperSynthesizer segment ceiling. Pure-Korean prefixes past this
+# length with an internal soft break already freeze segment 0 verbatim.
+_EARLY_CLAUSE_MAX_CHARS = 40
+_PURE_KOREAN_CLAUSE_RE = re.compile(r'^[가-힣 ,，、·]+$')
 
 
 def _reject_constant(_value):
@@ -84,7 +91,7 @@ def _candidate_impossible(text):
                 prefix, closed = _string_prefix(text, at)
                 return bool(closed and not prefix)
             value, at = _JSON_DECODER.raw_decode(text, at)
-            if key == 'type' and value != 'message':
+            if key == 'type' and value not in _PREFETCHABLE_DECISION_TYPES:
                 return True
             at = _skip_ws(text, at)
             if at >= len(text):
@@ -121,7 +128,7 @@ def message_candidate(text):
                 return None
             at = _skip_ws(text, at + 1)
             if key == 'message':
-                if message_type != 'message':
+                if message_type not in _PREFETCHABLE_DECISION_TYPES:
                     return None
                 prefix, closed = _string_prefix(text, at)
                 if not prefix:
@@ -143,6 +150,14 @@ def message_candidate(text):
                             tail += 1
                         if tail < len(prefix):
                             return prefix[:tail + 1]
+                # Long single-sentence pure-Korean replies freeze Piper's first
+                # bounded segment as soon as non-whitespace passes 40 chars.
+                if (not quoted and len(prefix) > _EARLY_CLAUSE_MAX_CHARS
+                        and any(not c.isspace() for c in prefix[_EARLY_CLAUSE_MAX_CHARS:])
+                        and _PURE_KOREAN_CLAUSE_RE.fullmatch(prefix[:_EARLY_CLAUSE_MAX_CHARS + 1])
+                        and any(c.isspace() or c in ',，、'
+                                for c in prefix[1:_EARLY_CLAUSE_MAX_CHARS])):
+                    return prefix
                 return None
             value, at = _JSON_DECODER.raw_decode(text, at)
             if key == 'type':
