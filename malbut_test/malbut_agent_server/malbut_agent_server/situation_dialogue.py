@@ -279,6 +279,7 @@ class MockSituationProvider:
                 situation_question = FALL_CONFIRMATION_QUESTION
             return SituationInterpretation('unknown', None, situation_question)
         normalized = ''.join(context.answer.split()).rstrip('.!?。！？')
+        refusal_normalized = ''.join(context.answer.split()).rstrip('.!。！')
         established = context.situation_assessment
         if normalized in {
             '그냥누워있는거야', '그냥누워있었어', '그냥누워있어', '쉬고있어',
@@ -289,7 +290,7 @@ class MockSituationProvider:
             return SituationInterpretation('unknown', None, situation_question)
         if normalized in {'도와줘', '도와주세요', '도움이필요해', '도움이필요해요'}:
             return SituationInterpretation(established, True, '')
-        if normalized in {
+        if refusal_normalized in {
             '도움은필요없어', '도움이필요없어', '도움은필요없어요',
             '도움이필요없어요', '도움필요없어', '도움필요없어요',
             '도움필요없습니다', '도움필요하지않아', '도움필요하지않아요',
@@ -299,7 +300,7 @@ class MockSituationProvider:
             '넘어졌지만괜찮아', '넘어졌지만괜찮아요',
         }:
             assessment = ('confirmed_incident'
-                          if normalized in {
+                          if refusal_normalized in {
                               '넘어졌지만도움은필요없어',
                               '넘어졌지만괜찮아', '넘어졌지만괜찮아요',
                           } else established)
