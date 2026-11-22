@@ -287,3 +287,58 @@ def test_situation_provider_checks_missing_key_and_reports_key_health():
         ('quota', 'insufficient_quota'),
         ('ok', None),
     ]
+
+
+@pytest.mark.parametrize('transient_error', [
+    ConnectionResetError('peer reset'),
+    ProviderError('OpenAI request failed with HTTP status 503'),
+    ProviderError('OpenAI request failed with HTTP status 502'),
+])
+def test_transient_network_or_5xx_retries_once_with_fresh_request_id(transient_error):
+    from malbut_agent_server.situation_provider import TRANSIENT_RETRY_DELAY_SECONDS
+
+    calls = []
+    sleeps = []
+
+    def transport(url, headers, payload, timeout):
+        calls.append(headers['X-Client-Request-Id'])
+        if len(calls) == 1:
+            raise transient_error
+        return response()
+
+    raw = OpenAIResponsesProvider('unused-test-key', 'test-model', transport=transport)
+    target = OpenAISituationProvider(raw, sleep=sleeps.append)
+    result = target.evaluate(context('넘어졌어요'))
+    assert result.question == '혹시 넘어지신 건가요?'
+    assert len(calls) == 2 and calls[0] != calls[1]
+    assert sleeps == [TRANSIENT_RETRY_DELAY_SECONDS]
+
+
+def test_transient_error_stops_after_one_retry_and_never_retries_timeout():
+    calls = []
+    sleeps = []
+
+    def always_503(url, headers, payload, timeout):
+        calls.append(headers['X-Client-Request-Id'])
+        raise ProviderError('OpenAI request failed with HTTP status 503')
+
+    raw = OpenAIResponsesProvider('unused-test-key', 'test-model', transport=always_503)
+    target = OpenAISituationProvider(raw, sleep=sleeps.append)
+    with pytest.raises(ProviderError, match='503'):
+        target.evaluate(context('넘어졌어요'))
+    assert len(calls) == 2 and len(sleeps) == 1
+
+    # Timeout must still fail without retrying so confirmation stays bounded.
+    timeout_calls = []
+
+    def timeout_transport(url, headers, payload, timeout):
+        timeout_calls.append(headers['X-Client-Request-Id'])
+        raise TimeoutError('timed out')
+
+    raw_timeout = OpenAIResponsesProvider(
+        'unused-test-key', 'test-model', transport=timeout_transport,
+    )
+    target_timeout = OpenAISituationProvider(raw_timeout, sleep=sleeps.append)
+    with pytest.raises(TimeoutError):
+        target_timeout.evaluate(context('넘어졌어요'))
+    assert len(timeout_calls) == 1 and len(sleeps) == 1

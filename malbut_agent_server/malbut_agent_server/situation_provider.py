@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 import json
+import time
 from uuid import uuid4
 
 from malbut_agent_server.providers.base import ProviderError
@@ -16,6 +17,13 @@ from malbut_agent_server.situation_dialogue import (
 
 
 MIN_CONFIRMATION_IO_TIMEOUT_SECONDS = 10.0
+TRANSIENT_RETRY_DELAY_SECONDS = 0.25
+# Fast transient transport/5xx faults may be retried once; timeouts, auth,
+# quota, and malformed responses never retry so confirmation stays bounded.
+_TRANSIENT_RETRY_CODES = frozenset({
+    ProviderFailureCode.NETWORK,
+    ProviderFailureCode.UNAVAILABLE,
+})
 
 
 INSTRUCTIONS = """
@@ -134,11 +142,12 @@ class OpenAISituationProvider:
     tools, personal memories, front routing, or persistent conversation store.
     """
 
-    def __init__(self, provider, user_id='situation-confirmation'):
+    def __init__(self, provider, user_id='situation-confirmation', *, sleep=time.sleep):
         if not isinstance(provider, OpenAIResponsesProvider):
             raise TypeError('an OpenAIResponsesProvider is required')
         self.provider = provider
         self.user_id = validate_user_id(user_id)
+        self._sleep = sleep
 
     def evaluate(self, context):
         """Use a fixed fall opener; interpret answers with the semantic model."""
@@ -197,25 +206,29 @@ class OpenAISituationProvider:
         if not api_key:
             provider._report_key('missing', 'missing_api_key')
             raise NormalizedProviderError(ProviderFailureCode.MISSING_CREDENTIALS)
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-            'User-Agent': 'malbut-agent-server/0.4',
-            'X-Client-Request-Id': provider._client_request_id(
-                'situation-' + str(uuid4()),
-            ),
-        }
-        try:
-            response = provider.transport(
-                f'{provider.base_url}/responses', headers, payload,
-                max(provider.timeout_seconds, MIN_CONFIRMATION_IO_TIMEOUT_SECONDS),
-            )
-        except Exception as error:
-            failure = classify_exception(error).code
-            if failure is ProviderFailureCode.AUTHENTICATION:
-                provider._report_key('invalid', 'authentication_failed')
-            elif failure is ProviderFailureCode.QUOTA:
-                provider._report_key('quota', 'insufficient_quota')
-            raise
-        provider._report_key('ok')
-        return _interpretation(response)
+        timeout = max(provider.timeout_seconds, MIN_CONFIRMATION_IO_TIMEOUT_SECONDS)
+        url = f'{provider.base_url}/responses'
+        for attempt in range(2):
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+                'User-Agent': 'malbut-agent-server/0.4',
+                'X-Client-Request-Id': provider._client_request_id(
+                    'situation-' + str(uuid4()),
+                ),
+            }
+            try:
+                response = provider.transport(url, headers, payload, timeout)
+            except Exception as error:
+                failure = classify_exception(error).code
+                if failure is ProviderFailureCode.AUTHENTICATION:
+                    provider._report_key('invalid', 'authentication_failed')
+                elif failure is ProviderFailureCode.QUOTA:
+                    provider._report_key('quota', 'insufficient_quota')
+                if attempt == 0 and failure in _TRANSIENT_RETRY_CODES:
+                    self._sleep(TRANSIENT_RETRY_DELAY_SECONDS)
+                    continue
+                raise
+            provider._report_key('ok')
+            return _interpretation(response)
+        raise ProviderError('situation provider failed without response')
