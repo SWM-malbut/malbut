@@ -65,7 +65,7 @@ def test_avoid_is_traversable_cost_and_restricted_wins_overlaps(saved_map):
 
 
 def test_unknown_map_cells_stay_unmodified_except_inside_restricted_zones(tmp_path):
-    """KeepoutFilter must not overwrite unknown space (255) with FREE_SPACE (0) or avoid."""
+    """Ensure KeepoutFilter leaves unknown space (255) unmodified outside restricted zones."""
     image = np.full((40, 80), 254, dtype=np.uint8)
     image[:, 40:] = 205  # x >= 1.0 m is unknown space in the trinary map.
     cv2.imwrite(str(tmp_path / 'home.pgm'), image)
