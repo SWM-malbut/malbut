@@ -33,6 +33,21 @@ def _receipt(request):
         _function_start(request) or request.audio_id in _WAITING_AUDIO_IDS)
 
 
+def _describe_error(error):
+    """Format an error with chained device causes on one log line."""
+    parts = [str(error) or type(error).__name__]
+    seen = {id(error)}
+    cause = error.__cause__
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        detail = str(cause)
+        parts.append(
+            f'{type(cause).__name__}: {detail}' if detail else type(cause).__name__
+        )
+        cause = cause.__cause__
+    return ' <- '.join(parts)
+
+
 @dataclass
 class _Request:
     playback_id: str
@@ -554,7 +569,7 @@ class SpeechRuntime:
             state = 'failed'
             if not request.cancel.is_set():
                 self._logger.error(
-                    f'tts_playback_failed: {request.playback_id}: {error}',
+                    f'tts_playback_failed: {request.playback_id}: {_describe_error(error)}',
                 )
         finally:
             # No new request starts until both iterator and device are closed.
@@ -567,7 +582,7 @@ class SpeechRuntime:
                     except Exception as error:
                         cleanup_failed = True
                         state = 'failed'
-                        self._logger.error(f'tts_cleanup_failed: {error}')
+                        self._logger.error(f'tts_cleanup_failed: {_describe_error(error)}')
             # A stop racing the final drain wins over normal completion.
             with self._condition:
                 if cleanup_failed or request.control_error is not None:

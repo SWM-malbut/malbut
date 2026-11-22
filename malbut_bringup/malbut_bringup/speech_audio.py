@@ -6,6 +6,14 @@ import subprocess
 import yaml
 
 
+class PulseAudioUnavailableError(RuntimeError):
+    """PulseAudio could not be queried to verify the shared microphone."""
+
+
+class SharedMicrophoneNotFoundError(RuntimeError):
+    """Expected exactly one physical XFM-DP PulseAudio input source."""
+
+
 def pulse_reference_environment(config_file):
     """Use the selected STT profile's explicit routes for its two audio peers."""
     try:
@@ -46,7 +54,7 @@ def shared_xfm_source(environment):
         if not isinstance(sources, list):
             raise ValueError('Invalid PulseAudio source list')
     except (OSError, subprocess.SubprocessError, ValueError) as error:
-        raise RuntimeError(
+        raise PulseAudioUnavailableError(
             'Shared microphone unavailable: run Bringup as the desktop audio user; '
             "pactl must reach that user's PulseAudio server. "
             'Required packages: pulseaudio pulseaudio-utils libasound2-plugins.'
@@ -61,7 +69,7 @@ def shared_xfm_source(environment):
                 and properties.get('device.class') != 'monitor'):
             matches.append(name)
     if len(matches) != 1:
-        raise RuntimeError(
+        raise SharedMicrophoneNotFoundError(
             'Shared microphone requires one XFM-DP PulseAudio input; '
             f'found {len(matches)}. Check its input profile; no other mic was selected.'
         )

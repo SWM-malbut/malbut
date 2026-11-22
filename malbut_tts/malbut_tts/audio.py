@@ -2,6 +2,7 @@
 
 from collections import deque
 import importlib
+import math
 from threading import Condition, Event, Thread, current_thread
 from time import monotonic
 
@@ -15,11 +16,24 @@ class PlaybackCancelled(RuntimeError):
 class StreamingPlayer:
     """Own one output stream, retaining unplayed PCM across a drained pause."""
 
-    def __init__(self, on_state, cancel_event, device=None):
+    def __init__(self, on_state, cancel_event, device=None, *,
+                 open_retry_timeout_s=4.0, open_retry_interval_s=0.25):
         """Start the device owner; sounddevice itself is imported on demand."""
+        if (isinstance(open_retry_timeout_s, bool)
+                or not isinstance(open_retry_timeout_s, (int, float))
+                or not math.isfinite(open_retry_timeout_s)
+                or open_retry_timeout_s < 0):
+            raise ValueError('open_retry_timeout_s must be finite and nonnegative')
+        if (isinstance(open_retry_interval_s, bool)
+                or not isinstance(open_retry_interval_s, (int, float))
+                or not math.isfinite(open_retry_interval_s)
+                or open_retry_interval_s <= 0):
+            raise ValueError('open_retry_interval_s must be finite and positive')
         self._on_state = on_state
         self._cancel = cancel_event
         self._device = device
+        self._open_retry_timeout_s = float(open_retry_timeout_s)
+        self._open_retry_interval_s = float(open_retry_interval_s)
         self._condition = Condition()
         self._pending = deque()
         self._offset = 0
@@ -233,6 +247,60 @@ class StreamingPlayer:
             self._drained = True
             self._condition.notify_all()
 
+    @staticmethod
+    def _is_transient_open_error(sd, error):
+        port_audio_error = getattr(sd, 'PortAudioError', None)
+        return (isinstance(port_audio_error, type)
+                and issubclass(port_audio_error, BaseException)
+                and isinstance(error, port_audio_error))
+
+    def _wait_retry(self, delay_s):
+        deadline = monotonic() + delay_s
+        with self._condition:
+            while not self._cancel.is_set() and not self._closing.is_set():
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return True
+                self._condition.wait(min(0.05, remaining))
+        return False
+
+    def _create_and_start_stream(self):
+        self._sd = importlib.import_module('sounddevice')
+        deadline = monotonic() + self._open_retry_timeout_s
+        while True:
+            if self._cancel.is_set() or self._closing.is_set():
+                return None
+            stream = None
+            try:
+                device_info = self._sd.query_devices(self._device, 'output')
+                latency = max(0.1, device_info['default_high_output_latency'])
+                stream = self._sd.OutputStream(
+                    samplerate=self._rate, channels=1, dtype='float32',
+                    blocksize=0, latency=latency, device=self._device,
+                    callback=self._callback,
+                    finished_callback=self._finished_callback,
+                )
+                if self._cancel.is_set() or self._closing.is_set():
+                    stream.close(ignore_errors=False)
+                    return None
+                stream.start()
+                return stream
+            except BaseException as error:
+                if stream is not None:
+                    try:
+                        stream.close(ignore_errors=True)
+                    except BaseException:
+                        pass
+                    stream = None
+                if (not self._is_transient_open_error(self._sd, error)
+                        or self._cancel.is_set() or self._closing.is_set()):
+                    raise
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise
+                if not self._wait_retry(min(self._open_retry_interval_s, remaining)):
+                    return None
+
     def _run(self):
         stream = None
         inactive_seen = False
@@ -271,17 +339,16 @@ class StreamingPlayer:
                         self._condition.wait(0.05)
                         continue
                 if action == 'create':
-                    self._sd = importlib.import_module('sounddevice')
-                    device_info = self._sd.query_devices(self._device, 'output')
-                    latency = max(0.1, device_info['default_high_output_latency'])
-                    stream = self._sd.OutputStream(
-                        samplerate=self._rate, channels=1, dtype='float32',
-                        blocksize=0, latency=latency, device=self._device,
-                        callback=self._callback,
-                        finished_callback=self._finished_callback,
-                    )
-                    action = 'start'
-                if action == 'start':
+                    stream = self._create_and_start_stream()
+                    if stream is None:
+                        break
+                    inactive_seen = False
+                    with self._condition:
+                        self._started = True
+                    if (not self._cancel.is_set()
+                            and not self._closing.is_set()):
+                        self._on_state('playing')
+                elif action == 'start':
                     if self._cancel.is_set() or self._closing.is_set():
                         break
                     stream.start()
