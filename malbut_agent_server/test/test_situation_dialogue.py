@@ -197,6 +197,14 @@ def test_mock_fall_with_okay_marks_confirmed_incident_without_help():
     assert final.result.help_needed is False
 
 
+@pytest.mark.parametrize('answer', ['괜찮아?', '괜찮아요？', '도움 필요 없어요?'])
+def test_mock_question_mark_on_refusal_triggers_clarification(answer):
+    dialogue = start()
+    turn = dialogue.answer(answer)
+    assert turn.result is None
+    assert turn.text
+
+
 def test_user_can_correct_an_earlier_incident_confirmation():
     dialogue = start()
     dialogue.answer('넘어졌어')

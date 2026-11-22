@@ -20,7 +20,7 @@ _FINAL_ENDING = re.compile(
     r'(?:느려|빨라|좋아|나빠|커|작아|많아|적어|맞아|틀려|싫어)(?:요)?|'
     r'뭐해|뭐하니|알겠지|해\s*봐(?:라)?|'
     r'않아|같아|알아|따라와|고마워|기억해|기억나|(?:으면|면)\s*해|'
-    r'어때|있어|없어|좋아져|(?:누구|어디|뭐|몇\s*시|몇\s*살)야|몇\s*도(?:야|래))$'
+    r'어때(?:요)?|있어|없어|좋아져|(?:누구|어디|뭐|몇\s*시|몇\s*살)야|몇\s*도(?:야|래))$'
 )
 
 # Conservative mid-sentence connectives, multi-character postpositions, and
@@ -53,6 +53,11 @@ def is_complete_korean_utterance(text: str) -> bool:
     text = _normalize_for_endpoint(text)
     if _FINAL_ENDING.search(text):
         return True
+    if len(text) >= 3 and text.endswith(('니다', '니까')):
+        # Catch vowel-stem formal endings such as 합니다/됩니다/풀립니다/가능합니까.
+        formal_stem = ord(text[-3]) - 0xAC00
+        if 0 <= formal_stem < 11172 and formal_stem % 28 == 17:  # ㅂ
+            return True
     if len(text) < 2:
         return False
     syllable = ord(text[-2]) - 0xAC00

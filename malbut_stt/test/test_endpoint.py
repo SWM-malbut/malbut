@@ -35,6 +35,8 @@ QUIET = bytes(640)
     '이제 그만 따라와', '고마워!', '고양이 이름을 기억해?', '이름이 기억나?',
     '실제로 움직이지는 마', '내 얘기를 들어주었으면 해.', '오늘 기온이 몇 도야?',
     '내일 최고 기온은 몇 도래?',
+    '오늘 날씨 어때요?', '확인합니다.', '오후부터 점차 풀립니다.',
+    '지금 갑니다', '갈 겁니다.', '가능합니까?', '아닙니다.',
 ])
 def test_explicit_korean_final_endings_can_shorten_the_wait(text):
     assert is_complete_korean_utterance(text)
@@ -53,7 +55,7 @@ def test_incomplete_korean_fragments_trigger_mid_sentence_veto(text):
 
 @pytest.mark.parametrize('text', [
     '', '삼각형', '네', '아니요', '고양이', '라면', '냉면', '가을', '망고', '순서',
-    '거실로 이동해 주세요.', '고마워!', '내 이름이 뭐였지?',
+    '거실로 이동해 주세요.', '고마워!', '내 이름이 뭐였지?', '가능합니까?',
 ])
 def test_short_answers_and_complete_sentences_are_not_vetoed_as_fragments(text):
     assert not is_incomplete_korean_fragment(text)
@@ -69,6 +71,7 @@ def test_short_answers_and_complete_sentences_are_not_vetoed_as_fragments(text):
     '친구네', '군대', '내가 준비를 끝냈어도', '먹을까 하고',
     '너무 느려서', '기분이 좋아도', '너무 느리다고', '좋다며',
     '한번 해봐라라고', '좋아요라는', '좋아져서', '좋아져도', '좋아져라고',
+    '합니다라고', '풀립니다만', '어때요라는', '하니까', '그러니까', '아니다',
 ])
 def test_fragments_connectives_quotes_and_punctuation_keep_fallback(text):
     assert not is_complete_korean_utterance(text)
