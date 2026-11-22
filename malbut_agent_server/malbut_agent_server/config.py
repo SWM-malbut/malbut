@@ -22,6 +22,7 @@ SUPPORTED_PROVIDERS = frozenset({'mock', 'openai', 'rai-sidecar'})
 SUPPORTED_TOOL_MODES = frozenset({'proposal', 'simulation'})
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna'
 DEFAULT_OPENAI_SUMMARY_MODEL = 'gpt-6-luna'
+DEFAULT_MEMORY_LIMIT = 5
 DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 5
 DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS = 11
 DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS = 5
@@ -124,7 +125,7 @@ class Settings:
     port: int = 8765
     database_path: str = ':memory:'
     user_id: str = 'local-user'
-    memory_limit: int = 5
+    memory_limit: int = DEFAULT_MEMORY_LIMIT
     conversation_ttl_seconds: int = 3600
     conversation_history_limit: int = 10
     conversation_summary_max_chars: int = 2000
@@ -276,7 +277,7 @@ class Settings:
             memory_limit=_env_int(
                 source,
                 'MALBUT_AGENT_MEMORY_LIMIT',
-                DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS,
+                DEFAULT_MEMORY_LIMIT,
                 1,
                 10,
             ),

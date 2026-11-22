@@ -222,7 +222,7 @@ def _stored_identity_question(text: str) -> tuple[str, ...] | None:
     if is_self_name_question(text) and '저장' in text:
         return ('name',)
     match = re.fullmatch(
-        r'\s*(?:새\s*대화야[.]\s*)?(?:(?:지금|현재)\s*)?(?:장기\s*기억에\s*)?'
+        r'\s*(?:새\s*대화야[.,!。]?\s*)?(?:(?:지금|현재)\s*)?(?:장기\s*기억에\s*)?'
         r'(?:저장된|저장해\s*둔|저장한)\s*(?:내|제|나의|저의)\s*'
         r'(?:호칭|별명)(?:이|가|은|는)?\s*(?:뭐야|뭐예요|뭔가요|무엇인가요)[?？.]?\s*',
         text,

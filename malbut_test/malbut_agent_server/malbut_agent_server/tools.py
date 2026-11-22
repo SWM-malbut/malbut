@@ -147,7 +147,7 @@ TOOL_SPECS = {
             'No speaker position or one-shot approach capability is available: '
             '"와바라", "이리 오너라", and "come here" without a named place '
             'require destination clarification, never guessed coordinates. '
-            'Relative motion is unsupported.'
+            'This tool handles named room destinations only, not relative motion or coordinates.'
         ),
         parameters={
             'type': 'object',
@@ -209,6 +209,8 @@ TOOL_SPECS = {
             'cancellation; answer the current question without this tool. '
             'Still use this tool for an actual stop/cancel command, including '
             '"이제 그만 따라와", "그쯤 하고 쉬어", and other paraphrases. '
+            'Do not use this tool when no foreground mission is active or the user '
+            'is merely declining or forbidding starting a new action. '
             'Do not cancel background monitoring or weather work. '
             'Cancellation receipt does not prove termination.'
         ),
@@ -232,14 +234,20 @@ TOOL_SPECS = {
             'asks to change the weather location, or answers your location clarification. '
             'Extract the new location, never the negated old location. Do not use for '
             'a one-off weather question about another place, travel plans, quoted speech, '
-            'or third-party locations. Never invent coordinates. Read the result before '
+            'or third-party locations. Pass explicit spoken area names directly to this '
+            'tool even with minor Korean STT digit/syllable noise so the server gazetteer '
+            'can resolve or reject them. Never invent coordinates. Read the result before '
             'claiming the location was saved; ambiguous names need a city/district.'
         ),
         parameters={
             'type': 'object',
             'properties': {'location': {
                 'type': 'string',
-                'description': 'The explicitly supplied new area, e.g. 경기도 수원시 우만동.',
+                'description': (
+                    'The explicitly supplied new area (e.g. 경기도 수원시 우만1동). '
+                    'Preserve spoken numbered dong/ga suffixes such as 1동/일동 or 2동/이동; '
+                    'never drop the number.'
+                ),
             }},
             'required': ['location'],
             'additionalProperties': False,
@@ -373,6 +381,7 @@ _ADDITIONAL_TOOLS = {
     ),
     'get_homecam_status': (
         'Query the cloud API for current Homecam settings and apply receipts. '
+        'Treat spoken status checks as fresh queries even when STT drops "?" to ".". '
         'A saved setting is not proof that the robot applied it.', {},
     ),
     'get_homecam_events': (

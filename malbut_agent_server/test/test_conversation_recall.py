@@ -153,6 +153,7 @@ def test_compacted_original_recall_redaction_and_reset_are_isolated():
     ('저의 본명은 뭐였나요?', 'name'),
     ('내 별명은?', 'nickname'),
     ('방금 부르라고 한 별명은 뭐였지?', None),
+    ('조금 전 이 대화에서만 나를 뭐라고 불러 달랬지?', None),
     ('순찰해 준 뒤 내가 정한 약속도 알려줘.', None),
     ('예전에 내가 정한 별명은 무엇인지 영어로 말해줘.', None),
     ('내 호칭과 지난달 예약 표식을 각각 알려 줘.', None),
@@ -233,3 +234,13 @@ def test_unusable_name_receipt_leaves_routing_to_the_model(public):
         public = dict(public, decision={'type': 'message'})
     prior = SimpleNamespace(user_content='내 이름이 뭐였지?', response={'public': public})
     assert previous_self_name_id('전에 알려 준 내 이름이 뭐였더라?', [prior], None) is None
+
+
+def test_new_dialogue_prefix_with_comma_still_matches_identity_lookups():
+    from malbut_agent_server.conversation_recall import is_self_name_question
+    from malbut_agent_server.personal_memory_store.intent import _stored_identity_question
+
+    assert is_self_name_question('새 대화야, 장기 기억에 저장된 내 이름이 뭐야?')
+    assert _stored_identity_question('새 대화야, 장기 기억에 저장된 내 호칭이 뭐야?') == (
+        'nickname',
+    )

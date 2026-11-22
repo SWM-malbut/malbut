@@ -237,3 +237,39 @@ def test_bundled_data_errors_are_safe(monkeypatch, error, code):
         module.resolve_weather_location('수원시 우만동')
     assert caught.value.code == code
     assert 'private' not in str(caught.value)
+
+
+@pytest.mark.parametrize('query,expected_location', [
+    ('경기도 수원시 8달 9 우만 일동', '경기도 수원시 팔달구 우만1동'),
+    ('경기도 수원시 8달 9 오만 일동', '경기도 수원시 팔달구 우만1동'),
+    ('수원시 팔달구 오만 1동', '경기도 수원시 팔달구 우만1동'),
+    ('수원시 오만 일동', '경기도 수원시 팔달구 우만1동'),
+    ('수원시 영통 9 영통 삼동', '경기도 수원시 영통구 영통3동'),
+    ('고양시 1산동 9 백석 일동', '경기도 고양시 일산동구 백석1동'),
+    ('서울시 9로 9 구로 일동', '서울특별시 구로구 구로제1동'),
+    ('서울시 4당 이동', '서울특별시 동작구 사당제2동'),
+])
+def test_korean_asr_region_slips_resolve_when_unambiguous(query, expected_location):
+    result = module.resolve_weather_location(query)
+    assert len(result) == 1
+    assert result[0]['location'] == expected_location
+
+
+@pytest.mark.parametrize('query', [
+    '수원시 팔달구 없는1동',
+    '수원시 우만3동',
+    '경기도 수원시 8달 9 우만 삼동',
+    '서울시 팔달구 오만 일동',
+    '용인시 오만 일동',
+])
+def test_korean_asr_fallback_rejects_wrong_digit_parent_or_unknown_leaf(query):
+    assert module.resolve_weather_location(query) == []
+
+
+def test_metropolitan_aliases_do_not_collide_with_gyeonggi_gwangju():
+    gwangju = module.resolve_weather_location('광주시')
+    assert len(gwangju) == 1
+    assert gwangju[0]['location'] == '경기도 광주시'
+    seoul = module.resolve_weather_location('서울시')
+    assert len(seoul) == 1
+    assert seoul[0]['location'] == '서울특별시'
