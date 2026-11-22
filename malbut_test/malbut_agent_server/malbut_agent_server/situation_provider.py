@@ -6,6 +6,9 @@ from uuid import uuid4
 
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.providers.reliable import (
+    NormalizedProviderError, ProviderFailureCode, classify_exception,
+)
 from malbut_agent_server.schemas import MAX_UTTERANCE_LENGTH, validate_user_id
 from malbut_agent_server.situation_dialogue import (
     ASSESSMENTS, FALL_CONFIRMATION_QUESTION, SituationContext, SituationInterpretation,
@@ -190,15 +193,29 @@ class OpenAISituationProvider:
         if provider.include_reasoning:
             payload['reasoning'] = {'effort': provider.reasoning_effort,
                                     'context': 'current_turn'}
+        api_key = provider._api_key
+        if not api_key:
+            provider._report_key('missing', 'missing_api_key')
+            raise NormalizedProviderError(ProviderFailureCode.MISSING_CREDENTIALS)
         headers = {
-            'Authorization': f'Bearer {provider._api_key}',
+            'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
             'User-Agent': 'malbut-agent-server/0.4',
             'X-Client-Request-Id': provider._client_request_id(
                 'situation-' + str(uuid4()),
             ),
         }
-        return _interpretation(provider.transport(
-            f'{provider.base_url}/responses', headers, payload,
-            max(provider.timeout_seconds, MIN_CONFIRMATION_IO_TIMEOUT_SECONDS),
-        ))
+        try:
+            response = provider.transport(
+                f'{provider.base_url}/responses', headers, payload,
+                max(provider.timeout_seconds, MIN_CONFIRMATION_IO_TIMEOUT_SECONDS),
+            )
+        except Exception as error:
+            failure = classify_exception(error).code
+            if failure is ProviderFailureCode.AUTHENTICATION:
+                provider._report_key('invalid', 'authentication_failed')
+            elif failure is ProviderFailureCode.QUOTA:
+                provider._report_key('quota', 'insufficient_quota')
+            raise
+        provider._report_key('ok')
+        return _interpretation(response)

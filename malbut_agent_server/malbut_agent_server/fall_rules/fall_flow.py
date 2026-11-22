@@ -636,6 +636,9 @@ class FallFlow:
                                  'waited_' + (incident.waiting_for or 'busy'),
                                  state='recheck_required')
                     self._notify(incident, 'robot_could_not_confirm', state='recheck_required')
+                    # End the stalled step before re-entering: the revisit may begin
+                    # with a posture/compare look rather than a new drive/ask step.
+                    self._command('stop', incident)
                     # The person may have moved meanwhile: go back and check from the start.
                     self.active = None
                     self._enqueue(incident, 'revisit')
@@ -703,6 +706,7 @@ class FallFlow:
         if guard:  # Consent or connection off: no Cloud look, no question (unchanged).
             incident.idle = 'person'
             incident.step = 'guard'
+            self._command('left_open', incident, who='person')
             self._record('analysis_unavailable', incident, guard_reason or 'cloud_blocked')
             return
         self._enqueue(incident, 'approach')

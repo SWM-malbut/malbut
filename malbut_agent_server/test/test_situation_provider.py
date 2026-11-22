@@ -229,3 +229,61 @@ def test_contextual_two_turn_path_uses_latest_cumulative_model_judgment(latest, 
     assert last_data['stage'] == 'help'
     assert last_data['established_situation_assessment'] == 'confirmed_incident'
     assert last_data['previous_dialogue_untrusted'][0]['answer'] == '발을 헛디뎠어요'
+
+
+def test_situation_provider_checks_missing_key_and_reports_key_health():
+    from malbut_agent_server.providers.reliable import (
+        NormalizedProviderError, ProviderFailureCode,
+    )
+
+    reports = []
+
+    class KeySource:
+        def __init__(self, value):
+            self.value = value
+
+        def current(self):
+            return self.value
+
+        def report(self, state, code=None):
+            reports.append((state, code))
+
+    calls = []
+    outcome = {'value': response()}
+
+    def transport(url, headers, payload, timeout):
+        calls.append((url, headers, payload, timeout))
+        if isinstance(outcome['value'], Exception):
+            raise outcome['value']
+        return outcome['value']
+
+    key_source = KeySource('')
+    raw = OpenAIResponsesProvider(key_source, 'test-model', transport=transport)
+    target = OpenAISituationProvider(raw)
+
+    # Empty key fails fast before transport and reports missing key health.
+    with pytest.raises(NormalizedProviderError) as missing:
+        target.evaluate(context('넘어졌어요'))
+    assert missing.value.failure.code is ProviderFailureCode.MISSING_CREDENTIALS
+    assert calls == []
+    assert reports == [('missing', 'missing_api_key')]
+
+    # Auth and quota failures report key health without retrying.
+    key_source.value = 'valid-key'
+    outcome['value'] = ProviderError('OpenAI request failed with HTTP status 401')
+    with pytest.raises(ProviderError):
+        target.evaluate(context('넘어졌어요'))
+    outcome['value'] = NormalizedProviderError(ProviderFailureCode.QUOTA)
+    with pytest.raises(NormalizedProviderError):
+        target.evaluate(context('넘어졌어요'))
+
+    # Success reports ok.
+    outcome['value'] = response()
+    target.evaluate(context('넘어졌어요'))
+    assert len(calls) == 3
+    assert reports == [
+        ('missing', 'missing_api_key'),
+        ('invalid', 'authentication_failed'),
+        ('quota', 'insufficient_quota'),
+        ('ok', None),
+    ]

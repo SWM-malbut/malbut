@@ -73,6 +73,7 @@ class FallConfirmationLink:
     # 2026-10-13): a drive whose outcome came as feedback, or a hold, stays here
     # holding the wheels until the next step replaces it or the check ends.
     held = None  # (request, goal handle)
+    _replacing_held = None  # Held mission being preempted by an in-flight goal
     status_publisher = None
     last_status = None
     status_at = -math.inf
@@ -324,6 +325,7 @@ class FallConfirmationLink:
         if expired:
             if self.goal_future is not None:
                 # The Manager did not answer: busy, send it again.
+                self._restore_held()
                 self._cancel_current()
                 self._wait('busy')
                 return expired
@@ -389,7 +391,8 @@ class FallConfirmationLink:
             return
         kind, request = work
         if kind == 'return':
-            self.held = None  # The way back replaces the hold in the Manager.
+            # Move self.held aside while the return goal is pending; restore it on failure.
+            self._replacing_held, self.held = self.held, None
             self._send_return(request)
             return
         if self._manual_driving():
@@ -397,7 +400,7 @@ class FallConfirmationLink:
             self._wait(MANUAL_DRIVE)
             return
         self.request, self.mode, self.running = request, kind, False
-        self.held = None  # This step replaces the hold in the Manager (same priority).
+        self._replacing_held, self.held = self.held, None
         self.sent_at = now
         if kind in DRIVES:
             x, y = drive_target(kind, request)
@@ -416,6 +419,7 @@ class FallConfirmationLink:
             self.goal_future = future
             future.add_done_callback(lambda done: self._accepted(request, done))
         except Exception:
+            self._restore_held()
             self._give_up(request)
 
     def _drive_done(self, request, outcome):
@@ -446,6 +450,7 @@ class FallConfirmationLink:
                 handle = future.result()
             except Exception:
                 if self.request == request and self.goal_future is future:
+                    self._restore_held()
                     self._give_up(request)
                 return
             if (self.request != request or self.coordinator.closed
@@ -463,9 +468,11 @@ class FallConfirmationLink:
             if not handle.accepted:
                 # Manager may still be preparing the robot. Keep
                 # this request queued; rejection is not the user's silence.
+                self._restore_held()
                 self.request = None
                 self._wait('busy')
                 return
+            self._replacing_held = None  # Accepted in the Manager: it replaces any prior hold.
             self.handle = handle
             self.accepted_at = self.clock()
             self.server_missing_since = None
@@ -483,6 +490,10 @@ class FallConfirmationLink:
                 # The held mission ended by itself (직접 움직이기 took the wheels).
                 self.held = None
                 self._drive()
+                return
+            if (self._replacing_held is not None and handle is not None
+                    and self._replacing_held[1] is handle):
+                self._replacing_held = None
                 return
             if self.request != request or self.coordinator.closed:
                 return
@@ -550,10 +561,18 @@ class FallConfirmationLink:
         except Exception:
             return None
 
+    def _restore_held(self):
+        replacing, self._replacing_held = self._replacing_held, None
+        if replacing is not None and self.held is None:
+            self.held = replacing
+
     def _release_held(self):
         held, self.held = self.held, None
+        replacing, self._replacing_held = self._replacing_held, None
         if held is not None:
             self._cancel_handle(held[1])
+        if replacing is not None and (held is None or replacing[1] is not held[1]):
+            self._cancel_handle(replacing[1])
 
     def _send_hold(self, request):
         """Keep a HIGH mission while waiting to ask (the Agent refused the question)."""
@@ -597,6 +616,7 @@ class FallConfirmationLink:
             self.return_future = future
             future.add_done_callback(lambda done: self._return_accepted(job, done))
         except Exception:
+            self._restore_held()
             self._finish_return(job, 'failed')
 
     def _return_accepted(self, job, future):
@@ -606,9 +626,12 @@ class FallConfirmationLink:
             try:
                 handle = future.result()
             except Exception:
+                self._restore_held()
                 return self._finish_return(job, 'failed')
             if not handle.accepted:
+                self._restore_held()
                 return self._finish_return(job, 'failed')
+            self._replacing_held = None  # Accepted return replaces any prior hold in the Manager.
             self.return_handle, self.return_future = handle, None
             try:
                 handle.get_result_async().add_done_callback(
@@ -636,6 +659,8 @@ class FallConfirmationLink:
         limit = (self.goal_response_timeout_s if self.return_handle is None
                  else self.approach_timeout_s)
         if self.clock() - self.return_sent_at >= limit:
+            if self.return_handle is None:
+                self._restore_held()
             self._cancel_handle(self.return_handle)
             self._finish_return(self.return_job, 'failed')
 

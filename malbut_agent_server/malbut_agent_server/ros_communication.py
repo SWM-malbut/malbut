@@ -469,6 +469,9 @@ def create_communication_node(
         def _begin_situation(self):
             if self._patrol_chat is not None:
                 self._patrol_chat.end()
+            if self._fall_check is not None and self._fall_check.in_window():
+                self._in_fall_window = True
+            self._awaiting_reply = None
             self._input_utterance_id = None
             self.dialogue.suspend()
             for waiters in self._addressee_waiters.values():
@@ -500,9 +503,14 @@ def create_communication_node(
             # Played under the interrupted utterance's ID, it also ends STT's wait
             # for that reply; otherwise the microphone would stay closed.
             waiting, self._awaiting_reply = self._awaiting_reply, None
+            if self.situation is not None and self.situation.active:
+                # Confirmation already owns the speaker/microphone: STOP_ALL or the
+                # pre-check notice would cut off its own question playback.
+                return
 
             def announce(_done=None):
-                if self._closing or not self._in_fall_window:
+                if (self._closing or not self._in_fall_window
+                        or (self.situation is not None and self.situation.active)):
                     return
                 self.say(FALL_CHECK_START, request_id=waiting or '')
                 self.get_logger().info(json.dumps({
