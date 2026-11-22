@@ -152,6 +152,22 @@ def test_conversation_limits_are_bounded() -> None:
     assert settings.max_model_input_chars == 8192
 
 
+def test_memory_limit_default_is_independent_of_provider_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing the default provider timeout must not change memory_limit."""
+    from malbut_agent_server import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        'DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS',
+        15,
+    )
+    settings = Settings.from_env({})
+    assert settings.memory_limit == config_module.DEFAULT_MEMORY_LIMIT == 5
+    assert settings.request_timeout_seconds == 15
+
+
 def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
     """Mock inference alone never enables simulation adapters."""
     proposal_settings = Settings(provider='mock', tool_mode='proposal')

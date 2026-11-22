@@ -1,5 +1,6 @@
 """Persist the robot's chosen weather location and resolve user-supplied regions."""
 
+from difflib import SequenceMatcher
 from functools import lru_cache
 from importlib.resources import files
 from itertools import product
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 import threading
+import unicodedata
 
 from .weather import _number, _text, _zone
 
@@ -102,6 +104,81 @@ class WeatherLocationStore:
             self._connection.close()
 
 
+_DIGIT_TO_HANGUL = str.maketrans('123456789', '일이삼사오육칠팔구')
+_HANGUL_TO_DIGIT = {
+    '일': '1', '이': '2', '삼': '3', '사': '4', '오': '5',
+    '육': '6', '칠': '7', '팔': '8', '구': '9',
+}
+_ASR_LEAF_RE = re.compile(r'([가-힣0-9.]+)(동|읍|면|가|구|리)')
+_ASR_LEAF_MIN_SCORE = 0.80
+_ASR_LEAF_MIN_MARGIN = 0.15
+
+
+def _normalize_asr_numbers(key):
+    """Normalize Korean STT digit/word swaps in administrative region names."""
+    normalized = re.sub(
+        r'(?<=[가-힣])([일이삼사오육칠팔구])(?=(?:동|가)$)',
+        lambda match: _HANGUL_TO_DIGIT[match.group(1)],
+        key,
+    )
+    return re.sub(
+        r'[1-9](?![0-9.]*(?:동|가|리|로|번)(?:$|[가-힣]))',
+        lambda match: match.group(0).translate(_DIGIT_TO_HANGUL),
+        normalized,
+    )
+
+
+def _resolve_asr_leaf(normalized_key, parent_leaves):
+    """Resolve one unambiguous parent-scoped Hangul ASR slip without guessing digits."""
+    best_prefix = ''
+    for cut in range(len(normalized_key) - 2, 1, -1):
+        prefix = normalized_key[:cut]
+        if prefix in parent_leaves:
+            best_prefix = prefix
+            break
+    if not best_prefix:
+        return []
+    leaf_query = normalized_key[len(best_prefix):]
+    match = _ASR_LEAF_RE.fullmatch(leaf_query)
+    if match is None:
+        return []
+    q_stem, q_unit = match.groups()
+    q_non_hangul = ''.join(char for char in q_stem if not '\uac00' <= char <= '\ud7a3')
+    q_hangul = ''.join(char for char in q_stem if '\uac00' <= char <= '\ud7a3')
+    if len(q_hangul) < 2:
+        return []
+    q_nfd = unicodedata.normalize('NFD', q_hangul)
+    scored = []
+    seen = set()
+    for cand_leaf, value in parent_leaves[best_prefix]:
+        location = value['location']
+        if location in seen:
+            continue
+        seen.add(location)
+        cand_match = _ASR_LEAF_RE.fullmatch(cand_leaf)
+        if cand_match is None or cand_match.group(2) != q_unit:
+            continue
+        c_stem = re.sub(r'제([0-9]+(?:\.[0-9]+)*)$', r'\1', cand_match.group(1))
+        c_non_hangul = ''.join(char for char in c_stem if not '\uac00' <= char <= '\ud7a3')
+        if c_non_hangul != q_non_hangul:
+            continue
+        c_hangul = ''.join(char for char in c_stem if '\uac00' <= char <= '\ud7a3')
+        if len(c_hangul) < 2:
+            continue
+        ratio = SequenceMatcher(
+            None, q_nfd, unicodedata.normalize('NFD', c_hangul), autojunk=False,
+        ).ratio()
+        scored.append((ratio, value))
+    if not scored:
+        return []
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_value = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else 0.0
+    if best_score >= _ASR_LEAF_MIN_SCORE and best_score - runner_up >= _ASR_LEAF_MIN_MARGIN:
+        return [dict(best_value)]
+    return []
+
+
 def resolve_weather_location(query):
     """Resolve a Korean administrative region using the bundled KMA gazetteer.
 
@@ -114,7 +191,7 @@ def resolve_weather_location(query):
         raise WeatherLocationError('LOCATION_INVALID_QUERY')
     key = query.replace(' ', '').replace('·', '.')
     try:
-        exact, parents = _region_index()
+        exact, parents, parent_leaves = _region_index()
     except OSError:
         raise WeatherLocationError('LOCATION_LOOKUP_FAILED') from None
     except (ValueError, TypeError, KeyError, AttributeError):
@@ -124,17 +201,28 @@ def resolve_weather_location(query):
         # e.g. Suwon has district rows but no city row: offer those districts,
         # never choose a representative district or average their coordinates.
         matches = parents.get(key, (None, []))[1]
+    if not matches:
+        normalized = _normalize_asr_numbers(key)
+        if normalized != key:
+            matches = exact.get(normalized)
+            if matches is None:
+                matches = parents.get(normalized, (None, []))[1]
+        if not matches:
+            matches = _resolve_asr_leaf(normalized, parent_leaves)
     return [dict(value) for value in matches[:5]]
 
 
 def _aliases(parts):
     province_names = {
-        '서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구',
-        '인천광역시': '인천', '광주광역시': '광주', '대전광역시': '대전',
-        '울산광역시': '울산', '세종특별자치시': '세종', '경기도': '경기',
-        '강원특별자치도': '강원', '충청북도': '충북', '충청남도': '충남',
-        '전북특별자치도': '전북', '전라남도': '전남', '경상북도': '경북',
-        '경상남도': '경남', '제주특별자치도': '제주',
+        '서울특별시': ('서울', '서울시'), '부산광역시': ('부산', '부산시'),
+        '대구광역시': ('대구', '대구시'), '인천광역시': ('인천', '인천시'),
+        '광주광역시': ('광주',), '대전광역시': ('대전', '대전시'),
+        '울산광역시': ('울산', '울산시'), '세종특별자치시': ('세종', '세종시'),
+        '경기도': ('경기',), '강원특별자치도': ('강원',),
+        '충청북도': ('충북',), '충청남도': ('충남',),
+        '전북특별자치도': ('전북',), '전라남도': ('전남',),
+        '경상북도': ('경북',), '경상남도': ('경남',),
+        '제주특별자치도': ('제주',),
     }
     aliases = set()
     for mask in range(1 << (len(parts) - 1)):
@@ -144,13 +232,14 @@ def _aliases(parts):
         for part in included:
             names = {part}
             if part in province_names:
-                names.add(province_names[part])
+                names.update(province_names[part])
             elif part.endswith(('시', '군')):
                 names.add(part[:-1])
             if part == parts[-1]:
                 # 우만동 means either 우만1동 or 우만2동. Keep both, with
                 # their original names and coordinates, for the user to choose.
                 names.add(re.sub(r'(?:제)?[0-9]+(?:\.[0-9]+)*동$', '동', part))
+                names.add(re.sub(r'제([0-9]+(?:\.[0-9]+)*동)$', r'\1', part))
             variants.append(names)
         aliases.update(''.join(value) for value in product(*variants))
     return aliases
@@ -164,7 +253,7 @@ def _region_index():
     rows = payload['rows']
     if payload['version'] != 1 or len(rows) != payload['row_count'] or not rows:
         raise ValueError('invalid bundled region data')
-    exact, parents = {}, {}
+    exact, parents, parent_leaves = {}, {}, {}
     codes = set()
     for row in rows:
         if (not isinstance(row, list) or len(row) != 6
@@ -188,6 +277,7 @@ def _region_index():
         })
         for alias in _aliases(parts):
             exact.setdefault(alias, []).append(value)
+        leaf = parts[-1]
         for size in range(1, len(parts)):
             depth = len(parts) - size
             for alias in _aliases(parts[:size]):
@@ -196,4 +286,5 @@ def _region_index():
                     parents[alias] = (depth, [value])
                 elif depth == previous[0] and value not in previous[1]:
                     previous[1].append(value)
-    return exact, parents
+                parent_leaves.setdefault(alias, []).append((leaf, value))
+    return exact, parents, parent_leaves

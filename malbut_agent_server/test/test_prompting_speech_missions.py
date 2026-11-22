@@ -273,3 +273,14 @@ def test_recall_before_missing_memory_answer_is_scoped_to_offered_tool():
     assert '반드시 recall_story_memory를 호출' in recall_rule
     with_recall = system_instructions_for_tools([*patrol, STORY_RECALL_TOOL])
     assert with_recall.replace(recall_rule, '', 1) == original
+
+
+def test_navigation_cancel_and_homecam_tool_descriptions_reflect_runtime_capabilities():
+    from malbut_agent_server.tools import HOMECAM_QUERY_TOOLS, TOOL_SPECS
+
+    assert 'Relative motion is unsupported' not in TOOL_SPECS['request_navigation'].description
+    assert 'named room destinations only' in TOOL_SPECS['request_navigation'].description
+    assert 'no foreground mission is active' in TOOL_SPECS['cancel_voice_mission'].description
+    assert 'STT drops "?" to "."' in TOOL_SPECS['get_homecam_status'].description
+    homecam_rules = system_instructions_for_tools(select_tool_specs(HOMECAM_QUERY_TOOLS))
+    assert '물음표가 마침표로 바뀌어' in homecam_rules
