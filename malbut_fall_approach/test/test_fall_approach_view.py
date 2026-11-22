@@ -5,8 +5,8 @@ import math
 import pytest
 
 from malbut_fall_approach.fall_approach import (
-    INSCRIBED_COST, LETHAL_COST, CostGrid, Pose2D, backup_distance, can_stand, goal_error,
-    sight_clear,
+    INSCRIBED_COST, LETHAL_COST, CostGrid, Pose2D, backup_distance, can_stand, filter_reachable,
+    goal_error, sight_clear,
 )
 
 # The farthest the Agent's fall rules let the view go (VIEW_MAX_M there).
@@ -50,6 +50,20 @@ def test_the_robot_must_stand_on_known_floor_clear_of_obstacles():
     assert not can_stand(floor, (3.0, 3.0))
     assert can_stand(floor, (4.0, 4.0))  # Near a wall but outside the footprint.
     assert not can_stand(floor, (6.0, 0.0))  # Off the costmap.
+
+
+def test_filter_reachable_skips_disconnected_pockets_and_preserves_order():
+    # A vertical wall across the entire costmap at x=1.0 separates left from right.
+    barrier = wall(1.0, -5.0, 4.95, cost=INSCRIBED_COST)
+    floor = grid(barrier)
+    candidates = [(2.5, 0.0), (-1.0, 0.5), (3.0, 1.0), (0.0, -1.0)]
+    assert filter_reachable(floor, (-2.0, 0.0), candidates) == [(-1.0, 0.5), (0.0, -1.0)]
+    # A robot inside an inscribed/lethal cell falls back to Nav2's planner tolerance.
+    assert filter_reachable(floor, (1.0, 0.0), candidates) == candidates
+    # An unmapped unknown band across the map does not leak reachability into exterior pockets.
+    unknown_band = wall(1.0, -5.0, 4.95, cost=UNKNOWN_COST)
+    assert filter_reachable(grid(unknown_band), (-2.0, 0.0), candidates) == [
+        (-1.0, 0.5), (0.0, -1.0)]
 
 
 def test_backs_up_only_when_facing_the_spot_and_short_of_the_distance():

@@ -218,7 +218,14 @@ controller_server:
       max_angular_accel: 3.2
       simulate_ahead_time: 1.0
       rotate_to_goal_heading: False
-      debug_trajectory_details: True
+      # Avoid per-tick LocalPlanEvaluation / MarkerArray deep-copies of every
+      # candidate trajectory on the Jetson CPU (defaults are True in Humble).
+      debug_trajectory_details: False
+      publish_evaluation: False
+      publish_trajectories: False
+      publish_transformed_plan: False
+      publish_global_plan: False
+      publish_local_plan: True
       # Driver /cmd_vel limits instead of the vendor's 0.4 m/s and 1.0 rad/s.
       min_vel_x: -0.2
       min_vel_y: 0.0
@@ -234,15 +241,19 @@ controller_server:
       decel_lim_x: -2.5
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
+      # Sample density matched to [-0.2, 0.2] m/s, 0 m/s lateral, [-0.5, 0.5] rad/s
+      # so DWB meets the 10 Hz control budget under full bringup load.
+      vx_samples: 11
+      vy_samples: 1
+      vtheta_samples: 13
       # At 0.2 m/s, a 3 s constant-turn projection rejects small corrective
       # turns in a 40 cm passage. Replan over 0.3 m while retaining footprint
       # collision checks and the existing velocity/acceleration limits.
       sim_time: 1.5
       linear_granularity: 0.05
-      angular_granularity: 0.025
+      # At 0.174 m corner radius, 0.075 rad moves a corner 13 mm (< half a 30 mm
+      # local cell) while cutting per-trajectory polygon steps 3x vs 0.025 rad.
+      angular_granularity: 0.075
       transform_tolerance: 0.2
       # DWB switches to RotateToGoal here; keep it equal to the goal checker.
       xy_goal_tolerance: 0.12
@@ -256,14 +267,16 @@ controller_server:
       # misses. Its score stays negligible on purpose: under the outline the
       # inflated cost reads 174-253 for any body clearance up to 0.35 m, so as a
       # preference it made standing still cheaper than driving along a wall.
-      # Scale 0 would skip the critic entirely.
+      # Scale 0 would skip the critic entirely. Place it last so O(1) alignment
+      # and distance critics short-circuit losing trajectories before polygon
+      # rasterization; winning candidates are still footprint-checked identically.
       # PreferForward (built-in dwb_critics) adds `penalty` x `scale` to every
       # trajectory that drives backwards; strafe_x/theta_scale are zeroed so
       # forward turning and rotating in place stay free. Keep the reverse
       # preference soft so short paths behind the robot can still make progress.
       # The person follower backs away from a
       # too-close person with the BackUp behavior, not through this controller.
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward", "ObstacleFootprint"]
       PreferForward.scale: 10.0
       PreferForward.penalty: 1.0
       PreferForward.strafe_x: 0.0
@@ -285,7 +298,12 @@ controller_server:
     # Keep DWB and the robot limits; soften only the reverse-vs-turn preference.
     FollowPerson:
       plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
+      debug_trajectory_details: False
+      publish_evaluation: False
+      publish_trajectories: False
+      publish_transformed_plan: False
+      publish_global_plan: False
+      publish_local_plan: True
       min_vel_x: -0.2
       min_vel_y: 0.0
       max_vel_x: 0.2
@@ -300,18 +318,18 @@ controller_server:
       decel_lim_x: -2.5
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
+      vx_samples: 11
+      vy_samples: 1
+      vtheta_samples: 13
       sim_time: 3.0
       linear_granularity: 0.05
-      angular_granularity: 0.025
+      angular_granularity: 0.075
       transform_tolerance: 0.2
       xy_goal_tolerance: 0.08
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: True
       stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward", "ObstacleFootprint"]
       # PreferForward's rotation term remains zero; 10 is a softer reverse penalty.
       PreferForward.scale: 10.0
       PreferForward.penalty: 1.0

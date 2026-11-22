@@ -35,7 +35,8 @@ from malbut_fall_approach.fall_approach import (
     APPROACH_LIMIT_S, BACKUP_SPEED_MPS, CAMERA_HFOV_RAD,
     HOLD_LIMIT_S, HOLDING_PHASES, RETURN_LIMIT_S, VIEW_LIMIT_S, CostGrid,
     Pose2D, StartPoses, TorsoWatch, already_near, approach_places, backup_distance, can_stand,
-    facing_turn, first_seen, goal_error, returning_turn, sight_clear, target_pose, UNSEEN_VIEW_M,
+    facing_turn, filter_reachable, first_seen, goal_error, returning_turn, sight_clear,
+    target_pose, UNSEEN_VIEW_M,
 )
 
 STATUS_TOPIC = '/malbut/falls/approach/status'
@@ -208,6 +209,7 @@ class FallApproachNode(Node):
         grid = self.grid
         if grid is not None:
             places = [p for p in places if can_stand(grid, p) and sight_clear(grid, p, target)]
+            places = filter_reachable(grid, (robot.x, robot.y), places)
         planned = False
         for place in places[:APPROACH_PLANS]:
             path = self._plan(handle, robot, place, deadline,

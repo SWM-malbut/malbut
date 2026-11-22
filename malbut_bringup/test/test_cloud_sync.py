@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import json
 import math
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 from urllib.error import HTTPError
@@ -619,3 +620,57 @@ def test_invalid_voice_profile_does_not_write_any_parameters(invalid):
     relay = object.__new__(VoiceProfileRelay)
     relay.receive({'voiceProfile': invalid})
     assert relay.advance() is None
+
+
+def test_stop_commands_keeps_homecam_heartbeat_relay_alive_without_polling_commands():
+    """During Bringup shutdown, stop accepting commands while still replying to homecam."""
+    data = PanelData()
+    bridge = SimpleNamespace(data=data, catalog=Mock(), node=Mock(),
+                             submit=Mock(), publish_closed_falls=Mock())
+    bridge.catalog.list_maps.return_value = []
+    client = Mock()
+    client.request.return_value = {'homecam': {'desiredState': {
+        'cameraEnabled': True, 'microphoneEnabled': True, 'monitoringEnabled': True}}}
+    homecam = Mock()
+    homecam.take.return_value = (42, {'mediaHealthy': True})
+    sync = CloudSync(bridge, client, homecam=homecam)
+    sync.stop_commands()
+    sync.tick()
+    assert [call.args[:2] for call in client.request.call_args_list] == [
+        ('/api/device/v1/robot/state', 'POST')]
+    homecam.answer.assert_called_once()
+    assert homecam.answer.call_args.args[0] == 42
+    assert homecam.answer.call_args.kwargs['body'] == {'desiredState': {
+        'cameraEnabled': True, 'microphoneEnabled': True, 'monitoringEnabled': True}}
+    bridge.submit.assert_not_called()
+    bridge.publish_closed_falls.assert_not_called()
+
+
+def test_close_interrupts_transport_before_joining_worker():
+    """Calling client.close() before thread.join() unblocks an in-flight socket wait."""
+    order = []
+    started = threading.Event()
+    unblocked = threading.Event()
+    bridge = SimpleNamespace(data=PanelData(), catalog=Mock(), node=Mock())
+    bridge.catalog.list_maps.return_value = []
+    client = Mock()
+
+    def slow_request(*_args, **_kwargs):
+        started.set()
+        unblocked.wait(timeout=5.0)
+        raise CloudError('Cloud request failed')
+
+    def close_client():
+        order.append('client_close')
+        unblocked.set()
+
+    client.request.side_effect = slow_request
+    client.close.side_effect = close_client
+    sync = CloudSync(bridge, client)
+    sync.thread.start()
+    assert started.wait(timeout=2.0)
+    sync.close()
+    order.append('joined')
+    assert order == ['client_close', 'joined']
+    assert not sync.thread.is_alive()
+    bridge.node.get_logger.return_value.warning.assert_not_called()

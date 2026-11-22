@@ -20,7 +20,11 @@ def generate_launch_description():
         SetEnvironmentVariable('HOMECAM_BACKEND_URL', LaunchConfiguration('backend_url')),
         SetEnvironmentVariable('HOMECAM_DEVICE_TOKEN_FILE', LaunchConfiguration('token_file')),
         Node(package='malbut_bringup', executable='robot_cloud_sync',
-             name='robot_cloud_sync', output='screen', parameters=[{
+             name='robot_cloud_sync', output='screen',
+             # Owned Bringup (nav2/homecam/speech) needs >5 s to tear down cleanly
+             # before robot_cloud_sync stops relaying homecam heartbeats.
+             sigterm_timeout='60', sigkill_timeout='15',
+             parameters=[{
                  'use_sim_time': False, 'manage_bringup': True, 'map_topic': '/map',
                  'backend_url': LaunchConfiguration('backend_url'),
                  'token_file': LaunchConfiguration('token_file'),
