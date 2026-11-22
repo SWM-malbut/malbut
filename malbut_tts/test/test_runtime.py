@@ -645,10 +645,8 @@ def test_device_failure_is_not_finished(h):
     assert (pid, 'finished') not in h.events
 
 
-def test_device_failure_logs_chained_cause(caplog):
+def test_device_failure_logs_chained_cause():
     """Chained PortAudio/device causes appear in playback and cleanup failure logs."""
-    import logging
-
     class FailingPlayer:
         def __init__(self, on_state, cancel_event):
             self._cause = OSError('Input/output error')
@@ -668,13 +666,18 @@ def test_device_failure_logs_chained_cause(caplog):
 
     done = Event()
     events = []
+    errors = []
 
     def on_status(pid, state, interim, req):
         events.append((pid, state))
         if state == 'failed':
             done.set()
 
-    logger = logging.getLogger('test_tts_chained_cause')
+    logger = SimpleNamespace(
+        info=lambda message: None,
+        warning=lambda message: None,
+        error=errors.append,
+    )
     runtime = SpeechRuntime(
         SingleChunkSynthesizer(),
         FailingPlayer,
@@ -682,21 +685,20 @@ def test_device_failure_logs_chained_cause(caplog):
         logger=logger,
     )
     try:
-        with caplog.at_level(logging.ERROR, logger='test_tts_chained_cause'):
-            pid = runtime.submit('answer')
-            assert done.wait(2)
-            assert (pid, 'failed') in events
+        pid = runtime.submit('answer')
+        assert done.wait(2)
+        assert (pid, 'failed') in events
     finally:
         runtime.close()
     assert any(
-        'tts_playback_failed:' in record.message
-        and 'OSError: Input/output error' in record.message
-        for record in caplog.records
+        'tts_playback_failed:' in message
+        and 'OSError: Input/output error' in message
+        for message in errors
     )
     assert any(
-        'tts_cleanup_failed:' in record.message
-        and 'OSError: Input/output error' in record.message
-        for record in caplog.records
+        'tts_cleanup_failed:' in message
+        and 'OSError: Input/output error' in message
+        for message in errors
     )
 
 
