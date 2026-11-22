@@ -395,7 +395,7 @@ def test_grounded_patrol_followup_uses_compact_instructions_and_none_effort() ->
 @pytest.mark.parametrize(
     'payload_text',
     [
-        '{"type":"clarification","message":"어느 방으로 갈까요? ' + '가나다라마바사' * 20 + '"}',
+        '{"type":"tool_call","message":"거실로 이동할게요. ' + '가나다라마바사' * 20 + '"}',
         '{"type":"refusal","message":"안전상 수행할 수 없어요. ' + '가나다라마바사' * 20 + '"}',
         '{"type":"message","message":"","reason":"' + 'empty_reason_' * 20 + '"}',
         'not-json-at-all ' + 'abcdefghij' * 15,
@@ -539,3 +539,78 @@ def test_homecam_query_client_reuses_keep_alive_and_preserves_403_json_code(
             client.close()
         with pytest.raises(RuntimeError, match='Homecam query unavailable'):
             client('get_homecam_status', {})
+
+
+def test_empty_recall_followup_uses_none_while_nonempty_recall_keeps_low() -> None:
+    """Empty recall Call 2 drops reasoning overhead; retrieved facts/stories keep low."""
+    provider = OpenAIResponsesProvider(
+        'offline-key', 'gpt-5.6-luna',
+        semantic_context=True, reasoning_effort='low', prompt_cache_enabled=True,
+    )
+    try:
+        req = _speech_request('내가 오늘 점심에 뭘 먹었는지 알아?', available_tools=())
+        empty_ctx = {
+            'mode': 'answer_only', 'enabled': True, 'memories': [],
+            'story_memory_untrusted': {'stories': []},
+        }
+        p_empty = provider.build_payload(req, [], [], [], memory_context=empty_ctx)
+        assert p_empty['reasoning']['effort'] == 'none'
+
+        nonempty_ctx = {
+            'mode': 'answer_only', 'enabled': True, 'memories': [],
+            'story_memory_untrusted': {'stories': [{'story_id': 's1', 'title': '점심'}]},
+        }
+        p_nonempty = provider.build_payload(req, [], [], [], memory_context=nonempty_ctx)
+        assert p_nonempty['reasoning']['effort'] == 'low'
+
+        event_ctx = dict(empty_ctx, event_attribute_evidence='행사 당시 근거만 사용')
+        p_event = provider.build_payload(req, [], [], [], memory_context=event_ctx)
+        assert p_event['reasoning']['effort'] == 'low'
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize(('utterance', 'expected_effort'), [
+    ('오늘 처음으로 집에서 빵을 구워봤어. 결과가 생각보다 괜찮더라.', 'none'),
+    ('이제 다음 회의 전에 해 볼 작은 준비 한 가지만 제안해줘.', 'none'),
+    ('주말에 민서랑 한강을 걷기로 했어. 나는 많이 걷고 싶지는 않아.', 'none'),
+    ('나를 따라와 줘', 'none'),
+    ('제자리에서 오른쪽으로 45도 돌아줘', 'none'),
+    ('세모에는 편이 몇 개 있어?', 'low'),
+    ('전에 말한 우리 고양이 이름이 뭐였지?', 'low'),
+    ('거실까지 갈 수 있는지만 궁금해. 지금은 이동하지 마.', 'low'),
+    ('우리 고양이 이름은 해달콩이야. 고양이 이름으로 기억해 줘.', 'low'),
+    ('아 내가 반대로 말했네. 빨간 상자에 장난감, 파란 상자에 책이 있어.', 'low'),
+    ('앞에 뭐가 보여?', 'low'),
+    ('홈캠 카메라랑 모니터링이 지금 켜져 있어?', 'low'),
+    ('새 지도를 만들어 줘', 'low'),
+])
+def test_selective_fast_turn_reasoning_effort_gates_safe_vs_complex_speech_turns(
+    utterance: str,
+    expected_effort: str,
+) -> None:
+    """Fast-turn effort='none' applies only to direct, low-ambiguity speech turns."""
+    names, tools = _live_tools()
+    provider = OpenAIResponsesProvider(
+        'offline-key', 'gpt-5.6-luna',
+        semantic_context=True, reasoning_effort='low',
+        fast_turn_reasoning_effort='none', prompt_cache_enabled=True,
+    )
+    disabled = OpenAIResponsesProvider(
+        'offline-key', 'gpt-5.6-luna',
+        semantic_context=True, reasoning_effort='low',
+        fast_turn_reasoning_effort='low', prompt_cache_enabled=True,
+    )
+    try:
+        req = _speech_request(utterance, available_tools=names)
+        payload = provider.build_payload(
+            req, [], [], tools, memory_context={'enabled': True, 'response_settings': {}},
+        )
+        assert payload['reasoning']['effort'] == expected_effort
+        disabled_payload = disabled.build_payload(
+            req, [], [], tools, memory_context={'enabled': True, 'response_settings': {}},
+        )
+        assert disabled_payload['reasoning']['effort'] == 'low'
+    finally:
+        provider.close()
+        disabled.close()

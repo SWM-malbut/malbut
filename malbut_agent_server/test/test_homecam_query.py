@@ -337,3 +337,50 @@ def test_query_round_trip_never_enters_manager_or_preparation(client, forbidden)
             assert len(client[1]) == 2
     finally:
         runtime.close()
+
+
+def test_fast_homecam_query_skips_start_notice_while_stalled_query_emits_it(monkeypatch):
+    import threading
+    from malbut_agent_server import conversation_progress as progress
+    from malbut_agent_server.function_speech import FUNCTION_STARTS
+    from malbut_agent_server.orchestration import followups
+
+    runtime = build_orchestrator(Settings(provider='mock', database_path=':memory:'))
+    tool = 'get_homecam_falls'
+    runtime.provider = QueryProvider(
+        selection=AgentDecision('tool_call', '조회', tool_name=tool, arguments={'limit': 2}),
+    )
+    runtime.conversation_store.create('user', 'room')
+    try:
+        configure_homecam_queries(
+            runtime,
+            lambda _name, _args: {'success': True, 'code': 'OK', 'result': {'incidents': []}},
+        )
+        fast_notices = []
+        with progress.request_scope(lambda text, _state: fast_notices.append(text)):
+            res = runtime.handle(SpeechAgentRequest(
+                'fast-hc', 'user', 'room', 't1', '홈캠 낙상 기록이 있어?', RobotState(), (tool,),
+            ))
+        assert res.decision.reason == 'homecam_record_existence'
+        assert fast_notices == []
+
+        monkeypatch.setattr(followups, 'HOMECAM_START_NOTICE_DELAY_S', 0.02)
+        noticed = threading.Event()
+        slow_notices = []
+
+        def slow_read(_name, _args):
+            assert noticed.wait(2.0)
+            return {'success': True, 'code': 'OK', 'result': {'incidents': []}}
+
+        configure_homecam_queries(runtime, slow_read)
+        runtime.provider = QueryProvider(
+            selection=AgentDecision('tool_call', '조회', tool_name=tool, arguments={'limit': 2}),
+        )
+        with progress.request_scope(lambda text, _state: (slow_notices.append(text), noticed.set())):
+            res2 = runtime.handle(SpeechAgentRequest(
+                'slow-hc', 'user', 'room', 't2', '홈캠 낙상 기록이 있어?', RobotState(), (tool,),
+            ))
+        assert res2.decision.reason == 'homecam_record_existence'
+        assert slow_notices == [FUNCTION_STARTS[tool]]
+    finally:
+        runtime.close()

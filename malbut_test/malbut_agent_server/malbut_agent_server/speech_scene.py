@@ -19,10 +19,25 @@ SCENE_INPUT_TIMEOUT_S = 1.0
 _TURN_IMAGE_PATTERN = re.compile(
     r'카메라|화면|사진|영상|보여|보이|봐줘|봐봐|보세요|살펴|둘러|'
     r'눈앞|앞에|뒤에|옆에|왼쪽|오른쪽|주변|근처|어디야|어디에|어디있|'
-    r'여기|저기|거기|이쪽|저쪽|그쪽|누구|사람|불켜|불꺼|문열|문닫|'
-    r'장애물|물건|놓여|어지러|깨끗|색깔|무슨색|표정|생겼|'
-    r'이동|가줘|가자|가봐|가줄|와줘|와봐|이리|저리|앞으로|뒤로|후진|'
-    r'회전|돌아|돌려|틀어|움직|비켜|따라|순찰|정찰|지도|맵|탐색|위치|좌표|경유|안내'
+    r'여기(?!까지)|저기|거기|이쪽|저쪽|그쪽|누구|사람|불켜|불꺼|문열|문닫|'
+    r'장애물|물건|놓여|어지러|깨끗|무슨색|표정|생겼|'
+    r'(?:지금|입은|입고|옷|얼굴|머리|방|벽|바닥|하늘|앞|옆|뒤|여기|저기|이거|저거|이것|저것).*색깔|'
+    r'색깔.*(?:보여|보이|알수있|맞춰|확인)|'
+    r'이동|가줘|(?<!돌아)가자|가봐|가줄|와줘|와봐|이리|저리|앞으로|뒤로|후진|'
+    r'회전|돌아(?!가[자고며면니])|돌려|틀어|움직|비켜|따라|순찰|정찰|'
+    r'(?<![가-힣])지도|(?:새|저장|현재|기존|내|우리집)지도|맵|탐색|위치|좌표|경유|안내'
+)
+_DEICTIC_COLOR_PATTERN = re.compile(r'(?:^|[\s,])(?:이|저)\s+[^\n]{0,12}색깔')
+_NON_VISUAL_WEATHER_PATTERN = re.compile(
+    r'날씨|기온|최고기온|최저기온|강수|예보|미세먼지'
+)
+_NON_VISUAL_HOMECAM_PATTERN = re.compile(r'홈캠')
+_NON_VISUAL_PAST_PATROL_PATTERN = re.compile(
+    r'(?:지난|아까|방금|그|이전|최근)순찰|순찰(?:사진|기록|영상|결과|이력|내역)|순찰에서'
+)
+_LIVE_ROBOT_MOTION_OR_VIEW_PATTERN = re.compile(
+    r'이동|움직|앞으로|뒤로|후진|왼쪽|오른쪽|회전|돌아줘|돌려|따라와|비켜|'
+    r'눈앞|앞에|뒤에|옆에|주변|장애물|표정|생겼|입은|옷'
 )
 
 
@@ -44,7 +59,14 @@ def needs_turn_image(
         return True
     normalized = unicodedata.normalize('NFC', utterance)
     compact = re.sub(r'[\s.!?~。！？,]', '', normalized).lower()
-    if _TURN_IMAGE_PATTERN.search(compact):
+    if (
+        (_NON_VISUAL_WEATHER_PATTERN.search(compact)
+         or _NON_VISUAL_HOMECAM_PATTERN.search(compact)
+         or _NON_VISUAL_PAST_PATROL_PATTERN.search(compact))
+        and not _LIVE_ROBOT_MOTION_OR_VIEW_PATTERN.search(compact)
+    ):
+        return False
+    if _TURN_IMAGE_PATTERN.search(compact) or _DEICTIC_COLOR_PATTERN.search(normalized):
         return True
     for location in navigation_locations or ():
         if isinstance(location, str):

@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from threading import RLock
+from threading import RLock, Timer
 
 from malbut_agent_server.function_speech import FUNCTION_STARTS
 
@@ -92,6 +92,24 @@ def announce_function_start(tool):
     progress = _current.get()
     if progress is not None:
         progress.start_function(tool)
+
+
+@contextmanager
+def delayed_function_start(tool, *, delay_s: float):
+    """Emit a function start notice only if execution outlasts ``delay_s``."""
+    progress = _current.get()
+    if progress is None or tool not in FUNCTION_STARTS or delay_s <= 0:
+        if delay_s <= 0:
+            announce_function_start(tool)
+        yield
+        return
+    timer = Timer(delay_s, progress.start_function, args=(tool,))
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
 
 
 def claim_retry(text):

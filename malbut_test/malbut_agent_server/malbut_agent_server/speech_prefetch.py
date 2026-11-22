@@ -23,6 +23,9 @@ class Preparation:
     text: str = ''
 
 
+_PREFETCHABLE_DECISION_TYPES = frozenset({'message', 'clarification'})
+
+
 class PrefetchTurn:
     """Bind one candidate to one provider attempt and a final validated text."""
 
@@ -73,7 +76,8 @@ class PrefetchTurn:
     def approve_provider(self, decision):
         """Provider validation is necessary but does not authorize publication."""
         with self._lock:
-            if (decision.type == 'message' and self._candidate is not None
+            if (decision.type in _PREFETCHABLE_DECISION_TYPES
+                    and self._candidate is not None
                     and decision.message.startswith(self._candidate.text)):
                 self._approved_text = decision.message
                 self.mark('provider_validated')

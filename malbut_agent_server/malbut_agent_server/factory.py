@@ -81,6 +81,7 @@ def _openai_adapter(
         max_model_input_chars=settings.max_model_input_chars,
         max_output_tokens=settings.openai_max_output_tokens,
         reasoning_effort=settings.openai_reasoning_effort,
+        fast_turn_reasoning_effort=settings.openai_fast_turn_reasoning_effort,
         include_reasoning=include_reasoning,
         semantic_context=semantic_context,
         is_fallback=is_fallback,

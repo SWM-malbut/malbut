@@ -19,6 +19,7 @@ from malbut_agent_server.conversation_progress import (
     WEATHER_RETRY_NOTICE,
     announce_function_start,
     claim_retry,
+    delayed_function_start,
 )
 from malbut_agent_server.homecam_query import record_existence_reply
 from malbut_agent_server.prompting import bounded_weather_context
@@ -95,6 +96,11 @@ def thanks_after_answer(
     )
 
 
+# Prerecorded homecam start notices take ~3.5s; only emit one if the cloud read
+# or follow-up synthesis genuinely stalls past this threshold.
+HOMECAM_START_NOTICE_DELAY_S = 1.5
+
+
 def answer_homecam(
     provider: AgentProvider,
     homecam_executor: Callable[[Any, Dict[str, Any]], Dict[str, Any]] | None,
@@ -107,55 +113,58 @@ def answer_homecam(
     memory_context: Dict[str, Any] | None,
 ) -> ProviderResult:
     """Read cloud metadata directly, then answer with no executable Tools."""
-    try:
-        if homecam_executor is None or not accepts_memory_context(provider):
-            raise RuntimeError('homecam query unavailable')
-        announce_function_start(first_result.decision.tool_name)
-        result = homecam_executor(
-            first_result.decision.tool_name,
-            first_result.decision.arguments,
-        )
-    except CancelledError:
-        raise
-    except Exception:
-        result = {'success': False, 'code': 'UNAVAILABLE', 'result': {}}
-    if not result['success']:
-        message = (
-            '웹에서 소유자의 음성 홈캠 조회 허용이 필요해요.'
-            if result['code'] == 'VOICE_DELEGATION_REQUIRED'
-            else '홈캠 정보를 조회하지 못했어요. 잠시 후 다시 요청해 주세요.'
-        )
-        return replace(first_result, decision=AgentDecision(
-            'message', message, reason='homecam_unavailable',
-        ), memory_proposal=None)
-    confirmed = (
-        result['success'] is True and result.get('code') == 'OK'
-        and isinstance(result['result'], dict)
-    )
-    settings = (memory_context or {}).get('response_settings')
-    if (confirmed and isinstance(request, SpeechAgentRequest)
-            and settings == dict(DEFAULTS, response_mode='natural')):
-        reply = record_existence_reply(
-            request.utterance, first_result.decision.tool_name, result['result'],
-        )
-        if reply is not None:
+    with delayed_function_start(
+        first_result.decision.tool_name,
+        delay_s=HOMECAM_START_NOTICE_DELAY_S,
+    ):
+        try:
+            if homecam_executor is None or not accepts_memory_context(provider):
+                raise RuntimeError('homecam query unavailable')
+            result = homecam_executor(
+                first_result.decision.tool_name,
+                first_result.decision.arguments,
+            )
+        except CancelledError:
+            raise
+        except Exception:
+            result = {'success': False, 'code': 'UNAVAILABLE', 'result': {}}
+        if not result['success']:
+            message = (
+                '웹에서 소유자의 음성 홈캠 조회 허용이 필요해요.'
+                if result['code'] == 'VOICE_DELEGATION_REQUIRED'
+                else '홈캠 정보를 조회하지 못했어요. 잠시 후 다시 요청해 주세요.'
+            )
             return replace(first_result, decision=AgentDecision(
-                'message', reply, reason='homecam_record_existence',
+                'message', message, reason='homecam_unavailable',
             ), memory_proposal=None)
-    context: Dict[str, Any] = copy.deepcopy(memory_context) if memory_context is not None else {}
-    # This is current-query data, not a remembered fact or workflow journal.
-    context['homecam_query_result_untrusted'] = {
-        'tool': first_result.decision.tool_name, 'data': result['result'],
-    }
-    value = request.to_dict()
-    value['available_tools'] = []
-    followup = copy_request(request, value)
-    if isinstance(followup, SpeechAgentRequest):
-        followup = replace(followup, confirmed_homecam_read=confirmed)
-    answer = provider.complete(
-        followup, list(memories), copy.deepcopy(list(turns)), [],
-        conversation_summary=copy.deepcopy(summary), memory_context=context,
-    )
+        confirmed = (
+            result['success'] is True and result.get('code') == 'OK'
+            and isinstance(result['result'], dict)
+        )
+        settings = (memory_context or {}).get('response_settings')
+        if (confirmed and isinstance(request, SpeechAgentRequest)
+                and settings == dict(DEFAULTS, response_mode='natural')):
+            reply = record_existence_reply(
+                request.utterance, first_result.decision.tool_name, result['result'],
+            )
+            if reply is not None:
+                return replace(first_result, decision=AgentDecision(
+                    'message', reply, reason='homecam_record_existence',
+                ), memory_proposal=None)
+        context: Dict[str, Any] = copy.deepcopy(memory_context) if memory_context is not None else {}
+        # This is current-query data, not a remembered fact or workflow journal.
+        context['homecam_query_result_untrusted'] = {
+            'tool': first_result.decision.tool_name, 'data': result['result'],
+        }
+        value = request.to_dict()
+        value['available_tools'] = []
+        followup = copy_request(request, value)
+        if isinstance(followup, SpeechAgentRequest):
+            followup = replace(followup, confirmed_homecam_read=confirmed)
+        answer = provider.complete(
+            followup, list(memories), copy.deepcopy(list(turns)), [],
+            conversation_summary=copy.deepcopy(summary), memory_context=context,
+        )
     answer.validate()
     if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
         return replace(first_result, decision=AgentDecision(

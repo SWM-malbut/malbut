@@ -202,6 +202,17 @@ def test_tool_refusal_or_changed_provider_decision_discards_candidate(decision):
     assert [e.operation for e in emitted] == ['prepare', 'cancel']
 
 
+def test_clarification_decision_approves_prefetched_candidate():
+    emitted = []
+    clarification = '어느 방으로 갈까요? 거실과 주방 중에 알려주세요.'
+    turn = PrefetchTurn('r-clar', 'u-clar', emitted.append)
+    assert turn.begin_attempt()
+    turn.prepare('어느 방으로 갈까요? 거')
+    turn.approve_provider(AgentDecision(type='clarification', message=clarification))
+    assert turn.hint(clarification)['prepared_id'] == emitted[0].prepared_id
+    assert [e.operation for e in emitted] == ['prepare']
+
+
 def test_context_is_scoped_to_one_request_and_never_inherited_by_background_thread():
     turn = PrefetchTurn('r', 'u', lambda _: None)
     with prefetch_scope(turn), ThreadPoolExecutor(1) as workers:

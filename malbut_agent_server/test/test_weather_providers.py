@@ -361,3 +361,35 @@ def test_forecast_token_check_and_transport_share_scoped_payload_and_reject_othe
     assert [t['name'] for t in sent[0]['tools']] == ['get_weather']
     blocks = sent[0]['input'][-1]['content']
     assert all(b['type'] == 'input_text' for b in blocks)
+
+
+@pytest.mark.parametrize(('utterance', 'expect_compact'), [
+    ('오늘 여기 기온이 몇 도야?', True),
+    ('그럼, 내일 거기 최고 기온은 몇 도래?', True),
+    ('지금 기온 몇 도야?', True),
+    ('기본 날씨 위치를 경기도 수원시 팔달구 우만1동으로 바꿔 줘.', False),
+    ('오늘 여기 기온은 알려 주지 마', False),
+    ('“오늘 기온이 몇 도야?”를 번역해 줘', False),
+])
+def test_basic_weather_query_routes_direct_temperature_questions_without_mutators_or_negations(
+    utterance,
+    expect_compact,
+):
+    from malbut_agent_server.schemas import SpeechAgentRequest
+    from malbut_agent_server.tools import select_tool_specs
+
+    request = SpeechAgentRequest.from_dict(dict(
+        _request(utterance).to_dict(),
+        available_tools=['get_weather', 'set_weather_location', 'request_mapping'],
+    ))
+    backend = OpenAIResponsesProvider(api_key='test-key', model='gpt-5.6-luna', reasoning_effort='low')
+    payload = backend.build_payload(
+        request, [], [], select_tool_specs(request.available_tools),
+    )
+    tool_names = [tool['name'] for tool in payload['tools']]
+    if expect_compact:
+        assert tool_names == ['get_weather']
+        assert payload['reasoning']['effort'] == 'none'
+    else:
+        assert 'request_mapping' in tool_names
+        assert payload['reasoning']['effort'] == 'low'

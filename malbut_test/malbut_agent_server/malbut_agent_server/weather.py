@@ -261,6 +261,23 @@ def decode_weather_result(value: dict, *, clock=time.time) -> dict:
         raise ValueError('invalid weather Action result schema') from error
 
 
+_BASIC_WEATHER_BLOCKED = re.compile(
+    r'["\'“”‘’]|하지\s*마|지\s*마|말고|않[아으지]|안\s|번역|연습|따라|예시|'
+    r'바꿔|변경|설정|저장|위치|이동|순찰|지도|기억|홈캠'
+)
+_BASIC_TEMPERATURE_OR_PRECIP = re.compile(
+    r'^(?:그럼|그러면|근데|그런데|혹시)?'
+    r'(?:(?:오늘|내일|지금|현재)(?:여기|거기|이곳|그곳)?|'
+    r'(?:여기|거기|이곳|그곳)(?:오늘|내일|지금|현재)?)?'
+    r'(?:(?:최고|최저|낮|아침)?기온|온도|날씨)'
+    r'(?:이|은|는|가|을|를)?'
+    r'(?:몇도(?:야|예요|인가요|지|죠|래|래요)?|'
+    r'어때(?:요)?|어떤가(?:요)?|어떻(?:니|나요)|'
+    r'알려(?:줘(?:요)?|주세요))'
+    r'[?!.]*$'
+)
+
+
 def basic_forecast_day(utterance):
     """Recognize self-contained daily questions; other wording follows ordinary dialogue."""
     match = re.fullmatch(
@@ -269,6 +286,18 @@ def basic_forecast_day(utterance):
         ''.join(utterance.split()),
     )
     return match.group(1) if match else None
+
+
+def basic_weather_query(utterance):
+    """Recognize direct, non-negated weather or temperature queries for compact Call 1."""
+    if not isinstance(utterance, str) or not utterance.strip():
+        return False
+    if basic_forecast_day(utterance) is not None:
+        return True
+    if _BASIC_WEATHER_BLOCKED.search(utterance):
+        return False
+    compact = re.sub(r'[\s,]', '', utterance)
+    return bool(_BASIC_TEMPERATURE_OR_PRECIP.fullmatch(compact))
 
 
 def _today_reply(weather, forecast, checked_at, location):
