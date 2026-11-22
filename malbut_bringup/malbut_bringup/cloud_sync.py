@@ -688,6 +688,7 @@ class CloudSync:
         self.homecam = homecam
         self.voice = voice
         self.stop_event = threading.Event()
+        self.commands_stopped = threading.Event()
         self.pending = OrderedDict()
         self.seen = OrderedDict()
         self.last_map = ''
@@ -876,30 +877,39 @@ class CloudSync:
                 self._warn(f'Destination preview: {error.__cause__}')
             raise
 
+    def stop_commands(self):
+        """Stop claiming cloud commands while keeping the homecam heartbeat relay alive."""
+        self.commands_stopped.set()
+
     def wait_seconds(self, elapsed):
         """Poll fast only while manual input keeps arriving."""
-        interval = MANUAL_POLL_S if time.monotonic() < self.fast_until else self.interval
+        interval = (MANUAL_POLL_S
+                    if not self.commands_stopped.is_set() and time.monotonic() < self.fast_until
+                    else self.interval)
         return max(0.1, interval - elapsed)
 
     def tick(self):
         """Flush receipts before claiming another command; never replay a mission."""
-        self._complete_pending()
+        draining = self.commands_stopped.is_set()
+        if not draining:
+            self._complete_pending()
         if self.stop_event.is_set():
             return
         now = time.monotonic()
-        if now - self.maps_at >= 5.0:
+        if not draining and now - self.maps_at >= 5.0:
             self.maps = self.bridge.catalog.list_maps()
             self.maps_at = now
         snapshot = self.bridge.data.snapshot()
         info = self.bridge.data.map_snapshot()
         # A Zone escape moves on as soon as its step ends, at every poll.
-        self.navigator.advance(snapshot.get('requests', []))
+        if not draining:
+            self.navigator.advance(snapshot.get('requests', []))
         # Fast manual polls only claim commands; state keeps its normal cadence.
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
             navigation = self.navigator.target(snapshot.get('requests', []),
                                                snapshot.get('system'))
             payload = state_payload(snapshot, info, self.maps, navigation=navigation)
-            if self.voice is not None:
+            if self.voice is not None and not draining:
                 applied = self.voice.advance()
                 if applied is not None:
                     payload['appliedVoiceProfile'] = applied
@@ -910,7 +920,7 @@ class CloudSync:
             try:
                 reply = self.client.request('/api/device/v1/robot/state', 'POST', payload)
             except CloudError as error:
-                if homecam is not None:
+                if homecam is not None and not self.stop_event.is_set():
                     self.homecam.answer(homecam[0], requested_at, time.monotonic(),
                                         failure=homecam_failure(error))
                 raise
@@ -918,13 +928,14 @@ class CloudSync:
                 body, failure = homecam_answer(reply)
                 self.homecam.answer(homecam[0], requested_at, time.monotonic(),
                                     body=body, failure=failure)
-            if self.voice is not None:
+            if self.voice is not None and not draining:
                 self.voice.receive(reply)
             self.last_state_at = now
-            closed = closed_fall_incidents(reply)
-            if closed:
-                self.bridge.publish_closed_falls(closed)
-        if self.stop_event.is_set():
+            if not draining:
+                closed = closed_fall_incidents(reply)
+                if closed:
+                    self.bridge.publish_closed_falls(closed)
+        if self.stop_event.is_set() or draining:
             return
         if info.get('active') and info.get('available') and now - self.last_map_at >= 5.0:
             try:
@@ -967,17 +978,20 @@ class CloudSync:
             try:
                 self.tick()
             except CloudError as error:
-                self._warn(str(error))
+                if not self.stop_event.is_set():
+                    self._warn(str(error))
             except Exception:
-                self._warn('Robot cloud synchronization failed; check local runtime state')
+                if not self.stop_event.is_set():
+                    self._warn('Robot cloud synchronization failed; check local runtime state')
             self.stop_event.wait(self.wait_seconds(time.monotonic() - started))
 
     def close(self):
-        """Stop claiming commands before the local bridge begins shutdown."""
+        """Stop all cloud activity and interrupt any in-flight transport request."""
+        self.commands_stopped.set()
         self.stop_event.set()
+        self.client.close()
         if self.thread.is_alive():
             self.thread.join(timeout=35.0)
-        self.client.close()
 
 
 def main(args=None):
@@ -1017,10 +1031,13 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Ignore repeat SIGINT/SIGTERM during teardown so owned Bringup stops cleanly.
+        previous_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         with bridge.data.lock:
             bridge.data.closed = True
         if sync is not None:
-            sync.close()
+            sync.stop_commands()
         if rclpy.ok():
             bridge.stop_teleop()
             bridge.cancel_owned()
@@ -1036,15 +1053,23 @@ def main(args=None):
             bridge.node.get_logger().warning('Action stop is unconfirmed; check the robot')
         if bridge.runtime:
             try:
+                # Keep pumping ROS callbacks so homecam_media_agent receives heartbeat
+                # replies until the owned Bringup process group has fully exited.
+                stop_future = bridge.runtime.stop()
+                while not stop_future.done() and rclpy.ok():
+                    executor.spin_once(timeout_sec=0.1)
                 bridge.runtime.close()
             except Exception:
                 bridge.node.get_logger().warning('Owned Bringup shutdown failed; check the robot')
+        if sync is not None:
+            sync.close()
         executor.shutdown()
         bridge.node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
         if lock is not None:
             lock.close()
+        signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
 
 

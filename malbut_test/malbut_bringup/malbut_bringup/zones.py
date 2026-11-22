@@ -25,7 +25,11 @@ import yaml
 
 ZONE_FORMAT = 'malbut-semantic-zones-v1'
 # Raw mask values: Nav2 scales 0..100 to costmap cost, 100 is lethal.
+# Values > 100 become OCC_GRID_UNKNOWN (-1) in map_server raw mode, which
+# KeepoutFilter skips (NO_INFORMATION) instead of overwriting master_grid
+# unknown space (255) with FREE_SPACE (0).
 COSTS = {'allow': 0, 'avoid': 70, 'restricted': 100}
+NO_FILTER_COST = 255
 # Around a no-entry Zone, about half the robot's padded footprint (0.185 m). Only
 # the Zone is lethal: the margin costs like an avoid Zone, so paths keep the body
 # clear where there is room, and a robot standing in the margin can still drive out.
@@ -186,6 +190,33 @@ def zone_feature(behavior, points, name=''):
     return feature
 
 
+def _unknown_map_cells(grid, metadata):
+    """Identify unknown static-map cells matching Nav2 map_server's map_io rules."""
+    import numpy as np
+
+    mode = str(metadata.get('mode', 'trinary')).lower()
+    if mode == 'raw':
+        return (grid > 100) if grid.ndim == 2 else np.zeros(grid.shape[:2], dtype=bool)
+    if grid.ndim == 3:
+        channels = grid[..., :3].astype(np.float32)
+        if mode == 'trinary' and grid.shape[2] == 4:
+            alpha = 255.0 - grid[..., 3].astype(np.float32)
+            shade = (channels.sum(axis=2) + alpha) / (4 * 255.0)
+        else:
+            shade = channels.mean(axis=2) / 255.0
+        if mode == 'scale':
+            return (grid[..., 3] < 255) if grid.shape[2] == 4 else np.zeros(grid.shape[:2], bool)
+    else:
+        shade = grid.astype(np.float32) / 255.0
+        if mode == 'scale':
+            return np.zeros(grid.shape[:2], dtype=bool)
+    negate = bool(metadata.get('negate', 0))
+    occ = shade if negate else (1.0 - shade)
+    free_thresh = float(metadata.get('free_thresh', 0.196))
+    occupied_thresh = float(metadata.get('occupied_thresh', 0.65))
+    return (occ >= free_thresh) & (occ <= occupied_thresh)
+
+
 def build_mask(map_yaml, features, restricted_buffer_m=RESTRICTED_MARGIN_M):
     """Rasterize Zones on the saved map's grid; the highest cost wins."""
     import cv2
@@ -227,6 +258,11 @@ def build_mask(map_yaml, features, restricted_buffer_m=RESTRICTED_MARGIN_M):
             ring = (margin > 0) & (zone == 0)
             mask[ring] = np.maximum(mask[ring], COSTS['avoid'])
         mask[zone > 0] = np.maximum(mask[zone > 0], COSTS[behavior])
+    # Preserve unknown static-map cells in KeepoutFilter: non-zone cells and
+    # soft avoid/margin cells spilling into unknown space stay NO_FILTER_COST,
+    # while restricted (100) still blocks unknown cells for allow_unknown planners.
+    unknown = _unknown_map_cells(grid, metadata)
+    mask[(mask == 0) | ((mask < COSTS['restricted']) & unknown)] = NO_FILTER_COST
     return mask, {'resolution': resolution, 'origin': [origin[0], origin[1], 0.0]}
 
 
@@ -247,10 +283,10 @@ def write_mask(output_yaml, mask, geometry):
 
 
 def empty_mask(output_yaml):
-    """Write a one-cell free mask: loaded when no saved map is selected."""
+    """Write a one-cell pass-through mask: loaded when no saved map is selected."""
     import numpy as np
 
-    return write_mask(output_yaml, np.zeros((1, 1), dtype=np.uint8),
+    return write_mask(output_yaml, np.full((1, 1), NO_FILTER_COST, dtype=np.uint8),
                       {'resolution': 0.05, 'origin': [0.0, 0.0, 0.0]})
 
 

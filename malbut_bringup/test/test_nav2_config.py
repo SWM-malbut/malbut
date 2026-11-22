@@ -183,14 +183,35 @@ def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(confi
     """The centre cell alone would protect only the 0.106 m inscribed circle."""
     follow = config['controller_server']['ros__parameters']['FollowPath']
     assert follow['critics'] == ['RotateToGoal', 'Oscillation', 'BaseObstacle',
-                                 'ObstacleFootprint', 'GoalAlign', 'PathAlign',
-                                 'PathDist', 'GoalDist', 'PreferForward']
+                                 'GoalAlign', 'PathAlign', 'PathDist',
+                                 'GoalDist', 'PreferForward', 'ObstacleFootprint']
     assert follow['BaseObstacle.scale'] == 0.02
     resolution = config['local_costmap']['local_costmap']['ros__parameters']['resolution']
     # DWB skips a critic at scale 0; at 254 the outline score must still stay
     # far below one cell of path distance (32 * resolution / 2).
     assert follow['ObstacleFootprint.scale'] > 0
     assert follow['ObstacleFootprint.scale'] * resolution * 254 < 0.1
+
+
+def test_dwb_avoids_debug_evaluation_copies_and_bounds_sampling_for_10hz(config):
+    """Keep 10 Hz budget on Jetson without skipping any local costmap cell."""
+    local = config['local_costmap']['local_costmap']['ros__parameters']
+    corners = yaml.safe_load(local['footprint'])
+    corner_radius = max(math.hypot(x, y) for x, y in corners)
+    resolution = local['resolution']
+    controller = config['controller_server']['ros__parameters']
+    for name in ('FollowPath', 'FollowPerson'):
+        dwb = controller[name]
+        assert dwb['debug_trajectory_details'] is False
+        assert dwb['publish_evaluation'] is False
+        assert dwb['publish_trajectories'] is False
+        assert dwb['publish_transformed_plan'] is False
+        assert dwb['publish_global_plan'] is False
+        assert dwb['short_circuit_trajectory_evaluation'] is True
+        assert dwb['vy_samples'] == 1
+        assert dwb['vx_samples'] * dwb['vtheta_samples'] <= 200
+        assert dwb['angular_granularity'] * corner_radius < 0.5 * resolution
+        assert dwb['critics'][-1] == 'ObstacleFootprint'
 
 
 def test_only_manual_driving_passes_the_collision_monitor(config):

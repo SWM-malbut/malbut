@@ -131,6 +131,8 @@ def test_cloud_launch_starts_only_outbound_bridge():
     actions = module.generate_launch_description().entities
     nodes = [action for action in actions if isinstance(action, Node)]
     assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert float(nodes[0]._ExecuteLocal__sigterm_timeout[0].perform(context)) >= 60.0
+    assert float(nodes[0]._ExecuteLocal__sigkill_timeout[0].perform(context)) >= 15.0
     assert not _includes(actions)
     parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
     assert parameters['use_sim_time'] is False

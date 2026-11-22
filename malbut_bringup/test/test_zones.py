@@ -8,8 +8,8 @@ import pytest
 import yaml
 
 from malbut_bringup.zones import (
-    build_mask, empty_mask, read_zones, write_mask, write_zones, zone_feature, ZoneError,
-    zones_path,
+    build_mask, empty_mask, NO_FILTER_COST, read_zones, write_mask, write_zones, zone_feature,
+    ZoneError, zones_path,
 )
 
 
@@ -42,8 +42,8 @@ def test_only_the_restricted_zone_is_lethal_and_its_margin_is_passable(saved_map
     assert mask.shape == (40, 80)
     assert _value(mask, 0.25, 0.25) == 100
     assert _value(mask, 0.66, 0.25) == 70  # 0.16 m outside: in the 0.2 m margin, avoid cost
-    assert _value(mask, 0.8, 0.25) == 0
-    assert _value(mask, -0.5, -0.5) == 0
+    assert _value(mask, 0.8, 0.25) == NO_FILTER_COST
+    assert _value(mask, -0.5, -0.5) == NO_FILTER_COST
     # The margin never lowers a neighbouring Zone, and a wider margin reaches farther.
     other = zone_feature('restricted', [[0.6, 0.0], [0.9, 0.0], [0.9, 0.5], [0.6, 0.5]])
     both, _ = build_mask(saved_map, [zone, other])
@@ -53,7 +53,7 @@ def test_only_the_restricted_zone_is_lethal_and_its_margin_is_passable(saved_map
 
 
 def test_avoid_is_traversable_cost_and_restricted_wins_overlaps(saved_map):
-    """Keep the old Zone costs: avoid 70 (passable), restricted 100, allow 0."""
+    """Keep the old Zone costs: avoid 70 (passable), restricted 100, unzoned pass-through."""
     avoid = zone_feature('avoid', [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]])
     restricted = zone_feature('restricted', [[0.0, 0.0], [0.3, 0.0], [0.3, 0.3], [0.0, 0.3]])
     allow = zone_feature('allow', [[-0.9, -0.9], [-0.5, -0.9], [-0.5, -0.5], [-0.9, -0.5]])
@@ -61,11 +61,30 @@ def test_avoid_is_traversable_cost_and_restricted_wins_overlaps(saved_map):
     assert _value(mask, -0.6, 0.6) == 70
     assert _value(mask, 0.15, 0.15) == 100
     assert _value(mask, -0.7, -0.7) == 70  # allow never lowers another Zone's cost
-    assert _value(mask, 1.5, 0.5) == 0
+    assert _value(mask, 1.5, 0.5) == NO_FILTER_COST
+
+
+def test_unknown_map_cells_stay_unmodified_except_inside_restricted_zones(tmp_path):
+    """KeepoutFilter must not overwrite unknown space (255) with FREE_SPACE (0) or avoid."""
+    image = np.full((40, 80), 254, dtype=np.uint8)
+    image[:, 40:] = 205  # x >= 1.0 m is unknown space in the trinary map.
+    cv2.imwrite(str(tmp_path / 'home.pgm'), image)
+    path = tmp_path / 'home.yaml'
+    path.write_text('image: home.pgm\nresolution: 0.05\norigin: [-1.0, -1.0, 0.0]\n'
+                    'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n')
+    restricted = zone_feature('restricted', [[0.7, 0.0], [1.2, 0.0], [1.2, 0.5], [0.7, 0.5]])
+    avoid = zone_feature('avoid', [[1.5, 0.0], [2.0, 0.0], [2.0, 0.5], [1.5, 0.5]])
+    mask, _ = build_mask(path, [restricted, avoid])
+    assert _value(mask, 0.9, 0.25) == 100  # restricted on known floor
+    assert _value(mask, 1.1, 0.25) == 100  # restricted still blocks unknown cells
+    assert _value(mask, 0.6, 0.25) == 70  # margin on known floor stays avoid
+    assert _value(mask, 1.3, 0.25) == NO_FILTER_COST  # margin in unknown stays untouched
+    assert _value(mask, 1.75, 0.25) == NO_FILTER_COST  # avoid in unknown stays untouched
+    assert _value(mask, 2.5, 0.25) == NO_FILTER_COST  # unzoned unknown stays untouched
 
 
 def test_mask_files_use_raw_mode_so_costs_reach_nav2(saved_map, tmp_path):
-    """map_server 'raw' passes 0..100 through; trinary would collapse the costs."""
+    """map_server 'raw' passes 0..100 through and maps 255 to NO_INFORMATION."""
     mask, geometry = build_mask(saved_map, [zone_feature(
         'avoid', [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]])])
     output = write_mask(tmp_path / 'cache/zone_mask.yaml', mask, geometry)
@@ -77,7 +96,8 @@ def test_mask_files_use_raw_mode_so_costs_reach_nav2(saved_map, tmp_path):
                           mask)
     empty = yaml.safe_load(empty_mask(tmp_path / 'empty.yaml').read_text())
     assert empty['mode'] == 'raw'
-    assert cv2.imread(str(tmp_path / 'empty.pgm'), cv2.IMREAD_UNCHANGED).tolist() == [[0]]
+    assert cv2.imread(str(tmp_path / 'empty.pgm'), cv2.IMREAD_UNCHANGED).tolist() == [
+        [NO_FILTER_COST]]
 
 
 def test_zone_files_belong_to_one_version_of_one_map(saved_map):

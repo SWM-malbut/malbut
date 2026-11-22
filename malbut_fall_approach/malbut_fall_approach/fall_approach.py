@@ -4,7 +4,7 @@ The node supplies Nav2 and TF. Limits are the user's 2026-10-08 decisions
 (60 s to arrive, stop 1 m before the spot) and the person follower's values.
 """
 
-from collections import OrderedDict
+from collections import deque, OrderedDict
 from dataclasses import dataclass
 import math
 
@@ -106,21 +106,81 @@ class CostGrid:
     height: int
     data: bytes
 
-    def cost(self, x, y):
-        """Return the cost under a map point, or None off the grid."""
+    def cell(self, x, y):
+        """Return (col, row) under a map point, or None off the grid."""
         dx, dy = x - self.origin_x, y - self.origin_y
         cos, sin = math.cos(self.origin_yaw), math.sin(self.origin_yaw)
         col = math.floor((cos * dx + sin * dy) / self.resolution)
         row = math.floor((-sin * dx + cos * dy) / self.resolution)
         if 0 <= col < self.width and 0 <= row < self.height:
-            return self.data[row * self.width + col]
+            return col, row
         return None
+
+    def cost(self, x, y):
+        """Return the cost under a map point, or None off the grid."""
+        coords = self.cell(x, y)
+        if coords is None:
+            return None
+        col, row = coords
+        return self.data[row * self.width + col]
 
 
 def can_stand(grid, point):
     """Known and outside the robot's inscribed footprint of any obstacle."""
     cost = grid.cost(*point)
     return cost is not None and cost < INSCRIBED_COST
+
+
+def filter_reachable(grid, start, places):
+    """Keep only places connected to the robot over known traversable cells.
+
+    Traverses cells with cost < 253 (known floor outside the robot's inscribed
+    footprint), so candidates isolated behind walls, keepout zones, or unmapped
+    gaps do not waste sequential planner calls. Falls back to ``places`` if the
+    robot pose is off-grid or already inside a cell with cost >= 253 so Nav2's
+    planner tolerance can still decide.
+    """
+    if not places:
+        return []
+    start_cell = grid.cell(*start)
+    if start_cell is None:
+        return list(places)
+    width, height, data = grid.width, grid.height, grid.data
+    start_idx = start_cell[1] * width + start_cell[0]
+    if data[start_idx] >= INSCRIBED_COST:
+        return list(places)
+    mapped = []
+    remaining = set()
+    for place in places:
+        coords = grid.cell(*place)
+        if coords is None:
+            continue
+        idx = coords[1] * width + coords[0]
+        mapped.append((place, idx))
+        remaining.add(idx)
+    if not mapped:
+        return []
+    visited = bytearray(width * height)
+    visited[start_idx] = 1
+    remaining.discard(start_idx)
+    queue = deque([start_idx])
+    while queue and remaining:
+        idx = queue.popleft()
+        row, col = divmod(idx, width)
+        r0 = row - 1 if row > 0 else 0
+        r1 = row + 1 if row + 1 < height else height - 1
+        c0 = col - 1 if col > 0 else 0
+        c1 = col + 1 if col + 1 < width else width - 1
+        for nr in range(r0, r1 + 1):
+            base = nr * width
+            for nc in range(c0, c1 + 1):
+                nidx = base + nc
+                if visited[nidx] or data[nidx] >= INSCRIBED_COST:
+                    continue
+                visited[nidx] = 1
+                remaining.discard(nidx)
+                queue.append(nidx)
+    return [place for place, idx in mapped if visited[idx]]
 
 
 def sight_clear(grid, point, target):

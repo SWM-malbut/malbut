@@ -14,7 +14,7 @@ from std_msgs.msg import String
 
 from malbut_bringup.user_map import load_or_build_user_map, save_rooms
 from malbut_bringup.zone_filter import ACTIVE_ROOMS_FILE, ZoneFilter
-from malbut_bringup.zones import write_zones, zone_feature, zones_path
+from malbut_bringup.zones import NO_FILTER_COST, write_zones, zone_feature, zones_path
 
 
 @pytest.fixture
@@ -72,11 +72,11 @@ def _loaded(node):
 
 
 def test_start_clears_any_mask_until_a_saved_map_is_selected(tmp_path, clock):
-    """Mapping and startup load a one-cell free mask, so no old Zone stays active."""
+    """Mapping and startup load a pass-through mask, so no old Zone stays active."""
     node = _node(tmp_path, clock)
     node._tick()
     mask, state = _loaded(node)
-    assert mask.tolist() == [[0]]
+    assert mask.tolist() == [[NO_FILTER_COST]]
     assert state == {'state': 'CLEARED', 'map': None, 'zones': 0,
                      'message': 'no saved map selected'}
     node._tick()
@@ -90,7 +90,7 @@ def test_selected_map_zones_are_applied_and_edits_reload(tmp_path, clock, saved_
         'restricted', [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]])])
     _select(node, 'LOCALIZATION', saved_map)
     mask, state = _loaded(node)
-    assert mask.shape == (40, 80) and mask.max() == 100
+    assert mask.shape == (40, 80) and (mask == 100).any()
     assert state['state'] == 'APPLIED' and state['zones'] == 1
     assert state['map'] == str(saved_map)
     node._tick()
@@ -100,7 +100,7 @@ def test_selected_map_zones_are_applied_and_edits_reload(tmp_path, clock, saved_
     os.utime(zones_path(saved_map), ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
     node._tick()
     mask, state = _loaded(node)
-    assert mask.tolist() == [[0]] and state['message'] == 'no zones for this map'
+    assert mask.tolist() == [[NO_FILTER_COST]] and state['message'] == 'no zones for this map'
 
 
 def test_switching_clears_the_previous_map_mask_at_once(tmp_path, clock, saved_map):
@@ -112,18 +112,18 @@ def test_switching_clears_the_previous_map_mask_at_once(tmp_path, clock, saved_m
     _loaded(node)
     _select(node, 'SWITCHING', saved_map)
     mask, state = _loaded(node)
-    assert mask.tolist() == [[0]] and state['state'] == 'CLEARED'
+    assert mask.tolist() == [[NO_FILTER_COST]] and state['state'] == 'CLEARED'
 
 
 def test_zones_for_another_map_version_are_not_applied(tmp_path, clock, saved_map):
-    """A broken or foreign Zone file loads the free mask and reports why."""
+    """A broken or foreign Zone file loads the pass-through mask and reports why."""
     node = _node(tmp_path, clock)
     zones_path(saved_map).write_text(json.dumps({
         'type': 'FeatureCollection', 'format': 'malbut-semantic-zones-v1',
         'map_id': 'another-map', 'features': []}))
     _select(node, 'LOCALIZATION', saved_map)
     mask, state = _loaded(node)
-    assert mask.tolist() == [[0]]
+    assert mask.tolist() == [[NO_FILTER_COST]]
     assert state['state'] == 'ERROR' and 'different version' in state['message']
 
 
