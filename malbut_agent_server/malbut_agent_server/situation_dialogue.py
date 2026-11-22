@@ -184,6 +184,7 @@ class SituationDialogue:
             interpreted = SituationInterpretation(self.situation_assessment, True, '')
         elif ''.join(text.split()).rstrip('.!。！') in (
             '도움필요없어요', '도움은필요없어요',
+            '괜찮아', '괜찮아요', '괜찮습니다',
         ):
             # Questions, quotes and compound refusals still need semantic interpretation.
             interpreted = SituationInterpretation(self.situation_assessment, False, '')
@@ -293,9 +294,15 @@ class MockSituationProvider:
             '도움이필요없어요', '도움필요없어', '도움필요없어요',
             '도움필요없습니다', '도움필요하지않아', '도움필요하지않아요',
             '도움이필요하지않아요', '넘어졌지만도움은필요없어',
+            '괜찮아', '괜찮아요', '괜찮습니다',
+            '나괜찮아', '나괜찮아요',
+            '넘어졌지만괜찮아', '넘어졌지만괜찮아요',
         }:
             assessment = ('confirmed_incident'
-                          if normalized == '넘어졌지만도움은필요없어' else established)
+                          if normalized in {
+                              '넘어졌지만도움은필요없어',
+                              '넘어졌지만괜찮아', '넘어졌지만괜찮아요',
+                          } else established)
             return SituationInterpretation(assessment, False, '')
         if normalized in {'넘어졌어', '넘어졌어요', '미끄러졌어', '넘어진건맞아'}:
             return SituationInterpretation('confirmed_incident', None, help_question)
@@ -307,7 +314,7 @@ class MockSituationProvider:
                 return SituationInterpretation('resolved', None, '')
         if context.stage == 'help' and normalized in {'네', '응', '필요해요'}:
             return SituationInterpretation(established, True, '')
-        if context.stage == 'help' and normalized in {'아니요', '아니', '괜찮아요', '괜찮아'}:
+        if context.stage == 'help' and normalized in {'아니요', '아니'}:
             return SituationInterpretation(established, False, '')
         return SituationInterpretation(
             established, None,

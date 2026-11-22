@@ -66,6 +66,8 @@ def test_explicit_help_decision_can_finish_while_actual_event_is_unknown(answer,
     ('smoke', ' 도와주세요!? \n', True),
     ('fall', '도움 필요 없어요', False), ('fall', '도움은 필요 없어요', False),
     ('smoke', ' 도움은 필요 없어요.!。！ \n', False),
+    ('fall', '괜찮아', False), ('fall', '괜찮아요', False),
+    ('fall', '괜찮습니다', False), ('smoke', ' 괜찮아요.!。！ \n', False),
 ])
 def test_standalone_help_decision_bypasses_reasking_provider_and_preserves_assessment(
         confirmed, situation_type, answer, expected):
@@ -93,7 +95,9 @@ def test_standalone_help_decision_bypasses_reasking_provider_and_preserves_asses
     '도움 필요 없어요?', '도움은 필요 없어요？', '"도움 필요 없어요"',
     '엄마가 도움 필요 없어요라고 했어요', '도움 필요 없다는 건 아니에요',
     '혼자 움직일 수 있다면 도움 필요 없어요', '넘어졌지만 도움은 필요 없어요',
-    '도움 필요 없어요, 아니 도와주세요', '괜찮아', '도움 필요 없습니다',
+    '도움 필요 없어요, 아니 도와주세요', '도움 필요 없습니다',
+    '괜찮아?', '괜찮아요？', '"괜찮아"', '안 괜찮아', '괜찮지 않아',
+    '나 괜찮아', '넘어졌지만 괜찮아', '괜찮아, 아니 도와주세요',
 ])
 def test_other_refusal_forms_still_use_semantic_provider(answer):
     provider = ScriptedProvider(judgment(), judgment())
@@ -176,13 +180,21 @@ def test_mock_recognizes_common_explicit_help_refusals_after_confirmed_fall(answ
     assert final.result.help_needed is False
 
 
-def test_okay_alone_in_actual_event_phase_does_not_mean_just_resting():
+def test_okay_alone_in_actual_event_phase_marks_no_help_without_negating_fall():
     dialogue = start()
-    turn = dialogue.answer('괜찮아')
-    assert turn.result is None
-    assert dialogue.situation_assessment == 'unknown'
-    assert dialogue.stage == 'situation'
-    assert dialogue.answer('그냥 누워 있는 거야').result.help_needed is False
+    final = dialogue.answer('괜찮아')
+    assert final.result is not None
+    assert final.result.situation_assessment == 'unknown'
+    assert final.result.help_needed is False
+    assert '도움이 필요하지 않으신 것으로 확인했어요' in final.text
+
+
+def test_mock_fall_with_okay_marks_confirmed_incident_without_help():
+    dialogue = start()
+    final = dialogue.answer('넘어졌지만 괜찮아')
+    assert final.result is not None
+    assert final.result.situation_assessment == 'confirmed_incident'
+    assert final.result.help_needed is False
 
 
 def test_user_can_correct_an_earlier_incident_confirmation():
