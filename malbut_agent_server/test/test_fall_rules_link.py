@@ -248,3 +248,34 @@ def test_voice_during_the_check_ends_it_help_or_stop(rig, kind, action):
     link.on_voice(SimpleNamespace(data='not json'))
     link.on_voice(SimpleNamespace(data=json.dumps({'kind': 'dance'})))
     assert len(commands(link)) == 1
+
+
+def test_held_mission_survives_rejected_replacement_and_retries_without_deadlock(rig):
+    link = rig.link
+    # Cancel the initial confirmation in flight and install a held approach handle.
+    link.goal_future = None
+    link.request = None
+    held_uuid = bytes(range(16, 32))
+    held_handle = Mock(accepted=True, goal_id=SimpleNamespace(uuid=held_uuid))
+    link.held = (next(iter(link.coordinator.requests.values())), held_handle)
+    link.manager_state = SimpleNamespace(
+        active_foreground_missions=[SimpleNamespace(
+            capability_id='fall_approach', mission_id=held_uuid.hex())],
+        active_background_missions=[], pending_missions=[], suspended_missions=[])
+
+    # Send confirmation while our own held approach is active in Manager.
+    link.tick()
+    assert link.goal_future is not None
+    assert link.held is None
+
+    # Rejection restores self.held so the next tick does not self-block.
+    link.goal_future.set_result(SimpleNamespace(accepted=False))
+    assert link.held is not None and link.held[1] is held_handle
+    rig.now.value += 1.0
+    link.tick()
+    assert link.goal_future is not None
+
+    # Acceptance clears the replacement hold cleanly.
+    link.goal_future.set_result(rig.handle)
+    assert link.held is None and link._replacing_held is None
+    held_handle.cancel_goal_async.assert_not_called()

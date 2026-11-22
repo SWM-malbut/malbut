@@ -31,7 +31,7 @@ EVERY_S = 5.0          # a pair of looks per person every five seconds
 PAIR_GAP_S = 1.0       # its two looks a second apart (as tested on the Jetson, 10-19)
 KEEP_S = 1800.0        # as long as the tracking remembers someone unseen
 MAX_TRACKS = 128
-PER_TRACK = 6
+PER_TRACK = 32         # 16 pairs (~80 s): exceeds LINK_S/SOLO_S (60 s) verdict windows
 SEEN_FOR_S = 0.5       # in view this long before a track's first look
 SEEN_GAP_S = 1.0       # unseen longer than this: its time in view counts anew
 ENCODER_THREADS = 2    # per look on the robot: 6 threads 33 ms/184 ms CPU, 2 63 ms/123 ms
@@ -83,6 +83,9 @@ class FallAppearance:
         self._tried = encode is not None
         # YOLO track -> deque[(at, unit vector, first of its pair)]
         self._tracks = OrderedDict()
+        # Earliest completed pair per track, kept until the track is forgotten so
+        # long-running group verdict checks still have their initial reference look.
+        self._first_pair = {}
         self._wanted = {}   # track -> since when a comparison waits for its pair
         self._in_view = OrderedDict()  # track -> (in view since, last seen)
         self.failures = 0
@@ -157,30 +160,87 @@ class FallAppearance:
             looks = self._tracks.setdefault(track, deque(maxlen=PER_TRACK))
             first = not (looks and looks[-1][2] and at - looks[-1][0] < EVERY_S)
             looks.append((at, [float(v) for v in vector], first))
+            if not first and len(looks) >= 2 and looks[-2][2] and track not in self._first_pair:
+                self._first_pair[track] = (looks[-2], looks[-1])
             self._tracks.move_to_end(track)
             if track in self._wanted and self.ready((track, self._wanted[track])):
                 del self._wanted[track]
         for track in [k for k, v in self._tracks.items() if at - v[-1][0] > KEEP_S]:
             del self._tracks[track]
+            self._first_pair.pop(track, None)
             self._wanted.pop(track, None)
         while len(self._tracks) > MAX_TRACKS:
-            self._wanted.pop(self._tracks.popitem(last=False)[0], None)
+            dropped = self._tracks.popitem(last=False)[0]
+            self._first_pair.pop(dropped, None)
+            self._wanted.pop(dropped, None)
 
     def _pairs(self, track):
         looks = list(self._tracks.get(track, ()))
-        return [(looks[i], looks[i + 1]) for i in range(len(looks) - 1)
-                if looks[i][2] and not looks[i + 1][2]]
+        pairs = [(looks[i], looks[i + 1]) for i in range(len(looks) - 1)
+                 if looks[i][2] and not looks[i + 1][2]]
+        first = self._first_pair.get(track)
+        if first is not None and (not pairs or pairs[0][0][0] > first[0][0]):
+            pairs.insert(0, first)
+        return pairs
 
-    def compare(self, before, after):
-        """Similarity of the last pair of (track, at) before and the first pair after,
-        or None while a side has no pair."""
-        old = [p for p in self._pairs(before[0]) if p[1][0] <= before[1] + 1.0]
-        new = [p for p in self._pairs(after[0]) if p[0][0] >= after[1] - 1.0]
-        if not old or not new:
-            return None
-        a, b = _mean(old[-1]), _mean(new[0])
+    def in_view(self, track, at=None):
+        """Whether ``track`` was seen in the active frame window."""
+        seen = self._in_view.get(track)
+        if seen is None:
+            return False
+        return at is None or at - seen[1] <= SEEN_GAP_S
+
+    def _pair_at_or_before(self, pairs, at):
+        before = [p for p in pairs if p[1][0] <= at + 1.0]
+        return before[-1] if before else None
+
+    def _pair_for_check_before(self, pairs, at):
+        chosen = self._pair_at_or_before(pairs, at)
+        if chosen is not None:
+            return chosen
+        # A track linked right after entering view finishes its first pair a second later.
+        soon = [p for p in pairs if at - 1.0 <= p[0][0] <= at + EVERY_S + PAIR_GAP_S]
+        return soon[0] if soon else None
+
+    def _pair_for_check_after(self, pairs, at):
+        chosen = self._pair_at_or_before(pairs, at)
+        if chosen is not None:
+            return chosen
+        # If the track just started and want() captured a fresh pair right after ``at``.
+        fresh = [p for p in pairs if p[0][0] >= at - 1.0]
+        return fresh[0] if fresh else None
+
+    def compare(self, before, after, *, mode='reappear'):
+        """Similarity of two appearance pairs, or None while a side has no pair.
+
+        ``mode='reappear'`` compares the last pair before ``before[1]`` against the
+        first pair after ``after[1]`` (unseen person returning).
+        ``mode='check'`` compares the reference pair around ``before[1]`` against
+        the latest pair up to ``after[1]`` (group verdict after LINK_S/SOLO_S).
+        """
+        if mode == 'check':
+            old_pair = self._pair_for_check_before(self._pairs(before[0]), before[1])
+            new_pair = self._pair_for_check_after(self._pairs(after[0]), after[1])
+            if old_pair is None or new_pair is None:
+                return None
+            if before[0] == after[0] and new_pair[0][0] <= old_pair[0][0]:
+                return None  # Never trivially compare a pair against itself.
+        elif mode == 'reappear':
+            old = [p for p in self._pairs(before[0]) if p[1][0] <= before[1] + 1.0]
+            new = [p for p in self._pairs(after[0]) if p[0][0] >= after[1] - 1.0]
+            if not old or not new:
+                return None
+            old_pair, new_pair = old[-1], new[0]
+        else:
+            raise ValueError('unsupported appearance comparison mode')
+        a, b = _mean(old_pair), _mean(new_pair)
         return None if a is None or b is None else sum(x * y for x, y in zip(a, b))
 
-    def ready(self, after):
-        """Whether the one who reappeared has a pair of looks yet."""
-        return any(p[0][0] >= after[1] - 1.0 for p in self._pairs(after[0]))
+    def ready(self, after, *, mode='reappear'):
+        """Whether ``after`` already has a pair usable for ``mode``."""
+        pairs = self._pairs(after[0])
+        if mode == 'check':
+            return self._pair_for_check_after(pairs, after[1]) is not None
+        if mode == 'reappear':
+            return any(p[0][0] >= after[1] - 1.0 for p in pairs)
+        raise ValueError('unsupported appearance comparison mode')

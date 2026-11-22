@@ -202,7 +202,128 @@ def test_redirect_errors_and_oversize_replies_fail_closed(reply, code):
 @pytest.mark.parametrize('options', [
     dict(model='gemma4:31b-cloud', api_key='key'), dict(model='gemma4:31b', api_key='key\n'),
     dict(model='gemma4:31b', api_key='key', timeout_s=21),
+    dict(model='gemma4:31b', api_key='key', quota_cooldown_s=0),
+    dict(model='gemma4:31b', api_key='key', payment_cooldown_s=-1),
 ])
 def test_configuration_does_not_silently_select_local_model(options):
     with pytest.raises(ValueError):
         OllamaCloudFallProvider(**options)
+
+
+@pytest.mark.parametrize('status,code,cooldown,headers', [
+    (429, 'cloud_quota_exhausted', 60.0, {}),
+    (429, 'cloud_quota_exhausted', 90.0, {'Retry-After': '90'}),
+    (402, 'cloud_payment_required', 300.0, {}),
+])
+def test_quota_and_payment_blocks_recover_after_cooldown(monkeypatch, status, code, cooldown, headers):
+    import sys
+    import types
+
+    now = [1000.0]
+    ok_body = response(json.dumps({
+        'assessment': 'normal_activity', 'explanation': '정상 활동입니다.',
+    }))
+    replies = [
+        types.SimpleNamespace(status=status, headers=headers),
+        types.SimpleNamespace(status=200, headers={}, content_type='application/json',
+                              content_length=len(ok_body), body=ok_body),
+    ]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, spec):
+            self.status = spec.status
+            self.headers = spec.headers
+            self.content_type = getattr(spec, 'content_type', 'application/json')
+            self.content_length = getattr(spec, 'content_length', 0)
+            self._body = getattr(spec, 'body', b'')
+            self.content = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def iter_chunked(self, size):
+            if self._body:
+                yield self._body
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            calls.append(now[0])
+            return FakeResponse(replies[len(calls) - 1])
+
+    fake = types.SimpleNamespace(ClientSession=FakeSession, ClientTimeout=lambda **kw: None,
+                                 DummyCookieJar=lambda: None, ClientError=OSError)
+    monkeypatch.setitem(sys.modules, 'aiohttp', fake)
+
+    provider = OllamaCloudFallProvider(model='gemma4:31b', api_key='secret-token',
+                                       clock=lambda: now[0])
+    # First call hits 429/402 and enters cooldown.
+    with pytest.raises(CloudFallProviderError, match=code):
+        asyncio.run(provider.analyze(request()))
+    # Inside cooldown: fails immediately without making a network call.
+    now[0] += cooldown - 1.0
+    with pytest.raises(CloudFallProviderError, match=code):
+        asyncio.run(provider.analyze(request()))
+    assert len(calls) == 1
+    # After cooldown expires: automatically retries and recovers on 200.
+    now[0] += 1.0
+    reply = asyncio.run(provider.analyze(request()))
+    assert reply.assessment is VideoAssessment.NORMAL_ACTIVITY
+    assert len(calls) == 2
+
+
+def test_auth_block_stays_blocked_until_key_is_replaced(monkeypatch):
+    import sys
+    import types
+
+    now = [1000.0]
+    calls = []
+
+    class FakeResponse:
+        status = 401
+        headers = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            calls.append(now[0])
+            return FakeResponse()
+
+    fake = types.SimpleNamespace(ClientSession=FakeSession, ClientTimeout=lambda **kw: None,
+                                 DummyCookieJar=lambda: None, ClientError=OSError)
+    monkeypatch.setitem(sys.modules, 'aiohttp', fake)
+
+    provider = OllamaCloudFallProvider(model='gemma4:31b', api_key='bad-token',
+                                       clock=lambda: now[0])
+    with pytest.raises(CloudFallProviderError, match='cloud_auth_required'):
+        asyncio.run(provider.analyze(request()))
+    now[0] += 3600.0
+    with pytest.raises(CloudFallProviderError, match='cloud_auth_required'):
+        asyncio.run(provider.analyze(request()))
+    assert len(calls) == 1

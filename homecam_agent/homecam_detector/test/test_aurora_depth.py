@@ -131,3 +131,79 @@ def test_projection_below_floor_rejects_bad_camera_calibration() -> None:
             depth_stamp_s=1.0,
             aligned_to_rgb=True,
         )
+
+
+def test_roll_correction_compensates_tilted_mount_and_clamps_small_floor_noise() -> None:
+    """Matching fall_place_locator roll correction avoids false floor rejections."""
+    import math
+
+    image = np.full((400, 640), 2500, dtype=np.uint16)
+    # Person lying near the right edge of the frame (x=0.95) with a -0.028 rad roll:
+    # without roll correction the right edge projects -0.077 m below floor (> 6 cm limit);
+    # with roll correction it lifts into the valid near-floor tolerance band.
+    right_pose = PersonPose(
+        box_confidence=0.95,
+        box=(0.8, 0.45, 1.0, 0.7),
+        keypoints=tuple(
+            PoseKeypoint(name=name, x=0.95, y=0.60, confidence=0.95)
+            for name in ('nose', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
+        ),
+        visible_keypoints=5,
+    )
+    unrolled = AuroraDepthEvidenceExtractor(
+        camera_height_m=0.123, camera_pitch_rad=0.0, camera_roll_rad=0.0,
+    )
+    rolled = AuroraDepthEvidenceExtractor(
+        camera_height_m=0.123, camera_pitch_rad=0.0, camera_roll_rad=-0.028,
+    )
+    with pytest.raises(ValueError, match='below floor'):
+        unrolled.extract(
+            depth_image=image, intrinsics=_intrinsics(), pose=right_pose,
+            rgb_stamp_s=1.0, depth_stamp_s=1.0, aligned_to_rgb=True,
+        )
+    result = rolled.extract(
+        depth_image=image, intrinsics=_intrinsics(), pose=right_pose,
+        rgb_stamp_s=1.0, depth_stamp_s=1.0, aligned_to_rgb=True,
+    )
+    assert result.usable is True
+    assert result.torso_floor_distance_m == pytest.approx(0.0)
+
+    # Verify exact combined roll + pitch projection for an elevated torso point.
+    pitch, roll = -0.04, -0.028
+    elevated = PersonPose(
+        box_confidence=0.95,
+        box=(0.8, 0.2, 1.0, 0.5),
+        keypoints=tuple(
+            PoseKeypoint(name=name, x=0.95, y=0.35, confidence=0.95)
+            for name in ('nose', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
+        ),
+        visible_keypoints=5,
+    )
+    intr = _intrinsics()
+    col, row = int(round(0.95 * (intr.width - 1))), int(round(0.35 * (intr.height - 1)))
+    x_opt = (col - intr.cx) * 2.5 / intr.fx
+    y_opt = (row - intr.cy) * 2.5 / intr.fy
+    expected_h = 0.123 - (
+        math.sin(roll) * x_opt
+        + math.cos(roll) * (math.cos(pitch) * y_opt + math.sin(pitch) * 2.5)
+    )
+    measured = AuroraDepthEvidenceExtractor(
+        camera_height_m=0.123, camera_pitch_rad=pitch, camera_roll_rad=roll,
+    ).extract(
+        depth_image=image, intrinsics=intr, pose=elevated,
+        rgb_stamp_s=1.0, depth_stamp_s=1.0, aligned_to_rgb=True,
+    )
+    assert measured.torso_floor_distance_m == pytest.approx(expected_h, abs=1e-9)
+
+    # Minor depth noise (-0.04 m below floor) is clamped to 0.0 m within the 6 cm tolerance.
+    minor_below = AuroraDepthEvidenceExtractor(camera_height_m=0.10, camera_pitch_rad=0.0)
+    near_floor = minor_below.extract(
+        depth_image=np.full((400, 640), 1000, dtype=np.uint16),
+        intrinsics=_intrinsics(),
+        pose=_pose(0.675),
+        rgb_stamp_s=1.0,
+        depth_stamp_s=1.0,
+        aligned_to_rgb=True,
+    )
+    assert near_floor.usable is True
+    assert near_floor.torso_floor_distance_m == pytest.approx(0.0)

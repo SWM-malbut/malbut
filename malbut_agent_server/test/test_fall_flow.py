@@ -1385,3 +1385,28 @@ def test_disabled_approach_never_returns_after_closing_without_a_question():
     out = robot.posture(('standing', None), ('standing', None))
     assert records(out, 'incident_resolved') == ['off_floor_verified']
     assert not drives(robot.log)
+
+
+def test_wait_alert_emits_stop_before_revisit_when_approach_is_disabled():
+    robot = Robot(approach_enabled=False)
+    incident = robot.open(track='t1', point=SPOT)
+    assert kinds(robot.posture(('floor', None)), 'ask')
+    robot.flow.blocked(incident, 'busy', robot.now)
+    robot.take()
+    robot.now += WAIT_ALERT_S
+    robot.flow.tick(robot.now)
+    out = robot.take()
+    command_kinds = [c['kind'] for c in out]
+    assert 'stop' in command_kinds and looks(out, 'posture')
+    assert command_kinds.index('stop') < command_kinds.index('look')
+
+
+def test_guard_open_emits_left_open_so_restart_keeps_incident_idle():
+    robot = Robot()
+    sighting, _ = robot.see('lying', track='t1', point=SPOT)
+    robot.flow.filter_answered(
+        sighting.sighting_id, 'guard', robot.now, reason='cloud_consent_missing')
+    out = robot.take()
+    assert robot.only().idle == 'person'
+    assert [c['who'] for c in kinds(out, 'left_open')] == ['person']
+    assert records(out, 'analysis_unavailable') == ['cloud_consent_missing']

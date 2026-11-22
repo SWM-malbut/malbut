@@ -355,13 +355,23 @@ class FallFlowSensor:
             self._appearance.observe(frame.observed_at, shot[-1].jpeg, people)
         self._answer_comparisons()
 
+    def _appearance_ready(self, after, mode):
+        return (self._appearance.ready(after) if mode == 'reappear'
+                else self._appearance.ready(after, mode=mode))
+
+    def _appearance_compare(self, before, after, mode):
+        return (self._appearance.compare(before, after) if mode == 'reappear'
+                else self._appearance.compare(before, after, mode=mode))
+
     def _answer_comparisons(self):
         now = self._now()
-        for request_id, (before, after, asked) in list(self._comparisons.items()):
-            if not self._appearance.ready(after) and now - asked < COMPARE_WAIT_S:
+        for request_id, (before, after, mode, asked) in list(self._comparisons.items()):
+            waiting = (not self._appearance_ready(after, mode)
+                       and (mode == 'reappear' or self._appearance.in_view(after[0], now)))
+            if waiting and now - asked < COMPARE_WAIT_S:
                 continue  # Its second look comes a second after it showed up.
             del self._comparisons[request_id]
-            similarity = self._appearance.compare(before, after)
+            similarity = self._appearance_compare(before, after, mode)
             self._messages.append(dict(kind='fall_appearance', request_id=request_id,
                                        similarity=None if similarity is None
                                        else round(similarity, 4)))
@@ -531,7 +541,7 @@ class FallFlowSensor:
         elif action == 'link':
             sighting = self._sightings.get(_id(data.get('sighting_id'), optional=False))
             incident_id = _id(data.get('incident_id'), optional=False)
-            incident = self._incidents.get(incident_id)
+            incident = self._incident(incident_id)
             if data.get('scene') not in (None, True, False):
                 raise ValueError('invalid link')
             # Not a scene of its own (too soon after the last one kept): only seen.
@@ -552,6 +562,9 @@ class FallFlowSensor:
             self._mark(incident, incident.check_round)
         elif action == 'compare':
             request_id = _id(data.get('request_id'), optional=False)
+            mode = data.get('mode', 'reappear')
+            if mode not in ('reappear', 'check'):
+                raise ValueError('invalid appearance comparison')
             sides = []
             for side in (data.get('a'), data.get('b')):
                 at = side.get('at') if isinstance(side, dict) else None
@@ -559,10 +572,13 @@ class FallFlowSensor:
                         or not math.isfinite(at)):
                     raise ValueError('invalid appearance comparison')
                 sides.append((_id(side.get('track'), optional=False), float(at)))
-            self._comparisons[request_id] = (*sides, self._now())
+            now = self._now()
+            self._comparisons[request_id] = (*sides, mode, now)
             while len(self._comparisons) > 32:
                 self._comparisons.popitem(last=False)
-            self._appearance.want(*sides[1])  # Its pair now, not on the five-second round.
+            if mode == 'reappear' or (not self._appearance_ready(sides[1], mode)
+                                      and self._appearance.in_view(sides[1][0], now)):
+                self._appearance.want(*sides[1])  # Its pair now, not on the five-second round.
             self._answer_comparisons()
         elif action == 'clip':
             incident = self._incident(_id(data.get('incident_id'), optional=False))
@@ -861,9 +877,17 @@ class FallFlowSensor:
         for segment in changed:
             fixed = self._clip_offsets.setdefault(
                 (incident.incident_id, segment.segment_index), offset)
+            min_revision = 0
+            if self._journal is not None and hasattr(self._journal, 'people_revision'):
+                try:
+                    min_revision = self._journal.people_revision(
+                        incident.incident_id, segment.segment_index)
+                except Exception:
+                    min_revision = 0
             self._people_call(self._people.segment, incident.incident_id,
                               incident.person or incident.first.get('track'),
-                              segment.segment_index, segment.start, segment.end)
+                              segment.segment_index, segment.start, segment.end,
+                              boot_id=incident.boot_id, min_revision=min_revision)
             clip = RecordedClip(
                 incident.incident_id, incident.boot_id, segment.segment_index, segment.revision,
                 segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
@@ -874,9 +898,9 @@ class FallFlowSensor:
                 except Exception:
                     self.clip_storage_failures += 1
 
-    def _people_call(self, method, *args):
+    def _people_call(self, method, *args, **kwargs):
         try:
-            method(*args)
+            method(*args, **kwargs)
         except Exception:
             self.people_storage_failures += 1
 

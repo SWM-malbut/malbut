@@ -289,3 +289,14 @@ def test_without_person_numbers_tracks_are_rows_as_before():
     rec.segment('incident-1', 'pose:0:a', 0, 100.0, 101.0)
     (people,) = rec.due(110.0)
     assert people.tracks[0].target
+
+
+def test_segment_preserves_restored_boot_id_and_advances_past_min_revision():
+    rec = recorder(boot_id='boot-new')
+    feed(rec, 100.0, 101.0)
+    rec.segment('incident-1', 'pose:0:a', 0, 100.0, 101.0,
+                boot_id='boot-original', min_revision=3)
+    (people,) = rec.due(110.0)
+    assert people.boot_id == 'boot-original'
+    assert people.revision == 4
+    assert people.tracks[0].key == rec._key('pose:0:a', 'boot-original')

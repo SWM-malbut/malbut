@@ -49,6 +49,7 @@ class HomecamDetectorNode(Node):
         self._depth_extractor = AuroraDepthEvidenceExtractor(
             camera_height_m=self._config.camera_height_m,
             camera_pitch_rad=self._config.camera_pitch_rad,
+            camera_roll_rad=self._config.camera_roll_rad,
             maximum_stamp_delta_s=self._config.depth_max_stamp_delta_sec,
             keypoint_threshold=self._config.pose_keypoint_threshold,
         )
@@ -192,6 +193,7 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("depth_max_stamp_delta_sec", 0.15)
         self.declare_parameter("camera_height_m", 0.091864)
         self.declare_parameter("camera_pitch_rad", 0.0)
+        self.declare_parameter("camera_roll_rad", 0.0)
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter(
             "navigation_status_topic", "/navigate_to_pose/_action/status"
@@ -237,6 +239,9 @@ class HomecamDetectorNode(Node):
             ),
             camera_pitch_rad=float(
                 self.get_parameter("camera_pitch_rad").value
+            ),
+            camera_roll_rad=float(
+                self.get_parameter("camera_roll_rad").value
             ),
             odom_topic=self.get_parameter("odom_topic").value,
             navigation_status_topic=self.get_parameter(
@@ -401,7 +406,7 @@ class HomecamDetectorNode(Node):
         except ValueError as error:
             self._log_depth_error(
                 "evidence",
-                f"Aurora depth evidence rejected: {type(error).__name__}",
+                f"Aurora depth evidence rejected: {type(error).__name__}: {error}",
             )
             return {"usable": False, "reason": "depth_invalid"}
         result = observation.as_dict()

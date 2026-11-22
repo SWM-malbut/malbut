@@ -193,6 +193,7 @@ class FallFlowLink:
         self.sent_at, self.accepted_at, self.server_missing_since = 0.0, None, None
         self.running = False
         self.held = None          # (step, goal handle) keeping the wheels between steps
+        self._replacing_held = None  # Held mission being preempted by an in-flight goal
         self.next_attempt = 0.0
         self.manager_state = None
         self.looks = {}           # look_id -> (what, sighting or incident id, sent at)
@@ -350,6 +351,8 @@ class FallFlowLink:
     def _replace(self, step):
         """The next step replaces the one in flight; a stop just ends it."""
         if self.step is not None:
+            if step is not None and self.goal_future is not None:
+                self._restore_held()
             self._cancel_current()
         self.step, self.running = step, False
         self.next_attempt = 0.0
@@ -418,7 +421,9 @@ class FallFlowLink:
             # 직접 움직이기 refuses it anyway (URGENT): wait without asking every second.
             self._wait(MANUAL_DRIVE)
             return
-        self.held = None  # This step replaces the hold in the Manager (same priority).
+        # Move self.held aside while the replacement goal is pending: if the send fails,
+        # times out, or is rejected, _restore_held() keeps _held_mission_id() accurate.
+        self._replacing_held, self.held = self.held, None
         self.sent_at, self.running = now, False
         if step['kind'] == 'drive':
             target = step.get('target') or (0.0, 0.0)
@@ -448,6 +453,7 @@ class FallFlowLink:
             self.goal_future = future
             future.add_done_callback(lambda done: self._accepted(step, done))
         except Exception as error:
+            self._restore_held()
             self._give_up(step, 'goal_send', error)
 
     def _drive_done(self, step, outcome):
@@ -498,6 +504,7 @@ class FallFlowLink:
         if not expired:
             return False
         if self.goal_future is not None:
+            self._restore_held()
             self._cancel_current()  # The Manager did not answer: busy, send it again.
             self._wait('busy')
             return True
@@ -546,6 +553,7 @@ class FallFlowLink:
                 handle = future.result()
             except Exception as error:
                 if self.step is step and self.goal_future is future:
+                    self._restore_held()
                     self._give_up(step, 'goal_response', error)
                     self._run()
                 return
@@ -555,9 +563,11 @@ class FallFlowLink:
                 return
             self.goal_future = None
             if not handle.accepted:
+                self._restore_held()
                 self._wait('busy')  # The Manager may still be preparing the robot.
                 self._run()
                 return
+            self._replacing_held = None  # Accepted in the Manager: it replaces any prior hold.
             self.handle, self.accepted_at = handle, self.clock()
             self.server_missing_since = None
             try:
@@ -574,6 +584,9 @@ class FallFlowLink:
             if self.held is not None and self.held[1] is handle:
                 self.held = None  # The held mission ended by itself (직접 움직이기).
                 self._run()
+                return
+            if self._replacing_held is not None and self._replacing_held[1] is handle:
+                self._replacing_held = None  # The replaced hold finished in the Manager.
                 return
             if self.step is not step or self.handle is not handle or self.closed:
                 return
@@ -652,10 +665,18 @@ class FallFlowLink:
         except Exception:
             return None
 
+    def _restore_held(self):
+        replacing, self._replacing_held = self._replacing_held, None
+        if replacing is not None and self.held is None:
+            self.held = replacing
+
     def _release_held(self):
         held, self.held = self.held, None
+        replacing, self._replacing_held = self._replacing_held, None
         if held is not None:
             self._cancel_handle(held[1])
+        if replacing is not None and (held is None or replacing[1] is not held[1]):
+            self._cancel_handle(replacing[1])
 
     def _send_hold(self, step):
         """Keep a HIGH mission while waiting to ask (the Agent refused the question)."""

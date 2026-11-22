@@ -1083,6 +1083,9 @@ def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, e
             params['pose_allow_spinning'], params['pose_opencv_num_threads']) == expected
     assert params['pose_keep_aspect'] is True and params['pose_inference_fps'] == 5.0
     assert 'fall_only' not in params
+    if overrides == {}:
+        assert params['camera_roll_rad'] == pytest.approx(
+            float(context.launch_configurations['fall_camera_roll_rad']))
 
 
 @pytest.mark.parametrize('changes', [

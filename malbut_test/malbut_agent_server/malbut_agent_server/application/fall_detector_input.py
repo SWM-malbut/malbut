@@ -47,6 +47,10 @@ def ros_stamp(value):
     return sec + nano / 1e9
 
 
+class StaleDetectorInputError(ValueError):
+    """Capture stamp is stale, future, or duplicate; existing subject state stays valid."""
+
+
 class _SameTracks:
     """No alias repair: with the fall rules' person tracking (fall_flow, SWM25-267) the
     Agent decides who is the same person, so YOLO's tracks go out as they are."""
@@ -99,7 +103,7 @@ class FallDetectorInput:
         timestamp(capture)
         identifier(frame_id)
         if source_now < capture or source_now - capture > self.max_source_age_s:
-            raise ValueError('future or stale capture')
+            raise StaleDetectorInputError('future or stale capture')
         changed = ((self._frame_id is not None and self._frame_id != frame_id)
                    or (self._last_source_now is not None and source_now < self._last_source_now))
         if changed:
@@ -115,7 +119,7 @@ class FallDetectorInput:
             self._generation += 1
         self._frame_id, self._last_source_now = frame_id, source_now
         if channel in self._last and capture <= self._last[channel]:
-            raise ValueError('duplicate or out-of-order capture')
+            raise StaleDetectorInputError('duplicate or out-of-order capture')
         # RGB and pose callbacks arrive separately. The same original image
         # stamp must bind to exactly the same local timestamp, not callback jitter.
         key = (frame_id, capture)
@@ -162,6 +166,9 @@ class FallDetectorInput:
     def candidates(self, payload, *, source_now, now):
         try:
             return self._candidates(payload, source_now=source_now, now=now)
+        except StaleDetectorInputError:
+            # A transient lag spike or duplicate stamp must not break view/subject continuity.
+            raise
         except (ValueError, TypeError, KeyError):
             self._pose_aliases.clear()
             self.monitor.invalidate_subject_input()
@@ -191,7 +198,7 @@ class FallDetectorInput:
             timestamp(capture)
             positive(data.get('subjectCheckMaxGapSec'), 'subject check gap')
             if capture > source_now or source_now - capture > self.max_source_age_s:
-                raise ValueError('stale subject checks')
+                raise StaleDetectorInputError('stale subject checks')
             subjects = []
             for track in data['tracks']:
                 if not isinstance(track, dict) or not isinstance(track.get('subjectCheck'), dict):
@@ -245,8 +252,10 @@ class FallDetectorInput:
             start, end = item.get('evidenceStartSec'), item.get('evidenceEndSec')
             timestamp(start)
             timestamp(end)
-            if start > end or end > source_now or source_now - end > self.max_source_age_s:
-                raise ValueError('stale candidate evidence')
+            if start > end:
+                raise ValueError('reversed candidate evidence')
+            if end > source_now or source_now - end > self.max_source_age_s:
+                raise StaleDetectorInputError('stale candidate evidence')
             evidence = item.get('evidence')
             if not isinstance(evidence, dict) or not isinstance(evidence.get('pose'), dict):
                 raise ValueError('invalid candidate evidence')

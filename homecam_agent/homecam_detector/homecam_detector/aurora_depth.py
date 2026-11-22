@@ -83,15 +83,18 @@ class AuroraDepthEvidenceExtractor:
         *,
         camera_height_m: float = 0.091864,
         camera_pitch_rad: float = 0.0,
+        camera_roll_rad: float = 0.0,
         minimum_depth_m: float = 0.3,
         maximum_depth_m: float = 3.0,
         maximum_stamp_delta_s: float = 0.15,
         keypoint_threshold: float = 0.5,
         patch_radius_px: int = 2,
+        max_below_floor_m: float = 0.06,
     ) -> None:
         for name, value in (
             ('minimum_depth_m', minimum_depth_m),
             ('maximum_depth_m', maximum_depth_m),
+            ('max_below_floor_m', max_below_floor_m),
         ):
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f'{name} must be finite and non-negative')
@@ -108,17 +111,21 @@ class AuroraDepthEvidenceExtractor:
             raise ValueError('minimum_depth_m must be below maximum_depth_m')
         if not math.isfinite(camera_pitch_rad):
             raise ValueError('camera_pitch_rad must be finite')
+        if not math.isfinite(camera_roll_rad):
+            raise ValueError('camera_roll_rad must be finite')
         if not 0 < keypoint_threshold <= 1:
             raise ValueError('keypoint_threshold must be in (0, 1]')
         if patch_radius_px < 0 or patch_radius_px > 10:
             raise ValueError('patch_radius_px must be between 0 and 10')
         self._camera_height_m = camera_height_m
         self._camera_pitch_rad = camera_pitch_rad
+        self._camera_roll_rad = camera_roll_rad
         self._minimum_depth_m = minimum_depth_m
         self._maximum_depth_m = maximum_depth_m
         self._maximum_stamp_delta_s = maximum_stamp_delta_s
         self._keypoint_threshold = keypoint_threshold
         self._patch_radius_px = patch_radius_px
+        self._max_below_floor_m = max_below_floor_m
 
     def extract(
         self,
@@ -169,12 +176,18 @@ class AuroraDepthEvidenceExtractor:
             depth_m = self._sample_depth(depth_image, pixel, scale)
             if depth_m is None:
                 continue
+            x_optical = (pixel[0] - intrinsics.cx) * depth_m / intrinsics.fx
             y_optical = (pixel[1] - intrinsics.cy) * depth_m / intrinsics.fy
-            height = (
-                self._camera_height_m
-                - math.sin(self._camera_pitch_rad) * depth_m
-                - math.cos(self._camera_pitch_rad) * y_optical
+            # Match fall_place_locator.mount_corrected() (R_x(roll) * R_y(pitch)).
+            y_corrected = (
+                math.sin(self._camera_roll_rad) * x_optical
+                + math.cos(self._camera_roll_rad)
+                * (
+                    math.cos(self._camera_pitch_rad) * y_optical
+                    + math.sin(self._camera_pitch_rad) * depth_m
+                )
             )
+            height = self._camera_height_m - y_corrected
             signed_floor_distances.append(height)
             forward_distances.append(depth_m)
         sampled = len(signed_floor_distances)
@@ -182,7 +195,7 @@ class AuroraDepthEvidenceExtractor:
         torso_floor_distance = None
         if signed_floor_distances:
             median_height = float(np.median(signed_floor_distances))
-            if median_height < -0.02:
+            if median_height < -self._max_below_floor_m:
                 raise ValueError(
                     'projected torso is below floor; check camera calibration'
                 )

@@ -726,3 +726,91 @@ def test_a_stuck_round_stops_growing_after_ten_minutes(filmed):
     mark(sensor, 'start')
     advance(sensor, clock, 900, step=5)
     assert ranges(journal)[-1][1] <= started + 600 + 5
+
+
+def test_check_mode_compare_answers_immediately_and_does_not_stall_on_gone_track(robot):
+    from malbut_agent_server.application.fall_appearance import FallAppearance
+
+    sensor, clock, _, _ = robot
+
+    class Image:
+        shape = (480, 640, 3)
+
+    vectors = iter([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0]])
+    sensor._appearance = FallAppearance(
+        encode=lambda _img, boxes: [next(vectors)] * len(boxes),
+        decode=lambda _jpeg: Image(),
+    )
+    advance(sensor, clock, 1)
+    poses(sensor, clock, key='pose:1:a')
+    linked_at = clock.value
+    # Collect initial pair (t+0.5, t+1.5) and a later pair (t+6.0, t+7.0).
+    for dt in (0.6, 1.0, 4.5, 1.0):
+        advance(sensor, clock, dt)
+        poses(sensor, clock, key='pose:1:a')
+    last_seen = clock.value
+    messages(sensor)
+
+    # Check mode matches the earlier and latest pairs immediately without 3 s wait.
+    sensor.apply(dict(action='compare', mode='check', request_id='chk-1',
+                      a=dict(track='pose:1:a', at=linked_at),
+                      b=dict(track='pose:1:a', at=last_seen)))
+    reply, = messages(sensor, 'fall_appearance')
+    assert reply == dict(kind='fall_appearance', request_id='chk-1', similarity=0.0)
+
+    # A gone track without pairs answers None immediately instead of stalling 3 s.
+    sensor.apply(dict(action='compare', mode='check', request_id='chk-gone',
+                      a=dict(track='pose:1:a', at=linked_at),
+                      b=dict(track='pose:1:gone', at=linked_at + 1.0)))
+    gone_reply, = messages(sensor, 'fall_appearance')
+    assert gone_reply == dict(kind='fall_appearance', request_id='chk-gone', similarity=None)
+
+    with pytest.raises(ValueError):
+        sensor.apply(dict(action='compare', mode='bogus', request_id='chk-bad',
+                          a=dict(track='a', at=1.0), b=dict(track='b', at=2.0)))
+
+
+def test_restored_incident_link_keeps_original_boot_id_and_advances_people_revision(tmp_path):
+    clock = Clock()
+    journal = SqliteFallJournal(tmp_path / 'events.sqlite', device_id='robot',
+                                wall_clock=lambda: 1_760_000_000.0)
+    try:
+        def make_sensor(boot_id):
+            s = FallFlowSensor(
+                device_id='robot', boot_id=boot_id, policy=policy(),
+                buffer=FallFrameBuffer(retention_s=30, max_bytes=100000, max_frames=200),
+                provider=Cloud(), journal=journal, clock=clock, place_locator=Places(),
+                wall_clock=lambda: 1_760_000_000.0 + clock.value,
+            )
+            s.configure(enabled=True, camera_enabled=True, cloud_consent=True, connected=True)
+            return s
+
+        first_boot = make_sensor('boot-1')
+        advance(first_boot, clock, 1)
+        poses(first_boot, clock, key='pose:1:a')
+        first_boot._sight('low', clock.value, track='pose:1:a', box=BOX, point=SPOT, photo=True)
+        sighting = messages(first_boot, 'fall_sighting')[0]['sighting']
+        record(first_boot, 'incident_opened', 'pose_sustained_low_posture',
+               sighting_id=sighting['sighting_id'])
+        advance(first_boot, clock, 25)
+        first_boot.flush_people()
+        initial_people = json.loads(journal.pending_people()['payload'])
+        assert (initial_people['bootId'], initial_people['revision']) == ('boot-1', 1)
+
+        # Simulate process restart with a new boot_id and empty in-memory incidents.
+        second_boot = make_sensor('boot-2')
+        advance(second_boot, clock, 1)
+        poses(second_boot, clock, key='pose:2:a')
+        second_boot._sight('low', clock.value, track='pose:2:a', box=BOX, point=SPOT, photo=True)
+        sighting2 = messages(second_boot, 'fall_sighting')[0]['sighting']
+        # action='link' must restore the persisted incident from SQLite (boot-1).
+        second_boot.apply(dict(action='link', sighting_id=sighting2['sighting_id'],
+                               incident_id='i1'))
+        advance(second_boot, clock, 25)
+        second_boot.flush_people()
+        updated_people = json.loads(journal.pending_people()['payload'])
+        assert updated_people['bootId'] == 'boot-1'
+        assert updated_people['revision'] == 2
+        assert journal.people_revision('i1', 0) == 2
+    finally:
+        journal.close()

@@ -167,3 +167,41 @@ def test_each_track_brings_its_torso_keypoints_for_its_map_place():
         message['tracks'] = [dict(row, torso=bad)]
         with pytest.raises(ValueError):
             adapter.candidates(json.dumps(message), source_now=1000, now=100)
+
+
+def test_stale_or_duplicate_candidates_preserve_subject_continuity():
+    from malbut_agent_server.application.fall_detector_input import StaleDetectorInputError
+
+    class CountingSubjects(Subjects):
+        def __init__(self):
+            super().__init__()
+            self.invalidations = 0
+
+        def invalidate_subject_input(self):
+            self.invalidations += 1
+
+    monitor = CountingSubjects()
+    adapter = FallDetectorInput(monitor, max_source_age_s=2, pose_aliases=False)
+    row = dict(targetTrackId='p1', trackingState='tracked', associationUsable=False,
+               box=[0.1, 0.1, 0.5, 0.9], subjectCheck={'state': 'unknown'})
+    valid = json.loads(candidates())
+    valid.update(subjectCheckVersion=1, subjectCheckMaxGapSec=0.5, captureTimeSec=1000.0,
+                 robotMotion='stationary', unassignedCount=0, tracks=[row])
+    adapter.candidates(json.dumps(valid), source_now=1000.0, now=100.0)
+    assert len(monitor.frames) == 1 and monitor.invalidations == 0
+
+    # Duplicate capture timestamp raises StaleDetectorInputError without invalidating view.
+    with pytest.raises(StaleDetectorInputError):
+        adapter.candidates(json.dumps(valid), source_now=1000.5, now=100.5)
+    assert monitor.invalidations == 0
+
+    # Stale subject capture raises StaleDetectorInputError without invalidating view.
+    stale = dict(valid, captureTimeSec=997.0)
+    with pytest.raises(StaleDetectorInputError):
+        adapter.candidates(json.dumps(stale), source_now=1001.0, now=101.0)
+    assert monitor.invalidations == 0
+
+    # Genuine malformed schema still fails closed and invalidates subject input.
+    with pytest.raises(ValueError):
+        adapter.candidates('{"schemaVersion":999}', source_now=1001.0, now=101.0)
+    assert monitor.invalidations == 1

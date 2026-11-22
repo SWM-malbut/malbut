@@ -374,3 +374,49 @@ def test_disabled_approach_retries_a_busy_question_without_holding_the_wheels(ri
         message=DOWNSTREAM_REJECTED, result_yaml='')))
     assert [goal_arguments(e)[0] for e in rig.goals] == ['fall_confirmation']
     assert rig.link.status()['waiting_for'] == 'busy'
+
+
+def test_held_drive_survives_rejected_or_timed_out_replacement_goal(rig):
+    """A failed or rejected replacement send must not lose track of our own held mission."""
+    open_incident(rig)
+    decisions(rig.link)
+    drive = rig.goals[-1]
+    held_uuid = bytes(range(16))
+    held_handle = Mock(accepted=True, goal_id=SimpleNamespace(uuid=held_uuid))
+    held_handle.get_result_async.return_value = Future()
+    drive.future.set_result(held_handle)
+    drive.feedback(SimpleNamespace(feedback=SimpleNamespace(
+        state='RUNNING', feedback_yaml=json.dumps(dict(outcome='arrived')))))
+    assert rig.link.held is not None and rig.link.held[1] is held_handle
+    rig.link.manager_state = SimpleNamespace(
+        active_foreground_missions=[SimpleNamespace(
+            capability_id='fall_approach', mission_id=held_uuid.hex())],
+        active_background_missions=[], pending_missions=[], suspended_missions=[])
+
+    # Arrival triggers the next drive (view); Manager rejects the first attempt.
+    answer(rig, 'arrival', 'same_person')
+    first_try = rig.goals[-1]
+    assert goal_arguments(first_try)[1]['phase'] == 'view'
+    assert rig.link.held is None
+    first_try.future.set_result(SimpleNamespace(accepted=False))
+    assert rig.link.held is not None and rig.link.held[1] is held_handle
+
+    # After 1 s the link still recognizes its own held mission and retries (no deadlock).
+    rig.now.value += 1.0
+    rig.link.tick()
+    assert len(rig.goals) == 3
+    second_try = rig.goals[-1]
+    assert goal_arguments(second_try)[1]['phase'] == 'view'
+
+    # Even a goal-response timeout restores self.held for the next retry.
+    rig.now.value += rig.link.goal_response_timeout_s
+    rig.link.tick()
+    assert rig.link.held is not None and rig.link.held[1] is held_handle
+    rig.now.value += 1.0
+    rig.link.tick()
+    assert len(rig.goals) == 4
+
+    # Only once Manager accepts the replacement step is the hold forgotten.
+    accept(rig, rig.goals[-1])
+    assert rig.link.held is None and rig.link._replacing_held is None
+    held_handle.cancel_goal_async.assert_not_called()

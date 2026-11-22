@@ -11,6 +11,7 @@ import io
 import json
 import math
 import re
+import time
 
 from malbut_agent_server.domain.fall_monitoring import (
     CloudFallReply, CloudFallRequest, VideoAssessment,
@@ -650,10 +651,30 @@ def valid_cloud_key(api_key):
             and all(33 <= ord(c) <= 126 for c in api_key))
 
 
+DEFAULT_QUOTA_COOLDOWN_S = 60.0
+DEFAULT_PAYMENT_COOLDOWN_S = 300.0
+MAX_RETRY_AFTER_S = 600.0
+
+
+def _retry_after_seconds(headers, *, minimum, maximum=MAX_RETRY_AFTER_S):
+    """Parse a numeric Retry-After header, bounded to [minimum, maximum]."""
+    raw = headers.get('Retry-After') if hasattr(headers, 'get') else None
+    if isinstance(raw, str):
+        try:
+            seconds = float(raw.strip())
+        except ValueError:
+            seconds = None
+        if seconds is not None and math.isfinite(seconds) and seconds > 0:
+            return min(maximum, max(minimum, seconds))
+    return minimum
+
+
 class OllamaCloudFallProvider:
     execution_target = 'cloud'
 
-    def __init__(self, *, model, api_key, timeout_s=20.0, box_format=NATIVE_BOX_FORMAT):
+    def __init__(self, *, model, api_key, timeout_s=20.0, box_format=NATIVE_BOX_FORMAT,
+                 clock=time.monotonic, quota_cooldown_s=DEFAULT_QUOTA_COOLDOWN_S,
+                 payment_cooldown_s=DEFAULT_PAYMENT_COOLDOWN_S):
         if box_format not in (LEGACY_BOX_FORMAT, NATIVE_BOX_FORMAT):
             raise ValueError('unsupported box format')
         if (not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', model)
@@ -665,9 +686,18 @@ class OllamaCloudFallProvider:
         if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
                 or not math.isfinite(timeout_s) or not 0 < timeout_s <= 20):
             raise ValueError('Cloud timeout must be at most 20 seconds')
+        for name, value in (('quota_cooldown_s', quota_cooldown_s),
+                            ('payment_cooldown_s', payment_cooldown_s)):
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value <= 0):
+                raise ValueError(f'{name} must be finite and positive')
         self.model, self._api_key, self.timeout_s = model, api_key, timeout_s
         self.box_format = box_format
+        self._clock = clock
+        self._quota_cooldown_s = float(quota_cooldown_s)
+        self._payment_cooldown_s = float(payment_cooldown_s)
         self._blocked = None if api_key is not None else 'cloud_auth_required'
+        self._blocked_until = None
 
     def replace_key(self, api_key):
         """Swap the credential without a restart; a new key clears an auth/quota block."""
@@ -675,10 +705,19 @@ class OllamaCloudFallProvider:
             raise ValueError('invalid Cloud credential')
         self._api_key = api_key
         self._blocked = None if api_key is not None else 'cloud_auth_required'
+        self._blocked_until = None
+
+    def _check_blocked(self):
+        if self._blocked is None:
+            return
+        if self._blocked_until is not None and self._clock() >= self._blocked_until:
+            self._blocked = None
+            self._blocked_until = None
+            return
+        raise CloudFallProviderError(self._blocked)
 
     async def analyze(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_payload(request, model=self.model, box_format=self.box_format,
                              live_rules=True)
         # Explicit cancellation boundary before starting a network operation.
@@ -686,36 +725,31 @@ class OllamaCloudFallProvider:
         return parse_reply(await self._post(body), request, box_format=self.box_format)
 
     async def check_person(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_person_check_payload(request, model=self.model)
         await asyncio.sleep(0)
         return parse_person_check(await self._post(body))
 
     async def check_posture(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_posture_check_payload(request, model=self.model)
         await asyncio.sleep(0)
         return parse_posture_check(await self._post(body), request)
 
     async def check_arrival(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_arrival_check_payload(request, model=self.model)
         await asyncio.sleep(0)
         return parse_arrival_check(await self._post(body))
 
     async def check_departure(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_departure_check_payload(request, model=self.model)
         await asyncio.sleep(0)
         return parse_departure_check(await self._post(body))
 
     async def compare_person(self, request):
-        if self._blocked:
-            raise CloudFallProviderError(self._blocked)
+        self._check_blocked()
         body = build_same_person_payload(request, model=self.model)
         await asyncio.sleep(0)
         return parse_same_person(await self._post(body))
@@ -743,6 +777,16 @@ class OllamaCloudFallProvider:
                         # A key replaced during this call is not blocked by the old key's reply.
                         if self._api_key is key:
                             self._blocked = code
+                            if response.status == 429:
+                                cooldown = _retry_after_seconds(
+                                    getattr(response, 'headers', None),
+                                    minimum=self._quota_cooldown_s,
+                                )
+                                self._blocked_until = self._clock() + cooldown
+                            elif response.status == 402:
+                                self._blocked_until = self._clock() + self._payment_cooldown_s
+                            else:
+                                self._blocked_until = None
                         raise CloudFallProviderError(code)
                     if response.status != 200:
                         raise CloudFallProviderError('cloud_http_error')

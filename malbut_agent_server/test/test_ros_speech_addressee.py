@@ -550,3 +550,85 @@ def test_shutdown_overrides_a_result_before_the_service_callback_returns(node):
     assert pending.future.done()
     node.begin_shutdown()
     assert pending.step().decision == Response.UNKNOWN
+
+
+def test_fall_window_never_stops_or_announces_over_an_active_confirmation(node, monkeypatch):
+    """Entering the fall window after confirmation starts must not STOP_ALL its question."""
+    from malbut_agent_server.fall_check_watch import FALL_CHECK_START, FallCheckWatch
+
+    stop_calls = []
+
+    class StopRequest(SimpleNamespace):
+        STOP_ALL = 1
+
+    class PendingStop:
+        def __init__(self):
+            self.callbacks = []
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+    pending_stops = []
+
+    def call_stop(req):
+        stop_calls.append(req)
+        future = PendingStop()
+        pending_stops.append(future)
+        return future
+
+    monkeypatch.setitem(
+        sys.modules, 'malbut_interfaces.srv',
+        SimpleNamespace(
+            ClassifySpeechAddressee=SimpleNamespace(Response=Response),
+            ControlSpeechPlayback=SimpleNamespace(Request=StopRequest),
+        ),
+    )
+    watch = FallCheckWatch(clock=lambda: 100.0)
+    node._fall_check = watch
+    node._speech_stop = SimpleNamespace(
+        service_is_ready=lambda: True, call_async=call_stop,
+    )
+
+    # Case 1: Confirmation starts BEFORE the 0.25 s window timer polls the status.
+    node.situation.active = True
+    node._awaiting_reply = 'old-chat-utterance'
+    watch.observe_status('{"active": true, "phase": "ask"}')
+    node._follow_fall_window()
+    assert node._in_fall_window is True
+    assert node._awaiting_reply is None
+    assert stop_calls == []
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+    # Leaving window while confirmation is still active keeps dialogue suspended.
+    watch.observe_status('{"active": false, "phase": null}')
+    node._follow_fall_window()
+    assert node._in_fall_window is False
+    assert node.dialogue.suspended is True
+
+    # Case 2: _begin_situation while already in window synchronizes _in_fall_window
+    # so a subsequent timer poll does not issue STOP_ALL either.
+    watch.observe_status('{"active": true, "phase": "approach"}')
+    node._begin_situation()
+    assert node._in_fall_window is True
+    node._follow_fall_window()
+    assert stop_calls == []
+
+    # Case 3: Normal fall check (confirmation NOT active) sends STOP_ALL;
+    # if confirmation starts before STOP_ALL finishes, announce() skips FALL_CHECK_START.
+    node._in_fall_window = False
+    node.situation.active = False
+    node._awaiting_reply = 'interrupted-turn'
+    node._follow_fall_window()
+    assert len(stop_calls) == 1
+    assert stop_calls[0].command == StopRequest.STOP_ALL
+    node.situation.active = True
+    pending_stops[0].callbacks[0](pending_stops[0])
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+    # Case 4: When confirmation stays inactive, STOP_ALL completes and announces FALL_CHECK_START.
+    node._in_fall_window = False
+    node.situation.active = False
+    node._follow_fall_window()
+    assert len(stop_calls) == 2
+    pending_stops[1].callbacks[0](pending_stops[1])
+    assert [m.text for m in node.sent[ros_communication.RESPONSE_TOPIC]] == [FALL_CHECK_START]

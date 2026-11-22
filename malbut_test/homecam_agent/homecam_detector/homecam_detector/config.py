@@ -23,6 +23,7 @@ class DetectorConfig:
     depth_max_stamp_delta_sec: float = 0.15
     camera_height_m: float = 0.091864
     camera_pitch_rad: float = 0.0
+    camera_roll_rad: float = 0.0
     odom_topic: str = "/odom"
     navigation_status_topic: str = "/navigate_to_pose/_action/status"
     pose_model_path: str = ""
@@ -105,6 +106,8 @@ def validate_config(config: DetectorConfig) -> List[str]:
         errors.append("camera_height_m must be positive")
     if not math.isfinite(config.camera_pitch_rad):
         errors.append("camera_pitch_rad must be finite")
+    if not math.isfinite(config.camera_roll_rad):
+        errors.append("camera_roll_rad must be finite")
     if config.odom_topic and not config.odom_topic.startswith("/"):
         errors.append("odom_topic must be empty or an absolute ROS topic")
     if (

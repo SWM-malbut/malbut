@@ -68,6 +68,7 @@ def test_rejects_nan_and_infinite_motion_parameters() -> None:
         "depth_max_stamp_delta_sec",
         "camera_height_m",
         "camera_pitch_rad",
+        "camera_roll_rad",
     ]
     defaults = VALID
     for field in float_fields:
