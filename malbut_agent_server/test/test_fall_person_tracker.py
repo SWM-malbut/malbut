@@ -582,3 +582,9 @@ def test_a_new_track_near_or_over_the_one_just_seen_is_still_them(robot):
     # A box elsewhere on screen but within the place's error (0.4 m).
     near = robot.frame(seen('near', (1.3, -0.15), box=BAG))
     assert near.assignments == {'near': 'test:P1'}
+
+
+def test_verdict_compare_requests_use_check_mode(robot):
+    requests = apart_a_minute(robot)
+    assert len(requests) == 2
+    assert all(req.get('mode') == 'check' for req in requests)

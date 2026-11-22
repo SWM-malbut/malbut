@@ -16,7 +16,7 @@ from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
 from malbut_agent_server.application.fall_flow_log import FallFlowLog
 from malbut_agent_server.application.fall_flow_sensor import FallFlowSensor
 from malbut_agent_server.application.fall_detector_input import (
-    FallDetectorInput, bounded_object, ros_stamp,
+    FallDetectorInput, StaleDetectorInputError, bounded_object, ros_stamp,
 )
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_place_locator import (
@@ -221,13 +221,15 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                     key: getattr(message, key) for key in HEARTBEAT_FIELDS}):
                 self.log_code('control_heartbeat_rejected')
 
-        def guarded(self, code, operation, *args, **kwargs):
+        def guarded(self, code, operation, *args, stale_code=None, **kwargs):
             try:
                 return operation(*args, **kwargs)
             except FallJournalError:
                 self.control.close()
                 self.log_code('journal_failed_runtime_stopped')
                 raise
+            except StaleDetectorInputError:
+                self.log_code(stale_code or code)
             except (ValueError, TypeError, KeyError, OverflowError, RuntimeError,
                     CvBridgeError, cv2.error):
                 # Never log image contents, model text, IDs, settings or credentials.
@@ -248,7 +250,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                     or clock() - self._last_image < 1 / settings.input_fps):
                 return
             self._last_image = clock()
-            self.guarded('rgb_invalid', self.convert_image, message)
+            self.guarded('rgb_invalid', self.convert_image, message, stale_code='rgb_stale')
 
         def convert_image(self, message):
             # Aurora input dimensions are explicit, not silently stretched.
@@ -312,6 +314,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.control.refresh()
             if self.control.accepting_images:
                 self.guarded('detector_input_invalid', getattr(self.inputs, kind), message.data,
+                             stale_code='detector_input_stale',
                              source_now=self.source_now(), now=clock())
 
         def on_answer(self, message):
@@ -461,10 +464,12 @@ def main(argv=None):
             print('replace example device_id with the registered robot ID '
                   'before execution')
             return 2
+        import importlib.util
         from malbut_agent_server.adapters.outbound.ollama_cloud_fall import OllamaCloudFallProvider
         from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
         from malbut_agent_server.fall_upload_worker import _read_token
-        import aiohttp  # noqa: F401: check optional dependency before opening the journal
+        if importlib.util.find_spec('aiohttp') is None:
+            raise ImportError('aiohttp is required for fall monitoring')
         import rclpy
 
         from malbut_agent_server.application.fall_key_sync import key_sync_plan

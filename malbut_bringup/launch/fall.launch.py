@@ -75,6 +75,7 @@ def _setup(context):
             'depth_aligned_to_rgb': True, 'depth_scale_m': 0.0,
             'depth_max_stamp_delta_sec': 0.15,
             'camera_height_m': camera_height, 'camera_pitch_rad': camera_pitch,
+            'camera_roll_rad': camera_roll,
         } if depth_on else {}
         fall_pose = Node(
             package='homecam_detector', executable='homecam_detector_node',

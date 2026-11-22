@@ -684,7 +684,7 @@ class PersonTracker:
                 request_id = uuid4().hex
                 self._checks[request_id] = _WAITING
                 requests[request_id] = member
-                self._requests.append(dict(request_id=request_id,
+                self._requests.append(dict(request_id=request_id, mode='check',
                                            a=dict(track=ref[0], at=ref[1]),
                                            b=dict(track=person.track, at=person.last_seen)))
             while len(self._checks) > 64:

@@ -388,6 +388,14 @@ class SqliteFallJournal:
     def people_status(self):
         return self._segment_status('incident_people')
 
+    def people_revision(self, incident_id, segment_index):
+        with self._lock:
+            row = self._db.execute(
+                'SELECT revision FROM incident_people '
+                'WHERE incident_id=? AND segment_index=?',
+                (incident_id, segment_index)).fetchone()
+            return int(row['revision']) if row else 0
+
     def discoveries(self, *, after_sequence=0, limit=100):
         """Paginated local review, not a guardian delivery or a resolved incident."""
         if (type(after_sequence) is not int or after_sequence < 0

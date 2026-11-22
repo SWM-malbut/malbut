@@ -45,9 +45,11 @@ class RecordedPeople:
 
 class _Segment:
     def __init__(self, incident_id: str, index: int, target: Optional[str],
-                 start: float, end: float) -> None:
+                 start: float, end: float, *, boot_id: str, min_revision: int = 0) -> None:
         self.incident_id, self.index, self.target = incident_id, index, target
         self.start, self.end = start, end
+        self.boot_id = boot_id
+        self.min_revision = min_revision
         # (subject key, box, strong): strong is None when the detector did not say.
         self.frames: Dict[float, Tuple[Tuple[str, Box, Optional[bool]], ...]] = {}
         self.cloud: Dict[float, Box] = {}
@@ -98,10 +100,15 @@ class FallPeopleRecorder:
                 self._add(segment, observed_at, frame)
 
     def segment(self, incident_id: str, subject_key: Optional[str], segment_index: int,
-                start: float, end: float) -> None:
+                start: float, end: float, *, boot_id: Optional[str] = None,
+                min_revision: int = 0) -> None:
         identifier(incident_id)
         timestamp(start)
         timestamp(end)
+        resolved_boot = self.boot_id if boot_id is None else boot_id
+        identifier(resolved_boot)
+        if type(min_revision) is not int or min_revision < 0:
+            raise ValueError('min_revision must be a non-negative integer')
         key = (incident_id, segment_index)
         segment = self._segments.get(key)
         if segment is None:
@@ -109,10 +116,13 @@ class FallPeopleRecorder:
                 return  # Released after it was sent; history alone would be partial.
             if len(self._segments) >= self.max_segments and not self._release_one():
                 return
-            segment = self._segments[key] = _Segment(incident_id, segment_index,
-                                                     subject_key, start, end)
+            segment = self._segments[key] = _Segment(
+                incident_id, segment_index, subject_key, start, end,
+                boot_id=resolved_boot, min_revision=min_revision)
         else:
             segment.start, segment.end, segment.dirty = start, end, True
+            if min_revision > segment.min_revision:
+                segment.min_revision = min_revision
             segment.frames = {t: f for t, f in segment.frames.items() if start <= t <= end}
             segment.cloud = {t: b for t, b in segment.cloud.items() if start <= t <= end}
         for observed_at, frame in self._history:
@@ -171,7 +181,8 @@ class FallPeopleRecorder:
                 continue
             if segment.dirty:
                 segment.dirty = False
-                people = self._build(segment, self._revisions.get(key, 0) + 1)
+                next_rev = max(self._revisions.get(key, 0), segment.min_revision) + 1
+                people = self._build(segment, next_rev)
                 if people is not None:
                     self._revisions[key] = people.revision
                     self._revisions.move_to_end(key)
@@ -196,8 +207,10 @@ class FallPeopleRecorder:
                 return True
         return False
 
-    def _key(self, subject_key: str) -> str:
-        return hashlib.sha256(f'{self.boot_id}\0{subject_key}'.encode()).hexdigest()[:12]
+    def _key(self, subject_key: str, boot_id: Optional[str] = None) -> str:
+        return hashlib.sha256(
+            f'{self.boot_id if boot_id is None else boot_id}\0{subject_key}'.encode()
+        ).hexdigest()[:12]
 
     def _build(self, segment: _Segment, revision: int) -> Optional[RecordedPeople]:
         span = round((segment.end - segment.start) * 1000)
@@ -223,6 +236,7 @@ class FallPeopleRecorder:
         if not kept and not cloud:
             return None
         return RecordedPeople(
-            segment.incident_id, self.boot_id, segment.index, revision,
-            tuple(PeopleTrack(self._key(s), s == segment.target, tuple(tracks[s])) for s in kept),
+            segment.incident_id, segment.boot_id, segment.index, revision,
+            tuple(PeopleTrack(self._key(s, segment.boot_id), s == segment.target,
+                              tuple(tracks[s])) for s in kept),
             cloud, segment.truncated or len(tracks) > self.max_tracks)

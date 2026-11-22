@@ -161,3 +161,33 @@ def test_people_unseen_for_30_minutes_are_dropped():
     seen.see(101.5 + KEEP_S, ['b'])
     seen.observe(102.0 + KEEP_S, b'jpeg', [('b', BOX)])
     assert 'a' not in seen._tracks
+
+
+def test_check_mode_compares_earliest_and_latest_pairs_beyond_60_seconds():
+    """Group verdict checks run 60+ s after linking and pass b=(track, last_seen)."""
+    # First pair at t=100.5..101.5 has [1, 0]; all later pairs have [0, 1].
+    vectors = ([1.0, 0.0], [1.0, 0.0]) + ([0.0, 1.0],) * 40
+    seen, _ = store(*vectors)
+    seen.observe(100.0, b'jpeg', [('a', BOX)])
+    # Linked at t=100.2, right before the track finishes its very first pair at 101.5.
+    linked_at = 100.2
+    t = 100.5
+    while t <= 195.0:
+        seen.observe(t, b'jpeg', [('a', BOX)])
+        seen.observe(t + PAIR_GAP_S, b'jpeg', [('a', BOX)])
+        t += EVERY_S
+    # After 95 s (> PER_TRACK rolling looks), check mode still finds the pinned first pair
+    # and compares it against the latest pair before last_seen.
+    last_seen = 196.0
+    assert seen.ready(('a', last_seen), mode='check')
+    sim = seen.compare(('a', linked_at), ('a', last_seen), mode='check')
+    assert sim is not None and abs(sim - 0.0) < 1e-9
+    # Reappear mode on the same pair would fail because no pair starts at/after last_seen.
+    assert seen.compare(('a', linked_at), ('a', last_seen), mode='reappear') is None
+
+    # A single pair on the same track is never trivially compared against itself.
+    solo, _ = store([1.0, 0.0])
+    solo.see(99.5, ['only'])
+    solo.observe(100.0, b'jpeg', [('only', BOX)])
+    solo.observe(101.0, b'jpeg', [('only', BOX)])
+    assert solo.compare(('only', 100.0), ('only', 101.0), mode='check') is None
