@@ -1410,3 +1410,48 @@ def test_guard_open_emits_left_open_so_restart_keeps_incident_idle():
     assert robot.only().idle == 'person'
     assert [c['who'] for c in kinds(out, 'left_open')] == ['person']
     assert records(out, 'analysis_unavailable') == ['cloud_consent_missing']
+
+
+@pytest.mark.parametrize('reason', [
+    'cloud_payment_required', 'cloud_auth_required', 'cloud_quota_exhausted',
+])
+def test_cloud_unavailable_on_arrival_asks_directly_without_view_loop(reason):
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.flow.arrival_answered(robot.active(), 'failed', robot.now, reason=reason)
+    out = robot.take()
+    assert kinds(out, 'ask') and not drives(out, 'view') and not looks(out, 'posture')
+
+
+def test_cloud_unavailable_after_view_returns_closer_before_asking():
+    robot = Robot()
+    robot.open(track='t1')
+    robot.drive('approach')
+    robot.flow.arrival_answered(robot.active(), 'failed', robot.now, reason='cloud_timeout')
+    assert drives(robot.take(), 'view')
+    robot.drive('view')
+    robot.flow.arrival_answered(
+        robot.active(), 'failed', robot.now, reason='cloud_payment_required')
+    out = robot.take()
+    assert drives(out, 'closer') and not looks(out, 'posture')
+
+
+def test_wait_alert_with_queued_incident_does_not_charge_other_incidents_time():
+    robot = Robot()
+    first = robot.open(track='t1', point=(3.0, 0.0))
+    s2, _ = robot.see(track='t2', point=(6.0, 0.0))
+    robot.filter(s2, 'suspect')
+    robot.flow.blocked(first, 'manual_drive', robot.now)
+    robot.take()
+    robot.wait(WAIT_ALERT_S)
+    second = robot.active()
+    assert second is not None and second != first
+    assert robot.flow.incidents[first].waiting_since is None
+    assert robot.flow.incidents[first].waited == pytest.approx(WAIT_ALERT_S)
+    # While the second incident runs for 10 minutes, the first must not hit WAIT_LIMIT_S.
+    robot.now += WAIT_LIMIT_S
+    robot.drive('approach')
+    robot.arrival('same_object')
+    assert robot.active() == first
+    assert robot.flow.incidents[first].state == 'open'

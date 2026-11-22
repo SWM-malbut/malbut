@@ -707,14 +707,20 @@ class OllamaCloudFallProvider:
         self._blocked = None if api_key is not None else 'cloud_auth_required'
         self._blocked_until = None
 
-    def _check_blocked(self):
+    def blocked_reason(self):
+        """Return active local auth/billing/quota block code, or None when calls may proceed."""
         if self._blocked is None:
-            return
+            return None
         if self._blocked_until is not None and self._clock() >= self._blocked_until:
             self._blocked = None
             self._blocked_until = None
-            return
-        raise CloudFallProviderError(self._blocked)
+            return None
+        return self._blocked
+
+    def _check_blocked(self):
+        code = self.blocked_reason()
+        if code is not None:
+            raise CloudFallProviderError(code)
 
     async def analyze(self, request):
         self._check_blocked()

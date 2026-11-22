@@ -45,10 +45,15 @@ class FallCandidateConfig:
     minimum_height_loss: float = 0.25
     moving_shape_ratio: float = 1.4
     maximum_floor_height_m: float = 0.30
+    floor_clear_hysteresis_m: float = 0.08
     rearm_upright_sec: float = 2.0
 
     def __post_init__(self):
         for name, value in asdict(self).items():
+            if name == "floor_clear_hysteresis_m":
+                if isinstance(value, bool) or not math.isfinite(value) or value < 0:
+                    raise ValueError(f"{name} must be finite and non-negative")
+                continue
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         if not 0 < self.keypoint_threshold <= 1:
@@ -329,8 +334,14 @@ class FallCandidateDetector:
             low_posture = (feature.near_floor
                            or ((feature.horizontal or feature.compact_body)
                                and feature.floor_height_m is None))
+            clear_floor_m = (self.config.maximum_floor_height_m
+                             + self.config.floor_clear_hysteresis_m)
+            above_clear_floor = (feature.floor_height_m is None
+                                 or feature.floor_height_m > clear_floor_m)
             upright = (feature.torso_angle_deg <= self.config.upright_torso_deg
-                       and not low_posture)
+                       and not low_posture
+                       and (above_clear_floor
+                            or (state.candidate is None and not state.down)))
             if upright:
                 if state.upright_since is None:
                     state.upright_since = capture_time
@@ -385,7 +396,7 @@ class FallCandidateDetector:
             # Additional observation output only. Do not change candidate
             # thresholds, re-arm behaviour or turn this into a recovery claim.
             stable = (diagnostic["associationUsable"] and robot_motion == "stationary"
-                      and upright and not transition and not kind
+                      and upright and above_clear_floor and not transition and not kind
                       and len(feature.anchor_names) == 4
                       and feature.body_axis_angle_deg is not None
                       and feature.body_axis_angle_deg <= self.config.upright_torso_deg

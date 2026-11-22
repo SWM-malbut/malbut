@@ -406,3 +406,33 @@ def test_track_reports_its_sure_torso_keypoints_for_the_map_place():
         PoseTrackingResult((tracked(None, "gone", "missing"),), (), ()),
         capture_time=0.0, image_size=(640, 400), robot_motion="stationary")
     assert missing["tracks"][0]["torso"] is None
+
+
+def test_floor_height_hysteresis_prevents_clear_flapping_near_threshold():
+    """2026-11-22: ±2-4 cm depth noise around 0.30 m must not flap suspected <-> clear."""
+    detector = FallCandidateDetector()
+    # Establish found_down near the 0.30 m threshold (0.29 m).
+    emitted = []
+    for n in range(5):
+        out = step(detector, {"a": body()}, n * 0.2, depth={"a": depth(0.29)})
+        emitted.extend(out["candidates"])
+    assert len(emitted) == 1 and emitted[0]["candidateKind"] == "found_down"
+
+    # Depth jitters slightly above 0.30 m (0.34 m <= 0.38 m) for > rearm_upright_sec:
+    # must NOT re-arm candidate or report stable_upright clear.
+    for n in range(5, 22):
+        out = step(detector, {"a": body()}, n * 0.2, depth={"a": depth(0.34)})
+        assert out["tracks"][0]["subjectCheck"]["state"] == "suspected"
+        assert out["tracks"][0]["activeCandidateId"] == emitted[0]["candidateId"]
+
+    # Dipping back to 0.29 m does NOT emit a duplicate candidate.
+    for n in range(22, 28):
+        out = step(detector, {"a": body()}, n * 0.2, depth={"a": depth(0.29)})
+        assert out["candidates"] == []
+
+    # Actually rising above 0.30 + 0.08 m clears cleanly after rearm_upright_sec.
+    last = None
+    for n in range(28, 42):
+        last = step(detector, {"a": body()}, n * 0.2, depth={"a": depth(0.55)})
+    assert last["tracks"][0]["subjectCheck"]["state"] == "clear"
+    assert last["tracks"][0]["activeCandidateId"] is None

@@ -254,8 +254,11 @@ class PersonTracker:
         self.expire(t)
         taken = {}
         stood_up = []
+        newly_placed = set()
         for obs, person in self._match(frame.people, t, frame.view):
             taken[id(obs)] = person
+            if person.point is None and obs.point is not None and person.first_seen < t:
+                newly_placed.add(person.person_id)
             self._note_taken(person, obs, t, frame.view)
             if self._apply(person, obs, t, frame.view, frame.stationary):
                 stood_up.append(person.person_id)
@@ -268,7 +271,10 @@ class PersonTracker:
             person.last_seen = max(person.last_seen, t)
         seen = [(obs, taken[id(obs)]) for obs in frame.people if id(obs) in taken]
         self._settle(seen, t)
-        merged = self._recover(seen, t)
+        merged = self._recover(seen, t, newly_placed, stood_up)
+        if merged:
+            parts = {track: self.people.get(merged.get(p.person_id, p.person_id), p)
+                     for track, p in parts.items()}
         self._merge(seen, t)
         self._unlink(t)
         self._release(seen, t, frame.view)
@@ -576,38 +582,89 @@ class PersonTracker:
             else:
                 person.unplaced = False
 
-    def _recover(self, seen, t):
-        """Depth back for a number made without it while uncertain (design decision 2):
-        the one unseen member of its group last measured within 1 m is that person, as
-        reappearing (decision 3), checked by ReID the same way. Two such members closer
-        than AMBIGUOUS_M to each other: still uncertain. Returns {retired: person}."""
+    def _merge_recovered(self, old, person, obs, t, stood_up, *, ask_reid=True):
+        """Fold a formerly unplaced ``person`` into unseen ``old`` once depth arrives."""
+        old_track = old.track
+        if ask_reid and self.reid and old.track and obs.track:
+            self._ask_appearance(old, obs, t)
+        if old.posture == 'suspected' and person.posture == 'clear':
+            stood_up.append(old.person_id)
+        for name in ('track', 'point', 'point_at', 'box', 'view'):
+            setattr(old, name, getattr(person, name))
+        if person.posture != 'unknown':
+            old.posture = person.posture
+        if person.down_point is not None:
+            old.down_point = person.down_point
+        old.last_seen = max(old.last_seen, person.last_seen)
+        old.hits = max(old.hits, person.hits)
+        old.places.extend(person.places)
+        old.also.update(person.also)
+        if obs.track != old_track:
+            self._took[old.person_id] = (obs.box, person.view)
+
+    def _recover(self, seen, t, newly_placed=(), stood_up=None):
+        """Depth back for a number made without it (design decision 2):
+        - while uncertain (in a group or still waiting to settle): the one unseen
+          candidate last measured within 1 m is that person, checked by ReID;
+        - when an edge-entry track created without depth gets its first map place
+          within 1 m of an unseen settled person gone > SHORT_GONE_S: re-associate
+          as reappearing with depth does.
+        Returns {retired: person}."""
         merged = {}
+        if stood_up is None:
+            stood_up = []
         here = {p.person_id for _, p in seen}
         for i, (obs, person) in enumerate(seen):
-            if not person.unplaced or obs.point is None:
+            if obs.point is None:
                 continue
-            person.unplaced = False
-            group = next((g for g in self.groups if person.person_id in g.members), None)
-            if group is None:
+            if person.unplaced:
+                person.unplaced = False
+                group = next((g for g in self.groups if person.person_id in g.members), None)
+                if group is not None:
+                    pool = group.members
+                elif person.waiting:
+                    pool = person.waiting
+                else:
+                    continue
+                near = sorted(((math.dist(obs.point, self.people[m].point), self.people[m])
+                               for m in pool
+                               if m not in here and m in self.people and self.people[m].point
+                               and math.dist(obs.point, self.people[m].point) <= REAPPEAR_M),
+                              key=lambda x: x[0])
+                if not near or (len(near) > 1 and near[1][0] - near[0][0] < AMBIGUOUS_M):
+                    continue
+                old = near[0][1]
+                person.waiting = ()
+                self._merge_recovered(old, person, obs, t, stood_up, ask_reid=True)
+                if group is not None:
+                    group.members -= {person.person_id, old.person_id}
+                    group.anchors.pop(old.person_id, None)
+                    if len(group.members) < 2:
+                        self.groups.remove(group)
+                self._drop(person.person_id)
+                merged[person.person_id] = old.person_id
+                here.add(old.person_id)
+                seen[i] = (obs, old)
                 continue
-            near = sorted(((math.dist(obs.point, self.people[m].point), self.people[m])
-                           for m in group.members
-                           if m not in here and m in self.people and self.people[m].point
-                           and math.dist(obs.point, self.people[m].point) <= REAPPEAR_M),
-                          key=lambda x: x[0])
-            if not near or (len(near) > 1 and near[1][0] - near[0][0] < AMBIGUOUS_M):
+            if (person.person_id not in newly_placed or person.waiting
+                    or any(person.person_id in g.members for g in self.groups)):
+                continue
+            near = sorted(
+                ((math.dist(obs.point, p.point), p) for p in self.people.values()
+                 if p.person_id != person.person_id and p.person_id not in here
+                 and self._settled(p) and p.point is not None
+                 and p.last_seen < person.first_seen
+                 and t - p.last_seen > SHORT_GONE_S
+                 and math.dist(obs.point, p.point) <= REAPPEAR_M),
+                key=lambda x: x[0],
+            )
+            if not near:
                 continue
             old = near[0][1]
-            if self.reid and old.track and obs.track:
-                self._ask_appearance(old, obs, t)
-            for name in ('track', 'point', 'point_at', 'box', 'view', 'posture'):
-                setattr(old, name, getattr(person, name))
-            old.last_seen = max(old.last_seen, person.last_seen)
-            old.places.extend(person.places)
-            group.members -= {person.person_id, old.person_id}
-            group.anchors.pop(old.person_id, None)
-            if len(group.members) < 2:
-                self.groups.remove(group)
+            rivals = [p for d, p in near[1:] if d - near[0][0] < AMBIGUOUS_M]
+            self._merge_recovered(old, person, obs, t, stood_up, ask_reid=not rivals)
+            if rivals:
+                self._group([old, *rivals], t)
             self._drop(person.person_id)
             merged[person.person_id] = old.person_id
             here.add(old.person_id)

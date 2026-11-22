@@ -588,3 +588,38 @@ def test_verdict_compare_requests_use_check_mode(robot):
     requests = apart_a_minute(robot)
     assert len(requests) == 2
     assert all(req.get('mode') == 'check' for req in requests)
+
+
+def test_edge_entry_without_depth_after_short_gone_reassociates_on_first_depth(robot):
+    """2026-11-22: after turning away > SHORT_GONE_S, the person enters at the edge with
+    point=None and gets depth 0.6 s later; must merge into the unseen person, not duplicate."""
+    robot.frames(1.0, seen('old', (1.90, -0.62), state='suspected'))
+    robot.wait(SHORT_GONE_S + 10.0)
+    robot.view = 1
+    edge = robot.frame(seen('new', None, box=(0.0, 0.0, 0.07, 0.59), state='unknown'))
+    assert edge.assignments == {'new': 'test:P2'}
+    recovered = robot.frame(seen('new', (1.94, -0.52), box=(0.20, 0.12, 0.35, 0.56),
+                                 state='unknown'))
+    assert recovered.assignments == {'new': 'test:P1'}
+    assert recovered.merged == {'test:P2': 'test:P1'}
+    assert 'test:P2' not in robot.tracker.people
+    # Edge 'unknown' frame must not erase the unseen person's suspected posture.
+    assert robot.tracker.people['test:P1'].posture == 'suspected'
+    req, = robot.tracker.take_requests()
+    assert req['a']['track'] == 'old' and req['b']['track'] == 'new'
+
+
+def test_unplaced_waiting_track_recovers_if_depth_arrives_before_settle_hits(robot):
+    """Depth returning on frame 2 (< SETTLE_HITS) must merge instead of clearing unplaced."""
+    robot.tracker.reid = False
+    robot.frames(1.0, seen('a', (3.0, 1.0), state='suspected'))
+    robot.wait(1.0)
+    first = robot.frame(seen('b', None, NUDGED, state='unknown'))
+    assert first.assignments == {'b': 'test:P2'}
+    assert robot.tracker.people['test:P2'].unplaced is True
+    second = robot.frame(seen('b', (3.1, 1.0), NUDGED, state='unknown'))
+    assert second.assignments == {'b': 'test:P1'}
+    assert second.merged == {'test:P2': 'test:P1'}
+    assert 'test:P2' not in robot.tracker.people
+    assert robot.tracker.people['test:P1'].posture == 'suspected'
+    assert not robot.tracker.uncertain('test:P1')
