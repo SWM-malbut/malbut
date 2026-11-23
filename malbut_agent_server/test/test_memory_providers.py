@@ -6,7 +6,6 @@ import threading
 
 import pytest
 
-from malbut_agent_server.application.front_routing import FrontRoutingService
 from malbut_agent_server.config import Settings
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.memory_contract import validate_memory_proposal
@@ -20,7 +19,6 @@ from malbut_agent_server.providers.openai_responses import (
     TEXT_DECISION_SCHEMA,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
-from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.schemas import (
     AgentDecision, AgentRequest, ProviderResult, RobotState, SpeechAgentRequest,
     ValidationError,
@@ -350,13 +348,6 @@ class _LegacyMockOverride(MockProvider):
         )
 
 
-class _NoRoute:
-    """Force one delegation through the configured fallback provider."""
-
-    def try_route(self, _request):
-        """Return no explicit front route."""
-        return None
-
 
 class _UnavailableMemoryProvider(MockProvider):
     """Represent one unavailable memory-aware provider."""
@@ -386,38 +377,24 @@ def test_result_validator_rejects_robot_and_memory_output_together():
         result.validate()
 
 
-@pytest.mark.parametrize('wrapper', ['reliable', 'routed'])
 @pytest.mark.parametrize('legacy', [False, True])
-def test_wrappers_preserve_memory_and_legacy_signature(wrapper, legacy):
+def test_wrappers_preserve_memory_and_legacy_signature(legacy):
     """Memory context survives wrappers without breaking legacy adapters."""
     child = _LegacyProvider() if legacy else MockProvider()
-    if wrapper == 'reliable':
-        provider = ReliableProvider([child], max_retries=0)
-    else:
-        provider = RoutedAgentProvider(
-            FrontRoutingService(_NoRoute()), general_provider=child,
-            robot_planner_provider=child, fallback_provider=child,
-        )
+    provider = ReliableProvider([child], max_retries=0)
     result = provider.complete(_request(), [], [], [],
                                memory_context=_context())
     assert result.memory_supported is (not legacy)
     assert (result.memory_proposal is None) is legacy
 
 
-@pytest.mark.parametrize('wrapper', ['reliable', 'routed'])
-def test_inherited_flag_does_not_override_actual_legacy_signature(wrapper):
+def test_inherited_flag_does_not_override_actual_legacy_signature():
     """Inspect before the call rather than catching TypeError and retrying."""
     child = _LegacyMockOverride()
     assert child.supports_memory is True
     assert accepts_memory_context(child) is False
     assert child.calls == 0
-    if wrapper == 'reliable':
-        provider = ReliableProvider([child], max_retries=0)
-    else:
-        provider = RoutedAgentProvider(
-            FrontRoutingService(_NoRoute()), general_provider=child,
-            robot_planner_provider=child, fallback_provider=child,
-        )
+    provider = ReliableProvider([child], max_retries=0)
     result = provider.complete(_request(), [], [], [],
                                memory_context=_context())
     assert child.calls == 1

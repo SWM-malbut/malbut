@@ -8,8 +8,6 @@ import time
 import pytest
 
 from malbut_agent_server.config import Settings
-from malbut_agent_server.application.front_routing import FrontRoutingService
-from malbut_agent_server.domain.front_route import FrontRoute, FrontRouteMatch
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.gateway import (
     PROPOSAL_ONLY, READ_ONLY, SIMULATION_ONLY, ToolCapability, ToolGateway,
@@ -18,7 +16,6 @@ from malbut_agent_server.gateway import (
 from malbut_agent_server.providers.mock import MockProvider
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.reliable import ReliableProvider
-from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.schemas import AgentDecision, AgentRequest, ProviderResult, ProviderUsage
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.tools import TOOL_SPECS, validate_tool_arguments
@@ -393,23 +390,14 @@ def test_factory_only_accepts_explicit_manager_executor():
         value.close()
 
 
-@pytest.mark.parametrize('reliable', [False, True])
-def test_general_routing_keeps_only_weather_and_completes_the_tool_loop(runtime, reliable):
-    class GeneralRouter:
-        def try_route(self, request):
-            return FrontRouteMatch(FrontRoute.GENERAL_CONVERSATION)
-
+def test_reliable_provider_completes_the_weather_tool_loop(runtime):
     child = WeatherProvider()
-    provider = RoutedAgentProvider(
-        FrontRoutingService(GeneralRouter()), general_provider=child,
-        robot_planner_provider=child, fallback_provider=child,
-    )
-    runtime.provider = ReliableProvider([provider]) if reliable else provider
+    runtime.provider = ReliableProvider([child])
     calls = []
     runtime.weather_executor = lambda value: (calls.append(value) or {'status': 'fresh'})
     result = runtime.handle(request(tools=('navigate', 'get_weather')))
     assert calls == ['weather-1']
-    assert [call['tools'] for call in child.calls] == [['get_weather'], []]
+    assert [call['tools'] for call in child.calls] == [['navigate', 'get_weather'], []]
     assert result.raw_decision.tool_name == 'get_weather'
     assert result.decision.message == 'fresh'
     assert result.provider_result.usage == ProviderUsage(30, 5, 35)

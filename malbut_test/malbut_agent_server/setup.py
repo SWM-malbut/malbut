@@ -115,10 +115,6 @@ setup(
                 'malbut_agent_server.situation_eval_runner:main'
             ),
             (
-                'malbut-front-route-inspect = '
-                'malbut_agent_server.front_route_inspector:main'
-            ),
-            (
                 'malbut-vlm-eval = '
                 'malbut_agent_server.vlm_eval_runner:main'
             ),

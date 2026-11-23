@@ -201,11 +201,6 @@ def is_provider_outage_result(provider_result: ProviderResult) -> bool:
         and provider_result.decision.reason == 'provider_unavailable'
     ):
         return True
-    if (
-        provider_result.provider == 'front-router'
-        and provider_result.decision.reason == 'front_route:router_unavailable'
-    ):
-        return True
     return False
 
 
@@ -376,16 +371,6 @@ def provider_circuit_summary(provider: Any) -> Dict[str, Any]:
         inner = getattr(candidate, 'provider', None)
         if inner is not None and inner is not candidate:
             _collect(inner, role)
-            return
-
-        # Inspect RoutedAgentProvider role providers.
-        if all(
-            hasattr(candidate, attr)
-            for attr in ('general_provider', 'robot_planner_provider', 'fallback_provider')
-        ):
-            _collect(candidate.general_provider, 'general')
-            _collect(candidate.robot_planner_provider, 'robot_planner')
-            _collect(candidate.fallback_provider, 'fallback')
             return
 
         # Inspect ReliableProvider circuits safely under its lock.

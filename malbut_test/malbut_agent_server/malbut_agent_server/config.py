@@ -162,7 +162,6 @@ class Settings:
     )
     rai_model: str = ''
     openai_general_model: str = ''
-    openai_robot_planner_model: str = ''
     conversation_token_budget: int = 16384
     openai_summary_model: str = DEFAULT_OPENAI_SUMMARY_MODEL
     openai_summary_reasoning_effort: str = 'low'
@@ -225,8 +224,6 @@ class Settings:
             f'{self.rai_sidecar_timeout_seconds!r}, '
             f'rai_model={self.rai_model!r}, '
             f'openai_general_model={self.openai_general_model!r}, '
-            'openai_robot_planner_model='
-            f'{self.openai_robot_planner_model!r}, '
             f'openai_summary_model={self.openai_summary_model!r}, '
             'openai_summary_reasoning_effort='
             f'{self.openai_summary_reasoning_effort!r})'
@@ -496,10 +493,6 @@ class Settings:
                 'OPENAI_GENERAL_MODEL',
                 '',
             ).strip(),
-            openai_robot_planner_model=source.get(
-                'OPENAI_ROBOT_PLANNER_MODEL',
-                '',
-            ).strip(),
             openai_summary_model=source.get(
                 'OPENAI_SUMMARY_MODEL',
                 DEFAULT_OPENAI_SUMMARY_MODEL,
@@ -603,12 +596,6 @@ class Settings:
             self.openai_general_model
         ):
             raise ValueError('OPENAI_GENERAL_MODEL is invalid')
-        if self.openai_robot_planner_model and not _valid_model_id(
-            self.openai_robot_planner_model
-        ):
-            raise ValueError(
-                'OPENAI_ROBOT_PLANNER_MODEL is invalid'
-            )
         if self.openai_fallback_model:
             if not _valid_model_id(self.openai_fallback_model):
                 raise ValueError('OPENAI_FALLBACK_MODEL is invalid')

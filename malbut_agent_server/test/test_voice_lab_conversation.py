@@ -12,7 +12,6 @@ from malbut_agent_server import voice_lab
 from malbut_agent_server.config import Settings
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.providers.reliable import ReliableProvider
-from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 
@@ -37,7 +36,7 @@ def test_env_precedence_cli_override_and_isolated_database(monkeypatch, tmp_path
     env_file.write_text(
         'MALBUT_AGENT_PROVIDER=openai\nOPENAI_API_KEY=test-only-not-a-real-key\n'
         'OPENAI_MODEL=file-model\nOPENAI_SUMMARY_MODEL=file-summary\n'
-        'OPENAI_GENERAL_MODEL=file-general\nOPENAI_ROBOT_PLANNER_MODEL=file-planner\n'
+        'OPENAI_GENERAL_MODEL=file-general\n'
         'MALBUT_AGENT_DB=/must-not-open-production.sqlite3\n'
         'MALBUT_AGENT_USER_ID=production-user\nMALBUT_AGENT_TOOL_MODE=simulation\n',
     )
@@ -53,7 +52,6 @@ def test_env_precedence_cli_override_and_isolated_database(monkeypatch, tmp_path
     assert overridden.openai_model == 'cli-model'
     assert overridden.openai_summary_model == 'file-summary'
     assert overridden.openai_general_model == 'file-general'
-    assert overridden.openai_robot_planner_model == 'file-planner'
     assert source == {'OPENAI_MODEL': 'environment-model', 'UNRELATED': 'unchanged'}
 
 
@@ -208,7 +206,6 @@ def test_live_runtime_startup_is_lazy_and_role_models_do_not_replace_foreground(
     settings = Settings(
         provider='openai', openai_api_key='test-only-not-a-real-key',
         openai_model='test-primary', openai_general_model='test-addressee',
-        openai_robot_planner_model='test-unused-planner',
         openai_summary_model='test-summary',
         database_path=str(tmp_path / 'conversation.sqlite3'),
     )
@@ -219,7 +216,6 @@ def test_live_runtime_startup_is_lazy_and_role_models_do_not_replace_foreground(
         assert isinstance(runtime.provider, StoryMemoryProvider)
         provider = runtime.provider.provider
         assert isinstance(provider, ReliableProvider)
-        assert not isinstance(provider, RoutedAgentProvider)
         assert provider._providers[0].model == 'test-primary'
         assert runtime.speech_addressee.provider.model == 'test-addressee'
         assert runtime.context_compactor.summarizer.model == 'test-summary'
