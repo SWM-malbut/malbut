@@ -2,9 +2,6 @@
 
 from functools import lru_cache
 
-from malbut_agent_server.application.front_routing import (
-    FrontRoutingService,
-)
 from malbut_agent_server.automatic_memory_extractor import (
     AutomaticMemoryExtractor,
 )
@@ -26,8 +23,6 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
-from malbut_agent_server.providers.routed import RoutedAgentProvider
-from malbut_agent_server.ports.front_router import FrontRouterPort
 from malbut_agent_server.rai_sidecar_client import (
     RaiSidecarClient,
     RaiSidecarProvider,
@@ -191,37 +186,6 @@ def build_provider(
     )
 
 
-def _openai_role_providers(
-    settings: Settings,
-    fallback_provider: AgentProvider,
-) -> tuple[AgentProvider, AgentProvider]:
-    """Return isolated Chat and Planner roles only when configured."""
-    role_models_configured = bool(
-        settings.openai_general_model
-        or settings.openai_robot_planner_model
-    )
-    if settings.provider != 'openai' or not role_models_configured:
-        return fallback_provider, fallback_provider
-
-    def build_role_provider(model: str) -> ReliableProvider:
-        if model:
-            return _reliable_openai_provider(
-                settings,
-                model,
-                include_reasoning=False,
-            )
-        return _reliable_openai_provider(
-            settings,
-            settings.openai_model,
-            fallback_model=settings.openai_fallback_model,
-        )
-
-    return (
-        build_role_provider(settings.openai_general_model),
-        build_role_provider(settings.openai_robot_planner_model),
-    )
-
-
 def build_capability_registry(
     settings: Settings,
 ) -> CapabilityRegistry:
@@ -237,7 +201,6 @@ def build_orchestrator(
     settings: Settings,
     *,
     robot_state_source: RobotStateSource | None = None,
-    front_router: FrontRouterPort | None = None,
     http_server: bool = True,
     weather_executor=None,
     weather_location_executor=None,
@@ -279,23 +242,12 @@ def build_orchestrator(
             )
             memory_reviewer = MemorySourceReviewer(review_provider)
         if settings.provider == 'openai':
-            # C mode has its own reliability state and no front/robot router.
-            # Other adapters keep their existing memory contract until they
-            # explicitly implement the answer-only/extraction modes.
+            # C mode has its own reliability state. Other adapters keep their
+            # existing memory contract until they explicitly implement
+            # answer-only/extraction modes.
             memory_extractor = AutomaticMemoryExtractor(build_provider(
                 settings, http_server=http_server, semantic_context=False,
             ))
-        if front_router is not None:
-            routing_service = FrontRoutingService(front_router)
-            general_provider, planner_provider = (
-                _openai_role_providers(settings, provider)
-            )
-            provider = RoutedAgentProvider(
-                routing_service,
-                general_provider=general_provider,
-                robot_planner_provider=planner_provider,
-                fallback_provider=provider,
-            )
         if story_extractor is _DEFAULT_STORY_EXTRACTOR:
             story_extractor = (
                 OpenAIStoryExtractor(

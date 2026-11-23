@@ -5,8 +5,6 @@ import json
 
 import pytest
 
-from malbut_agent_server.application.front_routing import FrontRoutingService
-from malbut_agent_server.domain.front_route import FrontRoute, FrontRouteMatch
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.prompting import (
     MAX_WEATHER_CONTEXT_CHARS, SYSTEM_INSTRUCTIONS, prepare_model_input,
@@ -15,7 +13,6 @@ from malbut_agent_server.providers.base import AgentProvider, accepts_weather_co
 from malbut_agent_server.providers.mock import MockProvider
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.providers.reliable import ReliableProvider
-from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.rai_sidecar_client import RaiSidecarClient, RaiSidecarProvider
 from malbut_agent_server.rai_sidecar_protocol import (
     ProposalResponse, SidecarUsage, TextReply, decode_request, encode_response,
@@ -215,22 +212,6 @@ class _LegacyOverride(MockProvider):
         return _result()
 
 
-class _Router:
-    def __init__(self, route=None):
-        self.route = route
-
-    def try_route(self, request):
-        if self.route is None:
-            return None
-        return FrontRouteMatch(route=self.route)
-
-
-def _routed(child, route=None):
-    return RoutedAgentProvider(FrontRoutingService(_Router(route)),
-                               general_provider=child, robot_planner_provider=child,
-                               fallback_provider=child)
-
-
 def test_reliable_retry_and_fallback_receive_the_same_weather():
     """Neither repeated calls nor fallback lose unavailable/freshness metadata."""
     failed, success = _RecordingProvider(fail=True), _RecordingProvider()
@@ -241,26 +222,11 @@ def test_reliable_retry_and_fallback_receive_the_same_weather():
     assert success.calls == [weather]
 
 
-@pytest.mark.parametrize('route', [
-    None, FrontRoute.GENERAL_CONVERSATION, FrontRoute.ROBOT_ACTION_REQUEST,
-])
-def test_every_delegating_route_preserves_weather(route):
-    """Fallback, general dialogue and planner each forward the server context."""
-    child = _RecordingProvider()
-    weather = _weather('unavailable')
-    _routed(child, route).complete(_request(), [], [], [], weather_context=weather)
-    assert child.calls == [weather]
-
-
-@pytest.mark.parametrize('wrapper', ['reliable', 'routed'])
-def test_legacy_complete_override_is_called_once_without_weather_keyword(wrapper):
+def test_legacy_complete_override_is_called_once_without_weather_keyword():
     """Signature inspection avoids breaking inherited legacy methods."""
     child = _LegacyOverride()
     assert accepts_weather_context(child) is False
-    provider = (
-        ReliableProvider([child], max_retries=0)
-        if wrapper == 'reliable' else _routed(child)
-    )
+    provider = ReliableProvider([child], max_retries=0)
     provider.complete(_request(), [], [], [], weather_context=_weather()).validate()
     assert child.calls == 1
 

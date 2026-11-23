@@ -24,7 +24,6 @@ def test_classifier_reuses_agent_configuration_and_bypasses_robot_routing(
         openai_api_key='test-key-not-for-network',
         openai_model='configured-main-model',
         openai_general_model=general_model,
-        openai_robot_planner_model='configured-robot-model',
         request_timeout_seconds=17,
         provider_total_timeout_seconds=20,
     ), http_server=False)
