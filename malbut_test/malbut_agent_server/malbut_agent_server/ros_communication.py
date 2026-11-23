@@ -1,72 +1,193 @@
 """ROS speech dialogue with independent Manager communication."""
 
 import argparse
-from collections import deque
 from dataclasses import replace
-import json
 import math
 import os
 from pathlib import Path
-import select
-import signal
 import sqlite3
 import sys
-import threading
-import time
-from typing import Optional, Sequence
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from typing import Any, Optional, Sequence
 
+from malbut_agent_server.communication import (
+    ADDRESSEE_SERVICE,
+    CommandLines,
+    CommunicationDeps,
+    CommunicationNodeCore,
+    END_DIALOGUE_TOPIC,
+    INPUT_STATUS_TOPIC,
+    MAX_COMMAND_BYTES,
+    MAX_PENDING_ADDRESSEE_REQUESTS,
+    RESPONSE_TOPIC,
+    apply_command,
+    read_commands,
+    run_with_fall_rules as _run_with_fall_rules,
+    spin_fall_rules,
+)
 from malbut_agent_server.config import Settings, load_env_file
-from malbut_agent_server.fall_check_watch import (
-    FALL_CHECK_BUSY, FALL_CHECK_HELP, FALL_CHECK_START, FALL_CHECK_STOPPED, asks_for_help,
-    asks_to_stop,
-)
 from malbut_agent_server.factory import build_orchestrator
-from malbut_agent_server.mission_speech import MissionAnnouncer
-from malbut_agent_server.speech_dialogue import (
-    DialogueWorker, MAX_SPEECH_ID_LENGTH, SpeechInputTooLongError,
-    validate_dialogue_input, validate_interruption_input,
-)
-from malbut_agent_server.speech_receipts import SpeechReceiptStore
-from malbut_agent_server.speech_receiver import (
-    DEFAULT_DB_PATH, TRANSCRIPT_TOPIC, receive_transcript,
-)
-from malbut_agent_server.weather_query import ManagerWeatherQuery
-from malbut_agent_server.speech_mission_policy import configure_speech_missions
-from malbut_agent_server.speech_missions import SpeechMissions
 from malbut_agent_server.ros_situation import (
-    SituationActionServer, build_situation_factory,
+    SituationActionServer,
+    build_situation_factory,
 )
-from malbut_agent_server.turn_metrics import TurnWaterfallRecorder
+from malbut_agent_server.speech_dialogue import (
+    DialogueWorker,
+    SpeechInputTooLongError,
+    validate_dialogue_input,
+)
+from malbut_agent_server.speech_receiver import (
+    DEFAULT_DB_PATH,
+    TRANSCRIPT_TOPIC,
+    receive_transcript,
+)
 
+__all__ = [
+    'ADDRESSEE_SERVICE',
+    'CommandLines',
+    'DEFAULT_CONVERSATION_DB',
+    'DEFAULT_DB_PATH',
+    'DEFAULT_SPEECH_USER',
+    'END_DIALOGUE_TOPIC',
+    'INPUT_STATUS_TOPIC',
+    'MAX_COMMAND_BYTES',
+    'MAX_PENDING_ADDRESSEE_REQUESTS',
+    'RESPONSE_TOPIC',
+    'TRANSCRIPT_TOPIC',
+    'apply_command',
+    'create_communication_node',
+    'dialogue_settings_from_args',
+    'main',
+    'read_commands',
+    'run_with_fall_rules',
+    'spin_fall_rules',
+]
 
-RESPONSE_TOPIC = '/malbut/speech/response'
-END_DIALOGUE_TOPIC = '/malbut/speech/end_dialogue'
-INPUT_STATUS_TOPIC = '/malbut/speech/input_status'
-ADDRESSEE_SERVICE = '/malbut/speech/classify_addressee'
-MAX_PENDING_ADDRESSEE_REQUESTS = 128
-MAX_COMMAND_BYTES = 65536
 DEFAULT_CONVERSATION_DB = '~/.local/state/malbut/speech-dialogue.sqlite3'
 DEFAULT_SPEECH_USER = 'speech-development-user'
 
 
+class _CommunicationSpeechMixin(CommunicationNodeCore):
+    """Speech transcript admission and fixed user-facing dialogue notices."""
+
+    def say_dialogue_end(self) -> None:
+        """Speak the closing notice without starting a new turn."""
+        # Playback can arrive before the end signal on the other topic. Leave
+        # request_id empty so finishing this notice never opens a follow-up.
+        if not self._in_fall_window:
+            self.say('대화 종료할게요.')
+
+    def _receive_speech(self, message: Any) -> None:
+        if self._closing:
+            return
+        if self._patrol_chat is not None and self._patrol_chat.receive(message):
+            if message.utterance_id == self._input_utterance_id:
+                self._input_utterance_id = None
+            if message.utterance_id not in self._seen_input_ids:
+                self._seen_input_ids.append(message.utterance_id)
+            return
+        if self.situation is not None and self.situation.active:
+            self.situation.transcript(message)
+            return
+        if getattr(message, 'session_id', ''):
+            # A late answer from an ended confirmation is not ordinary chat.
+            return
+        node: Any = self
+        utterance_id, text = message.utterance_id, message.text
+        try:
+            validate_dialogue_input(utterance_id, text)
+            # Transcript and status Topics may be delivered in either order.
+            if utterance_id == self._input_utterance_id:
+                self._input_utterance_id = None
+            if utterance_id not in self._seen_input_ids:
+                self._seen_input_ids.append(utterance_id)
+            if self._fall_check is not None and self._fall_check.in_window():
+                self._answer_during_fall_check(utterance_id, text)
+                return
+            previous = self._receipts.lookup(utterance_id, text)
+        except SpeechInputTooLongError as error:
+            node.get_logger().warning(f'speech_dialogue invalid input: {error}')
+            self.say(
+                '한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.',
+                request_id=utterance_id,
+            )
+            return
+        except ValueError:
+            node.get_logger().warning('speech_dialogue invalid input')
+            return
+        except sqlite3.Error:
+            node.get_logger().error('speech_dialogue receipt unavailable')
+            self.say(
+                '대화를 접수하지 못했어요. 다시 말씀해 주세요.',
+                request_id=utterance_id,
+            )
+            return
+        if previous is not None:
+            self._deps.receive_transcript_fn(
+                self._receipts, utterance_id, text, node.get_logger(),
+            )
+            return
+        if self.dialogue.startup_error:
+            node.get_logger().error('speech_dialogue startup failed')
+            self.say(
+                '대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.',
+                request_id=utterance_id,
+            )
+            return
+        if not self.dialogue.has_capacity():
+            node.get_logger().warning('speech_dialogue busy; not accepted')
+            self.say(
+                '앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.',
+                request_id=utterance_id,
+            )
+            return
+        outcome = self._deps.receive_transcript_fn(
+            self._receipts, utterance_id, text, node.get_logger(),
+        )
+        if outcome == 'storage_error':
+            self.say(
+                '대화를 접수하지 못했어요. 다시 말씀해 주세요.',
+                request_id=utterance_id,
+            )
+            return
+        if outcome == 'received' and not self.dialogue.submit(
+            utterance_id, text,
+        ):
+            node.get_logger().error('speech_dialogue submission failed')
+            self.say(
+                '대화를 처리하지 못했어요. 다시 말씀해 주세요.',
+                request_id=utterance_id,
+            )
+        elif outcome == 'received':
+            self._awaiting_reply = utterance_id
+
+
 def create_communication_node(
-    *, speech_db_path=DEFAULT_DB_PATH, on_event=None,
-    goal_response_timeout_s=5.0,
-    dialogue_settings=None, dialogue_factory=None,
-    weather_query_timeout_s=20.0,
-    situation_factory=None,
-    enable_manager_commands=False,
-    prerecorded_audio=False,
-    confirmation_answers=None,
-):
+    *,
+    speech_db_path: str = DEFAULT_DB_PATH,
+    on_event: Any = None,
+    goal_response_timeout_s: float = 5.0,
+    dialogue_settings: Optional[Settings] = None,
+    dialogue_factory: Any = None,
+    weather_query_timeout_s: float = 20.0,
+    situation_factory: Any = None,
+    enable_manager_commands: bool = False,
+    prerecorded_audio: bool = False,
+    confirmation_answers: Any = None,
+) -> Any:
     """Compose communication on one owning thread with a single executor."""
-    from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
-    from malbut_interfaces.srv import ClassifySpeechAddressee
+    from malbut_interfaces.msg import (  # type: ignore[attr-defined]
+        SpeechInputStatus,
+        SpeechRequest,
+        SpeechTranscript,
+    )
+    from malbut_interfaces.srv import ClassifySpeechAddressee  # type: ignore[attr-defined]
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
     from rclpy.qos import (
-        DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
+        DurabilityPolicy,
+        HistoryPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
     )
     from rclpy.task import Future
     from std_msgs.msg import String
@@ -76,723 +197,63 @@ def create_communication_node(
     settings = dialogue_settings or Settings(user_id=DEFAULT_SPEECH_USER)
     settings.validate_for_dialogue(require_api_key=False)
 
-    class CommunicationNode(Node):
+    deps = CommunicationDeps(
+        speech_input_status_cls=SpeechInputStatus,
+        speech_request_cls=SpeechRequest,
+        speech_transcript_cls=SpeechTranscript,
+        classify_addressee_srv=ClassifySpeechAddressee,
+        reentrant_callback_group_cls=ReentrantCallbackGroup,
+        durability_policy=DurabilityPolicy,
+        history_policy=HistoryPolicy,
+        qos_profile_cls=QoSProfile,
+        reliability_policy=ReliabilityPolicy,
+        future_cls=Future,
+        string_msg_cls=String,
+        manager_client_cls=ManagerClient,
+        dialogue_worker_cls=DialogueWorker,
+        situation_action_server_cls=SituationActionServer,
+        build_orchestrator_fn=build_orchestrator,
+        build_situation_factory_fn=build_situation_factory,
+        receive_transcript_fn=receive_transcript,
+        transcript_topic=TRANSCRIPT_TOPIC,
+        max_pending_addressee_provider=lambda: MAX_PENDING_ADDRESSEE_REQUESTS,
+    )
+
+    class CommunicationNode(_CommunicationSpeechMixin, Node):
         """Expose communication functions without invoking inference."""
 
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__('malbut_agent_communication')
-            self.missions = None
-            self.speech_missions = None
-            self._foreground_cancel = None
-            self.dialogue = None
-            self._receipts = None
-            self._closing = False
-            self._speech_ready = False
-            self._preparation = None
-            self._input_utterance_id = None
-            self._seen_input_ids = deque(maxlen=128)
-            self._addressee_waiters = {}
-            self._addressee_callbacks = 0
-            self.weather_query = None
-            self.situation = None
-            self._fall_check = None
-            self._patrol_chat = None
-            # Between the suspicion and the end of the question (2026-10-13).
-            self._in_fall_window = False
-            # The last utterance STT waits on until its reply has played.
-            self._awaiting_reply = None
-            try:
-                from rcl_interfaces.msg import ParameterDescriptor
-
-                # Startup-only override, matching Piper's per-robot YAML setting.
-                prefetch_enabled = self.declare_parameter(
-                    'speech_prefetch_enabled', settings.speech_prefetch_enabled,
-                    ParameterDescriptor(read_only=True),
-                ).value
-                if type(prefetch_enabled) is not bool:
-                    raise ValueError('speech_prefetch_enabled must be a boolean')
-                qos = QoSProfile(
-                    history=HistoryPolicy.KEEP_LAST, depth=10,
-                    reliability=ReliabilityPolicy.RELIABLE,
-                    durability=DurabilityPolicy.VOLATILE,
-                )
-                self._speech_qos = qos
-                self._speech = self.create_publisher(
-                    SpeechRequest, RESPONSE_TOPIC, qos,
-                )
-                self._dialogue_end = self.create_publisher(
-                    String, END_DIALOGUE_TOPIC,
-                    QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                               durability=DurabilityPolicy.TRANSIENT_LOCAL))
-                if prefetch_enabled:
-                    from malbut_interfaces.msg import SpeechPreparation
-
-                    self._preparation_type = SpeechPreparation
-                    self._preparation = self.create_publisher(
-                        SpeechPreparation, '/malbut/tts/prepare', qos,
-                    )
-                if settings.provider == 'openai':
-                    # How the OpenAI key is doing, for key_sync to tell the web.
-                    from malbut_agent_server.factory import openai_key_for
-                    from malbut_agent_server.ros_key_health import KeyHealthPublisher
-                    self._key_health = KeyHealthPublisher(self, openai_key_for(settings))
-                self._announcer = MissionAnnouncer(
-                    lambda text: self.say(
-                        text, request_type=SpeechRequest.NOTIFICATION,
-                    ),
-                    speak_audio=(lambda text, audio_id: self.say(
-                        text, request_type=SpeechRequest.NOTIFICATION, audio_id=audio_id,
-                    )) if prerecorded_audio else None,
-                )
-                self._receipts = SpeechReceiptStore(speech_db_path)
-                self.missions = ManagerClient(
-                    self, on_event=self._mission_event,
-                    goal_response_timeout_s=goal_response_timeout_s,
-                )
-                if enable_manager_commands:
-                    from malbut_agent_server.foreground_cancel import ForegroundCancellation
-
-                    self._foreground_cancel = ForegroundCancellation(self)
-                    # Without Manager no fall check drives or asks: no window either.
-                    self._fall_check = self._watch_fall_check()
-                    self.speech_missions = SpeechMissions(
-                        self.missions,
-                        cancel_foreground=self._foreground_cancel,
-                        move_refusal=self._fall_check.move_refusal,
-                    )
-                    state_qos = QoSProfile(depth=1)
-                    state_qos.reliability = ReliabilityPolicy.RELIABLE
-                    state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-                    self.create_subscription(
-                        String, '/malbut/localization/state',
-                        lambda message: self.speech_missions.observe_localization(
-                            message.data),
-                        state_qos,
-                    )
-                self._dialogue_wake = self.create_guard_condition(self._drain_dialogue)
-                self.weather_query = ManagerWeatherQuery(
-                    self.missions, timeout_s=weather_query_timeout_s,
-                    on_pending=self._dialogue_wake.trigger,
-                )
-
-                def runtime_factory():
-                    runtime = (
-                        dialogue_factory() if dialogue_factory is not None
-                        else build_orchestrator(settings, http_server=False)
-                    )
-                    runtime.weather_executor = self.weather_query.execute
-                    runtime.weather_location_executor = self.weather_query.set_location
-                    if self.speech_missions is not None:
-                        configure_speech_missions(runtime)
-                    return runtime
-
-                from malbut_agent_server.speech_scene import RosSpeechScene
-
-                try:
-                    self._scene = RosSpeechScene(self, self.speech_missions)
-                except ImportError:
-                    self._scene = None
-                    self.get_logger().warning('speech_scene_unavailable; continuing text dialogue')
-                self.turn_metrics = TurnWaterfallRecorder(
-                    capacity=settings.turn_metrics_capacity,
-                )
-                self.dialogue = DialogueWorker(
-                    runtime_factory, settings.user_id,
-                    on_output=self._dialogue_wake.trigger,
-                    publish_before_save=settings.speech_publish_before_save,
-                    turn_metrics=self.turn_metrics,
-                    **({'prefetch_enabled': True} if prefetch_enabled else {}),
-                    **({'scene_source': self._scene} if self._scene is not None else {}),
-                    **({'missions': self.speech_missions}
-                       if self.speech_missions is not None else {}),
-                )
-                self.situation = SituationActionServer(
-                    self,
-                    situation_factory or build_situation_factory(settings),
-                    on_begin=self._begin_situation,
-                    on_end=self._end_situation,
-                    prerecorded_audio=prerecorded_audio,
-                    confirmation_answers=confirmation_answers,
-                )
-                # Replies, startup and tool requests wake the executor directly.
-                # Keep a slow fallback for a coalesced/missed notification.
-                self.create_timer(1.0, self._drain_dialogue)
-                self.create_timer(0.25, self._follow_fall_window)
-                self._start_speech_inputs()
-                # Keep spontaneous conversation opt-in while it is being stabilized.
-                if self.declare_parameter('patrol_conversation_enabled', False).value:
-                    try:
-                        from malbut_agent_server.patrol_conversation_ros import RosPatrolConversation
-                        self._patrol_chat = RosPatrolConversation(self)
-                    except ImportError:
-                        self.get_logger().warning('patrol_conversation_detector_unavailable')
-            except Exception:
-                self.destroy_node()
-                raise
-
-        def _watch_fall_check(self):
-            """Follow the fall check like the app's move buttons (2026-10-12)."""
-            from malbut_agent_server.fall_check_watch import (
-                FALL_CHECK_STATUS_TOPIC, FallCheckWatch,
+            self._init_communication(
+                deps=deps,
+                settings=settings,
+                speech_db_path=speech_db_path,
+                on_event=on_event,
+                goal_response_timeout_s=goal_response_timeout_s,
+                dialogue_factory=dialogue_factory,
+                weather_query_timeout_s=weather_query_timeout_s,
+                situation_factory=situation_factory,
+                enable_manager_commands=enable_manager_commands,
+                prerecorded_audio=prerecorded_audio,
+                confirmation_answers=confirmation_answers,
             )
-            from malbut_interfaces.msg import SystemState
-            from std_msgs.msg import String
 
-            from malbut_agent_server.fall_check_watch import VOICE_TOPIC
-            from malbut_interfaces.srv import ControlSpeechPlayback
-
-            watch = FallCheckWatch()
-            self.create_subscription(
-                String, FALL_CHECK_STATUS_TOPIC,
-                lambda message: watch.observe_status(message.data), 10,
-            )
-            self._fall_voice = self.create_publisher(String, VOICE_TOPIC, 10)
-            self._fall_voice_message = String
-            self._speech_stop = self.create_client(
-                ControlSpeechPlayback, '/malbut/speech/playback_control')
-            latched = QoSProfile(depth=1)
-            latched.reliability = ReliabilityPolicy.RELIABLE
-            latched.durability = DurabilityPolicy.TRANSIENT_LOCAL
-            self.create_subscription(
-                SystemState, '/malbut/state',
-                lambda message: watch.observe_missions(
-                    mission.capability_id
-                    for group in (message.active_foreground_missions,
-                                  message.suspended_missions, message.pending_missions)
-                    for mission in group),
-                latched,
-            )
-            return watch
-
-        def _start_speech_inputs(self):
-            # Bringup discovers these endpoints before starting the microphone.
-            # A running worker thread alone does not mean its DB/session is ready.
-            if self._speech_ready or not self.dialogue.ready:
-                return
-            self.create_subscription(
-                SpeechTranscript, TRANSCRIPT_TOPIC,
-                self._receive_speech, self._speech_qos,
-            )
-            self.create_subscription(
-                SpeechInputStatus, INPUT_STATUS_TOPIC,
-                self._receive_input_status, self._speech_qos,
-            )
-            self.create_service(
-                ClassifySpeechAddressee, ADDRESSEE_SERVICE,
-                self._classify_addressee,
-                callback_group=ReentrantCallbackGroup(),
-            )
-            self._speech_ready = True
-            self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
-
-        def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False,
-                request_id='', audio_id='', playback_id='', prepared_id='', generation_id=''):
-            """Publish text without claiming playback completion."""
-            if not isinstance(text, str) or not text.strip():
-                return False
-            if self._closing or not self.context.ok():
-                return False
-            if self.situation is not None and self.situation.active:
-                return False
-            if prerecorded_audio and not audio_id:
-                from malbut_agent_server.mission_audio import CATALOG, TEXT_IDS
-                audio_id = TEXT_IDS.get(text, '')
-                if audio_id:
-                    text = CATALOG[audio_id]
-            options = {'audio_id': audio_id} if audio_id else {}
-            if (self._preparation is not None and prepared_id and generation_id
-                    and not audio_id and not interim and request_type == SpeechRequest.DIALOGUE):
-                options.update(prepared_id=prepared_id, generation_id=generation_id)
-            self._speech.publish(SpeechRequest(
-                text=text, request_type=request_type, interim=interim,
-                playback_id=playback_id or str(uuid4()), request_id=request_id, **options,
-            ))
-            return True
-
-        def say_dialogue_end(self):
-            """Speak the closing notice without starting a new turn."""
-            # Playback can arrive before the end signal on the other topic. Leave
-            # request_id empty so finishing this notice never opens a follow-up.
-            if not self._in_fall_window:
-                self.say('대화 종료할게요.')
-
-        def _receive_input_status(self, message):
-            if self._patrol_chat is not None:
-                self._patrol_chat.input_status(message)
-            if self._closing or message.session_id:
-                return
-            uid = message.utterance_id
-            if (not isinstance(uid, str) or not uid.strip()
-                    or len(uid) > MAX_SPEECH_ID_LENGTH):
-                return
-            unavailable = (not self.dialogue.ready or self.dialogue.startup_error
-                           or not self.dialogue.has_capacity()
-                           or self.situation is not None and self.situation.active)
-            if message.state == SpeechInputStatus.STARTED:
-                if uid in self._seen_input_ids:
-                    return
-                self._seen_input_ids.append(uid)
-                self._input_utterance_id = None if unavailable else uid
-            elif message.state == SpeechInputStatus.ENDED and uid == self._input_utterance_id:
-                self._input_utterance_id = None
-                if not unavailable:
-                    self.say_dialogue_end()
-            elif (message.state in (SpeechInputStatus.FAILED, SpeechInputStatus.FILTERED)
-                  and uid == self._input_utterance_id):
-                self._input_utterance_id = None
-                if not unavailable:
-                    text = ('다시 말씀해 주실래요?' if message.state == SpeechInputStatus.FILTERED
-                            else '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.')
-                    self.say(text, interim=False, request_id=uid)
-
-        def _receive_speech(self, message):
-            if self._closing:
-                return
-            if self._patrol_chat is not None and self._patrol_chat.receive(message):
-                if message.utterance_id == self._input_utterance_id:
-                    self._input_utterance_id = None
-                if message.utterance_id not in self._seen_input_ids:
-                    self._seen_input_ids.append(message.utterance_id)
-                return
-            if self.situation is not None and self.situation.active:
-                self.situation.transcript(message)
-                return
-            if getattr(message, 'session_id', ''):
-                # A late answer from an ended confirmation is not ordinary chat.
-                return
-            utterance_id, text = message.utterance_id, message.text
-            try:
-                validate_dialogue_input(utterance_id, text)
-                # Transcript and status Topics may be delivered in either order.
-                if utterance_id == self._input_utterance_id:
-                    self._input_utterance_id = None
-                if utterance_id not in self._seen_input_ids:
-                    self._seen_input_ids.append(utterance_id)
-                if self._fall_check is not None and self._fall_check.in_window():
-                    self._answer_during_fall_check(utterance_id, text)
-                    return
-                previous = self._receipts.lookup(utterance_id, text)
-            except SpeechInputTooLongError as error:
-                self.get_logger().warning(f'speech_dialogue invalid input: {error}')
-                self.say('한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.',
-                         request_id=utterance_id)
-                return
-            except ValueError:
-                self.get_logger().warning('speech_dialogue invalid input')
-                return
-            except sqlite3.Error:
-                self.get_logger().error('speech_dialogue receipt unavailable')
-                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
-                return
-            if previous is not None:
-                receive_transcript(
-                    self._receipts, utterance_id, text, self.get_logger(),
-                )
-                return
-            if self.dialogue.startup_error:
-                self.get_logger().error('speech_dialogue startup failed')
-                self.say('대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.',
-                         request_id=utterance_id)
-                return
-            if not self.dialogue.has_capacity():
-                self.get_logger().warning('speech_dialogue busy; not accepted')
-                self.say('앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.',
-                         request_id=utterance_id)
-                return
-            outcome = receive_transcript(
-                self._receipts, utterance_id, text, self.get_logger(),
-            )
-            if outcome == 'storage_error':
-                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
-                return
-            if outcome == 'received' and not self.dialogue.submit(
-                utterance_id, text,
-            ):
-                self.get_logger().error('speech_dialogue submission failed')
-                self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
-                         request_id=utterance_id)
-            elif outcome == 'received':
-                self._awaiting_reply = utterance_id
-
-        async def _classify_addressee(self, request, response):
-            """Yield to the executor while the dialogue worker classifies."""
-            response.decision = ClassifySpeechAddressee.Response.UNKNOWN
-            if self._closing or not self.context.ok():
-                return response
-            if self.situation is not None and self.situation.active:
-                return response
-            if self._addressee_callbacks >= MAX_PENDING_ADDRESSEE_REQUESTS:
-                return response
-            try:
-                validate_interruption_input(
-                    request.utterance_id, request.playback_id, request.text,
-                )
-                accepted = self.dialogue.submit_interruption(
-                    request.utterance_id, request.playback_id, request.text,
-                )
-            except ValueError:
-                accepted = False
-            if not accepted:
-                return response
-            key = (request.utterance_id, request.playback_id)
-            future = Future(executor=self.executor)
-            self._addressee_waiters.setdefault(key, []).append(future)
-            self._addressee_callbacks += 1
-            try:
-                response.decision = await future
-                if self._closing:
-                    response.decision = ClassifySpeechAddressee.Response.UNKNOWN
-                return response
-            finally:
-                self._addressee_callbacks -= 1
-                waiters = self._addressee_waiters.get(key, [])
-                if future in waiters:
-                    waiters.remove(future)
-                    if not waiters:
-                        del self._addressee_waiters[key]
-
-        def _resolve_addressee(self, result):
-            decision = result['decision']
-            if decision not in (
-                ClassifySpeechAddressee.Response.ADDRESSED,
-                ClassifySpeechAddressee.Response.NOT_ADDRESSED,
-                ClassifySpeechAddressee.Response.UNKNOWN,
-            ):
-                decision = ClassifySpeechAddressee.Response.UNKNOWN
-            key = (result['utterance_id'], result['playback_id'])
-            for future in self._addressee_waiters.pop(key, []):
-                if not future.done():
-                    future.set_result(decision)
-
-        def _begin_situation(self):
-            if self._patrol_chat is not None:
-                self._patrol_chat.end()
-            if self._fall_check is not None and self._fall_check.in_window():
-                self._in_fall_window = True
-            self._awaiting_reply = None
-            self._input_utterance_id = None
-            self.dialogue.suspend()
-            for waiters in self._addressee_waiters.values():
-                for future in waiters:
-                    if not future.done():
-                        future.set_result(ClassifySpeechAddressee.Response.UNKNOWN)
-            self._addressee_waiters.clear()
-
-        def _end_situation(self):
-            # A failed question may be asked again: the window still holds the dialogue.
-            if not self._in_fall_window:
-                self.dialogue.resume()
-
-        def _follow_fall_window(self):
-            """Stop the conversation, saying so, when a fall check begins (2026-10-13)."""
-            if self._closing or self._fall_check is None or self.dialogue is None:
-                return
-            inside = self._fall_check.in_window()
-            if inside == self._in_fall_window:
-                return
-            self._in_fall_window = inside
-            if not inside:
-                if self.situation is None or not self.situation.active:
-                    self.dialogue.resume()
-                return
-            if self._patrol_chat is not None:
-                self._patrol_chat.end()
-            self.dialogue.suspend()
-            # Played under the interrupted utterance's ID, it also ends STT's wait
-            # for that reply; otherwise the microphone would stay closed.
-            waiting, self._awaiting_reply = self._awaiting_reply, None
-            if self.situation is not None and self.situation.active:
-                # Confirmation already owns the speaker/microphone: STOP_ALL or the
-                # pre-check notice would cut off its own question playback.
-                return
-
-            def announce(_done=None):
-                if (self._closing or not self._in_fall_window
-                        or (self.situation is not None and self.situation.active)):
-                    return
-                self.say(FALL_CHECK_START, request_id=waiting or '')
-                self.get_logger().info(json.dumps({
-                    'event': 'fall_check_announced', 'interrupted': waiting,
-                }, ensure_ascii=False))
-
-            if self._speech_stop.service_is_ready():
-                # The notice goes after the stop, or the stop would cut it too.
-                from malbut_interfaces.srv import ControlSpeechPlayback
-                self._speech_stop.call_async(ControlSpeechPlayback.Request(
-                    playback_id='', command=ControlSpeechPlayback.Request.STOP_ALL,
-                )).add_done_callback(announce)
-            else:
-                announce()
-
-        def _answer_during_fall_check(self, utterance_id, text):
-            """Before the question: help alerts at once, a stop ends the check, else wait."""
-            kind = ('help' if asks_for_help(text)
-                    else 'stop' if asks_to_stop(text) else None)
-            if kind is None:
-                self.say(FALL_CHECK_BUSY, request_id=utterance_id)
-                return
-            self._fall_voice.publish(self._fall_voice_message(data=json.dumps(
-                {'kind': kind, 'utterance_id': utterance_id})))
-            self.say(FALL_CHECK_HELP if kind == 'help' else FALL_CHECK_STOPPED,
-                     request_id=utterance_id)
-            self.get_logger().info(json.dumps({
-                'event': 'fall_check_voice', 'kind': kind, 'utterance_id': utterance_id,
-            }, ensure_ascii=False))
-
-        def _drain_preparations(self):
-            if self._preparation is not None:
-                for event in self.dialogue.drain_preparations():
-                    if self._closing and event.operation != 'cancel':
-                        continue
-                    try:
-                        self._preparation.publish(self._preparation_type(
-                            operation=(self._preparation_type.PREPARE if event.operation == 'prepare'
-                                       else self._preparation_type.CANCEL),
-                            request_id=event.request_id, generation_id=event.generation_id,
-                            prepared_id=event.prepared_id, text=event.text,
-                        ))
-                    except Exception:
-                        # This optional cache hint cannot block final speech.
-                        self.get_logger().warning('speech_preparation_publish_skipped')
-
-        def _end_voice_turn(self, reply):
-            uid = reply['utterance_id']
-            if uid != self._awaiting_reply:
-                return False
-            companion = getattr(reply, '_companion_session', None)
-            if companion is not None:
-                chat = self._patrol_chat
-                if chat is None or chat.request_id != companion or chat.reply_id != uid:
-                    return False
-                chat.end_by_user()
-            else:
-                self._dialogue_end.publish(String(data=uid))
-                self.say_dialogue_end()
-            return True
-
-        def _drain_dialogue(self):
-            if self._closing:
-                return
-            self._drain_preparations()
-            self.weather_query.drain()
-            if self.dialogue.startup_error:
-                self.get_logger().error('speech_dialogue startup failed')
-                raise RuntimeError('speech_dialogue_startup_failed')
-            self._start_speech_inputs()
-            for response in self.dialogue.drain(validate=False):
-                if response.get('kind') == 'addressee':
-                    self._resolve_addressee(response)
-                    continue
-                if (self._patrol_chat is not None
-                        and not self._patrol_chat.allows_reply(response.get('utterance_id'))):
-                    if self._preparation is not None:
-                        self.dialogue.discard_reply(response)
-                    if response.get('utterance_id') == self._awaiting_reply:
-                        self._awaiting_reply = None
-                    continue
-                with self._announcer.direct_reply(
-                    getattr(response, '_mission_request_id', None),
-                ) as acknowledge:
-                    published = self.dialogue.publish_reply(
-                        response, lambda text: self.say(
-                            text, interim=response.get('kind') in {'progress', 'acknowledgement'},
-                            # Prerecorded TTS coalesces waiting/start notices for the
-                            # same utterance and preserves a start before a fast result.
-                            # Keep legacy synthesized receipts on their old correlation.
-                            request_id=('ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
-                                        if (response.get('kind') == 'acknowledgement'
-                                            and not prerecorded_audio)
-                                        else response.get('utterance_id', '')),
-                            **getattr(response, '_prepared_hint', {})),
-                        end_dialogue=self._end_voice_turn)
-                    if published is not None and published['kind'] != 'end_conversation':
-                        acknowledge(published['text'])
-                if published is not None:
-                    if (response.get('kind') not in {'progress', 'acknowledgement'}
-                            and response.get('utterance_id') == self._awaiting_reply):
-                        self._awaiting_reply = None
-                    if published['kind'] == 'end_conversation':
-                        self.get_logger().info(json.dumps({
-                            'event': 'voice_dialogue_ended', 'utterance_id': published['utterance_id'],
-                        }))
-                        continue
-                    logged = ({key: published[key] for key in ('utterance_id', 'kind')}
-                              if getattr(response, '_companion_session', None) else published)
-                    waterfall = getattr(response, '_waterfall', None)
-                    self.get_logger().info(json.dumps({
-                        'event': 'dialogue_response_published', **logged,
-                        **({'prefetch': dict(response._prefetch.metrics)}
-                           if getattr(response, '_prefetch', None) is not None else {}),
-                        **({'waterfall': waterfall} if waterfall is not None else {}),
-                    }, ensure_ascii=False))
-                    if settings.turn_metrics_snapshot_path and waterfall is not None:
-                        try:
-                            self.turn_metrics.write_snapshot(
-                                settings.turn_metrics_snapshot_path,
-                            )
-                        except Exception:
-                            self.get_logger().warning('turn_metrics_snapshot_write_failed')
-
-        def _mission_event(self, event):
-            if self.speech_missions is not None:
-                self.speech_missions.handle(event)
-            self.get_logger().info(json.dumps(
-                {'event': 'mission_event', **event}, ensure_ascii=False,
-            ))
-            weather_event = (
-                self.weather_query is not None
-                and self.weather_query.handle(event)
-            )
-            text = None if weather_event else self._announcer.handle(event)
-            if text is not None:
-                self.get_logger().info(json.dumps({
-                    'event': 'speech_published',
-                    'request_id': event['request_id'], 'text': text,
-                }, ensure_ascii=False))
-            if on_event is not None:
-                on_event(dict(event))
-
-        def begin_shutdown(self):
-            """Reject new work and release classification responses as unknown."""
-            self._closing = True
-            if self._preparation is not None and self.dialogue is not None:
-                self.dialogue.cancel_preparations()
-                self._drain_preparations()
-            if self.situation is not None:
-                self.situation.close()
-            for waiters in self._addressee_waiters.values():
-                for future in waiters:
-                    if not future.done():
-                        future.set_result(ClassifySpeechAddressee.Response.UNKNOWN)
-            self._addressee_waiters.clear()
-
-        def destroy_node(self):
-            """Release communication from the owning thread outside callbacks."""
-            self.begin_shutdown()
-            if getattr(self, '_key_health', None) is not None:
-                self._key_health.close()
-            if self.executor is not None and self.context.ok():
-                from rclpy.executors import ExternalShutdownException
-
-                deadline = time.monotonic() + 1.0
-                try:
-                    while (self._addressee_callbacks and self.context.ok()
-                           and time.monotonic() < deadline):
-                        self.executor.spin_once(timeout_sec=0.01)
-                except (KeyboardInterrupt, ExternalShutdownException):
-                    pass
-            if self.weather_query is not None:
-                self.weather_query.close()
-                self.weather_query.drain()
-            try:
-                if self._patrol_chat is not None:
-                    self._patrol_chat.close()
-                if self.dialogue is not None:
-                    self.dialogue.close()
-            finally:
-                try:
-                    if self.missions is not None:
-                        self.missions.close()
-                    if self._foreground_cancel is not None:
-                        self._foreground_cancel.close()
-                finally:
-                    try:
-                        if self._receipts is not None:
-                            self._receipts.close()
-                    finally:
-                        if self.situation is not None:
-                            self.situation.destroy()
-                        if getattr(self, '_scene', None) is not None:
-                            self._scene.close()
-                        destroyed = super().destroy_node()
-            return destroyed
+        def destroy_node(self) -> Any:
+            return self._destroy_communication(super().destroy_node)
 
     return CommunicationNode()
 
 
-def apply_command(node, command):
-    """Run a structured developer command, not natural speech."""
-    if not isinstance(command, dict):
-        raise ValueError('command must be a JSON object')
-    op = command.get('op')
-    allowed = {
-        'say': {'op', 'text'},
-        'submit': {'op', 'capability_id', 'arguments', 'request_id'},
-        'cancel': {'op', 'request_id'},
-        'status': {'op', 'request_id'},
-    }
-    if op not in allowed or set(command) - allowed[op]:
-        raise ValueError('unsupported operation or command fields')
-    if op == 'say':
-        if not node.say(command.get('text')):
-            raise ValueError('text must be non-empty and ROS must be running')
-        return {'published': True}
-    if op == 'submit':
-        request_id = node.missions.submit(
-            command.get('capability_id'), command.get('arguments'),
-            request_id=command.get('request_id'),
-        )
-    else:
-        request_id = command.get('request_id')
-        if not isinstance(request_id, str) or not request_id.strip():
-            raise ValueError('request_id is required')
-        if op == 'cancel':
-            node.missions.cancel(request_id)
-    return node.missions.snapshot(request_id)
-
-
-class CommandLines:
-    """Bound partial stdin input without blocking ROS feedback and cancel."""
-
-    def __init__(self):
-        """Start an empty command buffer."""
-        self._buffer = bytearray()
-        self._discarding = False
-
-    def feed(self, data):
-        """Yield complete lines, with None for each oversized command."""
-        for fragment in data.splitlines(keepends=True):
-            complete = fragment.endswith(b'\n')
-            if not self._discarding:
-                if len(self._buffer) + len(fragment) > MAX_COMMAND_BYTES:
-                    self._buffer.clear()
-                    self._discarding = True
-                    yield None
-                else:
-                    self._buffer.extend(fragment)
-            if complete:
-                if not self._discarding:
-                    yield bytes(self._buffer)
-                self._buffer.clear()
-                self._discarding = False
-
-
-def read_commands(node, descriptor, lines):
-    """Apply complete stdin command lines; return None once stdin closes."""
-    if descriptor is None or not select.select([descriptor], [], [], 0)[0]:
-        return descriptor
-    data = os.read(descriptor, 4096)
-    if not data:
-        return None
-    for line in lines.feed(data):
-        if line is None:
-            node.get_logger().warning(
-                'Command exceeds 65536 bytes; discarded.',
-            )
-            continue
-        if not line.strip():
-            continue
-        try:
-            result = apply_command(node, json.loads(line))
-            node.get_logger().info(json.dumps(
-                {'event': 'command_result', 'result': result},
-                ensure_ascii=False,
-            ))
-        except (ValueError, KeyError, TypeError) as error:
-            node.get_logger().warning('Invalid command: ' + str(error))
-    return descriptor
+def run_with_fall_rules(args: Any, ros_args: Sequence[str], settings: Any) -> int:
+    """Run the fall rules beside the dialogue so that either can fail alone."""
+    return _run_with_fall_rules(
+        args,
+        ros_args,
+        settings,
+        create_node_fn=create_communication_node,
+        command_lines_cls=CommandLines,
+        read_commands_fn=read_commands,
+    )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -809,15 +270,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--user-id', default=DEFAULT_SPEECH_USER)
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--enable-manager-commands', action='store_true')
-    parser.add_argument('--prerecorded-audio', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        '--prerecorded-audio',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     # Speech is off when Bringup's speech module did not start; the fall rules
     # (the former fall coordinator) then still run here, without a dialogue.
     parser.add_argument('--speech', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--fall-rules', action='store_true')
     # The one fall check (SWM25-261, Bringup fall_flow): FallFlow decides every step.
     parser.add_argument('--fall-flow', action='store_true')
-    parser.add_argument('--no-fall-approach', action='store_true',
-                        help='Run fall checks from the current position')
+    parser.add_argument(
+        '--no-fall-approach',
+        action='store_true',
+        help='Run fall checks from the current position',
+    )
     for peer in ('', 'bridge-', 'vlm-'):
         parser.add_argument(f'--fall-{peer}runtime-id', default='')
     args, ros_args = parser.parse_known_args(argv)
@@ -833,8 +301,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             settings = dialogue_settings_from_args(args)
         except (ValueError, OSError):
-            print('Invalid speech dialogue settings. Check provider and paths.',
-                  file=sys.stderr)
+            print(
+                'Invalid speech dialogue settings. Check provider and paths.',
+                file=sys.stderr,
+            )
             if args.check or not args.fall_rules:
                 return 2
     if args.check:
@@ -870,7 +340,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             + ('Voice mission requests are routed through Manager.'
                if args.enable_manager_commands else 'Voice mission requests are disabled.')
         )
-        descriptor = sys.stdin.fileno()
+        descriptor: Optional[int] = sys.stdin.fileno()
         lines = CommandLines()
         while rclpy.ok():
             executor.spin_once(timeout_sec=0.05)
@@ -878,8 +348,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except Exception as error:
-        print('Agent communication failed: ' + type(error).__name__,
-              file=sys.stderr)
+        print(
+            'Agent communication failed: ' + type(error).__name__,
+            file=sys.stderr,
+        )
         return 2
     finally:
         try:
@@ -893,164 +365,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-def spin_fall_rules(executor, logger, failed):
-    """Spin the fall rules on their own thread, apart from dialogue waits."""
-    from rclpy.executors import ExternalShutdownException
-
-    try:
-        executor.spin()
-    except ExternalShutdownException:
-        pass
-    except Exception as error:
-        # Like the former coordinator process exiting: heartbeats stop and the
-        # fall runtime pauses itself; speech keeps working.
-        failed.set()
-        logger.error('fall_rules_failed: ' + type(error).__name__)
-
-
-def run_with_fall_rules(args, ros_args, settings):
-    """Run the fall rules beside the dialogue so that either can fail alone."""
-    try:
-        import rclpy
-        from rclpy.executors import (
-            ExternalShutdownException, MultiThreadedExecutor, SingleThreadedExecutor,
-        )
-        from rclpy.signals import SignalHandlerOptions
-
-        from malbut_agent_server.fall_rules.node import FallRulesNode
-    except ImportError:
-        print('Source ROS 2 and the built workspace first.', file=sys.stderr)
-        return 2
-    # As the fall coordinator did: keep ROS alive after a signal long enough to
-    # cancel the fall mission these rules asked the Manager for.
-    stopped = threading.Event()
-    previous = {sig: signal.signal(sig, lambda *_: stopped.set())
-                for sig in (signal.SIGINT, signal.SIGTERM)}
-    failed = threading.Event()
-    rules = rules_executor = rules_thread = None
-    node = executor = None
-    initialized = False
-    from malbut_agent_server.confirmation_answers import ConfirmationAnswers
-    confirmation_answers = ConfirmationAnswers()
-
-    def report(text):
-        owner = rules if rules is not None else node
-        if owner is not None:
-            owner.get_logger().error(text)
-        else:
-            print(text, file=sys.stderr)
-
-    def drop_dialogue(error):
-        # Like the Agent process exiting beside the former coordinator: the
-        # Manager then finds no confirmation server and the question fails.
-        nonlocal node, executor
-        report('agent_communication_failed: ' + type(error).__name__)
-        try:
-            if node is not None:
-                node.destroy_node()
-        finally:
-            if executor is not None:
-                executor.shutdown(timeout_sec=0)
-            node = executor = None
-
-    def rules_running():
-        return rules_thread is not None and rules_thread.is_alive()
-
-    try:
-        rclpy.init(args=ros_args, signal_handler_options=SignalHandlerOptions.NO)
-        initialized = True
-        try:
-            rules = FallRulesNode(
-                runtime_id=args.fall_runtime_id, bridge_runtime_id=args.fall_bridge_runtime_id,
-                vlm_runtime_id=args.fall_vlm_runtime_id, flow=args.fall_flow,
-                approach_enabled=not args.no_fall_approach,
-                confirmation_answers=confirmation_answers)
-            rules_executor = MultiThreadedExecutor(num_threads=2)
-            rules_executor.add_node(rules)
-        except Exception as error:
-            # Like the coordinator failing at start: no heartbeat, so the fall
-            # runtime pauses itself; speech still starts.
-            failed.set()
-            print('Fall rules failed to start: ' + type(error).__name__, file=sys.stderr)
-            if rules is not None:
-                rules.destroy_node()
-            rules = rules_executor = None
-        else:
-            rules_thread = threading.Thread(
-                target=spin_fall_rules, args=(rules_executor, rules.get_logger(), failed),
-                name='fall-rules', daemon=True)
-            rules_thread.start()
-            rules.get_logger().info('Fall rules started' + (
-                '' if args.speech and settings is not None
-                else '; speech is off, so the Agent asks no questions'))
-        if args.speech and settings is not None:
-            try:
-                node = create_communication_node(
-                    speech_db_path=args.db_path,
-                    goal_response_timeout_s=args.goal_response_timeout_s,
-                    dialogue_settings=settings,
-                    enable_manager_commands=args.enable_manager_commands,
-                    prerecorded_audio=args.prerecorded_audio,
-                    confirmation_answers=confirmation_answers,
-                )
-                executor = SingleThreadedExecutor()
-                executor.add_node(node)
-            except Exception as error:
-                drop_dialogue(error)
-            else:
-                node.get_logger().info(
-                    'Agent communication started; initializing speech dialogue worker. '
-                    + ('Voice mission requests are routed through Manager.'
-                       if args.enable_manager_commands
-                       else 'Voice mission requests are disabled.'))
-        descriptor = sys.stdin.fileno() if node is not None else None
-        lines = CommandLines()
-        while rclpy.ok() and not stopped.is_set() and (node is not None or rules_running()):
-            if node is None:
-                stopped.wait(0.05)
-                continue
-            try:
-                executor.spin_once(timeout_sec=0.05)
-                descriptor = read_commands(node, descriptor, lines)
-            except ExternalShutdownException:
-                break
-            except Exception as error:
-                drop_dialogue(error)
-                descriptor = None
-    except ExternalShutdownException:
-        pass
-    except Exception as error:
-        print('Agent failed: ' + type(error).__name__, file=sys.stderr)
-        failed.set()
-    finally:
-        try:
-            if rules is not None:
-                pending = rules.close()
-                deadline = time.monotonic() + 3.0
-                while (pending is not None and not pending.done() and rules_running()
-                       and time.monotonic() < deadline):
-                    time.sleep(0.01)
-        finally:
-            try:
-                if node is not None:
-                    node.destroy_node()
-            finally:
-                if executor is not None:
-                    executor.shutdown(timeout_sec=0)
-                if rules_executor is not None:
-                    rules_executor.shutdown(timeout_sec=3.0)
-                if rules_thread is not None:
-                    rules_thread.join(timeout=3.0)
-                if rules is not None:
-                    rules.destroy_node()
-                if initialized and rclpy.ok():
-                    rclpy.shutdown()
-                for sig, handler in previous.items():
-                    signal.signal(sig, handler)
-    return 2 if failed.is_set() else 0
-
-
-def dialogue_settings_from_args(args):
+def dialogue_settings_from_args(args: Any) -> Settings:
     """Keep voice development data separate from the HTTP user database."""
     if not args.conversation_db.strip() or not args.db_path.strip():
         raise ValueError('Speech database paths must not be blank')
@@ -1060,7 +375,7 @@ def dialogue_settings_from_args(args):
     if args.env_file:
         load_env_file(Path(args.env_file).expanduser())
     settings = Settings.from_env(os.environ)
-    overrides = {
+    overrides: dict[str, Any] = {
         'database_path': str(Path(args.conversation_db).expanduser()),
         'user_id': args.user_id,
     }

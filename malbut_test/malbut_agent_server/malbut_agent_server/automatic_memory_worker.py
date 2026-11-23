@@ -224,10 +224,13 @@ class AutomaticMemoryWorker:
                     # A failed job is not retried or reported as saved.
                     if job is not None:
                         try:
-                            self._transaction(lambda conn: self.jobs.finish(
-                                conn, job, 'failed',
-                                **job.get('_stage_metrics', {}),
-                            ))
+                            failed_job = job
+                            self._transaction(
+                                lambda conn, current=failed_job: self.jobs.finish(
+                                    conn, current, 'failed',
+                                    **current.get('_stage_metrics', {}),
+                                )
+                            )
                         except Exception:
                             pass  # Expiry bounds an indeterminate DB failure.
                     break
