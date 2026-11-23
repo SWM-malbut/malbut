@@ -18,6 +18,7 @@ from malbut_agent_server.prompting import (
     GROUNDED_QUERY_CONVERSATION_INSTRUCTIONS,
     HOMECAM_RESULT_INSTRUCTIONS,
     PATROL_RESULT_INSTRUCTIONS,
+    WEATHER_SYSTEM_INSTRUCTIONS,
 )
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import (
@@ -174,7 +175,7 @@ def _text_response(message: str = '확인했어요.') -> dict[str, Any]:
             {'mode': 'answer_only', 'enabled': True},
             {'status': 'fresh', 'location': '수원시 우만동', 'current': {'condition': '맑음', 'temperature_c': 15.0}},
             False,
-            _TWO_PASS_FOLLOWUP_DIRECTIVE,
+            WEATHER_SYSTEM_INSTRUCTIONS,
             'none',
         ),
     ],

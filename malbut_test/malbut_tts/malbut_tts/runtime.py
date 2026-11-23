@@ -182,9 +182,10 @@ class SpeechRuntime:
                 key = None
             if self._prefetch is not None and self._prefetch.job is not None:
                 job = self._prefetch.job
-                if job.key != key or job.state == 'queued':
-                    # A committed request wins if speculation has not started;
-                    # never run redundant preparation after its normal playback.
+                if job.key != key or (job.state == 'queued' and self._active is None):
+                    # A committed request wins if idle speculation has not started;
+                    # during an active prerecorded interim drain, keep a matching
+                    # queued job so the worker can pre-synthesize while audio drains.
                     self._prefetch.cancel()
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
@@ -255,8 +256,18 @@ class SpeechRuntime:
                 self._prefetch.cancel(key)
                 self._condition.notify_all()
                 return True
+            active = self._active
+            prerecorded_interim_same_turn = (
+                active is not None
+                and active.interim
+                and bool(active.audio_id)
+                and active.request_id == request_id
+                and not active.cancel.is_set()
+                and active.state not in TERMINAL_STATES
+            )
             if (not isinstance(text, str) or not text.strip() or len(text) > 4096
-                    or self._active is not None or self._pending
+                    or (active is not None and not prerecorded_interim_same_turn)
+                    or self._pending
                     or request_id in self._finalized_request_ids):
                 return False
             speed, _ = self._voice_settings()
@@ -461,6 +472,21 @@ class SpeechRuntime:
                 request.command = None
             self._report_status(request, state)
 
+    def _run_prefetch(self, job):
+        audio = None
+        try:
+            if job.piper_speed is not None:
+                self._synthesizer.set_speed(job.piper_speed)
+            audio = self._synthesizer.prepare_first(
+                job.text, job.cancel, max_bytes=MAX_PREPARED_BYTES)
+        except Exception as error:
+            # Speculation failures must not fail a later final answer.
+            self._logger.info(f'tts_prefetch_discarded: {type(error).__name__}')
+        with self._condition:
+            self._prefetch.finish(job, audio)
+            self._condition.notify_all()
+        del audio  # The slot is the only retained preparation owner.
+
     def _run(self):
         while True:
             with self._condition:
@@ -480,19 +506,7 @@ class SpeechRuntime:
                 self._active = request
             self._fail_waiting(expired, 'expired')
             if job is not None:
-                audio = None
-                try:
-                    if job.piper_speed is not None:
-                        self._synthesizer.set_speed(job.piper_speed)
-                    audio = self._synthesizer.prepare_first(
-                        job.text, job.cancel, max_bytes=MAX_PREPARED_BYTES)
-                except Exception as error:
-                    # Speculation failures must not fail a later final answer.
-                    self._logger.info(f'tts_prefetch_discarded: {type(error).__name__}')
-                with self._condition:
-                    self._prefetch.finish(job, audio)
-                    self._condition.notify_all()
-                del audio  # The slot is the only retained preparation owner.
+                self._run_prefetch(job)
                 continue
             if request is None:
                 continue
@@ -564,7 +578,22 @@ class SpeechRuntime:
                 if not request.cancel.is_set():
                     if not has_audio:
                         raise RuntimeError('TTS generated no audio')
-                    player.finish()
+                    if (self._prefetch is not None and request.interim and request.audio_id
+                            and callable(getattr(player, 'begin_finish', None))
+                            and callable(getattr(player, 'wait_finished', None))):
+                        player.begin_finish()
+                        while not request.cancel.is_set():
+                            job = None
+                            with self._condition:
+                                if not self._closed:
+                                    job = self._prefetch.start()
+                            if job is not None:
+                                self._run_prefetch(job)
+                                continue
+                            if player.wait_finished(0.02):
+                                break
+                    else:
+                        player.finish()
         except Exception as error:
             state = 'failed'
             if not request.cancel.is_set():

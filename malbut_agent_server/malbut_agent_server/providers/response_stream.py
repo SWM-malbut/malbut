@@ -3,6 +3,7 @@
 import json
 import re
 
+from malbut_agent_server.mission_audio import TEXT_IDS
 from malbut_agent_server.providers.base import ProviderError
 
 _PREFETCHABLE_DECISION_TYPES = frozenset({'message', 'clarification'})
@@ -135,6 +136,10 @@ def message_candidate(text):
                     return None
                 prefix.encode('utf-8')  # Incomplete surrogate pairs are not candidates.
                 if closed:
+                    # Prerecorded notices play directly via audio_id; never
+                    # block the TTS worker behind a discarded Piper prefetch.
+                    if prefix in TEXT_IDS:
+                        return None
                     return prefix
                 # Conservative boundary: punctuation outside quotes, followed
                 # by whitespace and at least one character of the next sentence.

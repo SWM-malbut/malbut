@@ -20,6 +20,7 @@ from malbut_agent_server.prompting import (
     SCENE_IMAGE_INSTRUCTIONS,
     SCENE_MAP_MOTION_INSTRUCTIONS,
     WEATHER_SYSTEM_INSTRUCTIONS,
+    WEATHER_TOOL_CALL_INSTRUCTIONS,
 )
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
@@ -232,6 +233,8 @@ def test_dead_instructions_are_excluded_from_irrelevant_turn_profiles() -> None:
         assert CONVERSATION_OPENER_INSTRUCTIONS not in fg_dev
         assert SCENE_IMAGE_INSTRUCTIONS in fg_dev
         assert SCENE_MAP_MOTION_INSTRUCTIONS in fg_dev
+        assert WEATHER_TOOL_CALL_INSTRUCTIONS in fg_dev
+        assert WEATHER_SYSTEM_INSTRUCTIONS not in fg_dev
 
         sr = provider.build_payload(
             AgentRequest('r', 'u', 'c', 't', '난 민재야', RobotState(), ()),
@@ -323,37 +326,50 @@ def test_live_speech_profiles_stay_within_token_budgets() -> None:
             'homecam_query_result_untrusted': {'tool': 'get_homecam_status', 'data': {'online': True}},
         }
 
+        patrol_ctx = {
+            'mode': 'answer_only',
+            'enabled': True,
+            'patrol_observations_untrusted': {
+                'observations': [{'observation_id': 'obs-1', 'objects': []}],
+            },
+        }
+
         # Tool schemas keep clear natural-sentence descriptions (verified by
         # Jetson 2x2 factorial ablation to avoid +250ms extra reasoning latency
-        # caused by telegraphic schema compression) while trimmed instructions
-        # still keep full-speech static tokens ~22% below pre-PR410 baselines.
+        # caused by telegraphic schema compression) while deduplicated
+        # developer instructions and Call-2-gated weather formatting rules cut
+        # full-speech static tokens ~20% below PR426 and ~38% below pre-PR410.
         budgets = [
-            ('full_speech_memory', 10200, provider.build_payload(
+            ('full_speech_memory', 8500, provider.build_payload(
                 _speech_request('안녕 오늘 기분 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'enabled': True, 'response_settings': {}},
             )),
-            ('full_speech_answer_only', 9000, provider.build_payload(
+            ('full_speech_answer_only', 7700, provider.build_payload(
                 _speech_request('안녕 오늘 기분 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'mode': 'answer_only', 'enabled': True, 'response_settings': {}},
             )),
-            ('weather_call_1', 850, provider.build_payload(
+            ('weather_call_1', 680, provider.build_payload(
                 _speech_request('오늘 날씨 어때?', available_tools=names, scene_context=scene),
                 [], [], tools, memory_context={'mode': 'answer_only', 'enabled': True, 'response_settings': {}},
             )),
-            ('weather_call_2', 2000, provider.build_payload(
+            ('weather_call_2', 1700, provider.build_payload(
                 _speech_request('오늘 날씨 어때?', available_tools=(), scene_context=scene),
                 [], [], [], memory_context={'mode': 'answer_only', 'enabled': True},
                 weather_context=weather_ctx,
             )),
-            ('homecam_followup', 2100, provider.build_payload(
+            ('homecam_followup', 1650, provider.build_payload(
                 _speech_request('홈캠 상태 어때?', available_tools=(), scene_context=scene, confirmed_homecam_read=True),
                 [], [], [], memory_context=homecam_ctx,
             )),
-            ('recall_followup', 2900, provider.build_payload(
+            ('patrol_followup', 2100, provider.build_payload(
+                _speech_request('리모컨 어디서 봤어?', available_tools=(), scene_context=scene),
+                [], [], [], memory_context=patrol_ctx,
+            )),
+            ('recall_followup', 2300, provider.build_payload(
                 _speech_request('내 이름 뭐야?', available_tools=(), scene_context=scene),
                 [], [], [], memory_context={'mode': 'answer_only', 'enabled': True},
             )),
-            ('guest_chat', 2800, provider.build_payload(
+            ('guest_chat', 2250, provider.build_payload(
                 _speech_request('안녕하세요', available_tools=(), scene_context={'companion_guest': True}),
                 [], [], [], memory_context={'mode': 'answer_only', 'enabled': False},
             )),

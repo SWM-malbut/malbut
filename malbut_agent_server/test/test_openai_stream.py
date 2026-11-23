@@ -76,6 +76,8 @@ def provider():
     ('{"type":"message","message":"안녕. 다', '안녕. 다'),
     ('{"type":"message","message":"안녕.   다', '안녕.   다'),
     ('{"type":"message","message":"안녕."', '안녕.'),
+    ('{"type":"message","message":"현재 지원하지 않아요."', None),
+    ('{"type":"message","message":"대화 종료할게요."', None),
     ('{"type":"message","message":"안녕. ', None),
     ('{"type":"message","message":"3.14가 값', None),
     ('{"type":"message","message":"\\"안녕. 다', None),

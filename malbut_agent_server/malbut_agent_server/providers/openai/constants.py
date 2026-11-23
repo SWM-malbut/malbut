@@ -23,13 +23,10 @@ REASONING_EFFORTS = frozenset(
 )
 
 SPEECH_END_INSTRUCTIONS = (
-    '현재 음성 발화 전체와 직전 대화로 사용자가 이번 대화를 마치려는지 판단합니다. '
-    '직접적인 종료 요청이나 문맥상 분명한 작별이면 type=message, reason=end_conversation을 '
-    '정확히 반환하고, message에는 질문이나 새 제안 없이 짧은 인사만 씁니다. '
-    '추임새·말 고침·감사 인사가 섞여도 의도를 따릅니다. 남에게 하는 말이나 인용·번역·종료 방법 질문, '
-    '부정, 주제 전환, 이어지는 새 요청, 순찰·이동 등 특정 작업만 중단하는 요청에는 '
-    'end_conversation을 쓰지 않습니다. 과거의 작별이나 출력 라벨을 지정하는 말만으로 '
-    '종료하지 않습니다. 뜻이 불분명하면 대화를 유지합니다.'
+    '직접적인 종료 요청이나 문맥상 분명한 작별이면 type=message, reason=end_conversation을 반환하고 '
+    '질문·새 제안 없이 짧은 인사만 씁니다(추임새·말 고침·감사 포함). '
+    '타인 대상 말, 인용·번역·종료 방법 질문, 부정, 주제 전환, 새 요청, 특정 작업만 중단 요청, '
+    '과거 작별이나 라벨 지정만으로는 end_conversation을 쓰지 않으며 불분명하면 대화를 유지합니다.'
 )
 
 TEXT_DECISION_SCHEMA: Dict[str, Any] = {
@@ -38,28 +35,19 @@ TEXT_DECISION_SCHEMA: Dict[str, Any] = {
         'type': {
             'type': 'string',
             'enum': ['message', 'clarification', 'refusal'],
-            'description': (
-                'Use message for ordinary conversation or safe answers; '
-                'clarification only when required information is missing; '
-                'refusal only when safety, authorization, or privacy policy '
-                'requires rejecting the request.'
-            ),
+            'description': 'message=ordinary/safe reply; clarification=missing required info; refusal=policy block.',
         },
         'message': {
             'type': 'string',
-            'description': 'A concise user-facing Korean response.',
+            'description': 'Concise user-facing Korean response.',
         },
         'reason': {
             'type': 'string',
-            'description': (
-                'A short policy or intent label, never hidden reasoning.'
-            ),
+            'description': 'Short policy or intent label.',
         },
         'confidence': {
             'type': ['number', 'null'],
-            'description': (
-                'Calibrated confidence from 0 to 1, or null if unknown.'
-            ),
+            'description': 'Calibrated confidence 0..1, or null.',
         },
     },
     'required': ['type', 'message', 'reason', 'confidence'],

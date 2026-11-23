@@ -89,10 +89,12 @@ def fake_device(high_latency=0.0348):
     ), instances
 
 
-@pytest.mark.parametrize('high_latency, expected', [(0.0348, 0.1), (0.1, 0.1), (0.2, 0.2)])
+@pytest.mark.parametrize('high_latency, expected', [
+    (0.0348, 0.2), (0.1, 0.2), (0.2, 0.2), (0.35, 0.35),
+])
 @pytest.mark.parametrize('device', [None, 17])
 def test_output_latency_floor_preserves_device_high_latency(high_latency, expected, device):
-    """Allow at least 100 ms without reducing the selected device's high latency."""
+    """Allow at least 200 ms without reducing the selected device's high latency."""
     api, instances = fake_device(high_latency)
     api.query_devices = lambda selected, kind: {
         'default_high_output_latency': high_latency if selected == device else 0.4,
@@ -109,6 +111,49 @@ def test_output_latency_floor_preserves_device_high_latency(high_latency, expect
             assert stream.options['blocksize'] == 0
         finally:
             player.stop()
+            player.close()
+
+
+@pytest.mark.parametrize('floor, high_latency, expected', [
+    (0.0, 0.0348, 0.0348), (0.15, 0.0348, 0.15), (0.25, 0.2, 0.25), (0.1, 0.3, 0.3),
+])
+def test_custom_output_latency_floor_is_honored(floor, high_latency, expected):
+    api, instances = fake_device(high_latency)
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(
+            lambda state: None, Event(), output_latency_floor_s=floor,
+        )
+        try:
+            player.write([1, 2, 3, 4], 24000)
+            wait_until(lambda: instances and instances[0].starts == 1)
+            assert instances[0].options['latency'] == expected
+        finally:
+            player.stop()
+            player.close()
+
+
+@pytest.mark.parametrize('invalid', [-0.1, 2.01, float('nan'), float('inf'), True, '0.2'])
+def test_invalid_output_latency_floor_is_rejected(invalid):
+    with pytest.raises(ValueError, match='output_latency_floor_s'):
+        StreamingPlayer(lambda state: None, Event(), output_latency_floor_s=invalid)
+
+
+def test_cooperative_begin_finish_and_wait_finished_drain_cleanly():
+    api, instances = fake_device()
+    states = []
+    with patch.dict('sys.modules', {'sounddevice': api}):
+        player = StreamingPlayer(states.append, Event())
+        try:
+            player.write([1, 2, 3, 4], 24000)
+            wait_until(lambda: states == ['playing'])
+            player.begin_finish()
+            assert not player.wait_finished(0.01)
+            instances[0].step()
+            assert not player.wait_finished(0.01)
+            instances[0].drain()
+            assert player.wait_finished(1.0)
+            assert instances[0].output == [1.0, 2.0, 3.0, 4.0]
+        finally:
             player.close()
 
 
@@ -159,7 +204,7 @@ class StreamingPlayerTests(unittest.TestCase):
     def test_starts_before_generation_ends_and_waits_for_device_drain(self):
         """PCM plays while more input is possible, and drain gates success."""
         stream = self.start([1, 2, 3, 4])
-        self.assertEqual(stream.options['latency'], 0.1)
+        self.assertEqual(stream.options['latency'], 0.2)
         stream.step()
         self.player.write([5, 6, 7, 8], 24000)
         outcome = self.finish_in_thread()

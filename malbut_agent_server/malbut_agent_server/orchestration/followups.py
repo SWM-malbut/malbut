@@ -96,9 +96,10 @@ def thanks_after_answer(
     )
 
 
-# Prerecorded homecam start notices take ~3.5s; only emit one if the cloud read
-# or follow-up synthesis genuinely stalls past this threshold.
+# Prerecorded homecam/location start notices take ~3.0-3.5s; only emit one if
+# the read/update genuinely stalls past this threshold.
 HOMECAM_START_NOTICE_DELAY_S = 1.5
+WEATHER_LOCATION_START_NOTICE_DELAY_S = 1.5
 
 
 def answer_homecam(
@@ -215,29 +216,39 @@ def answer_weather(
             ),
             reason='weather_unavailable', confidence=1.0,
         ), memory_proposal=None)
-    announce_function_start(first_result.decision.tool_name)
     weather: Dict[str, Any] = {'status': 'unavailable'}
-    for attempt in range(2):
-        try:
-            if setting_location:
+    if setting_location:
+        with delayed_function_start(
+            first_result.decision.tool_name,
+            delay_s=WEATHER_LOCATION_START_NOTICE_DELAY_S,
+        ):
+            try:
                 assert weather_location_executor is not None
                 weather = weather_location_executor(
                     request.request_id,
                     first_result.decision.arguments['location'],
                 )
-            else:
+                weather = bounded_weather_context(weather)
+            except CancelledError:
+                raise
+            except Exception:
+                weather = {'status': 'unavailable'}
+    else:
+        announce_function_start(first_result.decision.tool_name)
+        for attempt in range(2):
+            try:
                 assert weather_executor is not None
                 # A new read ID avoids replaying the Manager's failed receipt.
                 read_id = request.request_id if attempt == 0 else str(uuid.uuid4())
                 weather = weather_executor(read_id)
-            weather = bounded_weather_context(weather)
-        except CancelledError:
-            raise
-        except Exception:
-            weather = {'status': 'unavailable'}
-        if (setting_location or weather['status'] != 'unavailable' or attempt
-                or not claim_retry(WEATHER_RETRY_NOTICE)):
-            break
+                weather = bounded_weather_context(weather)
+            except CancelledError:
+                raise
+            except Exception:
+                weather = {'status': 'unavailable'}
+            if (weather['status'] != 'unavailable' or attempt
+                    or not claim_retry(WEATHER_RETRY_NOTICE)):
+                break
     notice_id = weather.get('notice_id')
     if not setting_location:
         if weather['status'] == 'location_required':
