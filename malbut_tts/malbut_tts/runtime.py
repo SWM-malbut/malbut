@@ -182,10 +182,18 @@ class SpeechRuntime:
                 key = None
             if self._prefetch is not None and self._prefetch.job is not None:
                 job = self._prefetch.job
-                if job.key != key or (job.state == 'queued' and self._active is None):
+                same_turn_interim = (
+                    interim and bool(correlated_id)
+                    and job.key[0] == correlated_id
+                    and (bool(audio_id) or job.state != 'queued')
+                )
+                if not same_turn_interim and (
+                    job.key != key or (job.state == 'queued' and self._active is None)
+                ):
                     # A committed request wins if idle speculation has not started;
-                    # during an active prerecorded interim drain, keep a matching
-                    # queued job so the worker can pre-synthesize while audio drains.
+                    # during an active prerecorded interim drain (or when a same-turn
+                    # interim races with an in-flight/ready prefetch), keep the
+                    # matching job so the final answer still hits prefetch.
                     self._prefetch.cancel()
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
