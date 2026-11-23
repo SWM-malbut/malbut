@@ -384,3 +384,47 @@ def test_fast_homecam_query_skips_start_notice_while_stalled_query_emits_it(monk
         assert slow_notices == [FUNCTION_STARTS[tool]]
     finally:
         runtime.close()
+
+
+def test_homecam_start_notice_does_not_fire_during_slow_followup_after_fast_query(monkeypatch):
+    import time
+    from malbut_agent_server import conversation_progress as progress
+    from malbut_agent_server.orchestration import followups
+
+    monkeypatch.setattr(followups, 'HOMECAM_START_NOTICE_DELAY_S', 0.02)
+    followup_ran = []
+
+    class SlowFollowupProvider(QueryProvider):
+        def complete(self, request, memories, turns, tools, conversation_summary=None,
+                     *, memory_context=None):
+            if memory_context and 'homecam_query_result_untrusted' in memory_context:
+                followup_ran.append(True)
+                time.sleep(0.08)
+            return super().complete(
+                request, memories, turns, tools, conversation_summary,
+                memory_context=memory_context,
+            )
+
+    runtime = build_orchestrator(Settings(provider='mock', database_path=':memory:'))
+    tool = 'get_homecam_events'
+    runtime.provider = SlowFollowupProvider()
+    runtime.conversation_store.create('user', 'room')
+    try:
+        configure_homecam_queries(
+            runtime,
+            lambda _name, _args: {
+                'success': True, 'code': 'OK',
+                'result': {'events': [{'id': 'e1', 'eventType': 'person'}]},
+            },
+        )
+        notices = []
+        with progress.request_scope(lambda text, _state: notices.append(text)):
+            res = runtime.handle(SpeechAgentRequest(
+                'fast-query-slow-llm', 'user', 'room', 't1',
+                '최근에 홈캠에서 사람을 감지했는지 확인해줘', RobotState(), (tool,),
+            ))
+        assert followup_ran == [True]
+        assert res.decision.type == 'message'
+        assert notices == []
+    finally:
+        runtime.close()

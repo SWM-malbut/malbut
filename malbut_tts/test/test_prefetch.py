@@ -347,3 +347,51 @@ def test_prepare_runs_on_single_worker_during_prerecorded_interim_drain_and_hits
         assert len(final_player.audio) == 2
     finally:
         h.runtime.close()
+
+
+@pytest.mark.parametrize('same_turn', [True, False])
+def test_same_turn_interim_preserves_running_prefetch_for_final(same_turn):
+    """A same-turn interim racing with in-flight prepare must not cancel it."""
+    entered = Event()
+    release = Event()
+    calls = []
+
+    def generate(text, _):
+        calls.append((text, get_ident()))
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        yield SimpleNamespace(audio_float_array=np.ones(16, dtype=np.float32))
+
+    class FakePrerecorded:
+        def generate(self, audio_id, cancel_event):
+            yield np.ones(16, dtype=np.float32), 22050
+
+    synth, _ = engine(generate)
+    h = PrefetchHarness(
+        synth, prerecorded=FakePrerecorded(), prefetch_enabled=True,
+    )
+    try:
+        assert h.runtime.prepare(PREFIX, **KEY)
+        assert entered.wait(3)
+        interim_req = KEY['request_id'] if same_turn else 'other-turn'
+        interim_id = h.runtime.submit(
+            '조회할게요.', interim=True, request_id=interim_req,
+            audio_id='function.get_homecam_events.starting',
+        )
+        final_id = h.runtime.submit(FINAL, **KEY)
+        release.set()
+        interim_player = h.active(interim_id)
+        interim_player.drain.set()
+        h.wait(interim_id, 'finished')
+        final_player = h.active(final_id)
+        final_player.drain.set()
+        h.wait(final_id, 'finished')
+        # Same turn reuses the prefetched first segment (2 synth calls total);
+        # another turn's interim cancels it so final synthesizes both segments (3 calls).
+        assert len(calls) == (2 if same_turn else 3)
+        assert len({thread for _, thread in calls}) == 1
+        assert len(final_player.audio) == 2
+    finally:
+        release.set()
+        h.runtime.close()
