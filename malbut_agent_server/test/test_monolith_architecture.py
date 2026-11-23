@@ -351,3 +351,30 @@ def test_decomposed_runtime_facades_preserve_exports_and_stay_bounded() -> None:
     assert _node_loc(
         _PACKAGE_ROOT / 'vlm_eval_metrics.py', '_summarize_configuration',
     ) <= 150
+
+
+def test_reply_speaker_reads_prepared_hint_at_publish_time() -> None:
+    """Prefetch hints populated during publish_reply reach node.say()."""
+    from malbut_agent_server.communication.dialogue_pump import _make_reply_speaker
+    from malbut_agent_server.dialogue.models import _DialogueReply
+
+    calls: list[tuple[str, dict]] = []
+
+    class _FakeNode:
+        def say(self, text: str, **kwargs: object) -> bool:
+            calls.append((text, dict(kwargs)))
+            return True
+
+    reply = _DialogueReply({'utterance_id': 'utt-1', 'kind': 'answer', 'text': '안녕'})
+    speak = _make_reply_speaker(_FakeNode(), reply, prerecorded_audio=False)
+    reply._prepared_hint = {'prepared_id': 'prep-1', 'generation_id': 'gen-1'}
+    assert speak('안녕') is True
+    assert calls == [(
+        '안녕',
+        {
+            'interim': False,
+            'request_id': 'utt-1',
+            'prepared_id': 'prep-1',
+            'generation_id': 'gen-1',
+        },
+    )]

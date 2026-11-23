@@ -54,24 +54,22 @@ def _make_reply_speaker(
     *,
     prerecorded_audio: bool,
 ) -> Callable[[str], bool]:
-    """Bind response metadata cleanly without capturing a loop variable."""
-    interim = response.get('kind') in {'progress', 'acknowledgement'}
-    # Prerecorded TTS coalesces waiting/start notices for the
-    # same utterance and preserves a start before a fast result.
-    # Keep legacy synthesized receipts on their old correlation.
-    request_id = (
-        'ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
-        if response.get('kind') == 'acknowledgement' and not prerecorded_audio
-        else response.get('utterance_id', '')
-    )
-    prepared_hint = getattr(response, '_prepared_hint', {})
-
+    """Bind response without capturing a loop variable; read fields at publish time."""
     def _speak(text: str) -> bool:
+        kind = response.get('kind')
+        # Prerecorded TTS coalesces waiting/start notices for the
+        # same utterance and preserves a start before a fast result.
+        # Keep legacy synthesized receipts on their old correlation.
+        request_id = (
+            'ack:' + str(uuid5(NAMESPACE_URL, response['utterance_id']))
+            if kind == 'acknowledgement' and not prerecorded_audio
+            else response.get('utterance_id', '')
+        )
         return bool(node.say(
             text,
-            interim=interim,
+            interim=kind in {'progress', 'acknowledgement'},
             request_id=request_id,
-            **prepared_hint,
+            **getattr(response, '_prepared_hint', {}),
         ))
 
     return _speak
