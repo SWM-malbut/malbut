@@ -285,3 +285,65 @@ def test_preparation_rejected_during_committed_playback():
         assert not h.runtime.prepare(PREFIX,**KEY)
         player.drain.set();h.wait(identity,'finished')
     finally:h.runtime.close()
+
+
+def test_prepare_runs_on_single_worker_during_prerecorded_interim_drain_and_hits_final():
+    """Prefetch overlaps with a draining prerecorded interim for the same turn."""
+    class CooperativePlayer(Player):
+        def begin_finish(self):
+            self.finishing.set()
+
+        def wait_finished(self, timeout=None):
+            if not self.drain.wait(timeout):
+                return False
+            if self.fail:
+                raise RuntimeError('device failed')
+            return True
+
+    class CooperativeHarness(PrefetchHarness):
+        def make_player(self, **kwargs):
+            player = CooperativePlayer(**kwargs)
+            self.players.put(player)
+            return player
+
+    prerecorded_calls = []
+
+    class FakePrerecorded:
+        def generate(self, audio_id, cancel_event):
+            prerecorded_calls.append(audio_id)
+            yield np.ones(16, dtype=np.float32), 22050
+
+    synth, calls = engine()
+    h = CooperativeHarness(
+        synth, prerecorded=FakePrerecorded(), prefetch_enabled=True,
+    )
+    try:
+        interim_id = h.runtime.submit(
+            '날씨를 확인할게요.', interim=True,
+            request_id=KEY['request_id'],
+            audio_id='function.get_weather.starting',
+        )
+        interim_player = h.active(interim_id)
+        assert interim_player.finishing.wait(3)
+        # Another turn cannot piggyback on this turn's prerecorded interim.
+        assert not h.runtime.prepare(
+            PREFIX, request_id='other-turn',
+            generation_id='g', prepared_id='p',
+        )
+        # Same turn prepares segment 0 while the prerecorded interim drains.
+        assert h.runtime.prepare(PREFIX, **KEY)
+        ready(h)
+        assert [text for text, _ in calls] == ['첫 문장입니다. ']
+        # Final answer arrives before interim finishes draining and still hits prefetch.
+        final_id = h.runtime.submit(FINAL, **KEY)
+        interim_player.drain.set()
+        h.wait(interim_id, 'finished')
+        final_player = h.active(final_id)
+        final_player.drain.set()
+        h.wait(final_id, 'finished')
+        assert prerecorded_calls == ['function.get_weather.starting']
+        assert [text for text, _ in calls] == ['첫 문장입니다. ', '다음 문장입니다.']
+        assert len({thread for _, thread in calls}) == 1
+        assert len(final_player.audio) == 2
+    finally:
+        h.runtime.close()

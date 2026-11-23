@@ -9,6 +9,9 @@ from time import monotonic
 import numpy as np
 
 
+DEFAULT_OUTPUT_LATENCY_FLOOR_S = 0.2
+
+
 class PlaybackCancelled(RuntimeError):
     """Signal that this playback has been cancelled."""
 
@@ -17,7 +20,8 @@ class StreamingPlayer:
     """Own one output stream, retaining unplayed PCM across a drained pause."""
 
     def __init__(self, on_state, cancel_event, device=None, *,
-                 open_retry_timeout_s=4.0, open_retry_interval_s=0.25):
+                 open_retry_timeout_s=4.0, open_retry_interval_s=0.25,
+                 output_latency_floor_s=DEFAULT_OUTPUT_LATENCY_FLOOR_S):
         """Start the device owner; sounddevice itself is imported on demand."""
         if (isinstance(open_retry_timeout_s, bool)
                 or not isinstance(open_retry_timeout_s, (int, float))
@@ -29,13 +33,20 @@ class StreamingPlayer:
                 or not math.isfinite(open_retry_interval_s)
                 or open_retry_interval_s <= 0):
             raise ValueError('open_retry_interval_s must be finite and positive')
+        if (isinstance(output_latency_floor_s, bool)
+                or not isinstance(output_latency_floor_s, (int, float))
+                or not math.isfinite(output_latency_floor_s)
+                or not 0.0 <= output_latency_floor_s <= 2.0):
+            raise ValueError('output_latency_floor_s must be finite and between 0.0 and 2.0')
         self._on_state = on_state
         self._cancel = cancel_event
         self._device = device
         self._open_retry_timeout_s = float(open_retry_timeout_s)
         self._open_retry_interval_s = float(open_retry_interval_s)
+        self._output_latency_floor_s = float(output_latency_floor_s)
         self._condition = Condition()
         self._pending = deque()
+        self._buffered_samples = 0
         self._offset = 0
         self._rate = None
         self._input_done = False
@@ -112,23 +123,34 @@ class StreamingPlayer:
                 self._condition.wait(0.05)
             self._check()
             self._pending.append(chunk)
+            self._buffered_samples += len(chunk)
             self._condition.notify_all()
 
-    def finish(self):
-        """Wait through any pauses until every output buffer has drained."""
+    def begin_finish(self):
+        """Mark input complete without blocking for device drain."""
         with self._condition:
             self._check()
             if self._rate is None:
                 raise RuntimeError('No audio was generated.')
             self._input_done = True
             self._condition.notify_all()
-        while not self._done.wait(0.05):
-            with self._condition:
-                self._check()
+
+    def wait_finished(self, timeout=None):
+        """Wait up to timeout seconds for drain; raise on failure or cancellation."""
+        finished = self._done.wait(timeout)
         with self._condition:
             self._check()
-            if not self._complete:
-                raise RuntimeError('Audio did not finish playing.')
+            if finished:
+                if not self._complete:
+                    raise RuntimeError('Audio did not finish playing.')
+                return True
+            return False
+
+    def finish(self):
+        """Wait through any pauses until every output buffer has drained."""
+        self.begin_finish()
+        while not self.wait_finished(0.05):
+            pass
 
     def set_ducked(self, ducked):
         """Change upcoming PCM only; preserve queued samples and playback position."""
@@ -152,6 +174,7 @@ class StreamingPlayer:
                 return False
             self._pause_requested = True
             self._gain = 1.0
+            self._gain_until = 0.0
             self._condition.notify_all()
             return True
 
@@ -178,6 +201,7 @@ class StreamingPlayer:
             self._closing.set()
             with self._condition:
                 self._pending.clear()
+                self._buffered_samples = 0
                 self._condition.notify_all()
             if current_thread() is not self._thread:
                 self._done.wait()
@@ -202,14 +226,15 @@ class StreamingPlayer:
                     self._drain_reason = 'paused'
                     raise self._sd.CallbackStop()
                 if self._rebuffering:
-                    buffered = sum(len(chunk) for chunk in self._pending) - self._offset
                     # Match the initial 400 ms cushion after actual starvation.
                     # Keep the stream open and leave queued PCM untouched.
-                    if not self._input_done and buffered < max(frames, int(self._rate * 0.4)):
+                    if (not self._input_done
+                            and self._buffered_samples < max(frames, int(self._rate * 0.4))):
                         underflow = True
                         return
                     self._rebuffering = False
                 filled = 0
+                chunk_popped = False
                 while filled < frames and self._pending:
                     chunk = self._pending[0]
                     count = min(frames - filled, len(chunk) - self._offset)
@@ -217,17 +242,23 @@ class StreamingPlayer:
                         self._offset:self._offset + count]
                     filled += count
                     self._offset += count
+                    self._buffered_samples -= count
                     if self._offset == len(chunk):
                         self._pending.popleft()
                         self._offset = 0
+                        chunk_popped = True
                 if filled < frames and not self._input_done:
                     underflow = True
                     self._rebuffering = True
-                if monotonic() >= self._gain_until:
+                if self._gain_until != 0.0 and monotonic() >= self._gain_until:
                     self._gain = 1.0
-                outdata[:filled] *= self._gain
-                self._condition.notify_all()
-                if self._input_done and not self._pending:
+                    self._gain_until = 0.0
+                if self._gain != 1.0:
+                    outdata[:filled] *= self._gain
+                finished = self._input_done and not self._pending
+                if chunk_popped or finished:
+                    self._condition.notify_all()
+                if finished:
                     self._drain_reason = 'finished'
                     raise self._sd.CallbackStop()
         except (self._sd.CallbackStop, self._sd.CallbackAbort):
@@ -273,7 +304,10 @@ class StreamingPlayer:
             stream = None
             try:
                 device_info = self._sd.query_devices(self._device, 'output')
-                latency = max(0.1, device_info['default_high_output_latency'])
+                latency = max(
+                    self._output_latency_floor_s,
+                    device_info['default_high_output_latency'],
+                )
                 stream = self._sd.OutputStream(
                     samplerate=self._rate, channels=1, dtype='float32',
                     blocksize=0, latency=latency, device=self._device,
@@ -382,5 +416,6 @@ class StreamingPlayer:
             finally:
                 with self._condition:
                     self._pending.clear()
+                    self._buffered_samples = 0
                     self._done.set()
                     self._condition.notify_all()

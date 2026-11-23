@@ -62,6 +62,7 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('language', 'Korean')
                 self.declare_parameter('output_device', -1)
                 self.declare_parameter('output_device_name', '')
+                self.declare_parameter('output_latency_floor_s', 0.2)
                 self.declare_parameter('audio_directory', '')
                 self.declare_parameter('max_pending_requests', 32)
                 self.declare_parameter('pending_timeout_s', 0.0)
@@ -168,11 +169,13 @@ def create_tts_node(runtime_factory=None):
                 speed = self.get_parameter('piper_speed').value if backend == 'piper' else None
                 return speed, self.get_parameter('speech_volume_percent').value
 
+            output_latency_floor_s = self.get_parameter('output_latency_floor_s').value
             return SpeechRuntime(
                 synthesizer,
                 lambda on_state, cancel_event: StreamingPlayer(
                     on_state, cancel_event,
                     device=device_name or (None if device == -1 else device),
+                    output_latency_floor_s=output_latency_floor_s,
                 ),
                 self._queue_status,
                 logger=self.get_logger(),

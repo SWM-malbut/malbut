@@ -140,7 +140,7 @@ def extract_two_pass_prefix(
         text_format=copy.deepcopy(text_section),
         prompt_cache_key=prompt_cache_key,
         model=model,
-        include_weather=include_weather,
+        include_weather=include_weather and (WEATHER_SYSTEM_INSTRUCTIONS in dev_text),
         has_homecam_rules=has_homecam_rules,
         has_patrol_rules=has_patrol_rules,
     )
@@ -228,12 +228,25 @@ def _compute_grounded_flags(
         and not include_image
         and not (memory_context or {}).get('pending_question')
     )
+    # Speech Call-1 without weather_context only needs compact weather-tool call
+    # rules; full weather formatting rules (Rules 17-19) load when weather_context
+    # is attached on Call 2 (standalone or via two-pass developer delta).
+    speech_call1_without_weather = (
+        isinstance(request, SpeechAgentRequest)
+        and weather_context is None
+        and memory_context is not None
+    )
     include_weather = (
-        not tool_free_answer
-        or weather_context is not None
-        or any(
-            tool.name in {'get_weather', 'set_weather_location'}
-            for tool in tools
+        weather_context is not None
+        or (
+            not speech_call1_without_weather
+            and (
+                not tool_free_answer
+                or any(
+                    tool.name in {'get_weather', 'set_weather_location'}
+                    for tool in tools
+                )
+            )
         )
     )
     return _GroundedFlags(
@@ -556,9 +569,8 @@ def _apply_conversation_preservation(
         schema = copy.deepcopy(payload['text']['format']['schema'])
         schema['properties']['message'].update({
             'description': (
-                '이번에 말할 완결된 한국어 응답 한 구간. 자세한 설명은 하나의 '
-                '핵심 개념만 설명 두세 문장, 150~250자로 설명한 뒤 다음 개념을 계속 들을지 묻는다. '
-                '요청된 필수 조건과 안전 주의사항은 빠뜨리지 않는다.'
+                '이번에 말할 완결된 한국어 응답 한 구간(자세한 설명은 150~250자 두세 문장). '
+                '필수 조건과 안전 주의사항은 빠뜨리지 않는다.'
             ),
         })
         response_settings = (memory_context or {}).get('response_settings') or {}

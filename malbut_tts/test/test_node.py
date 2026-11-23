@@ -405,12 +405,39 @@ def test_default_node_warms_local_voice_without_api_key(fake_ros, monkeypatch):
     assert node.parameters['piper_threads'] == 3
     assert node.parameters['piper_speed'] == 0.9
     assert node.parameters['piper_max_chars'] == 40
+    assert node.parameters['output_latency_floor_s'] == 0.2
     assert runtime_settings['voice_settings']() == (0.9, 100)
     node.parameters.update(piper_speed=1.25, speech_volume_percent=40)
     assert runtime_settings['voice_settings']() == (1.25, 40)
     engine.load.assert_called_once_with()
     assert any('CPU only' in line for line in fake_ros.logs)
     node.destroy_node()
+
+
+def test_custom_output_latency_floor_is_forwarded_to_player(
+    fake_ros, monkeypatch,
+):
+    from unittest.mock import Mock
+
+    engine = Mock(sample_rate=22050)
+    captured = {}
+
+    def runtime(synth, player_factory, on_status, **kwargs):
+        captured['player'] = player_factory(None, None)
+        return FakeRuntime(on_status)
+
+    fake_ros.parameters.update(output_latency_floor_s=0.25)
+    monkeypatch.setitem(sys.modules, 'malbut_tts.live_piper_synthesis', SimpleNamespace(
+        LivePiperSynthesizer=lambda *a, **k: engine))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.audio', SimpleNamespace(
+        StreamingPlayer=lambda *a, **k: k))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
+        SpeechRuntime=runtime))
+    node = tts_node.create_tts_node()
+    try:
+        assert captured['player']['output_latency_floor_s'] == 0.25
+    finally:
+        node.destroy_node()
 
 
 @pytest.mark.parametrize('backend,speed,volume,accepted', [

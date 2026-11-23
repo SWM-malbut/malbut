@@ -313,3 +313,58 @@ def test_delayed_function_start_suppresses_fast_calls_and_fires_on_slow_calls():
             assert fired.wait(2.0)
             time.sleep(0.03)
     assert slow_notices == [FUNCTION_STARTS['get_homecam_falls']]
+
+
+def test_set_weather_location_suppresses_starting_notice_on_fast_calls(monkeypatch):
+    import time
+    from malbut_agent_server.orchestration import followups
+
+    runtime = build_orchestrator(Settings(database_path=':memory:'), http_server=False)
+    runtime.conversation_store.create('weather-user', 'weather-conversation')
+
+    class SetLocationProvider(WeatherProvider):
+        def complete(self, *args, **kwargs):
+            from malbut_agent_server.schemas import ProviderResult
+            return ProviderResult(
+                AgentDecision(
+                    'tool_call', '위치를 바꿀게요.',
+                    tool_name='set_weather_location',
+                    arguments={'location': '서울 종로구'},
+                ),
+                'test', 'test', 0,
+            )
+
+    runtime.provider = SetLocationProvider()
+    fast_notices = []
+    runtime.weather_location_executor = lambda _req_id, _loc: {
+        'status': 'location_not_found',
+    }
+    try:
+        with progress.request_scope(lambda text, _state: fast_notices.append(text)):
+            runtime.handle(request(text='여기 종로구야', tools=('set_weather_location',)))
+        assert fast_notices == []
+
+        monkeypatch.setattr(followups, 'WEATHER_LOCATION_START_NOTICE_DELAY_S', 0.02)
+        slow_notices = []
+        fired = threading.Event()
+
+        def on_slow(text, _state):
+            slow_notices.append(text)
+            fired.set()
+
+        def slow_location(_req_id, _loc):
+            assert fired.wait(2.0)
+            time.sleep(0.02)
+            return {'status': 'location_set', 'location': '서울 종로구'}
+
+        from dataclasses import replace
+
+        runtime.weather_location_executor = slow_location
+        with progress.request_scope(on_slow):
+            runtime.handle(replace(
+                request(text='여기 종로구야', tools=('set_weather_location',)),
+                request_id='weather-slow', turn_id='turn-2',
+            ))
+        assert slow_notices == [FUNCTION_STARTS['set_weather_location']]
+    finally:
+        runtime.close()
