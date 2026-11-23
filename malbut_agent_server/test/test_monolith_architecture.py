@@ -24,6 +24,7 @@ def _assert_acyclic_package(
     expected_min_modules: int,
 ) -> None:
     pkg_dir = _PACKAGE_ROOT / subpackage
+    dotted_subpackage = subpackage.replace('/', '.')
     graph: dict[str, list[str]] = {}
     for path in sorted(pkg_dir.glob('*.py')):
         module_name = path.stem
@@ -37,7 +38,7 @@ def _assert_acyclic_package(
                     raise AssertionError(
                         f'{subpackage}/{module_name}.py must not import {forbidden_parent}'
                     )
-                prefix = f'malbut_agent_server.{subpackage}.'
+                prefix = f'malbut_agent_server.{dotted_subpackage}.'
                 if node.module.startswith(prefix):
                     deps.add(node.module[len(prefix):].split('.')[0])
             elif isinstance(node, ast.Import):
@@ -74,6 +75,11 @@ def _assert_acyclic_package(
         ('orchestration', 'malbut_agent_server.orchestrator', 3),
         ('personal_memory_store', 'malbut_agent_server.personal_memory', 4),
         ('story_store', 'malbut_agent_server.story_runtime_store', 5),
+        ('providers/openai', 'malbut_agent_server.providers.openai_responses', 4),
+        ('communication', 'malbut_agent_server.ros_communication', 6),
+        ('application/cloud_fall', 'malbut_agent_server.application.cloud_fall_monitor', 7),
+        ('application/fall_sensor', 'malbut_agent_server.application.fall_flow_sensor', 3),
+        ('dialogue', 'malbut_agent_server.speech_dialogue', 3),
     ],
 )
 def test_subpackages_form_strict_acyclic_dags(
@@ -231,3 +237,144 @@ def test_story_runtime_store_dynamic_clock_and_shared_memory_connection() -> Non
         assert story._db.now() == 2500.0
     finally:
         conversations.close()
+
+
+def _node_loc(path: Path, name: str, *, is_class: bool = False) -> int:
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    target_type = ast.ClassDef if is_class else (ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in ast.walk(tree):
+        if isinstance(node, target_type) and node.name == name:
+            assert node.end_lineno is not None
+            return node.end_lineno - node.lineno + 1
+    raise AssertionError(f'{name} not found in {path}')
+
+
+def test_decomposed_runtime_facades_preserve_exports_and_stay_bounded() -> None:
+    """Decomposed runtime facades keep public/test seams and prevent monolith regrowth."""
+    from malbut_agent_server import ros_communication, speech_dialogue
+    from malbut_agent_server.application import cloud_fall_monitor, fall_flow_sensor
+    from malbut_agent_server.providers import openai_responses
+
+    expected_exports = {
+        openai_responses: {
+            'MAX_PROVIDER_RESPONSE_BYTES',
+            'OpenAIResponsesProvider',
+            'PooledOpenAITransport',
+            'REASONING_EFFORTS',
+            'SPEECH_END_INSTRUCTIONS',
+            'TEXT_DECISION_SCHEMA',
+            'Transport',
+            '_DEFAULT_URLLIB_TRANSPORT',
+            '_NoRedirectHandler',
+            '_TWO_PASS_FOLLOWUP_DIRECTIVE',
+            '_TwoPassPrefix',
+            '_insufficient_quota',
+            '_is_fast_speech_call1',
+        },
+        ros_communication: {
+            'ADDRESSEE_SERVICE',
+            'CommandLines',
+            'DEFAULT_CONVERSATION_DB',
+            'DEFAULT_DB_PATH',
+            'DEFAULT_SPEECH_USER',
+            'END_DIALOGUE_TOPIC',
+            'INPUT_STATUS_TOPIC',
+            'MAX_COMMAND_BYTES',
+            'MAX_PENDING_ADDRESSEE_REQUESTS',
+            'RESPONSE_TOPIC',
+            'TRANSCRIPT_TOPIC',
+            'apply_command',
+            'create_communication_node',
+            'dialogue_settings_from_args',
+            'main',
+            'read_commands',
+            'run_with_fall_rules',
+            'spin_fall_rules',
+        },
+        cloud_fall_monitor: {
+            'APPROACH_OUTCOMES',
+            'CLEARED_PLACE_MAX_S',
+            'CloudAnalysisStatus',
+            'CloudFallMonitor',
+            'GUARD_FAILURES',
+            'PersonCheck',
+            'RUNTIME_CLOUD_BLOCKS',
+            '_inside',
+            'associate_timed_finding',
+        },
+        fall_flow_sensor: {
+            'AnalysisStatus',
+            'FallFlowSensor',
+            'FlowIncident',
+            'GUARD_REASONS',
+            'Look',
+            'Photo',
+            'RUNTIME_CLOUD_BLOCKS',
+        },
+        speech_dialogue: {
+            'DialogueWorker',
+            'ERROR_RESPONSE',
+            'MAX_INTERRUPTION_IDS',
+            'MAX_SPEECH_ID_LENGTH',
+            'MEMORY_CHANGED_RESPONSE',
+            'NAVIGATION_CHANGED_RESPONSE',
+            'SESSION_ERROR_RESPONSE',
+            'SpeechInputTooLongError',
+            '_DialogueReply',
+            'starts_new_conversation',
+            'validate_dialogue_input',
+            'validate_interruption_input',
+        },
+    }
+    for module, names in expected_exports.items():
+        missing = {name for name in names if not hasattr(module, name)}
+        assert not missing, f'{module.__name__} missing exports: {sorted(missing)}'
+
+    assert _node_loc(
+        _PACKAGE_ROOT / 'application/cloud_fall_monitor.py', 'CloudFallMonitor', is_class=True,
+    ) <= 700
+    assert _node_loc(
+        _PACKAGE_ROOT / 'providers/openai_responses.py', 'OpenAIResponsesProvider', is_class=True,
+    ) <= 550
+    assert _node_loc(
+        _PACKAGE_ROOT / 'providers/openai_responses.py', '_prepare_payload',
+    ) <= 80
+    assert _node_loc(
+        _PACKAGE_ROOT / 'ros_communication.py', 'create_communication_node',
+    ) <= 150
+    assert _node_loc(
+        _PACKAGE_ROOT / 'application/fall_flow_sensor.py', 'FallFlowSensor', is_class=True,
+    ) <= 600
+    assert _node_loc(
+        _PACKAGE_ROOT / 'speech_dialogue.py', 'DialogueWorker', is_class=True,
+    ) <= 650
+    assert _node_loc(
+        _PACKAGE_ROOT / 'vlm_eval_metrics.py', '_summarize_configuration',
+    ) <= 150
+
+
+def test_reply_speaker_reads_prepared_hint_at_publish_time() -> None:
+    """Prefetch hints populated during publish_reply reach node.say()."""
+    from malbut_agent_server.communication.dialogue_pump import _make_reply_speaker
+    from malbut_agent_server.dialogue.models import _DialogueReply
+
+    calls: list[tuple[str, dict]] = []
+
+    class _FakeNode:
+        def say(self, text: str, **kwargs: object) -> bool:
+            calls.append((text, dict(kwargs)))
+            return True
+
+    reply = _DialogueReply({'utterance_id': 'utt-1', 'kind': 'answer', 'text': '안녕'})
+    speak = _make_reply_speaker(_FakeNode(), reply, prerecorded_audio=False)
+    reply._prepared_hint = {'prepared_id': 'prep-1', 'generation_id': 'gen-1'}
+    assert speak('안녕') is True
+    assert calls == [(
+        '안녕',
+        {
+            'interim': False,
+            'request_id': 'utt-1',
+            'prepared_id': 'prep-1',
+            'generation_id': 'gen-1',
+        },
+    )]

@@ -21,13 +21,19 @@ def test_robot_values_are_the_contract_values(enum, key):
 
 
 def notifications():
-    tree = ast.parse(Path(cloud_fall_monitor.__file__).read_text())
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ('_notify', '_notify_once')):
-            level, reason = node.args[1], node.args[2]
-            assert isinstance(level, ast.Attribute) and isinstance(reason, ast.Constant)
-            yield node.func.attr, NotificationLevel[level.attr].value, reason.value
+    monitor_path = Path(cloud_fall_monitor.__file__).resolve()
+    sources = [
+        monitor_path,
+        *sorted((monitor_path.parent / 'cloud_fall').glob('*.py')),
+    ]
+    for source in sources:
+        tree = ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ('_notify', '_notify_once')):
+                level, reason = node.args[1], node.args[2]
+                assert isinstance(level, ast.Attribute) and isinstance(reason, ast.Constant)
+                yield node.func.attr, NotificationLevel[level.attr].value, reason.value
 
 
 def test_every_notification_the_robot_sends_is_in_the_contract():

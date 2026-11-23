@@ -454,9 +454,9 @@ def _fall_threshold_curve(
         best = max(
             candidates,
             key=lambda point: (
-                point['recall'],
-                -point['false_alerts_per_camera_day'],
-                -point['threshold'],
+                float(point['recall'] or 0.0),
+                -float(point['false_alerts_per_camera_day'] or 0.0),
+                -float(point['threshold'] or 0.0),
             ),
         )
     return {
@@ -589,21 +589,24 @@ def _fallback_prediction() -> VlmPrediction:
     )
 
 
-def _summarize_configuration(
+_EvalRow = Tuple[VlmEvaluationCase, Optional[PredictionRecord], VlmPrediction]
+
+
+def _detected_count(selected: Sequence[_EvalRow]) -> int:
+    return sum(row[2].fall_detected for row in selected)
+
+
+def _build_evaluation_rows(
     cases: Sequence[VlmEvaluationCase],
     records: Sequence[PredictionRecord],
-    prices: Mapping[str, Any],
-    traffic_profile: Optional[Mapping[str, Any]],
-) -> Dict[str, Any]:
-    first = records[0]
+) -> Tuple[List[int], List[_EvalRow], int]:
     repetitions = sorted({record.repetition for record in records})
     if repetitions != list(range(1, max(repetitions) + 1)):
         raise ValueError('prediction repetitions must be contiguous from 1')
-    expected = len(cases) * len(repetitions)
     by_identity = {
         (record.case_id, record.repetition): record for record in records
     }
-    rows = []
+    rows: List[_EvalRow] = []
     missing = 0
     for repetition in repetitions:
         for case in cases:
@@ -618,7 +621,52 @@ def _summarize_configuration(
                 else _fallback_prediction()
             )
             rows.append((case, record, prediction))
+    return repetitions, rows, missing
 
+
+def _compute_expected_false_alerts(
+    rows: Sequence[_EvalRow],
+    traffic_profile: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(traffic_profile, dict):
+        return None
+    volumes = traffic_profile.get('clips_per_camera_day')
+    if not isinstance(volumes, dict):
+        return None
+    rates: Dict[str, float] = {}
+    complete = True
+    total_false_alerts = 0.0
+    for traffic_class, volume in volumes.items():
+        selected = [
+            row
+            for row in rows
+            if row[0].traffic_class == traffic_class
+        ]
+        if (
+            not isinstance(volume, (int, float))
+            or isinstance(volume, bool)
+            or volume < 0
+            or not selected
+        ):
+            complete = False
+            continue
+        rate = _detected_count(selected) / len(selected)
+        rates[str(traffic_class)] = round(rate, 9)
+        total_false_alerts += rate * float(volume)
+    return {
+        'profile': traffic_profile.get('name', 'unnamed'),
+        'complete': complete,
+        'value': round(total_false_alerts, 9) if complete else None,
+        'unit': 'alerts_per_camera_day',
+        'class_fall_positive_rates': rates,
+    }
+
+
+def _compute_fall_metrics(
+    rows: Sequence[_EvalRow],
+    valid_rows: Sequence[_EvalRow],
+    traffic_profile: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
     clear_fall_rows = [row for row in rows if row[0].has_clear_fall]
     all_fall_rows = [row for row in rows if row[0].has_fall]
     hard_negative_rows = [
@@ -635,30 +683,21 @@ def _summarize_configuration(
         for row in rows
         if row[0].traffic_class == 'screen_or_reflection'
     ]
-
-    def detected_count(selected: Sequence[Tuple[Any, Any, Any]]) -> int:
-        return sum(row[2].fall_detected for row in selected)
-
-    valid_rows = [
-        row
-        for row in rows
-        if row[1] is not None and row[1].semantic_valid
-    ]
-    fall_metrics = {
+    fall_metrics: Dict[str, Any] = {
         'clear_recall': proportion(
-            detected_count(clear_fall_rows),
+            _detected_count(clear_fall_rows),
             len(clear_fall_rows),
         ),
         'all_recall': proportion(
-            detected_count(all_fall_rows),
+            _detected_count(all_fall_rows),
             len(all_fall_rows),
         ),
         'hard_negative_fpr': proportion(
-            detected_count(hard_negative_rows),
+            _detected_count(hard_negative_rows),
             len(hard_negative_rows),
         ),
         'no_event_fpr': proportion(
-            detected_count(no_event_rows),
+            _detected_count(no_event_rows),
             len(no_event_rows),
         ),
         'screen_reflection_fpr': proportion(
@@ -684,14 +723,10 @@ def _summarize_configuration(
             len(motion_only_rows),
         ),
     }
-    assessment_truth = [row[0].fall_assessment for row in valid_rows]
-    assessment_predictions = [
-        row[2].fall_assessment for row in valid_rows
-    ]
     fall_metrics['assessment'] = _classification(
         FALL_ASSESSMENTS,
-        assessment_truth,
-        assessment_predictions,
+        [row[0].fall_assessment for row in valid_rows],
+        [row[2].fall_assessment for row in valid_rows],
     )
     found_down_rows = [
         row for row in rows if row[0].fall_assessment == 'found_down'
@@ -723,7 +758,7 @@ def _summarize_configuration(
         [row[2].fall_detected for row in rows],
     )['precision']
     fall_metrics['all_non_fall_fpr'] = proportion(
-        detected_count(normal_rows),
+        _detected_count(normal_rows),
         len(normal_rows),
     )
     fall_metrics['calibration'] = _calibration(
@@ -753,21 +788,32 @@ def _summarize_configuration(
         ),
         len(recovery_rows),
     )
-
-    strata = defaultdict(list)
+    strata: Dict[Tuple[str, Any], List[_EvalRow]] = defaultdict(list)
     for row in all_fall_rows:
         for name, value in row[0].conditions.items():
             strata[(name, value)].append(row)
         strata[('robot_motion', row[0].robot_motion)].append(row)
     fall_metrics['stratified_recall'] = {
         f'{name}={value}': proportion(
-            detected_count(selected),
+            _detected_count(selected),
             len(selected),
         )
         for (name, value), selected in sorted(strata.items())
     }
+    fall_metrics['expected_false_alerts'] = _compute_expected_false_alerts(
+        rows, traffic_profile,
+    )
+    fall_metrics['confidence_threshold_sweep'] = _fall_threshold_curve(
+        rows, traffic_profile,
+    )
+    return fall_metrics
 
-    subject_metrics = {
+
+def _compute_subject_metrics(
+    valid_rows: Sequence[_EvalRow],
+    expected: int,
+) -> Dict[str, Any]:
+    subject_metrics: Dict[str, Any] = {
         'coverage': proportion(len(valid_rows), expected),
     }
     for subject in SUBJECTS:
@@ -783,14 +829,19 @@ def _summarize_configuration(
         ),
         len(valid_rows),
     )
+    return subject_metrics
 
+
+def _compute_event_and_temporal_metrics(
+    rows: Sequence[_EvalRow],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     event_counts = {
         event_type: {'tp': 0, 'fp': 0, 'fn': 0}
         for event_type in PREDICTED_EVENT_TYPES
     }
-    overlaps = []
-    start_errors = []
-    end_errors = []
+    overlaps: List[float] = []
+    start_errors: List[float] = []
+    end_errors: List[float] = []
     within_one = 0
     within_two = 0
     match_count = 0
@@ -820,7 +871,7 @@ def _summarize_configuration(
             event_counts[case.events[index].event_type]['fn'] += 1
         for index in unmatched_predicted:
             event_counts[prediction.events[index].event_type]['fp'] += 1
-    event_metrics = {}
+    event_metrics: Dict[str, Any] = {}
     for event_type, counts in event_counts.items():
         precision_value = ratio(
             counts['tp'],
@@ -847,9 +898,20 @@ def _summarize_configuration(
             'recall': recall_value,
             'f1': f1,
         }
+    temporal_metrics = {
+        'tiou': _distribution(overlaps),
+        'start_error_s': _distribution(start_errors),
+        'end_error_s': _distribution(end_errors),
+        'start_within_1s': proportion(within_one, match_count),
+        'start_within_2s': proportion(within_two, match_count),
+    }
+    return event_metrics, temporal_metrics
 
-    posture_truth = [row[0].posture_end for row in valid_rows]
-    posture_predictions = [row[2].posture_end for row in valid_rows]
+
+def _compute_risk_metrics(
+    valid_rows: Sequence[_EvalRow],
+    expected: int,
+) -> Dict[str, Any]:
     risk_truth = [row[0].risk for row in valid_rows]
     risk_predictions = [row[2].risk for row in valid_rows]
     risk_metrics = _classification(RISKS, risk_truth, risk_predictions)
@@ -868,8 +930,13 @@ def _summarize_configuration(
         sum(row[2].risk == 'urgent' for row in none_rows),
         len(none_rows),
     )
+    return risk_metrics
 
-    records_present = [record for _case, record, _prediction in rows if record]
+
+def _compute_telemetry_metrics(
+    records_present: Sequence[PredictionRecord],
+    expected: int,
+) -> Dict[str, Any]:
     total_latencies = [
         record.total_latency_ms
         for record in records_present
@@ -880,7 +947,7 @@ def _summarize_configuration(
         for record in records_present
         if record.first_token_latency_ms is not None
     ]
-    telemetry = {
+    return {
         'request_success_rate': proportion(
             sum(record.request_succeeded for record in records_present),
             expected,
@@ -943,6 +1010,13 @@ def _summarize_configuration(
         ),
     }
 
+
+def _compute_cost_metrics(
+    rows: Sequence[_EvalRow],
+    records_present: Sequence[PredictionRecord],
+    expected: int,
+    prices: Mapping[str, Any],
+) -> Dict[str, Any]:
     costs = [
         cost
         for record in records_present
@@ -977,10 +1051,13 @@ def _summarize_configuration(
             }
         )
     usd_costs = [cost.get('amount_usd') for cost in costs]
-    if len(usd_costs) == expected and all(
-        isinstance(cost, (int, float)) for cost in usd_costs
-    ):
-        total_usd = sum(float(cost) for cost in usd_costs)
+    usd_numbers = [
+        float(cost)
+        for cost in usd_costs
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+    ]
+    if len(usd_numbers) == expected:
+        total_usd = sum(usd_numbers)
         mean_usd = total_usd / expected
         cost_metrics['usd'] = {
             'total': round(total_usd, 9),
@@ -993,46 +1070,14 @@ def _summarize_configuration(
                 for clips_per_day in (10, 50, 200)
             },
         }
+    return cost_metrics
 
-    expected_false_alerts = None
-    if isinstance(traffic_profile, dict):
-        volumes = traffic_profile.get('clips_per_camera_day')
-        if isinstance(volumes, dict):
-            rates = {}
-            complete = True
-            total_false_alerts = 0.0
-            for traffic_class, volume in volumes.items():
-                selected = [
-                    row
-                    for row in rows
-                    if row[0].traffic_class == traffic_class
-                ]
-                if (
-                    not isinstance(volume, (int, float))
-                    or isinstance(volume, bool)
-                    or volume < 0
-                    or not selected
-                ):
-                    complete = False
-                    continue
-                rate = detected_count(selected) / len(selected)
-                rates[str(traffic_class)] = round(rate, 9)
-                total_false_alerts += rate * float(volume)
-            expected_false_alerts = {
-                'profile': traffic_profile.get('name', 'unnamed'),
-                'complete': complete,
-                'value': (
-                    round(total_false_alerts, 9) if complete else None
-                ),
-                'unit': 'alerts_per_camera_day',
-                'class_fall_positive_rates': rates,
-            }
-    fall_metrics['expected_false_alerts'] = expected_false_alerts
-    fall_metrics['confidence_threshold_sweep'] = _fall_threshold_curve(
-        rows,
-        traffic_profile,
-    )
 
+def _compute_stability_metrics(
+    cases: Sequence[VlmEvaluationCase],
+    rows: Sequence[_EvalRow],
+    repetitions: Sequence[int],
+) -> Dict[str, Any]:
     stability_cases = []
     if len(repetitions) > 1:
         for case in cases:
@@ -1057,7 +1102,7 @@ def _summarize_configuration(
                     > 1,
                 }
             )
-    stability = {
+    return {
         'repetitions': len(repetitions),
         'fall_flip_rate': proportion(
             sum(item['fall_flip'] for item in stability_cases),
@@ -1073,6 +1118,12 @@ def _summarize_configuration(
         ),
     }
 
+
+def _build_case_outcomes(
+    rows: Sequence[_EvalRow],
+    cases: Sequence[VlmEvaluationCase],
+    repetitions: Sequence[int],
+) -> List[Dict[str, Any]]:
     case_outcomes = []
     for row_index, (case, record, prediction) in enumerate(rows):
         case_outcomes.append(
@@ -1093,6 +1144,36 @@ def _summarize_configuration(
                 ),
             }
         )
+    return case_outcomes
+
+
+def _summarize_configuration(
+    cases: Sequence[VlmEvaluationCase],
+    records: Sequence[PredictionRecord],
+    prices: Mapping[str, Any],
+    traffic_profile: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    first = records[0]
+    repetitions, rows, missing = _build_evaluation_rows(cases, records)
+    expected = len(cases) * len(repetitions)
+    valid_rows = [
+        row
+        for row in rows
+        if row[1] is not None and row[1].semantic_valid
+    ]
+    records_present = [
+        record for _case, record, _prediction in rows if record is not None
+    ]
+    fall_metrics = _compute_fall_metrics(rows, valid_rows, traffic_profile)
+    subject_metrics = _compute_subject_metrics(valid_rows, expected)
+    event_metrics, temporal_metrics = _compute_event_and_temporal_metrics(rows)
+    risk_metrics = _compute_risk_metrics(valid_rows, expected)
+    telemetry = _compute_telemetry_metrics(records_present, expected)
+    cost_metrics = _compute_cost_metrics(rows, records_present, expected, prices)
+    stability = _compute_stability_metrics(cases, rows, repetitions)
+    case_outcomes = _build_case_outcomes(rows, cases, repetitions)
+    posture_truth = [row[0].posture_end for row in valid_rows]
+    posture_predictions = [row[2].posture_end for row in valid_rows]
 
     return {
         'configuration_id': canonical_sha256(first.config_key)[:16],
@@ -1151,13 +1232,7 @@ def _summarize_configuration(
                 'tiou_threshold': 0.3,
                 'per_type': event_metrics,
             },
-            'temporal': {
-                'tiou': _distribution(overlaps),
-                'start_error_s': _distribution(start_errors),
-                'end_error_s': _distribution(end_errors),
-                'start_within_1s': proportion(within_one, match_count),
-                'start_within_2s': proportion(within_two, match_count),
-            },
+            'temporal': temporal_metrics,
             'posture': _classification(
                 PREDICTED_POSTURES,
                 posture_truth,
@@ -1248,7 +1323,7 @@ def pareto_frontier(
     eligible = []
     excluded = []
     for run in runs:
-        values = []
+        values: List[float] = []
         for axis in axes:
             value = _metric_path(run.get('metrics', {}), axis['metric'])
             if not isinstance(value, (int, float)):

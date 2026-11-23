@@ -21,176 +21,137 @@ stopped is answered "guard" and the rules ask nothing (unchanged).
 
 import asyncio
 from collections import OrderedDict, deque
-from dataclasses import dataclass, field
 import math
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from uuid import uuid4
 
 from malbut_agent_server.application.fall_appearance import FallAppearance
-from malbut_agent_server.application.fall_clip_planner import FallClipPlanner, RecordedClip
+from malbut_agent_server.application.fall_clip_planner import FallClipPlanner
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_people_recorder import FallPeopleRecorder
-from malbut_agent_server.domain.fall_monitoring import (
-    ArrivalCheckRequest, CandidateKind, CloudAnalysisExplanation, CloudFallReply,
-    CloudFallRequest, DepartureCheckRequest, FallCandidate, FallRuntimePolicy, FrameWindow,
-    PersonCheckRequest, PersonObservation, PersonVisibility, PostureCheckRequest, RgbFrame,
-    SubjectFrame, VideoAssessment, identifier, timestamp,
+from malbut_agent_server.application.fall_sensor import (
+    ANSWERS,
+    ARRIVAL_FRAMES,
+    ARRIVAL_WINDOW_S,
+    CHECK_CLIP_AFTER_S,
+    CHECK_CLIP_EVERY_S,
+    CHECK_CLIP_MAX_S,
+    CLIP_MARKS,
+    COMPARE_WAIT_S,
+    DEPARTURE_FRAMES,
+    FURNITURE_HEIGHT_M,
+    GUARDIAN_AGAIN_S,
+    GUARD_REASONS,
+    HFOV_RAD,
+    LOOKS,
+    MIDDLE_EVERY_S,
+    MIDDLE_LIMIT_S,
+    MIDDLE_MAX,
+    MOMENT_AFTER_S,
+    MOMENT_BEFORE_S,
+    MOMENT_FRAMES,
+    PHOTO_KEEP_S,
+    POSTURE_FRAMES,
+    POSTURE_WINDOW_S,
+    RECENT_S,
+    RECORD_KINDS,
+    RECORD_PURPOSE,
+    RUNTIME_CLOUD_BLOCKS,
+    SHOWN,
+    STATES,
+    SUPPORT_BAND,
+    VIEW_MARGIN,
+    VIEW_MAX_M,
+    AnalysisStatus,
+    FlowIncident,
+    Look,
+    Photo,
+    _box,
+    _id,
+    _point,
+    cloud_looks,
+    journal_ops,
 )
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
-from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
+from malbut_agent_server.domain.fall_monitoring import (
+    CandidateKind,
+    FallCandidate,
+    FallRuntimePolicy,
+    PersonObservation,
+    PersonVisibility,
+    RgbFrame,
+    SubjectFrame,
+    identifier,
+    timestamp,
+)
+from malbut_agent_server.ports.cloud_fall import CloudFallProvider
 from malbut_agent_server.ports.fall_event_journal import FallJournalError
 
-# Stopped on purpose (consent, connection, settings): the rules ask nothing then.
-GUARD_REASONS = frozenset({
-    'waiting_settings', 'disabled', 'camera_off', 'mapping', 'control_unavailable',
-    'runtime_error', 'cloud_consent_missing', 'settings_pending', 'server_settings_unavailable',
-    'server_settings_stale', 'monitoring_disabled', 'cloud_disconnected',
-    'cloud_permission_changed', 'worker_cancelled',
-})
-RUNTIME_CLOUD_BLOCKS = frozenset({
-    'waiting_settings', 'disabled', 'camera_off', 'mapping', 'control_unavailable',
-    'runtime_error', 'cloud_consent_missing', 'settings_pending',
-    'server_settings_unavailable', 'server_settings_stale',
-})
-# The moment of a fall seen by YOLO-Pose: 4 s before to 1 s after, 12 frames (design 5).
-MOMENT_BEFORE_S, MOMENT_AFTER_S, MOMENT_FRAMES = 4.0, 1.0, 12
-# The current look of the whole body: 3 frames over 2 s (unchanged).
-POSTURE_WINDOW_S, POSTURE_FRAMES = 2.0, 3
-ARRIVAL_WINDOW_S, ARRIVAL_FRAMES = 1.0, 2
-# The spot while the robot waits and drives there: once a second, when it is in
-# view, for at most ten minutes per incident (design 6); thinned to stay bounded.
-MIDDLE_EVERY_S, MIDDLE_LIMIT_S, MIDDLE_MAX, DEPARTURE_FRAMES = 1.0, 600.0, 120, 12
-HFOV_RAD = 1.2915
-VIEW_MARGIN = 0.2
-VIEW_MAX_M = 8.0
-# Photos of closed or never-opened suspicions are dropped after this.
-PHOTO_KEEP_S = 1800.0
-RECENT_S = 60.0
-FURNITURE_HEIGHT_M = 0.30
-SUPPORT_BAND = 0.25
-LOOKS = ('filter', 'arrival', 'departure', 'posture')
-# Which explanation each record may carry (fall_events.json analysisPurposes).
-RECORD_PURPOSE = {'analysis_completed': ('incident', 'crosscheck'),
-                  'arrival_compared': ('arrival_check',),
-                  'departure_reviewed': ('departure_check',),
-                  'posture_check_completed': ('posture_check',)}
-# 처리 완료 arrives every second while the app lists it; tell the rules now and then.
-GUARDIAN_AGAIN_S = 10.0
-# The robot's check as the incident's video (SWM25-268, 목업 53번): from when the robot
-# gets to work on a round until 5 s after the judgment, without its waits. The range
-# grows every few seconds meanwhile (people boxes keep only 30 s of history) and stops
-# growing after ten minutes.
-CLIP_MARKS = ('start', 'pause', 'end')
-CHECK_CLIP_AFTER_S, CHECK_CLIP_EVERY_S, CHECK_CLIP_MAX_S = 5.0, 5.0, 600.0
-# A ReID question waits for the second look of the one who reappeared (a second later),
-# then is answered with what there is (SWM25-267 decision 10).
-COMPARE_WAIT_S = 3.0
-# The web's assessment shown beside a look's explanation (display only).
-SHOWN = {'same_person': VideoAssessment.SUSPECTED_FALL,
-         'person_unsure': VideoAssessment.SUSPECTED_FALL,
-         'different_person': VideoAssessment.SUSPECTED_FALL,
-         'same_object': VideoAssessment.NORMAL_ACTIVITY, 'gone': VideoAssessment.NORMAL_ACTIVITY,
-         'not_visible': VideoAssessment.UNOBSERVABLE,
-         'animal_left': VideoAssessment.NORMAL_ACTIVITY,
-         'person_walked': VideoAssessment.NORMAL_ACTIVITY,
-         'person_crawled': VideoAssessment.SUSPECTED_FALL,
-         'not_seen': VideoAssessment.UNOBSERVABLE,
-         'furniture': VideoAssessment.NORMAL_ACTIVITY, 'standing': VideoAssessment.NORMAL_ACTIVITY,
-         'floor_active': VideoAssessment.NORMAL_ACTIVITY,
-         'floor': VideoAssessment.SUSPECTED_FALL, 'unclear': VideoAssessment.UNOBSERVABLE}
-RECORD_KINDS = frozenset({
-    'incident_opened', 'analysis_completed', 'analysis_unavailable', 'approach_started',
-    'approach_completed', 'arrival_compared', 'reverify_completed', 'departure_reviewed',
-    'view_completed', 'posture_check_completed', 'fall_moment_reviewed', 'question_requested',
-    'confirmation_completed', 'voice_result', 'agent_check_failed', 'check_waiting',
-    'check_not_confirmed', 'revisit_started', 'check_stopped', 'incident_resolved',
-    'recheck_started', 'approach_returned', 'candidate_dropped', 'notification_grouped',
-})
-STATES = ('verifying', 'recheck_required', 'help_required', 'resolved')
-ANSWERS = ('help_request', 'okay', 'unclear', 'no_response', 'failed')
-
-
-@dataclass(frozen=True)
-class Photo:
-    frames: tuple
-    box: Optional[tuple]
-    at: float
-
-
-@dataclass
-class FlowIncident:
-    """What the VLM keeps for an incident of the fall rules: photos and its clip."""
-
-    incident_id: str
-    boot_id: str
-    first: dict
-    opened_at: float
-    open: bool = True
-    check_round: int = 1
-    left: Optional[str] = None     # left open for the guardian: nobody or person (restart)
-    middle: list = field(default_factory=list)
-    middle_at: float = -math.inf
-    person: Optional[str] = None   # the Agent's person number: the yellow box (SWM25-267)
-    # While the robot works on a round: [check round, since, last grown] (SWM25-268).
-    check_clip: Optional[list] = None
-    # When a suspicion last joined it, without a journal (the journal keeps it otherwise).
-    seen_at: Optional[float] = None
-
-
-@dataclass
-class Look:
-    look_id: str
-    what: str
-    sighting_id: Optional[str]
-    incident_id: Optional[str]
-    photo: Optional[str] = None
-    box: Optional[tuple] = None
-    track: Optional[str] = None
-    fall_moments: tuple = ()
-
-
-@dataclass(frozen=True)
-class AnalysisStatus:
-    state: str = 'idle'
-    request_id: str = ''
-    request_purpose: str = ''
-    last_error_code: str = ''
-
-
-def _point(value):
-    return None if value is None else [round(float(value[0]), 3), round(float(value[1]), 3)]
-
-
-def _box(value):
-    if value is None:
-        return None
-    if (not isinstance(value, (list, tuple)) or len(value) != 4
-            or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
-                       and math.isfinite(v) and 0 <= v <= 1 for v in value)
-            or value[0] >= value[2] or value[1] >= value[3]):
-        raise ValueError('invalid box')
-    return tuple(float(v) for v in value)
-
-
-def _id(value, *, optional=True):
-    if value is None and optional:
-        return None
-    if not isinstance(value, str) or not value or len(value) > 200:
-        raise ValueError('invalid identifier')
-    return value
+__all__ = [
+    'ANSWERS',
+    'ARRIVAL_FRAMES',
+    'ARRIVAL_WINDOW_S',
+    'AnalysisStatus',
+    'CHECK_CLIP_AFTER_S',
+    'CHECK_CLIP_EVERY_S',
+    'CHECK_CLIP_MAX_S',
+    'CLIP_MARKS',
+    'COMPARE_WAIT_S',
+    'DEPARTURE_FRAMES',
+    'FURNITURE_HEIGHT_M',
+    'FallFlowSensor',
+    'FlowIncident',
+    'GUARDIAN_AGAIN_S',
+    'GUARD_REASONS',
+    'HFOV_RAD',
+    'LOOKS',
+    'Look',
+    'MIDDLE_EVERY_S',
+    'MIDDLE_LIMIT_S',
+    'MIDDLE_MAX',
+    'MOMENT_AFTER_S',
+    'MOMENT_BEFORE_S',
+    'MOMENT_FRAMES',
+    'PHOTO_KEEP_S',
+    'POSTURE_FRAMES',
+    'POSTURE_WINDOW_S',
+    'Photo',
+    'RECENT_S',
+    'RECORD_KINDS',
+    'RECORD_PURPOSE',
+    'RUNTIME_CLOUD_BLOCKS',
+    'SHOWN',
+    'STATES',
+    'SUPPORT_BAND',
+    'VIEW_MARGIN',
+    'VIEW_MAX_M',
+    '_box',
+    '_id',
+    '_point',
+]
 
 
 class FallFlowSensor:
     """One device boot; event-loop confined, with at most one Cloud task."""
 
-    def __init__(self, *, device_id: str, boot_id: str, policy: FallRuntimePolicy,
-                 buffer: FallFrameBuffer, provider: CloudFallProvider, journal=None,
-                 clock: Callable[[], float] = time.monotonic,
-                 wall_clock: Callable[[], float] = time.time,
-                 clip_planner: Optional[FallClipPlanner] = None,
-                 people_recorder: Optional[FallPeopleRecorder] = None,
-                 place_locator=None, flow_log=None, appearance=None) -> None:
+    def __init__(
+        self,
+        *,
+        device_id: str,
+        boot_id: str,
+        policy: FallRuntimePolicy,
+        buffer: FallFrameBuffer,
+        provider: CloudFallProvider,
+        journal: Any = None,
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        clip_planner: Optional[FallClipPlanner] = None,
+        people_recorder: Optional[FallPeopleRecorder] = None,
+        place_locator: Any = None,
+        flow_log: Any = None,
+        appearance: Any = None,
+    ) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -200,67 +161,74 @@ class FallFlowSensor:
         self._provider, self._journal = provider, journal
         self._clock, self._wall_clock = clock, wall_clock
         self._clips = clip_planner or FallClipPlanner()
-        self._clip_offsets = {}
+        self._clip_offsets: Dict[Any, float] = {}
         self.clip_storage_failures = 0
         self._people = people_recorder or FallPeopleRecorder(boot_id=boot_id)
         self.people_storage_failures = 0
         self._place = place_locator
-        self._flow_log = flow_log  # FallFlowLog: what went to and came from the rules
-        # ReID descriptors for the person tracking's splits (SWM25-267 decision 10).
+        self._flow_log = flow_log
         self._appearance = appearance or FallAppearance()
-        self._comparisons = OrderedDict()   # request id -> (before, after, asked at)
-        self._subjects = FallSubjectEvidence(retention_s=buffer.retention_s,
-                                             max_frames=buffer.max_frames)
+        self._comparisons: 'OrderedDict[str, Tuple[Any, ...]]' = OrderedDict()
+        self._subjects = FallSubjectEvidence(
+            retention_s=buffer.retention_s, max_frames=buffer.max_frames,
+        )
         self._enabled = self._camera = self._consent = self._connected = False
-        self._block = None
+        self._block: Optional[str] = None
         self._epoch = 0
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[Any]] = None
         self._running = False
         self._analysis = AnalysisStatus()
-        self._calls = deque()
+        self._calls: deque[float] = deque()
         self._scan_anchor = 0.0
         self._last_scan_end = -1.0
         self._person: Optional[PersonObservation] = None
         self._last_person_seen: Optional[float] = None
-        self._running_missions = ()
-        self._messages = []
-        self._looks = deque()
-        self._analyses = OrderedDict()   # look_id -> CloudAnalysisExplanation
-        self._photos = OrderedDict()     # photo id -> Photo
-        self._moments = OrderedDict()    # fall moment id -> Photo (frames only)
-        self._pending_moments = {}       # fall moment id -> the fall's time
-        self._sightings = OrderedDict()  # sighting id -> (message, evidence start, end)
-        self._incidents = {}
+        self._running_missions: Tuple[str, ...] = ()
+        self._messages: List[Dict[str, Any]] = []
+        self._looks: deque[Look] = deque()
+        self._analyses: 'OrderedDict[str, Any]' = OrderedDict()
+        self._photos: 'OrderedDict[str, Photo]' = OrderedDict()
+        self._moments: 'OrderedDict[str, Photo]' = OrderedDict()
+        self._pending_moments: Dict[str, float] = {}
+        self._sightings: 'OrderedDict[str, Tuple[Any, ...]]' = OrderedDict()
+        self._incidents: Dict[str, FlowIncident] = {}
         self._view = 0
         self._moving = True
         self._storage_failed = False
-        self._guardian_sent = OrderedDict()
+        self._guardian_sent: 'OrderedDict[str, float]' = OrderedDict()
 
     # ------------------------------------------------------------ the node's interface
 
-    def _now(self):
+    def _now(self) -> float:
         value = self._clock()
         timestamp(value)
         return value
 
     @property
-    def analysis_status(self):
+    def analysis_status(self) -> AnalysisStatus:
         return self._analysis
 
-    def drain_events(self):
+    def drain_events(self) -> Tuple[Dict[str, Any], ...]:
         messages, self._messages = tuple(self._messages), []
         if self._flow_log is not None:
             for message in messages:
                 self._flow_log.write('to_rules', message)
         return messages
 
-    def pending_questions(self):
+    def pending_questions(self) -> Tuple[Any, ...]:
         return ()
 
-    def set_running_missions(self, capability_ids):
+    def set_running_missions(self, capability_ids: Sequence[str]) -> None:
         self._running_missions = tuple(capability_ids)
 
-    def configure(self, *, enabled, camera_enabled, cloud_consent, connected):
+    def configure(
+        self,
+        *,
+        enabled: bool,
+        camera_enabled: bool,
+        cloud_consent: bool,
+        connected: bool,
+    ) -> None:
         if enabled and self._storage_failed:
             raise FallJournalError('recover journal and restart before enabling')
         values = enabled, camera_enabled, cloud_consent, connected
@@ -284,7 +252,7 @@ class FallFlowSensor:
         elif not (previous[0] and previous[1]):
             self._scan_anchor = self._now()  # A new periodic interval, not a delayed scan.
 
-    def set_cloud_block(self, reason):
+    def set_cloud_block(self, reason: Optional[str]) -> None:
         if reason is not None and reason not in RUNTIME_CLOUD_BLOCKS:
             raise ValueError('invalid runtime Cloud block')
         if reason == self._block:
@@ -318,7 +286,7 @@ class FallFlowSensor:
             self._last_person_seen = observation.observed_at
         return True
 
-    def invalidate_subject_input(self):
+    def invalidate_subject_input(self) -> None:
         self._subjects.clear()
         self._view += 1
 
@@ -338,13 +306,14 @@ class FallFlowSensor:
             self._view += 1
         self._moving = moving
         self._people_call(self._people.observe, frame.observed_at, tuple(
-            (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None))
+            (p.subject_key, p.box, p.strong) for p in frame.subjects if p.box is not None
+        ))
         # Who is still there and who stood up: the Agent's person tracking (SWM25-267).
         self._messages.append(self._people_frame(frame))
         self._describe(frame)
         return True
 
-    def _describe(self, frame):
+    def _describe(self, frame: SubjectFrame) -> None:
         """What each person in view looks like, every few seconds (ReID, decision 10)."""
         people = [(p.subject_key, p.box) for p in frame.subjects if p.box is not None]
         self._appearance.see(frame.observed_at, [track for track, _ in people])
@@ -355,28 +324,36 @@ class FallFlowSensor:
             self._appearance.observe(frame.observed_at, shot[-1].jpeg, people)
         self._answer_comparisons()
 
-    def _appearance_ready(self, after, mode):
-        return (self._appearance.ready(after) if mode == 'reappear'
-                else self._appearance.ready(after, mode=mode))
+    def _appearance_ready(self, after: Any, mode: str) -> bool:
+        return (
+            self._appearance.ready(after) if mode == 'reappear'
+            else self._appearance.ready(after, mode=mode)
+        )
 
-    def _appearance_compare(self, before, after, mode):
-        return (self._appearance.compare(before, after) if mode == 'reappear'
-                else self._appearance.compare(before, after, mode=mode))
+    def _appearance_compare(self, before: Any, after: Any, mode: str) -> Optional[float]:
+        return (
+            self._appearance.compare(before, after) if mode == 'reappear'
+            else self._appearance.compare(before, after, mode=mode)
+        )
 
-    def _answer_comparisons(self):
+    def _answer_comparisons(self) -> None:
         now = self._now()
         for request_id, (before, after, mode, asked) in list(self._comparisons.items()):
-            waiting = (not self._appearance_ready(after, mode)
-                       and (mode == 'reappear' or self._appearance.in_view(after[0], now)))
+            waiting = (
+                not self._appearance_ready(after, mode)
+                and (mode == 'reappear' or self._appearance.in_view(after[0], now))
+            )
             if waiting and now - asked < COMPARE_WAIT_S:
                 continue  # Its second look comes a second after it showed up.
             del self._comparisons[request_id]
             similarity = self._appearance_compare(before, after, mode)
-            self._messages.append(dict(kind='fall_appearance', request_id=request_id,
-                                       similarity=None if similarity is None
-                                       else round(similarity, 4)))
+            self._messages.append(dict(
+                kind='fall_appearance',
+                request_id=request_id,
+                similarity=None if similarity is None else round(similarity, 4),
+            ))
 
-    def _people_frame(self, frame):
+    def _people_frame(self, frame: SubjectFrame) -> Dict[str, Any]:
         """One frame for the Agent's person tracking; a frame with nobody is sent too."""
         at = frame.observed_at
         robot = None
@@ -390,17 +367,22 @@ class FallFlowSensor:
         for pose in frame.subjects:
             if pose.box is None:
                 continue
-            people.append(dict(track=pose.subject_key, box=[round(v, 4) for v in pose.box],
-                               point=_point(self._pose_place(at, pose)),
-                               state=pose.state.value))
-        return dict(kind='fall_people', at=at, view=self._view,
-                    stationary=frame.camera_stationary, robot=_point(robot), people=people)
+            people.append(dict(
+                track=pose.subject_key,
+                box=[round(v, 4) for v in pose.box],
+                point=_point(self._pose_place(at, pose)),
+                state=pose.state.value,
+            ))
+        return dict(
+            kind='fall_people',
+            at=at,
+            view=self._view,
+            stationary=frame.camera_stationary,
+            robot=_point(robot),
+            people=people,
+        )
 
-    def _pose_place(self, at, pose):
-        """A Pose person's map place: on their torso keypoints (SWM25-267, 10-19 20:02:
-        the box centre of someone cut off at the image edge was on the wall behind),
-        the box centre from an older detector. None: not measured (under a table, too
-        close, no torso seen)."""
+    def _pose_place(self, at: float, pose: Any) -> Any:
         if self._place is None:
             return None
         try:
@@ -423,9 +405,10 @@ class FallFlowSensor:
             return None
         latest = self._subjects.latest(candidate.subject_key)
         box = latest[2].box if latest is not None else None
-        # Placed as in the person frames, so the rules compare like with like.
-        point = (self._pose_place(candidate.observed_at, latest[2])
-                 if latest is not None and box is not None else None)
+        point = (
+            self._pose_place(candidate.observed_at, latest[2])
+            if latest is not None and box is not None else None
+        )
         if candidate.kind is CandidateKind.MOTION_SEEN:
             kind = 'motion'
         elif candidate.pose_reason == 'pose_sustained_horizontal_posture':
@@ -436,14 +419,19 @@ class FallFlowSensor:
         if kind == 'motion':
             moment = 'm-' + uuid4().hex
             self._pending_moments[moment] = candidate.observed_at
-        start = (candidate.evidence_started_at if candidate.evidence_started_at is not None
-                 else candidate.observed_at)
+        start = (
+            candidate.evidence_started_at
+            if candidate.evidence_started_at is not None
+            else candidate.observed_at
+        )
         floor = candidate.sensors.floor_distance_m if candidate.sensors is not None else None
-        return self._sight(kind, candidate.observed_at, track=candidate.subject_key, box=box,
-                           point=point, placed=True, photo=True, fall_moment=moment,
-                           evidence=(start, candidate.observed_at), floor=floor)
+        return self._sight(
+            kind, candidate.observed_at, track=candidate.subject_key, box=box,
+            point=point, placed=True, photo=True, fall_moment=moment,
+            evidence=(start, candidate.observed_at), floor=floor,
+        )
 
-    def close_by_guardian(self, incident_id):
+    def close_by_guardian(self, incident_id: Any) -> None:
         """처리 완료 in the app: the rules stop and never check it again."""
         if not isinstance(incident_id, str):
             return
@@ -456,14 +444,15 @@ class FallFlowSensor:
                 self._guardian_sent.pop(next(iter(self._guardian_sent)))
             self._messages.append(dict(kind='guardian_closed', incident_id=incident_id))
 
-    def maintain_associations(self):
+    def maintain_associations(self) -> None:
         """Every loop: finish fall moments, keep frames of spots, drop old photos."""
         now = self._now()
         for moment, at in tuple(self._pending_moments.items()):
             if now >= at + MOMENT_AFTER_S:
                 del self._pending_moments[moment]
-                frames = self._frames(at + MOMENT_AFTER_S, MOMENT_BEFORE_S + MOMENT_AFTER_S,
-                                      MOMENT_FRAMES)
+                frames = self._frames(
+                    at + MOMENT_AFTER_S, MOMENT_BEFORE_S + MOMENT_AFTER_S, MOMENT_FRAMES,
+                )
                 if frames:
                     self._moments[moment] = Photo(frames, None, at)
         self._collect_middle(now)
@@ -475,7 +464,7 @@ class FallFlowSensor:
             if now - clip[1] >= CHECK_CLIP_MAX_S:
                 incident.check_clip = None  # A round stuck for ten minutes: stop growing.
             else:
-                self._extend_check(incident, now, after=CHECK_CLIP_EVERY_S)
+                journal_ops.extend_check(self, incident, now, after=CHECK_CLIP_EVERY_S)
         for store in (self._photos, self._moments):
             kept = self._kept_photos()
             for key, photo in tuple(store.items()):
@@ -487,7 +476,7 @@ class FallFlowSensor:
                and now - next(iter(self._sightings.values()))[0]['at'] > PHOTO_KEEP_S):
             self._sightings.popitem(last=False)
 
-    def flush_people(self):
+    def flush_people(self) -> None:
         try:
             ready = self._people.due(self._now())
         except Exception:
@@ -500,242 +489,29 @@ class FallFlowSensor:
                 except Exception:
                     self.people_storage_failures += 1
 
-    async def close(self):
-        self.configure(enabled=False, camera_enabled=False, cloud_consent=False,
-                       connected=False)
+    async def close(self) -> None:
+        self.configure(
+            enabled=False, camera_enabled=False, cloud_consent=False, connected=False,
+        )
         if self._task is not None:
             self._task.cancel()
 
-    # ------------------------------------------------------------ decisions of the rules
+    # ------------------------------------------------------------ sightings & middle frames
 
-    def apply(self, data):
-        """One decision of the Agent's fall rules (/malbut/falls/runtime/decision)."""
-        if not isinstance(data, dict):
-            raise ValueError('invalid decision')
-        if self._flow_log is not None:
-            self._flow_log.write('from_rules', data)
-        action = data.get('action')
-        if action == 'flow_hello':
-            self._ready()
-        elif action == 'look':
-            what = data.get('what')
-            if what not in LOOKS:
-                raise ValueError('invalid look')
-            look = Look(_id(data.get('look_id'), optional=False), what,
-                        _id(data.get('sighting_id')), _id(data.get('incident_id')),
-                        _id(data.get('photo') or data.get('before')), _box(data.get('box')),
-                        _id(data.get('track')),
-                        tuple(_id(m, optional=False) for m in data.get('fall_moments') or ())[:2])
-            if (look.sighting_id is None) == (look.incident_id is None):
-                raise ValueError('a look is about a sighting or an incident')
-            if len(self._looks) >= 32:
-                raise ValueError('too many looks')
-            if not self._cloud_allowed():
-                self._answer(look, 'guard', reason=self._guard_reason())
-            else:
-                self._looks.append(look)
-        elif action == 'record':
-            self._write_record(data)
-        elif action == 'notify':
-            self._write_notice(data)
-        elif action == 'link':
-            sighting = self._sightings.get(_id(data.get('sighting_id'), optional=False))
-            incident_id = _id(data.get('incident_id'), optional=False)
-            incident = self._incident(incident_id)
-            if data.get('scene') not in (None, True, False):
-                raise ValueError('invalid link')
-            # Not a scene of its own (too soon after the last one kept): only seen.
-            if sighting is not None and incident is not None and data.get('scene') is not False:
-                self._clip_from(incident, sighting)
-            # Seen now: for a restarted Agent, whoever is at its place for 30 more minutes.
-            if self._journal is not None:
-                self._store(self._journal.seen_flow_incident, incident_id)
-            elif incident is not None:
-                incident.seen_at = self._now()
-        elif action == 'people':
-            self._people_numbers(data)
-        elif action == 'left_open':
-            incident = self._incident(_id(data.get('incident_id'), optional=False))
-            if incident is None or data.get('who') not in ('nobody', 'person'):
-                raise ValueError('invalid left open')
-            incident.left = data['who']
-            self._mark(incident, incident.check_round)
-        elif action == 'compare':
-            request_id = _id(data.get('request_id'), optional=False)
-            mode = data.get('mode', 'reappear')
-            if mode not in ('reappear', 'check'):
-                raise ValueError('invalid appearance comparison')
-            sides = []
-            for side in (data.get('a'), data.get('b')):
-                at = side.get('at') if isinstance(side, dict) else None
-                if (isinstance(at, bool) or not isinstance(at, (int, float))
-                        or not math.isfinite(at)):
-                    raise ValueError('invalid appearance comparison')
-                sides.append((_id(side.get('track'), optional=False), float(at)))
-            now = self._now()
-            self._comparisons[request_id] = (*sides, mode, now)
-            while len(self._comparisons) > 32:
-                self._comparisons.popitem(last=False)
-            if mode == 'reappear' or (not self._appearance_ready(sides[1], mode)
-                                      and self._appearance.in_view(sides[1][0], now)):
-                self._appearance.want(*sides[1])  # Its pair now, not on the five-second round.
-            self._answer_comparisons()
-        elif action == 'clip':
-            incident = self._incident(_id(data.get('incident_id'), optional=False))
-            if incident is None or data.get('mark') not in CLIP_MARKS:
-                raise ValueError('invalid clip mark')
-            self._check_clip(incident, data['mark'], self._round(data))
-        else:
-            raise ValueError('unsupported decision')
-
-    def _ready(self):
-        """For a restarted Agent: the open incidents and the latest suspicions."""
-        open_incidents = []
-        now = self._now()
-        stored = self._journal.open_flow_incidents() if self._journal is not None else [
-            dict(incident_id=i.incident_id, boot_id=i.boot_id, payload=dict(first=i.first),
-                 check_round=i.check_round, left=i.left,
-                 seen_ago=None if i.seen_at is None else max(0.0, now - i.seen_at))
-            for i in self._incidents.values() if i.open]
-        for row in stored:
-            first = row['payload'].get('first')
-            if not isinstance(first, dict):
-                continue
-            open_incidents.append(dict(incident_id=row['incident_id'], first=first,
-                                       check_round=row['check_round'],
-                                       fall_moments=row['payload'].get('fall_moments', []),
-                                       left=row.get('left'), seen_ago=row.get('seen_ago')))
-        recent = [message for message, *_ in self._sightings.values()
-                  if now - message['at'] <= RECENT_S
-                  and message['kind'] in ('low', 'lying', 'motion', 'cloud')]
-        self._messages.append(dict(kind='flow_ready', flow=True,
-                                   open_incidents=open_incidents[-64:], recent=recent[-32:]))
-
-    def _incident(self, incident_id):
-        incident = self._incidents.get(incident_id)
-        if incident is None and self._journal is not None:
-            stored = self._journal.flow_incident(incident_id)
-            if stored is not None:  # Opened before this process started.
-                incident = FlowIncident(incident_id, stored['boot_id'],
-                                        stored['payload'].get('first') or {}, self._now(),
-                                        stored['open'], stored['check_round'],
-                                        stored.get('left'))
-                self._incidents[incident_id] = incident
-        return incident
-
-    def _write_record(self, data):
-        event, incident_id = data.get('event'), data.get('incident_id')
-        if event not in RECORD_KINDS:
-            raise ValueError('unsupported record')
-        if incident_id is None:
-            if self._journal is not None:  # Local only (a filtered candidate).
-                self._store(self._journal.append_flow_note, dict(
-                    event=event, reason=data.get('reason'),
-                    sighting_id=data.get('sighting_id')))
-            return
-        _id(incident_id, optional=False)
-        if event == 'incident_opened' and incident_id not in self._incidents:
-            sighting = self._sightings.get(data.get('sighting_id'))
-            first = sighting[0] if sighting is not None else {}
-            now = self._now()
-            incident = FlowIncident(incident_id, self.boot_id, first, now, seen_at=now)
-            self._incidents[incident_id] = incident
-            if self._journal is not None:
-                self._store(self._journal.save_flow_incident, incident_id=incident_id,
-                            boot_id=self.boot_id, payload=dict(first=first, fall_moments=[
-                                first.get('fall_moment')] if first.get('fall_moment') else []))
-            if sighting is not None:
-                self._clip_from(incident, sighting)
-        incident = self._incident(incident_id)
-        if incident is None:
-            raise ValueError('unknown incident')
-        analysis = None
-        look_id = data.get('look_id')
-        if look_id is not None and RECORD_PURPOSE.get(event):
-            analysis = self._analyses.get(look_id)
-            if analysis is not None and analysis.purpose not in RECORD_PURPOSE[event]:
-                analysis = None
-        reason = data.get('reason')
-        if event == 'approach_started' and reason is None:
-            running = self._running_missions
-            reason = ('patrol_stopped' if 'patrol' in running
-                      else 'follow_stopped' if 'follow_person' in running else None)
-        round_ = self._round(data)
-        self._append(incident, event, data, reason=reason, analysis=analysis)
-        if event == 'incident_resolved':
-            incident.open = False
-            incident.middle.clear()
-            self._mark(incident, round_)
-            if incident.check_clip is not None:  # The judgment, even without an end mark.
-                self._check_clip(incident, 'end', round_)
-        elif event == 'recheck_started':
-            incident.open = True
-            incident.left = None
-            incident.middle.clear()
-            incident.middle_at = -math.inf
-            self._mark(incident, round_)
-
-    def _write_notice(self, data):
-        incident = self._incident(_id(data.get('incident_id'), optional=False))
-        if incident is None:
-            raise ValueError('unknown incident')
-        level = data.get('level')
-        if level not in ('info', 'check', 'urgent'):
-            raise ValueError('invalid level')
-        self._append(incident, 'notification_requested', data, reason=data.get('reason'),
-                     level=level)
-
-    def _round(self, data):
-        value = data.get('check_round', 1)
-        if type(value) is not int or not 1 <= value <= 10000:
-            raise ValueError('invalid check round')
-        return value
-
-    def _append(self, incident, event, data, *, reason, analysis=None, level=None):
-        state, answer = data.get('state'), data.get('answer')
-        if state not in STATES or (answer is not None and answer not in ANSWERS):
-            raise ValueError('invalid record state')
-        if reason is not None and (not isinstance(reason, str) or len(reason) > 80):
-            raise ValueError('invalid reason')
-        fall_seen = data.get('fall_seen') is True
-        incident.check_round = self._round(data)
-        if self._journal is None:
-            return
-        self._store(self._journal.append_flow_event, device_id=self.device_id,
-                    boot_id=incident.boot_id, event_id=str(uuid4()),
-                    incident_id=incident.incident_id, kind=event, state=state,
-                    fall_seen=fall_seen,
-                    assessment='observed_fall' if fall_seen else 'suspected_fall',
-                    answer=answer, reason=reason, notification_level=level,
-                    check_round=incident.check_round, analysis=analysis)
-
-    def _mark(self, incident, round_):
-        if self._journal is not None:
-            self._store(self._journal.mark_flow_incident, incident.incident_id,
-                        open=incident.open, check_round=round_, left=incident.left)
-
-    def _store(self, method, *args, **kwargs):
-        if self._storage_failed:
-            raise FallJournalError('recover journal and restart before writing')
-        try:
-            method(*args, **kwargs)
-        except Exception:
-            self._storage_failed = True
-            self.configure(enabled=False, camera_enabled=False, cloud_consent=False,
-                           connected=False)
-            raise FallJournalError('fall event persistence failed') from None
-
-    # ------------------------------------------------------------ sightings
-
-    def _sight(self, kind, at, *, track=None, box=None, photo=False, fall_moment=None,
-               evidence=None, point=None, placed=False, frames=None, floor=None):
-        """placed: point already measured (None: no place), not from the box."""
+    def _sight(
+        self, kind: str, at: float, *, track: Optional[str] = None,
+        box: Optional[Tuple[float, float, float, float]] = None,
+        photo: bool = False, fall_moment: Optional[str] = None,
+        evidence: Optional[Tuple[float, float]] = None,
+        point: Any = None, placed: bool = False, frames: Any = None,
+        floor: Optional[float] = None,
+    ) -> str:
         sighting_id = 's-' + uuid4().hex
         if point is None and not placed and box is not None and self._place is not None:
             try:
                 point = self._place.locate_near(at, box)
             except Exception:
-                point = None  # Auxiliary: no map place.
+                point = None
         robot = None
         if self._place is not None:
             try:
@@ -749,28 +525,29 @@ class FallFlowSensor:
             if shot:
                 photo_id = 'p-' + uuid4().hex
                 self._photos[photo_id] = Photo(tuple(shot[-1:]), box, at)
-        message = dict(sighting_id=sighting_id, at=at, kind=kind, track=track,
-                       point=_point(point), box=list(box) if box is not None else None,
-                       view=self._view, robot=_point(robot), on_floor=None, photo=photo_id,
-                       fall_moment=fall_moment,
-                       # Torso height above the floor by depth (YOLO candidates): for the log.
-                       floor=None if floor is None else round(float(floor), 3))
+        message = dict(
+            sighting_id=sighting_id, at=at, kind=kind, track=track,
+            point=_point(point), box=list(box) if box is not None else None,
+            view=self._view, robot=_point(robot), on_floor=None, photo=photo_id,
+            fall_moment=fall_moment,
+            floor=None if floor is None else round(float(floor), 3),
+        )
         self._sightings[sighting_id] = (message, *(evidence or (at, at)))
         while len(self._sightings) > 512:
             self._sightings.popitem(last=False)
         self._messages.append(dict(kind='fall_sighting', sighting=message))
         return sighting_id
 
-    def _frames(self, end, duration_s, count):
+    def _frames(self, end: float, duration_s: float, count: int) -> Tuple[Any, ...]:
         try:
             return self.buffer.window(
                 end=end, duration_s=duration_s, max_images=count,
-                max_age_s=max(duration_s, self.policy.max_frame_age_s)).frames
+                max_age_s=max(duration_s, self.policy.max_frame_age_s),
+            ).frames
         except ValueError:
             return ()
 
-    def _collect_middle(self, now):
-        """Frames of each open spot while it is in view, for "what left" (design 6)."""
+    def _collect_middle(self, now: float) -> None:
         if self._place is None:
             return
         frames = self._frames(now, 1.0, 1)
@@ -802,114 +579,33 @@ class FallFlowSensor:
             if len(incident.middle) > MIDDLE_MAX:
                 incident.middle = incident.middle[::2]
 
-    def _kept_photos(self):
-        kept = set()
+    def _kept_photos(self) -> Set[Optional[str]]:
+        kept: Set[Optional[str]] = set()
         for incident in self._incidents.values():
             kept.add(incident.first.get('photo'))
             if incident.open:
                 kept.add(incident.first.get('fall_moment'))
         return kept
 
-    # ------------------------------------------------------------ clips
-
-    def _clip_from(self, incident, sighting):
-        message, start, end = sighting
-        anchor = {'motion': 'pose_motion', 'lying': 'pose_found_down', 'low': 'pose_found_down',
-                  'cloud': 'cloud_window'}.get(message['kind'])
-        if anchor is None:
-            return
-        self._record_clip(incident, start, end, anchor_kind=anchor,
-                          found_down=message['kind'] != 'motion')
-
-    def _people_numbers(self, data):
-        """Who each YOLO track is from now on, and whose each incident is (the Agent decides)."""
-        tracks, incidents = data.get('tracks') or {}, data.get('incidents') or {}
-        if not isinstance(tracks, dict) or not isinstance(incidents, dict):
-            raise ValueError('invalid people numbers')
-        at = data.get('at')
-        if tracks and (isinstance(at, bool) or not isinstance(at, (int, float))
-                       or not math.isfinite(at)):
-            raise ValueError('invalid people numbers')
-        for track, person in tracks.items():
-            self._people_call(self._people.assign, _id(track, optional=False),
-                              _id(person, optional=False), float(at))
-        for incident_id, person in incidents.items():
-            incident = self._incident(_id(incident_id, optional=False))
-            if incident is not None and person is not None:
-                incident.person = _id(person, optional=False)
-                self._people_call(self._people.retarget, incident.incident_id, incident.person)
-
-    def _check_clip(self, incident, mark, round_):
-        """A mark of the robot's check: a range starts now, or ends (at a wait as it
-        begins, 5 s after the judgment)."""
-        now = self._now()
-        if incident.check_clip is not None:
-            self._extend_check(incident, now,
-                               after=0.0 if mark == 'pause' else CHECK_CLIP_AFTER_S)
-            incident.check_clip = None
-        if mark == 'start':
-            # Started soon after the first suspicion, it joins that range (-10 s): one
-            # 확인. After a wait it is its own range, and the first one stays 발견.
-            incident.check_clip = [round_, now, now]
-            self._extend_check(incident, now, after=CHECK_CLIP_EVERY_S)
-
-    def _extend_check(self, incident, now, *, after):
-        round_, since, _ = incident.check_clip
-        incident.check_clip[2] = now
-        self._record_clip(incident, since, min(now, since + CHECK_CLIP_MAX_S),
-                          anchor_kind='check' if round_ == 1 else 'recheck',
-                          check_round=round_, pre_s=0.0, post_s=after)
-
-    def _record_clip(self, incident, start, end, *, anchor_kind, found_down=False,
-                     check_round=None, pre_s=None, post_s=None):
-        try:
-            changed = self._clips.observe(incident.incident_id, start, end,
-                                          anchor_kind=anchor_kind, found_down=found_down,
-                                          pre_s=pre_s, post_s=post_s, check_round=check_round)
-        except ValueError:
-            self.clip_storage_failures += 1
-            return
-        if not changed:
-            return
-        offset = self._wall_clock() - self._now()
-        first = self._clip_offsets.setdefault(incident.incident_id, offset)
-        stepped = abs(offset - first) > 1.0
-        for segment in changed:
-            fixed = self._clip_offsets.setdefault(
-                (incident.incident_id, segment.segment_index), offset)
-            min_revision = 0
-            if self._journal is not None and hasattr(self._journal, 'people_revision'):
-                try:
-                    min_revision = self._journal.people_revision(
-                        incident.incident_id, segment.segment_index)
-                except Exception:
-                    min_revision = 0
-            self._people_call(self._people.segment, incident.incident_id,
-                              incident.person or incident.first.get('track'),
-                              segment.segment_index, segment.start, segment.end,
-                              boot_id=incident.boot_id, min_revision=min_revision)
-            clip = RecordedClip(
-                incident.incident_id, incident.boot_id, segment.segment_index, segment.revision,
-                segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
-                segment.found_down, stepped, segment.check_round)
-            if self._journal is not None and hasattr(self._journal, 'append_clip'):
-                try:
-                    self._journal.append_clip(device_id=self.device_id, clip=clip)
-                except Exception:
-                    self.clip_storage_failures += 1
-
-    def _people_call(self, method, *args, **kwargs):
+    def _people_call(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
         try:
             method(*args, **kwargs)
         except Exception:
             self.people_storage_failures += 1
 
-    # ------------------------------------------------------------ Cloud
+    # ------------------------------------------------------------ rule decisions & Cloud
 
-    def _cloud_allowed(self):
+    def apply(self, data: Any) -> None:
+        """One decision of the Agent's fall rules (/malbut/falls/runtime/decision)."""
+        journal_ops.apply_decision(self, data)
+
+    def _incident(self, incident_id: str) -> Optional[FlowIncident]:
+        return journal_ops.get_incident(self, incident_id)
+
+    def _cloud_allowed(self) -> bool:
         return self._guard_reason() is None
 
-    def _guard_reason(self):
+    def _guard_reason(self) -> Optional[str]:
         if self._block is not None:
             return self._block
         if not self._enabled or not self._camera:
@@ -920,27 +616,35 @@ class FallFlowSensor:
             return 'cloud_disconnected'
         return None
 
-    def _refuse_looks(self):
+    def _refuse_looks(self) -> None:
         reason = self._guard_reason() or 'cloud_permission_changed'
         while self._looks:
             self._answer(self._looks.popleft(), 'guard', reason=reason)
 
-    def _cancel(self):
+    def _cancel(self) -> None:
         if self._task is not None and not self._task.done():
-            self._analysis = AnalysisStatus('cancel_requested', self._analysis.request_id,
-                                            self._analysis.request_purpose)
+            self._analysis = AnalysisStatus(
+                'cancel_requested',
+                self._analysis.request_id,
+                self._analysis.request_purpose,
+            )
             self._task.cancel()
 
-    def _answer(self, look, verdict, *, earlier=None, reason=None):
-        message = dict(kind='fall_look_result', look_id=look.look_id, what=look.what,
-                       verdict=verdict, earlier=earlier, reason=reason)
+    def _answer(
+        self, look: Look, verdict: str, *,
+        earlier: Optional[str] = None, reason: Optional[str] = None,
+    ) -> None:
+        message: Dict[str, Any] = dict(
+            kind='fall_look_result', look_id=look.look_id, what=look.what,
+            verdict=verdict, earlier=earlier, reason=reason,
+        )
         if look.sighting_id is not None:
             message['sighting_id'] = look.sighting_id
         else:
             message['incident_id'] = look.incident_id
         self._messages.append(message)
 
-    def periodic_interval_s(self):
+    def periodic_interval_s(self) -> float:
         now = self._now()
         fast = self.policy.scan_interval_s
         if any(i.open for i in self._incidents.values()):
@@ -966,279 +670,17 @@ class FallFlowSensor:
                 return False
             if self._looks:
                 look = self._looks.popleft()
-                await self._run_look(look)
+                await cloud_looks.run_look(self, look)
                 return True
-            return await self._scan()
+            return await cloud_looks.run_scan(self)
         finally:
             self._running = False
 
-    def _rate_limited(self, now):
+    def _rate_limited(self, now: float) -> bool:
         while self._calls and self._calls[0] <= now - 60:
             self._calls.popleft()
         return len(self._calls) >= self.policy.max_calls_per_minute
 
-    async def _call(self, request_id, purpose, coroutine):
-        """One Cloud call within the timeout; None on any failure (the reason recorded)."""
-        epoch = self._epoch
-        self._calls.append(self._now())
-        self._analysis = AnalysisStatus('waiting_response', request_id, purpose)
-        self._task = asyncio.ensure_future(coroutine)
-        self._task.add_done_callback(lambda task: task.cancelled() or task.exception())
-        try:
-            done, _ = await asyncio.wait({self._task}, timeout=self.policy.cloud_timeout_s)
-            if self._epoch != epoch or self._task.cancelled():
-                self._analysis = AnalysisStatus('canceled', request_id, purpose)
-                return None, 'cloud_permission_changed'
-            if not done:
-                self._task.cancel()
-                self._analysis = AnalysisStatus('failed', request_id, purpose, 'cloud_timeout')
-                return None, 'cloud_timeout'
-            reply = self._task.result()
-        except asyncio.CancelledError:
-            if self._task is not None:
-                self._task.cancel()
-            raise
-        except CloudFallProviderError as error:
-            self._analysis = AnalysisStatus('failed', request_id, purpose, error.code)
-            return None, error.code
-        except Exception:
-            self._analysis = AnalysisStatus('failed', request_id, purpose,
-                                            'cloud_failed_or_invalid_response')
-            return None, 'cloud_failed_or_invalid_response'
-        self._analysis = AnalysisStatus('completed', request_id, purpose)
-        return reply, None
-
-    def _explain(self, look_id, request_id, purpose, assessment, explanation):
-        try:
-            self._analyses[look_id] = CloudAnalysisExplanation(
-                request_id, purpose, assessment, explanation)
-        except (ValueError, TypeError, UnicodeError):
-            return  # Missing display evidence never stops the check.
-        while len(self._analyses) > 128:
-            self._analyses.popitem(last=False)
-
-    def _provider_blocked(self):
+    def _provider_blocked(self) -> Optional[str]:
         probe = getattr(self._provider, 'blocked_reason', None)
         return probe() if callable(probe) else None
-
-    async def _run_look(self, look):
-        if not self._cloud_allowed():
-            self._answer(look, 'guard', reason=self._guard_reason())
-            return
-        blocked = self._provider_blocked()
-        if blocked is not None:
-            # Locally blocked provider (auth/billing/quota cooldown) makes zero HTTP calls;
-            # answer immediately instead of starving max_calls_per_minute.
-            purpose = {'filter': 'incident', 'arrival': 'arrival_check',
-                       'departure': 'departure_check',
-                       'posture': 'posture_check'}.get(look.what, look.what)
-            self._analysis = AnalysisStatus('failed', str(uuid4()), purpose, blocked)
-            self._failed(look, blocked)
-            return
-        now = self._now()
-        if self._rate_limited(now):
-            self._looks.appendleft(look)  # Within the minute's budget: wait, not fail.
-            return
-        request_id = str(uuid4())
-        if look.what == 'filter':
-            await self._filter(look, request_id, now)
-        elif look.what == 'arrival':
-            await self._arrival(look, request_id, now)
-        elif look.what == 'departure':
-            await self._departure(look, request_id, now)
-        else:
-            await self._posture(look, request_id, now)
-
-    def _failed(self, look, error):
-        if error in GUARD_REASONS:
-            self._answer(look, 'guard', reason=error)
-        else:
-            self._answer(look, 'failed', reason=error)
-
-    async def _filter(self, look, request_id, now):
-        """The first look at a suspicion: the Cloud check that used to follow the opening."""
-        try:
-            window = self.buffer.window(end=now, duration_s=self.policy.clip_window_s,
-                                        max_images=self.policy.max_images,
-                                        max_age_s=self.policy.max_frame_age_s)
-        except ValueError:
-            self._answer(look, 'failed', reason='fresh_rgb_unavailable')
-            return
-        request = CloudFallRequest(
-            request_id=request_id, purpose='incident', device_id=self.device_id,
-            boot_id=self.boot_id, incident_id=None, subject_key=look.track,
-            evidence_revision=1, window=window, sensors=None,
-            target=self._subjects.target(look.track, window) if look.track else None)
-        reply, error = await self._call(request_id, 'incident', self._provider.analyze(request))
-        if reply is None:
-            self._failed(look, error)
-            return
-        if not isinstance(reply, CloudFallReply):
-            self._answer(look, 'failed', reason='cloud_failed_or_invalid_response')
-            return
-        self._explain(look.look_id, request_id, 'incident', reply.assessment, reply.explanation)
-        # The shared three questions: not a person, only an image, or ordinary all
-        # come back as normal_activity; the rules never drop a fall motion for it.
-        self._answer(look, 'ordinary' if reply.assessment is VideoAssessment.NORMAL_ACTIVITY
-                     else 'suspect')
-
-    def _photo_window(self, photo_id):
-        photo = self._photos.get(photo_id) if photo_id else None
-        if photo is None:
-            return None, None
-        frames = photo.frames
-        return FrameWindow(frames, frames[0].captured_at, frames[-1].captured_at, False), photo.box
-
-    def _now_window(self, now, duration_s, count):
-        frames = self._frames(now, duration_s, count)
-        if not frames:
-            return None
-        return FrameWindow(frames, frames[0].captured_at, frames[-1].captured_at, False)
-
-    async def _arrival(self, look, request_id, now):
-        after = self._now_window(now, ARRIVAL_WINDOW_S, ARRIVAL_FRAMES)
-        if after is None:
-            self._answer(look, 'failed', reason='fresh_rgb_unavailable')
-            return
-        before, box = self._photo_window(look.photo)
-        if before is None:
-            # No first sight (a restart): only whether a person is there now (design 6).
-            reply, error = await self._call(
-                request_id, 'person_check',
-                self._provider.check_person(PersonCheckRequest(request_id, after)))
-            if reply is None:
-                self._failed(look, error)
-                return
-            verdict = {'person': 'person_unsure', 'not_person': 'gone'}.get(
-                reply.verdict, 'not_visible')
-            self._explain(look.look_id, request_id, 'arrival_check', SHOWN[verdict],
-                          reply.explanation)
-            self._answer(look, verdict)
-            return
-        reply, error = await self._call(request_id, 'arrival_check', self._provider.check_arrival(
-            ArrivalCheckRequest(request_id, before, box or look.box, after)))
-        if reply is None:
-            self._failed(look, error)
-            return
-        self._explain(look.look_id, request_id, 'arrival_check', SHOWN[reply.verdict],
-                      reply.explanation)
-        self._answer(look, reply.verdict)
-
-    async def _departure(self, look, request_id, now):
-        incident = self._incidents.get(look.incident_id)
-        before, box = self._photo_window(look.photo)
-        middle = list(incident.middle) if incident is not None else []
-        after = self._now_window(now, 1.0, 1)
-        if before is None or not middle or after is None:
-            self._answer(look, 'not_seen')  # Nothing to see the leaving in (design 6).
-            return
-        if len(middle) > DEPARTURE_FRAMES:
-            step = (len(middle) - 1) / (DEPARTURE_FRAMES - 1)
-            middle = [middle[round(i * step)] for i in range(DEPARTURE_FRAMES)]
-        window = FrameWindow(tuple(middle), middle[0].captured_at, middle[-1].captured_at, False)
-        reply, error = await self._call(
-            request_id, 'departure_check', self._provider.check_departure(
-                DepartureCheckRequest(request_id, before, box or look.box, window, after)))
-        if reply is None:
-            self._failed(look, error)
-            return
-        self._explain(look.look_id, request_id, 'departure_check', SHOWN[reply.verdict],
-                      reply.explanation)
-        self._answer(look, reply.verdict)
-
-    async def _posture(self, look, request_id, now):
-        window = self._now_window(now, POSTURE_WINDOW_S, POSTURE_FRAMES)
-        if window is None:
-            self._answer(look, 'failed', reason='fresh_rgb_unavailable')
-            return
-        moments = tuple(
-            FrameWindow(m.frames, m.frames[0].captured_at, m.frames[-1].captured_at, False)
-            for m in (self._moments.get(key) for key in look.fall_moments) if m is not None)
-        reply, error = await self._call(request_id, 'posture_check', self._provider.check_posture(
-            PostureCheckRequest(request_id, window, moments)))
-        if reply is None:
-            self._failed(look, error)
-            return
-        self._explain(look.look_id, request_id, 'posture_check', SHOWN[reply.verdict],
-                      reply.explanation)
-        # Fall moments asked but lost (a restart): the earlier moment is unknown (design 5).
-        earlier = reply.earlier if moments else ('unknown' if look.fall_moments else None)
-        self._answer(look, reply.verdict, earlier=earlier)
-
-    async def _scan(self):
-        """Cloud's periodic look at the whole scene: its finds become sightings."""
-        now = self._now()
-        if now < self._scan_anchor + self.periodic_interval_s():
-            return False
-        if self._guard_reason() is not None or self._rate_limited(now):
-            self._scan_anchor = now
-            return False
-        blocked = self._provider_blocked()
-        if blocked is not None:
-            self._scan_anchor = now
-            self._analysis = AnalysisStatus('failed', str(uuid4()), 'crosscheck', blocked)
-            return False
-        try:
-            window = self.buffer.window(end=now, duration_s=self.policy.clip_window_s,
-                                        max_images=self.policy.max_images,
-                                        max_age_s=self.policy.max_frame_age_s)
-        except ValueError:
-            return False
-        if window.frames[-1].captured_at <= self._last_scan_end:
-            return False
-        self._scan_anchor = now
-        self._last_scan_end = window.frames[-1].captured_at
-        request = CloudFallRequest(
-            request_id=str(uuid4()), purpose='crosscheck', device_id=self.device_id,
-            boot_id=self.boot_id, incident_id=None, subject_key=None, evidence_revision=0,
-            window=window, sensors=None)
-        reply, _ = await self._call(request.request_id, 'crosscheck',
-                                    self._provider.analyze(request))
-        if not isinstance(reply, CloudFallReply) or reply.assessment not in (
-                VideoAssessment.OBSERVED_FALL, VideoAssessment.SUSPECTED_FALL):
-            return True
-        times = tuple(f.captured_at for f in window.frames)
-        for finding in reply.findings:
-            regions = [r for r in finding.regions if r.frame_index < len(times)]
-            if self._on_furniture(times, finding, regions):
-                continue
-            region = regions[-1] if regions else None
-            at = times[region.frame_index] if region is not None else times[-1]
-            box = region.box if region is not None else None
-            point = None
-            if box is not None and self._place is not None:
-                try:
-                    point = self._place.locate(at, box)
-                except Exception:
-                    point = None
-            moment = None
-            if finding.assessment is VideoAssessment.OBSERVED_FALL:
-                moment = 'm-' + uuid4().hex  # The frames Cloud judged a fall (design 5).
-                self._moments[moment] = Photo(window.frames, None, at)
-            frame = next((f for f in window.frames if f.captured_at == at), window.frames[-1])
-            sighting = self._sight('cloud', at, box=box, point=point, photo=True,
-                                   frames=(frame,), fall_moment=moment,
-                                   evidence=(times[0], times[-1]))
-            # Shown when the rules open an incident on it (look_id = the sighting).
-            self._explain(sighting, request.request_id, 'crosscheck', finding.assessment,
-                          reply.explanation)
-        return True
-
-    def _on_furniture(self, times, finding, regions):
-        """Every box rests clearly above the floor and no fall was seen (2026-10-09)."""
-        locate3d = getattr(self._place, 'locate3d', None)
-        if (locate3d is None or not regions
-                or finding.assessment is VideoAssessment.OBSERVED_FALL):
-            return False
-        heights = []
-        for region in regions:
-            left, top, right, bottom = region.box
-            band = (left, bottom - (bottom - top) * SUPPORT_BAND, right, bottom)
-            try:
-                spot = locate3d(times[region.frame_index], band)
-            except Exception:
-                spot = None
-            if spot is None:
-                return False  # Not measured: a fall cannot be ruled out.
-            heights.append(spot[2])
-        return min(heights) > FURNITURE_HEIGHT_M

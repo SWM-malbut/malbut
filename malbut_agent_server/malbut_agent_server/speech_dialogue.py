@@ -1,130 +1,74 @@
 """Run existing conversation handling outside the ROS callback thread."""
 
 from collections import OrderedDict, deque
-from concurrent.futures import CancelledError
-from contextlib import nullcontext as _nullcontext
-from dataclasses import dataclass
+import contextlib
 import hashlib
 import math
-import re
 import sqlite3
 from threading import Condition, Thread
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from malbut_agent_server.conversation import (
-    ConversationNotFoundError, ConversationStateError,
+    ConversationNotFoundError,
+    ConversationStateError,
 )
 from malbut_agent_server.conversation_progress import RequestProgress, request_scope
+from malbut_agent_server.dialogue import (
+    ADDRESSEE_DECISIONS,
+    ERROR_RESPONSE,
+    MAPPING_NAME_SECONDS,
+    MAX_INTERRUPTION_IDS,
+    MAX_SPEECH_ID_LENGTH,
+    MEMORY_CHANGED_RESPONSE,
+    NAVIGATION_CHANGED_RESPONSE,
+    NAVIGATION_CONFIRMATION_SECONDS,
+    NEW_CONVERSATION_REQUESTS,
+    SESSION_ERROR_RESPONSE,
+    SpeechInputTooLongError,
+    _DialogueReply,
+    _MappingNameQuestion,
+    _NavigationConfirmation,
+    addressee_reply,
+    answer_companion,
+    classify_interruption,
+    deliver_before_save,
+    make_reply,
+    publish_reply,
+    refresh_reply,
+    run_worker_loop,
+    starts_new_conversation,
+    validate_dialogue_input,
+    validate_interruption_input,
+)
 from malbut_agent_server.function_speech import FUNCTION_STARTS
-from malbut_agent_server.orchestrator import MemoryChangedError
-from malbut_agent_server.schemas import (
-    MAX_SPEECH_TRANSCRIPT_LENGTH, RobotState, SpeechAgentRequest,
-    validate_user_id,
-)
+from malbut_agent_server.schemas import validate_user_id
 from malbut_agent_server.turn_metrics import (
-    TurnWaterfallRecorder, TurnWaterfallTrace, turn_trace_scope,
+    TurnWaterfallRecorder,
+    TurnWaterfallTrace,
+    turn_trace_scope,
 )
 
-
-ERROR_RESPONSE = '답변을 만들지 못했어요. 다시 말씀해 주세요.'
-SESSION_ERROR_RESPONSE = (
-    '대화 세션을 사용할 수 없어요. Agent 대화 모드를 다시 시작해 주세요.'
-)
-MEMORY_CHANGED_RESPONSE = (
-    '기억 정보가 변경되어 이전 답변을 전달하지 않았어요. 다시 말씀해 주세요.'
-)
-MAX_INTERRUPTION_IDS = 128
-MAX_SPEECH_ID_LENGTH = 256
-NAVIGATION_CONFIRMATION_SECONDS = 30.0
-MAPPING_NAME_SECONDS = 120.0
-NAVIGATION_CHANGED_RESPONSE = '지도나 방 정보가 변경되어 이동하지 않았어요. 다시 말씀해 주세요.'
-ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
-NEW_CONVERSATION_REQUESTS = frozenset({
-    '새로시작하자', '새로시작해', '새로시작해줘', '새로시작해주세요',
-    '대화새로시작하자', '대화를새로시작하자', '대화를새로시작해줘',
-    '대화를새로시작해주세요', '새대화시작하자', '새대화를시작하자',
-    '새대화시작해줘', '새대화를시작해줘', '새대화를시작해주세요',
-})
-
-
-def starts_new_conversation(text):
-    """Recognize a direct opening command, preserving any following request."""
-    parts = re.split(r'[.!?。！？]+', text, maxsplit=1)
-    if re.sub(r'\s+', '', parts[0]) not in NEW_CONVERSATION_REQUESTS:
-        return False
-    return len(parts) == 1 or not re.match(
-        r'\s*(?:[\"\'”’`]|라고|라는|라며|고\s*(?:했|말))', parts[1],
-    )
-
-
-class _DialogueReply(dict):
-    """Keep freshness validation outside the serializable reply fields."""
-
-    def __init__(self, fields, memory_validator=None):
-        """Attach the internal guard without adding a public JSON field."""
-        super().__init__(fields)
-        self._memory_validator = memory_validator
-        self._mission_callback = None
-        self._mission_request_id = None
-        self._on_publish = None
-        self._prefetch = None
-        self._prepared_hint = {}
-        self._delivery_ticket = None
-        self._turn_trace = None
-        self._waterfall = None
-
-
-@dataclass(frozen=True)
-class _NavigationConfirmation:
-    proposal: object
-    conversation_id: str
-    generation: int
-    revision: int
-    expires_at: float
-
-
-@dataclass(frozen=True)
-class _MappingNameQuestion:
-    conversation_id: str
-    generation: int
-    revision: int
-    expires_at: float
-
-
-class SpeechInputTooLongError(ValueError):
-    """The complete transcript exceeds the supported speech turn size."""
-
-
-def validate_dialogue_input(utterance_id: str, text: str) -> None:
-    """Reject unusable input before the caller commits a receipt."""
-    if not isinstance(utterance_id, str) or not utterance_id.strip():
-        raise ValueError('utterance_id must be a nonblank string')
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError('text must be a nonblank string')
-    if len(text) > MAX_SPEECH_TRANSCRIPT_LENGTH:
-        raise SpeechInputTooLongError(
-            f'text exceeds {MAX_SPEECH_TRANSCRIPT_LENGTH} characters; '
-            'the complete transcript was not accepted',
-        )
-    try:
-        utterance_id.encode('utf-8')
-        text.encode('utf-8')
-    except UnicodeEncodeError as error:
-        raise ValueError('speech input must be valid UTF-8') from error
-
-
-def validate_interruption_input(utterance_id, playback_id, text):
-    """Bound correlation IDs and reuse the normal transcript text limits."""
-    validate_dialogue_input(utterance_id, text)
-    if (not isinstance(playback_id, str) or not playback_id.strip()
-            or len(playback_id) > MAX_SPEECH_ID_LENGTH
-            or len(utterance_id) > MAX_SPEECH_ID_LENGTH):
-        raise ValueError('interruption IDs must be nonblank and bounded')
-    try:
-        playback_id.encode('utf-8')
-    except UnicodeEncodeError as error:
-        raise ValueError('playback_id must be valid UTF-8') from error
+__all__ = [
+    'ADDRESSEE_DECISIONS',
+    'DialogueWorker',
+    'ERROR_RESPONSE',
+    'MAPPING_NAME_SECONDS',
+    'MAX_INTERRUPTION_IDS',
+    'MAX_SPEECH_ID_LENGTH',
+    'MEMORY_CHANGED_RESPONSE',
+    'NAVIGATION_CHANGED_RESPONSE',
+    'NAVIGATION_CONFIRMATION_SECONDS',
+    'NEW_CONVERSATION_REQUESTS',
+    'SESSION_ERROR_RESPONSE',
+    'SpeechInputTooLongError',
+    '_DialogueReply',
+    '_MappingNameQuestion',
+    '_NavigationConfirmation',
+    'starts_new_conversation',
+    'validate_dialogue_input',
+    'validate_interruption_input',
+]
 
 
 class DialogueWorker:
@@ -136,11 +80,18 @@ class DialogueWorker:
     """
 
     def __init__(
-        self, runtime_factory: Callable, user_id: str, capacity: int = 10,
-        *, missions=None, scene_source=None, prefetch_enabled=False,
-        publish_before_save=False, on_output=None,
+        self,
+        runtime_factory: Callable[[], Any],
+        user_id: str,
+        capacity: int = 10,
+        *,
+        missions: Any = None,
+        scene_source: Any = None,
+        prefetch_enabled: bool = False,
+        publish_before_save: bool = False,
+        on_output: Optional[Callable[[], Any]] = None,
         turn_metrics: Optional[TurnWaterfallRecorder] = None,
-    ):
+    ) -> None:
         """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
             raise TypeError('runtime_factory must be callable')
@@ -156,43 +107,41 @@ class DialogueWorker:
         if type(publish_before_save) is not bool:
             raise TypeError('publish_before_save must be a boolean')
         self._publish_before_save = publish_before_save
-        self._preparations = deque()
-        self._prefetch_turns = {}
+        self._preparations: deque[Any] = deque()
+        self._prefetch_turns: Dict[str, Any] = {}
         self._prefetch_epoch = 0
-        self.patrol_memory = None
+        self.patrol_memory: Any = None
         from malbut_agent_server.companion_dialogue import CompanionDialogue
         self._companion = CompanionDialogue()
-        self._navigation_confirmation = None
-        self._mapping_name_question = None
+        self._navigation_confirmation: Optional[_NavigationConfirmation] = None
+        self._mapping_name_question: Optional[_MappingNameQuestion] = None
         self._user_id = validate_user_id(user_id)
         self._capacity = capacity
         self._condition = Condition()
-        self._pending = deque()
-        self._results = deque()
-        self._interruptions = OrderedDict()
+        self._pending: deque[Tuple[str, str, Optional[str], Any]] = deque()
+        self._results: deque[Any] = deque()
+        self._interruptions: 'OrderedDict[str, Dict[str, Any]]' = OrderedDict()
         self.turn_metrics = turn_metrics or TurnWaterfallRecorder()
-        self._pending_traces: dict[int, TurnWaterfallTrace] = {}
+        self._pending_traces: Dict[int, TurnWaterfallTrace] = {}
         self._outstanding = 0
         self._closing = False
         self._stopped = False
         self._ready = False
         self._startup_error: Optional[str] = None
-        self._active_progress = None
+        self._active_progress: Any = None
         self._suspended = False
         self._generation = 0
         self._running = False
         self._thread = Thread(target=self._run, name='malbut-speech-dialogue')
         self._thread.start()
 
-    def _notify_reader(self):
+    def _notify_reader(self) -> None:
         # Optional ROS wakeup only; the owning thread still publishes and saves.
         if self._on_output is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_output()
-            except Exception:
-                pass  # A slow fallback drain also covers shutdown/wakeup races.
 
-    def _emit(self, reply):
+    def _emit(self, reply: Any) -> None:
         self._results.append(reply)
         self._notify_reader()
 
@@ -223,12 +172,18 @@ class DialogueWorker:
                 and self._outstanding < self._capacity
             )
 
-    def metrics_snapshot(self, limit: int = 20) -> dict:
+    def metrics_snapshot(self, limit: int = 20) -> Dict[str, Any]:
         """Return content-free rolling latency summary and recent speech turns."""
         return self.turn_metrics.snapshot(limit=limit)
 
-    def submit(self, utterance_id: str, text: str, *, opener_context=None,
-               companion_session=None) -> bool:
+    def submit(
+        self,
+        utterance_id: str,
+        text: str,
+        *,
+        opener_context: Any = None,
+        companion_session: Any = None,
+    ) -> bool:
         """Queue an original utterance without waiting for model inference."""
         validate_dialogue_input(utterance_id, text)
         with self._condition:
@@ -236,7 +191,7 @@ class DialogueWorker:
                 return False
             self._cancel_prefetch()
             self._outstanding += 1
-            progress = RequestProgress(
+            progress: Any = RequestProgress(
                 lambda notice, state: self._progress_notice(utterance_id, notice, state),
             )
             progress.prefetch_epoch = self._prefetch_epoch
@@ -255,7 +210,7 @@ class DialogueWorker:
             self._condition.notify()
             return True
 
-    def submit_interruption(self, utterance_id, playback_id, text) -> bool:
+    def submit_interruption(self, utterance_id: str, playback_id: str, text: str) -> bool:
         """Classify once on this conversation without admitting a dialogue turn."""
         validate_interruption_input(utterance_id, playback_id, text)
         digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
@@ -283,8 +238,10 @@ class DialogueWorker:
             if not self.has_capacity():
                 return False
             if len(self._interruptions) >= MAX_INTERRUPTION_IDS:
-                expired = next((uid for uid, entry in self._interruptions.items()
-                                if not entry['pending']), None)
+                expired = next((
+                    uid for uid, entry in self._interruptions.items()
+                    if not entry['pending']
+                ), None)
                 if expired is None:
                     return False
                 del self._interruptions[expired]
@@ -297,19 +254,21 @@ class DialogueWorker:
             self._condition.notify()
             return True
 
-    def _cancel_prefetch(self):
+    def _cancel_prefetch(self) -> None:
         self._prefetch_epoch += 1
         for turn in tuple(self._prefetch_turns.values()):
             turn.cancel()
         self._prefetch_turns.clear()
 
-    def _queue_preparation(self, event):
+    def _queue_preparation(self, event: Any) -> bool:
         # The ROS thread publishes these separately from speech replies. A
         # dropped optimization must not prevent ordinary final text delivery.
         with self._condition:
             if event.operation == 'cancel':
-                self._preparations = deque(item for item in self._preparations
-                                           if item.prepared_id != event.prepared_id)
+                self._preparations = deque(
+                    item for item in self._preparations
+                    if item.prepared_id != event.prepared_id
+                )
             elif self._closing or self._suspended:
                 return False
             if len(self._preparations) >= 32:
@@ -320,19 +279,19 @@ class DialogueWorker:
             self._notify_reader()
             return True
 
-    def drain_preparations(self):
+    def drain_preparations(self) -> List[Any]:
         """Return quiet preparation commands, never playback status or replies."""
         with self._condition:
             events = list(self._preparations)
             self._preparations.clear()
             return events
 
-    def cancel_preparations(self):
+    def cancel_preparations(self) -> None:
         """Invalidate quiet work before waiting for an in-flight request to end."""
         with self._condition:
             self._cancel_prefetch()
 
-    def discard_reply(self, reply):
+    def discard_reply(self, reply: Any) -> None:
         """Release quiet work when the ROS publication policy suppresses a reply."""
         with self._condition:
             self._release_prefetch(reply)
@@ -340,24 +299,28 @@ class DialogueWorker:
         if trace is not None and not trace.finalized:
             trace.finalize(self.turn_metrics, outcome='cancelled')
 
-    def _release_prefetch(self, reply, *, published=False):
+    def _release_prefetch(self, reply: Any, *, published: bool = False) -> None:
         turn = getattr(reply, '_prefetch', None)
         if turn is not None:
             if not published:
                 turn.cancel()
             self._prefetch_turns.pop(turn.request_id, None)
 
-    def drain(self, *, validate=True) -> list[dict]:
+    def drain(self, *, validate: bool = True) -> List[Dict[str, Any]]:
         """Recheck ready replies and release their admission capacity."""
         with self._condition:
             results = list(self._results)
             self._results.clear()
-            self._outstanding -= sum(item['kind'] not in {'progress', 'acknowledgement'}
-                                     and getattr(item, '_delivery_ticket', None) is None
-                                     for item in results)
-            results = [item for item in results
-                       if item['kind'] not in {'progress', 'acknowledgement'}
-                       or item._progress.can_publish(item['text'])]
+            self._outstanding -= sum(
+                item['kind'] not in {'progress', 'acknowledgement'}
+                and getattr(item, '_delivery_ticket', None) is None
+                for item in results
+            )
+            results = [
+                item for item in results
+                if item['kind'] not in {'progress', 'acknowledgement'}
+                or item._progress.can_publish(item['text'])
+            ]
         # Never acquire the DB lock while holding the queue lock: the worker
         # may be handing off a validated reply while holding its transaction.
         if validate:
@@ -365,87 +328,22 @@ class DialogueWorker:
                 self._refresh_reply(reply)
         return results
 
-    def publish_reply(self, reply: dict, publish: Callable, *, end_dialogue=None) -> Optional[dict]:
+    def publish_reply(
+        self,
+        reply: Dict[str, Any],
+        publish: Callable[[str], bool],
+        *,
+        end_dialogue: Optional[Callable[[Any], Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Check again immediately before publishing while stores are open."""
-        self._refresh_reply(reply)
-        with self._condition:
-            ticket = getattr(reply, '_delivery_ticket', None)
-            trace = getattr(reply, '_turn_trace', None)
-            if ticket is not None and ticket['state'] != 'waiting':
-                return None
-            if (self._closing or self._stopped or self._suspended
-                    or getattr(reply, '_generation', self._generation)
-                    != self._generation):
-                self._release_prefetch(reply)
-                if trace is not None and ticket is None and not trace.finalized:
-                    trace.finalize(self.turn_metrics, outcome='cancelled')
-                return None
-            if reply.get('kind') == 'addressee':
-                return None
-            if reply['kind'] == 'end_conversation':
-                ended = bool(end_dialogue and end_dialogue(reply))
-                if trace is not None and not trace.finalized:
-                    trace.set_metadata(decision_type='end_conversation')
-                    record = trace.finalize(
-                        self.turn_metrics,
-                        outcome='ok' if ended else 'cancelled',
-                    )
-                    if isinstance(reply, _DialogueReply):
-                        reply._waterfall = record.to_compact_dict()
-                return dict(reply) if ended else None
-            if reply.get('kind') in {'progress', 'acknowledgement'}:
-                return dict(reply) if reply._progress.publish(publish, reply['text']) else None
-            dispatch = getattr(reply, '_mission_callback', None)
-            if dispatch is not None:
-                # Consume before calling transport, even if publication fails.
-                reply._mission_callback = None
-                try:
-                    reply['text'] = dispatch()
-                except Exception:
-                    reply['text'] = '실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.'
-                    reply['kind'] = 'error'
-            prefetch = getattr(reply, '_prefetch', None)
-            if prefetch is not None:
-                reply._prepared_hint = prefetch.hint(reply['text']) if reply['kind'] == 'answer' else {}
-                if not reply._prepared_hint:
-                    prefetch.cancel()
-            published = False
-            try:
-                if ticket is not None:
-                    reply['text'] = ticket['progress'].final_text(reply['text'])
-                published = publish(reply['text'])
-            finally:
-                self._release_prefetch(reply, published=published)
-                if ticket is not None:
-                    ticket['state'] = 'published' if published else 'cancelled'
-                    self._condition.notify_all()
-            if published:
-                if trace is not None:
-                    trace.set_flag('prefetch_hit', bool(getattr(reply, '_prepared_hint', None)))
-                    trace.mark_tts_published()
-                    if ticket is not None:
-                        trace.set_flag('delivery_before_save', True)
-                        waterfall = trace.snapshot_compact()
-                    else:
-                        record = trace.finalize(self.turn_metrics)
-                        waterfall = record.to_compact_dict()
-                    if isinstance(reply, _DialogueReply):
-                        reply._waterfall = waterfall
-                activate = reply._on_publish
-                reply._on_publish = None
-                if activate is not None:
-                    activate()
-                return dict(reply)
-            if trace is not None and ticket is None and not trace.finalized:
-                trace.finalize(self.turn_metrics, outcome='cancelled')
-            return None
+        return publish_reply(self, reply, publish, end_dialogue=end_dialogue)
 
-    def _cancel_traces(self, traces):
+    def _cancel_traces(self, traces: List[Any]) -> None:
         for trace in traces:
             if trace is not None and not trace.finalized:
                 trace.finalize(self.turn_metrics, outcome='cancelled')
 
-    def suspend(self):
+    def suspend(self) -> None:
         """Preempt ordinary speech and invalidate queued or in-flight replies."""
         cancelled_traces = []
         with self._condition:
@@ -470,33 +368,13 @@ class DialogueWorker:
             self._outstanding = int(self._running)
         self._cancel_traces(cancelled_traces)
 
-    def resume(self):
+    def resume(self) -> None:
         """Accept new ordinary turns without replaying preempted replies."""
         with self._condition:
             self._suspended = False
 
-    def _refresh_reply(self, reply):
-        validator = getattr(reply, '_memory_validator', None)
-        if validator is None:
-            return
-        try:
-            if self._closing or self._stopped:
-                raise MemoryChangedError('dialogue worker is closed')
-            validator()
-        except MemoryChangedError:
-            self._release_prefetch(reply)
-            reply['text'] = MEMORY_CHANGED_RESPONSE
-            reply['kind'] = 'error'
-            reply._memory_validator = None
-            reply._mission_callback = None
-            reply._on_publish = None
-        except Exception:
-            self._release_prefetch(reply)
-            reply['text'] = ERROR_RESPONSE
-            reply['kind'] = 'error'
-            reply._memory_validator = None
-            reply._mission_callback = None
-            reply._on_publish = None
+    def _refresh_reply(self, reply: Any) -> None:
+        refresh_reply(self, reply)
 
     def close(self) -> None:
         """Discard waiting and late replies; let the running call finish."""
@@ -525,340 +403,12 @@ class DialogueWorker:
         self._cancel_traces(cancelled_traces)
         self._thread.join()
 
-    def _run(self):
-        runtime = None
-        conversation_id = None
-        try:
-            try:
-                runtime = self._factory()
-                if hasattr(runtime, 'turn_metrics'):
-                    runtime.turn_metrics = self.turn_metrics
-                self._companion.service = getattr(runtime, 'companion_service', None)
-                if self._companion.service:
-                    self._companion.service.on_change = self._companion.clear_history
-                    self._companion.service.start()
-                start_memory = getattr(runtime, 'start_background_memory', None)
-                if start_memory is not None:
-                    start_memory()
-                session = runtime.conversation_store.resume_or_create(self._user_id)
-                conversation_id = session.conversation_id
-                with self._condition:
-                    self.patrol_memory = getattr(runtime, 'patrol_memory', None)
-                    self._ready = True
-                self._notify_reader()
-            except Exception as error:
-                failed_traces = []
-                with self._condition:
-                    self._startup_error = type(error).__name__
-                    self._stopped = True
-                    self._notify_reader()
-                    if not self._closing:
-                        while self._pending:
-                            utterance_id, _text, playback_id, progress = self._pending.popleft()
-                            trace = (self._pending_traces.pop(id(progress), None)
-                                     if progress is not None else None)
-                            if progress is not None:
-                                progress.finish(cancelled=True)
-                            if playback_id is not None:
-                                self._emit(self._addressee_reply(
-                                    utterance_id, playback_id, 'unknown',
-                                ))
-                            else:
-                                if trace is not None:
-                                    failed_traces.append(trace)
-                                self._emit(self._reply(
-                                    utterance_id, conversation_id,
-                                    ERROR_RESPONSE, 'error',
-                                ))
-                for trace in failed_traces:
-                    trace.finalize(self.turn_metrics, outcome='error')
-                return
-            while True:
-                with self._condition:
-                    self._condition.wait_for(
-                        lambda: self._closing or bool(self._pending),
-                    )
-                    if self._closing:
-                        return
-                    utterance_id, text, playback_id, progress = self._pending.popleft()
-                    trace = (self._pending_traces.pop(id(progress), None)
-                             if progress is not None else None)
-                    confirmation = None
-                    mapping_question = None
-                    if playback_id is None:
-                        confirmation = self._navigation_confirmation
-                        self._navigation_confirmation = None
-                        mapping_question = self._mapping_name_question
-                        self._mapping_name_question = None
-                    generation = self._generation
-                    self._running = True
-                    self._active_progress = progress
-                if playback_id is not None:
-                    reply = self._classify_interruption(
-                        runtime, conversation_id, utterance_id, playback_id, text,
-                    )
-                    with self._condition:
-                        self._running = False
-                        if not self._closing and generation != self._generation:
-                            self._outstanding -= 1
-                        elif not self._closing:
-                            entry = self._interruptions[utterance_id]
-                            entry['pending'] = False
-                            if entry['conflict']:
-                                reply['decision'] = 'unknown'
-                            entry['decision'] = reply['decision']
-                            self._emit(reply)
-                    continue
-                if trace is not None:
-                    trace.mark_dequeued()
-                if getattr(progress, 'companion_session', None) is not None:
-                    self._answer_companion(
-                        runtime, utterance_id, text, progress, generation, trace=trace,
-                    )
-                    continue
-                prefetch = None
-                delivery = {'published': False}
-                turn_outcome = 'ok'
-                try:
-                    digest = hashlib.sha256(
-                        utterance_id.encode('utf-8'),
-                    ).hexdigest()
-                    request_id = 'speech-request-' + digest
-                    start_new = (
-                        starts_new_conversation(text)
-                        and not runtime.conversation_store.has_agent_request(
-                            self._user_id, request_id,
-                        )
-                    )
-                    session = runtime.conversation_store.resume_or_create(
-                        self._user_id, conversation_id, start_new=start_new,
-                    )
-                    conversation_id = session.conversation_id
-                    if trace is not None:
-                        trace.set_metadata(
-                            request_id=request_id,
-                            conversation_id=conversation_id,
-                        )
-                    confirmation = self._valid_navigation_confirmation(session, confirmation)
-                    mapping_question = self._valid_mapping_name_question(session, mapping_question)
-                    fresh_request = not runtime.conversation_store.has_agent_request(
-                        self._user_id, request_id,
-                    )
-                    scene, image = None, None
-                    with (trace.measure('scene_prepare_ms') if trace is not None
-                          else _nullcontext()):
-                        locations = (self._missions.navigation_locations()
-                                     if self._missions is not None else None)
-                        if (confirmation is not None
-                                and confirmation.proposal.location not in (locations or ())):
-                            confirmation = None
-                        navigation_binding = (self._missions.prepare(
-                            request_id, 'request_navigation', {'location': locations[0]},
-                        ) if locations else None)
-                        if self._scene_source is not None:
-                            try:
-                                from malbut_agent_server.speech_scene import needs_turn_image
+    def _run(self) -> None:
+        run_worker_loop(self)
 
-                                want_image = needs_turn_image(
-                                    text,
-                                    navigation_locations=locations or (),
-                                    navigation_confirmation=(confirmation.proposal.location
-                                                             if confirmation is not None else ''),
-                                    mapping_name_requested=mapping_question is not None,
-                                )
-                                if not want_image and hasattr(self._scene_source, 'prepare_text_turn'):
-                                    scene, image = self._scene_source.prepare_text_turn()
-                                else:
-                                    prepare = getattr(self._scene_source, 'prepare_turn', None)
-                                    if prepare is None:
-                                        prepare = self._scene_source.snapshot
-                                    scene, image = prepare()
-                            except Exception:
-                                scene = {'image': {'available': False}, 'map': None, 'pose': None}
-                    if trace is not None:
-                        trace.set_flag('image_captured', image is not None)
-                    opener = getattr(progress, 'opener_context', None)
-                    if opener is not None and not start_new:
-                        scene = dict(scene or {}, conversation_opener=opener)
-                    request = SpeechAgentRequest(
-                        request_id=request_id,
-                        user_id=self._user_id,
-                        conversation_id=conversation_id,
-                        turn_id='speech-turn-' + digest,
-                        utterance=text,
-                        robot_state=RobotState(camera_available=image is not None),
-                        scene_context=scene, turn_image=image,
-                        available_tools=tuple(getattr(runtime, 'speech_mission_tools', ()))
-                        + tuple(getattr(runtime, 'patrol_query_tools', ()))
-                        + tuple(getattr(runtime, 'homecam_query_tools', ())) + (
-                            ('get_weather', 'set_weather_location')
-                            if getattr(runtime, 'weather_executor', None)
-                            is not None else ()
-                        ),
-                        navigation_locations=locations,
-                        navigation_confirmation=(confirmation.proposal.location
-                                                 if confirmation is not None else ''),
-                        mapping_name_requested=mapping_question is not None,
-                    )
-                    if self._prefetch_enabled:
-                        from malbut_agent_server.speech_prefetch import PrefetchTurn
-
-                        with self._condition:
-                            prefetch = PrefetchTurn(
-                                request_id, utterance_id, self._queue_preparation,
-                                lock=self._condition,
-                                current=lambda g=generation, epoch=progress.prefetch_epoch: (
-                                    not self._closing and not self._suspended
-                                    and g == self._generation and epoch == self._prefetch_epoch),
-                            )
-                            self._prefetch_turns[request_id] = prefetch
-                    def deliver(
-                        result,
-                        _utterance_id=utterance_id,
-                        _conversation_id=conversation_id,
-                        _generation=generation,
-                        _progress=progress,
-                        _prefetch=prefetch,
-                        _trace=trace,
-                        _delivery=delivery,
-                    ):
-                        published = self._deliver_before_save(
-                            result, _utterance_id, _conversation_id,
-                            _generation, _progress, _prefetch, trace=_trace,
-                        )
-                        _delivery['published'] = published
-                        return published
-
-                    result = self._handle_with_progress(
-                        runtime, request, progress, prefetch,
-                        deliver if self._publish_before_save else None,
-                        trace=trace,
-                    )
-                    decision = result.decision
-                    if (navigation_binding is not None
-                            and result.raw_decision.tool_name == 'request_navigation'
-                            and not self._missions.navigation_matches(navigation_binding)):
-                        reply = self._reply(utterance_id, conversation_id,
-                                            NAVIGATION_CHANGED_RESPONSE, 'answer')
-                    elif decision.type == 'tool_call' and self._missions is not None:
-                        reply = self._mission_reply(
-                            runtime, request, result, utterance_id, conversation_id,
-                            confirmation=confirmation, navigation_binding=navigation_binding,
-                            mapping_question=mapping_question,
-                        )
-                    elif (decision.type not in {
-                            'message', 'clarification', 'refusal',
-                    } or not isinstance(decision.message, str)
-                            or not decision.message.strip()):
-                        raise ValueError('Expected a non-action response')
-                    else:
-                        message = decision.message
-                        if ((decision.type == 'refusal' and decision.reason in {
-                                'safety:unknown_tool', 'safety:tool_unavailable',
-                        }) or (decision.type == 'message' and decision.reason in {
-                                'unsupported_capability', 'unavailable_capability',
-                        })):
-                            from malbut_agent_server.mission_audio import CATALOG
-                            message = CATALOG['operation.unsupported']
-                        reply = self._reply(
-                            utterance_id, conversation_id,
-                            message, 'end_conversation' if decision.ends_conversation else 'answer',
-                            getattr(result, 'memory_validator', None),
-                        )
-                        if (self._missions is not None
-                                and result.safety.code == 'navigation_confirmation_required'):
-                            self._prepare_navigation_confirmation(runtime, request, result, reply)
-                        elif (fresh_request and 'request_mapping' in request.available_tools
-                              and decision.type == 'clarification'
-                              and decision.clarification_for == 'mapping_name'):
-                            self._prepare_mapping_name_question(runtime, request, result, reply)
-                except CancelledError:
-                    turn_outcome = 'cancelled'
-                    reply = None
-                except (ConversationNotFoundError, ConversationStateError):
-                    turn_outcome = 'error'
-                    reply = self._reply(
-                        utterance_id, conversation_id,
-                        SESSION_ERROR_RESPONSE, 'error',
-                    )
-                except MemoryChangedError:
-                    turn_outcome = 'error'
-                    reply = self._reply(
-                        utterance_id, conversation_id,
-                        MEMORY_CHANGED_RESPONSE, 'error',
-                    )
-                except Exception:
-                    turn_outcome = 'error'
-                    if delivery['published']:
-                        import logging
-                        logging.getLogger(__name__).exception(
-                            'speech_result_save_failed utterance_id=%s', utterance_id,
-                        )
-                    reply = self._reply(
-                        utterance_id, conversation_id, ERROR_RESPONSE, 'error',
-                    )
-                finally:
-                    if delivery['published']:
-                        # A storage failure must not send a second spoken answer.
-                        reply = None
-                    if prefetch is not None and not delivery['published']:
-                        if reply is None or reply['kind'] != 'answer':
-                            prefetch.cancel()
-                            with self._condition:
-                                self._prefetch_turns.pop(prefetch.request_id, None)
-                        else:
-                            reply._prefetch = prefetch
-                    progress.finish(cancelled=reply is None or reply['kind'] == 'end_conversation')
-                finalize_outcome = None
-                with self._condition:
-                    self._active_progress = None
-                    self._running = False
-                    if self._closing:
-                        if trace is not None and not trace.finalized:
-                            finalize_outcome = (
-                                turn_outcome if delivery['published'] else 'cancelled'
-                            )
-                    else:
-                        if delivery['published']:
-                            self._outstanding -= 1
-                            if trace is not None and not trace.finalized:
-                                finalize_outcome = turn_outcome
-                        elif reply is None or generation != self._generation:
-                            if reply is not None:
-                                self._release_prefetch(reply)
-                            self._outstanding -= 1
-                            if trace is not None and not trace.finalized:
-                                finalize_outcome = 'cancelled'
-                        else:
-                            reply._generation = generation
-                            if trace is not None:
-                                if turn_outcome == 'error':
-                                    trace.set_metadata(outcome='error', decision_type='error')
-                                trace.mark_emitted()
-                                reply._turn_trace = trace
-                            from malbut_agent_server.mission_audio import TEXT_IDS
-                            if reply['kind'] != 'end_conversation' and reply['text'] not in TEXT_IDS:
-                                reply['text'] = progress.final_text(reply['text'])
-                            self._emit(reply)
-                if trace is not None and finalize_outcome is not None:
-                    trace.finalize(self.turn_metrics, outcome=finalize_outcome)
-        finally:
-            with self._condition:
-                self._stopped = True
-            if runtime is not None:
-                if self._companion.service:
-                    self._companion.service.close()
-                close_runtime = getattr(runtime, 'close', None)
-                if close_runtime is not None:
-                    close_runtime()
-                else:
-                    # Retain the existing injected-runtime adapter contract.
-                    try:
-                        runtime.conversation_store.close()
-                    finally:
-                        runtime.memory_store.close()
-
-    def _valid_navigation_confirmation(self, session, pending):
+    def _valid_navigation_confirmation(
+        self, session: Any, pending: Optional[_NavigationConfirmation],
+    ) -> Optional[_NavigationConfirmation]:
         """Validate the confirmation consumed by this ordinary turn at dequeue."""
         with self._condition:
             if (pending is not None and time.monotonic() < pending.expires_at
@@ -870,7 +420,9 @@ class DialogueWorker:
                 return pending
             return None
 
-    def _prepare_navigation_confirmation(self, runtime, request, result, reply):
+    def _prepare_navigation_confirmation(
+        self, runtime: Any, request: Any, result: Any, reply: _DialogueReply,
+    ) -> None:
         """Bind the question to its target and activate only after publication."""
         if result.raw_decision.type != 'tool_call':
             # A cached clarification has no fresh proposal and cannot re-arm it.
@@ -879,7 +431,7 @@ class DialogueWorker:
             request.request_id, 'request_navigation', result.raw_decision.arguments,
         )
 
-        def activate():
+        def activate() -> None:
             expires_at = time.monotonic() + NAVIGATION_CONFIRMATION_SECONDS
             if self._running or self._pending:
                 # An answer received before this question is not confirmation.
@@ -902,7 +454,9 @@ class DialogueWorker:
 
         reply._on_publish = activate
 
-    def _valid_mapping_name_question(self, session, pending):
+    def _valid_mapping_name_question(
+        self, session: Any, pending: Optional[_MappingNameQuestion],
+    ) -> Optional[_MappingNameQuestion]:
         """Consume a question only in its current, unexpired conversation turn."""
         if (pending is not None and time.monotonic() < pending.expires_at
                 and session.status == 'active'
@@ -912,9 +466,11 @@ class DialogueWorker:
             return pending
         return None
 
-    def _prepare_mapping_name_question(self, runtime, request, result, reply):
+    def _prepare_mapping_name_question(
+        self, runtime: Any, request: Any, result: Any, reply: _DialogueReply,
+    ) -> None:
         """Arm a typed model question only once its committed reply is published."""
-        def activate():
+        def activate() -> None:
             expires_at = time.monotonic() + MAPPING_NAME_SECONDS
             if self._running or self._pending:
                 return
@@ -934,8 +490,18 @@ class DialogueWorker:
 
         reply._on_publish = activate
 
-    def _mission_reply(self, runtime, request, result, utterance_id, conversation_id,
-                       *, confirmation=None, navigation_binding=None, mapping_question=None):
+    def _mission_reply(
+        self,
+        runtime: Any,
+        request: Any,
+        result: Any,
+        utterance_id: str,
+        conversation_id: str,
+        *,
+        confirmation: Optional[_NavigationConfirmation] = None,
+        navigation_binding: Any = None,
+        mapping_question: Optional[_MappingNameQuestion] = None,
+    ) -> _DialogueReply:
         """Bind a committed proposal; send only at the ROS publication boundary."""
         decision = result.decision
         if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
@@ -949,7 +515,7 @@ class DialogueWorker:
             getattr(result, 'memory_validator', None),
         )
 
-        def guard():
+        def guard() -> Optional[str]:
             if decision.tool_name in {'request_navigation_point', 'request_waypoints'}:
                 revision = ((request.scene_context or {}).get('map') or {}).get('revision')
                 if revision is None or not self._missions.map_matches(revision):
@@ -988,7 +554,7 @@ class DialogueWorker:
         reply._mission_request_id = proposal.manager_request_id
         return reply
 
-    def _progress_notice(self, utterance_id, text, progress):
+    def _progress_notice(self, utterance_id: str, text: str, progress: Any) -> None:
         with self._condition:
             if self._closing or not progress.active:
                 return
@@ -1000,10 +566,16 @@ class DialogueWorker:
 
     @staticmethod
     def _handle_with_progress(
-        runtime, request, progress, prefetch=None, delivery=None, *, trace=None,
-    ):
-        from malbut_agent_server.speech_prefetch import prefetch_scope
+        runtime: Any,
+        request: Any,
+        progress: Any,
+        prefetch: Any = None,
+        delivery: Any = None,
+        *,
+        trace: Any = None,
+    ) -> Any:
         from malbut_agent_server.speech_delivery import delivery_scope
+        from malbut_agent_server.speech_prefetch import prefetch_scope
 
         with (
             request_scope(progress=progress),
@@ -1013,149 +585,71 @@ class DialogueWorker:
         ):
             return runtime.handle(request)
 
-    def _deliver_before_save(self, result, utterance_id, conversation_id,
-                             generation, progress, prefetch, *, trace=None):
-        """Let the ROS thread publish within the worker's validation transaction.
+    def _deliver_before_save(
+        self,
+        result: Any,
+        utterance_id: str,
+        conversation_id: str,
+        generation: int,
+        progress: Any,
+        prefetch: Any,
+        *,
+        trace: Any = None,
+    ) -> bool:
+        return deliver_before_save(
+            self, result, utterance_id, conversation_id, generation,
+            progress, prefetch, clock=time.monotonic, trace=trace,
+        )
 
-        No DB guard runs on the ROS thread for this ticket: the worker has just
-        checked final memory and holds SQLite's writer lock until we return.
-        A bounded wait and atomic ticket expiry avoid deadlock with other ROS
-        callbacks using the database. Late tickets can never publish twice.
-        """
-        if result.decision.ends_conversation:
-            # The committed result sends a turn control instead of a speech ticket.
-            return False
-        deadline = time.monotonic() + 0.25
-        if not self._condition.acquire(timeout=0.25):
-            return False
-        try:
-            if (self._closing or self._suspended or generation != self._generation):
-                return False
-            text = result.decision.message
-            from malbut_agent_server.mission_audio import CATALOG
-            if ((result.decision.type == 'refusal' and result.decision.reason in {
-                    'safety:unknown_tool', 'safety:tool_unavailable',
-            }) or result.decision.reason in {'unsupported_capability', 'unavailable_capability'}):
-                text = CATALOG['operation.unsupported']
-            reply = self._reply(utterance_id, conversation_id, text, 'answer')
-            reply['delivery_before_save'] = True
-            ticket = reply._delivery_ticket = {'state': 'waiting', 'progress': progress}
-            reply._generation = generation
-            reply._prefetch = prefetch
-            if trace is not None:
-                trace.mark_emitted()
-                reply._turn_trace = trace
-            self._emit(reply)
-            self._condition.wait_for(
-                lambda: ticket['state'] != 'waiting' or self._closing
-                or self._suspended or generation != self._generation,
-                timeout=max(0, deadline - time.monotonic()),
-            )
-            if ticket['state'] == 'published':
-                progress.finish()
-                return True
-            ticket['state'] = 'cancelled'
-            # The ROS thread may already have drained it. The cancelled ticket
-            # also guards that copy, so only the normal post-save reply remains.
-            self._results = deque(item for item in self._results if item is not reply)
-            return False
-        finally:
-            self._condition.release()
-
-    def begin_companion(self, session):
+    def begin_companion(self, session: Any) -> None:
         """Expose the encounter to the app before the first spoken reply."""
         self._companion.begin(session)
 
-    def end_companion(self, session):
+    def end_companion(self, session: Any) -> None:
         """Discard an encounter, including a model response still in flight."""
         self._companion.end(session)
 
-    def companion_reply_allowed(self, session):
+    def companion_reply_allowed(self, session: Any) -> bool:
         return self._companion.reply_allowed(session)
 
     def _answer_companion(
-        self, runtime, utterance_id, text, progress, generation, *, trace=None,
-    ):
-        from malbut_agent_server.companion_dialogue import CompanionOutcome
-
-        session = progress.companion_session
-        companion_error = False
-        try:
-            with (
-                request_scope(progress=progress),
-                trace.measure('provider_ms') if trace is not None else _nullcontext(),
-            ):
-                provider = getattr(runtime, 'companion_provider', runtime.provider)
-                message = self._companion.answer(provider, session, utterance_id,
-                                                 text, progress.opener_context,
-                                                 scene_source=self._scene_source)
-        except Exception:
-            companion_error = True
-            message = ERROR_RESPONSE
-        if trace is not None:
-            trace.set_metadata(
-                outcome='error' if companion_error else 'companion',
-                conversation_id=session if isinstance(session, str) else None,
-            )
-        receipt = self._companion.reply_receipt()
-        ended = message is CompanionOutcome.END_CONVERSATION
-        progress.finish(cancelled=message is None or ended)
-        finalize_outcome = None
-        with self._condition:
-            self._active_progress = None
-            self._running = False
-            if self._closing:
-                if trace is not None and not trace.finalized:
-                    finalize_outcome = 'cancelled'
-            else:
-                if message is None or generation != self._generation:
-                    self._outstanding -= 1
-                    if trace is not None and not trace.finalized:
-                        finalize_outcome = 'cancelled'
-                else:
-                    reply = self._reply(utterance_id, session, '' if ended else message,
-                                        'end_conversation' if ended else 'answer')
-                    reply._companion_session = session
-                    def validate():
-                        if not self._companion.reply_allowed(session, receipt):
-                            raise MemoryChangedError('companion identity or memory changed')
-                    reply._memory_validator = validate
-                    reply._generation = generation
-                    if trace is not None:
-                        trace.mark_emitted()
-                        reply._turn_trace = trace
-                    self._emit(reply)
-        if trace is not None and finalize_outcome is not None:
-            trace.finalize(self.turn_metrics, outcome=finalize_outcome)
+        self,
+        runtime: Any,
+        utterance_id: str,
+        text: str,
+        progress: Any,
+        generation: int,
+        *,
+        trace: Any = None,
+    ) -> None:
+        answer_companion(
+            self, runtime, utterance_id, text, progress, generation, trace=trace,
+        )
 
     @staticmethod
-    def _addressee_reply(utterance_id, playback_id, decision):
-        return {
-            'kind': 'addressee', 'utterance_id': utterance_id,
-            'playback_id': playback_id, 'decision': decision,
-        }
+    def _addressee_reply(
+        utterance_id: str, playback_id: str, decision: str,
+    ) -> Dict[str, str]:
+        return addressee_reply(utterance_id, playback_id, decision)
 
-    def _classify_interruption(self, runtime, conversation_id, utterance_id, playback_id, text):
-        try:
-            snapshot = self._companion.snapshot()
-            if snapshot is None:
-                snapshot = runtime.conversation_store.snapshot(
-                    self._user_id, conversation_id, limit=10,
-                )
-            decision = runtime.speech_addressee.classify(text, snapshot)
-            if decision not in ADDRESSEE_DECISIONS:
-                decision = 'unknown'
-        except Exception:
-            decision = 'unknown'
-        return self._addressee_reply(utterance_id, playback_id, decision)
+    def _classify_interruption(
+        self,
+        runtime: Any,
+        conversation_id: Optional[str],
+        utterance_id: str,
+        playback_id: str,
+        text: str,
+    ) -> Dict[str, str]:
+        return classify_interruption(
+            self, runtime, conversation_id, utterance_id, playback_id, text,
+        )
 
     @staticmethod
     def _reply(
-        utterance_id, conversation_id, text, kind, memory_validator=None,
-    ):
-        return _DialogueReply({
-            'utterance_id': utterance_id,
-            'text': text,
-            'kind': kind,
-            'conversation_id': conversation_id,
-        }, memory_validator)
+        utterance_id: str,
+        conversation_id: Optional[str],
+        text: str,
+        kind: str,
+        memory_validator: Optional[Callable[[], Any]] = None,
+    ) -> _DialogueReply:
+        return make_reply(utterance_id, conversation_id, text, kind, memory_validator)

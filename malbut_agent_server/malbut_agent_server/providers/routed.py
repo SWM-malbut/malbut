@@ -159,9 +159,8 @@ class RoutedAgentProvider(AgentProvider):
                 memory_context,
                 weather_context,
             )
-            if result.decision.type == 'tool_call' and not (
-                result.decision.tool_name in {tool.name for tool in general_tools}
-            ):
+            if (result.decision.type == 'tool_call'
+                    and result.decision.tool_name not in {tool.name for tool in general_tools}):
                 sanitized = replace(
                     result,
                     decision=self._local_decision(

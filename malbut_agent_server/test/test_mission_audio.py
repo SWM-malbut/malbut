@@ -62,7 +62,7 @@ def test_voice_functions_keep_one_start_and_cancellation_receipt():
 def test_existing_detailed_replies_use_short_recordings():
     text = '전면 작업의 취소를 요청했지만 접수 여부를 확인하지 못했어요. 종료된 것으로 판단하지 않을게요.'
     assert CATALOG[TEXT_IDS[text]] == '취소 여부를 확인하지 못했어요.'
-    for text, audio_id in TEXT_IDS.items():
+    for _text, audio_id in TEXT_IDS.items():
         assert audio_id in CATALOG
 
 
@@ -70,12 +70,20 @@ def test_fixed_input_errors_and_response_constants_have_recordings():
     """Catch a new literal error response that would silently call live TTS."""
     from malbut_agent_server import fall_check_watch, speech_dialogue
 
-    source = Path(__file__).resolve().parents[1] / 'malbut_agent_server/ros_communication.py'
-    literals = [node.args[0].value for node in ast.walk(ast.parse(source.read_text()))
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == 'say' and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)]
+    pkg_root = Path(__file__).resolve().parents[1] / 'malbut_agent_server'
+    sources = [
+        pkg_root / 'ros_communication.py',
+        *sorted((pkg_root / 'communication').glob('*.py')),
+    ]
+    literals = [
+        node.args[0].value
+        for source in sources
+        for node in ast.walk(ast.parse(source.read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == 'say' and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
     assert literals
     for module, names in (
         (speech_dialogue, ('ERROR_RESPONSE', 'SESSION_ERROR_RESPONSE',
