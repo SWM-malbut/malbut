@@ -257,10 +257,17 @@ class SoundDeviceRecorder:
 
         # Use the same device IDs as `python -m sounddevice`.
         self._device = None if device_index == -1 else device_index
-        # Robot Bringup pins XFM in PULSE_SOURCE for both consumers. Standalone
-        # capture and explicit non-XFM device selections keep their old behavior.
+        # Dedicated PulseAudio STT source (e.g. DJI Mic Mini / external USB lavalier)
+        # overrides device_index so Web/terminal Bringup can pin a non-XFM mic cleanly
+        # while PulseAudio resamples 48 kHz USB audio to 16 kHz mono.
+        resolved_pulse = os.environ.get('MALBUT_STT_RESOLVED_PULSE_SOURCE', '')
         shared_source = os.environ.get('MALBUT_SHARED_MICROPHONE', '')
-        if device_index == 0 and shared_source:
+        if resolved_pulse:
+            if os.environ.get('PULSE_SOURCE') != resolved_pulse:
+                raise RuntimeError(
+                    'Configured PulseAudio microphone source does not match PULSE_SOURCE')
+            self._device = 'pulse'
+        elif device_index == 0 and shared_source:
             if os.environ.get('PULSE_SOURCE') != shared_source:
                 raise RuntimeError('Shared microphone source does not match PULSE_SOURCE')
             self._device = 'pulse'

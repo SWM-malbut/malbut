@@ -62,10 +62,20 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         stt_decode_timeout_s = parameter('stt_decode_timeout_s', 30.0)
         compute_type = parameter('compute_type', 'int8')
         device_index = parameter('device_index', 0)
+        input_pulse_source = parameter('input_pulse_source', '')
         wake_chime_device_index = parameter('wake_chime_device_index', -1)
         chime_tail_s = parameter('chime_tail_s', 0.3)
         short_speech_guard = parameter('short_speech_guard', False)
         followup_timeout_s = parameter('followup_timeout_s', 10.0)
+        vad_threshold = parameter('vad_threshold', 0.5)
+        vad_min_rms_dbfs = parameter('vad_min_rms_dbfs', -96.0)
+        vad_snr_margin_db = parameter('vad_snr_margin_db', 0.0)
+        vad_sustain_margin_db = parameter('vad_sustain_margin_db', 4.0)
+        vad_hangover_ms = parameter('vad_hangover_ms', 160)
+        high_pass_hz = parameter('high_pass_hz', 0.0)
+        noise_suppression_mode = parameter('noise_suppression_mode', 'off')
+        noise_suppression_level = parameter('noise_suppression_level', 2)
+        wake_min_speech_s = parameter('wake_min_speech_s', 0.08)
         input_has_aec = parameter('input_has_aec', False)
         aec_backend = parameter('aec_backend', 'none')
         aec_source = parameter('aec_source', '')
@@ -111,6 +121,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         if (type(max_utterance_s) not in (float, int)
                 or not isfinite(max_utterance_s) or max_utterance_s < 0):
             raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
+        if not isinstance(input_pulse_source, str):
+            raise ValueError('input_pulse_source must be a string')
+        input_pulse_source = input_pulse_source.strip()
+        if input_pulse_source.startswith('match:') and not input_pulse_source[len('match:'):].strip():
+            raise ValueError('input_pulse_source match: selector requires a nonempty keyword')
+        if aec_backend == 'pulse_reference' and input_pulse_source:
+            raise ValueError('input_pulse_source cannot be combined with aec_backend=pulse_reference')
         if (type(wake_chime_device_index) is not int or wake_chime_device_index < -1):
             raise ValueError('wake_chime_device_index must be -1 or an output device index')
         if (type(chime_tail_s) not in (int, float) or not isfinite(chime_tail_s)
@@ -121,6 +138,33 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         if (type(followup_timeout_s) not in (int, float)
                 or not isfinite(followup_timeout_s) or followup_timeout_s < 0):
             raise ValueError('followup_timeout_s must be finite and nonnegative')
+        if (type(vad_threshold) not in (int, float) or not isfinite(vad_threshold)
+                or not 0.0 < vad_threshold < 1.0):
+            raise ValueError('vad_threshold must be strictly between 0 and 1')
+        if (type(vad_min_rms_dbfs) not in (int, float) or not isfinite(vad_min_rms_dbfs)
+                or not -120.0 <= vad_min_rms_dbfs <= 0.0):
+            raise ValueError('vad_min_rms_dbfs must be finite between -120 and 0')
+        if (type(vad_snr_margin_db) not in (int, float) or not isfinite(vad_snr_margin_db)
+                or not 0.0 <= vad_snr_margin_db <= 40.0):
+            raise ValueError('vad_snr_margin_db must be finite between 0 and 40')
+        if (type(vad_sustain_margin_db) not in (int, float) or not isfinite(vad_sustain_margin_db)
+                or not 0.0 <= vad_sustain_margin_db <= 20.0):
+            raise ValueError('vad_sustain_margin_db must be finite between 0 and 20')
+        if type(vad_hangover_ms) is not int or not 0 <= vad_hangover_ms <= 1000:
+            raise ValueError('vad_hangover_ms must be an integer between 0 and 1000')
+        if (type(high_pass_hz) not in (int, float) or not isfinite(high_pass_hz)
+                or not 0.0 <= high_pass_hz <= 500.0):
+            raise ValueError('high_pass_hz must be finite between 0 and 500')
+        if noise_suppression_mode not in ('off', 'vad_only', 'vad_and_asr'):
+            raise ValueError('noise_suppression_mode must be off, vad_only, or vad_and_asr')
+        if type(noise_suppression_level) is not int or noise_suppression_level not in (0, 1, 2, 3):
+            raise ValueError('noise_suppression_level must be an integer between 0 and 3')
+        if aec_backend != 'none' and (noise_suppression_mode != 'off' or high_pass_hz > 0.0):
+            raise ValueError(
+                'high_pass_hz and noise_suppression_mode require aec_backend=none')
+        if (type(wake_min_speech_s) not in (int, float) or not isfinite(wake_min_speech_s)
+                or not 0.0 < wake_min_speech_s <= 0.3):
+            raise ValueError('wake_min_speech_s must be finite between 0 and 0.3 seconds')
         if (type(stt_decode_timeout_s) not in (int, float)
                 or not isfinite(stt_decode_timeout_s) or stt_decode_timeout_s <= 0):
             raise ValueError('stt_decode_timeout_s must be finite and positive')
@@ -181,14 +225,26 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'loading_runtime_dependencies'
 
+        if noise_suppression_mode != 'off':
+            import pywebrtc_audio  # noqa: F401
         from malbut_stt.silero_stream import SileroStreamVad
         from malbut_stt.wake import LocalWakeRecognizer
         from malbut_stt.silero_gate import from_environment as create_silero_gate
 
         phase = 'initializing_silero_gate'
-        silero_gate = create_silero_gate(os.environ)
+        gate_min_rms = float(vad_min_rms_dbfs) if vad_min_rms_dbfs > -96.0 else None
+        silero_gate = (
+            create_silero_gate(os.environ)
+            if vad_threshold == 0.5 and gate_min_rms is None
+            else create_silero_gate(
+                os.environ, threshold=float(vad_threshold), min_rms_dbfs=gate_min_rms)
+        )
         if silero_gate is not None:
-            node.get_logger().info('stt_silero_gate_enabled:threshold=0.5,min_speech_ms=80')
+            gate_rms_label = (
+                f',min_rms_dbfs={gate_min_rms}' if gate_min_rms is not None else '')
+            node.get_logger().info(
+                f'stt_silero_gate_enabled:threshold={float(vad_threshold)},'
+                f'min_speech_ms=80{gate_rms_label}')
 
         phase = 'initializing_turn_detection'
         from malbut_stt.turn_detection import load_guards
@@ -249,9 +305,21 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             os.environ,
             metadata=dict(backend=backend, stt_model_path=str(stt_path),
                           wake_model_path=str(wake_path), device_index=device_index,
+                          input_pulse_source=input_pulse_source,
+                          resolved_pulse_source=os.environ.get(
+                              'MALBUT_STT_RESOLVED_PULSE_SOURCE', ''),
                           vad_backend='silero', input_has_aec=input_has_aec,
                           chime_tail_s=chime_tail_s, short_speech_guard=short_speech_guard,
                           followup_timeout_s=followup_timeout_s,
+                          vad_threshold=float(vad_threshold),
+                          vad_min_rms_dbfs=float(vad_min_rms_dbfs),
+                          vad_snr_margin_db=float(vad_snr_margin_db),
+                          vad_sustain_margin_db=float(vad_sustain_margin_db),
+                          vad_hangover_ms=vad_hangover_ms,
+                          high_pass_hz=float(high_pass_hz),
+                          noise_suppression_mode=noise_suppression_mode,
+                          noise_suppression_level=noise_suppression_level,
+                          wake_min_speech_s=float(wake_min_speech_s),
                           capture_settings=asdict(settings),
                           silero_gate=silero_gate.metadata if silero_gate is not None else None,
                           model=getattr(transcriber, 'metadata', {})),
@@ -291,9 +359,52 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             transcriber.model = silero_gate.wrap_model(transcriber.model, diagnostics)
         phase = 'initializing_vad'
         vad_path = Path(turn_model_directory).expanduser() / 'silero-v6.2.3.onnx'
-        vad = SileroStreamVad(vad_path)
-        wake_vad = vad.new_stream()
-        node.get_logger().info('stt_vad:silero,threshold=0.5')
+        raw_vad = (SileroStreamVad(vad_path) if vad_threshold == 0.5
+                   else SileroStreamVad(vad_path, threshold=float(vad_threshold)))
+        raw_wake_vad = raw_vad.new_stream()
+        vad = raw_vad
+        wake_vad = raw_wake_vad
+        noise_aware_vads = ()
+        if vad_min_rms_dbfs > -96.0 or vad_snr_margin_db > 0.0:
+            from malbut_stt.noise_guard import NoiseAwareVad, NoiseFloorTracker
+
+            tracker = NoiseFloorTracker()
+            hangover_frames = round(vad_hangover_ms / 20)
+            vad = NoiseAwareVad(
+                raw_vad,
+                min_rms_dbfs=float(vad_min_rms_dbfs),
+                snr_margin_db=float(vad_snr_margin_db),
+                sustain_margin_db=float(vad_sustain_margin_db),
+                hangover_frames=hangover_frames,
+                high_pass_hz=float(high_pass_hz) if high_pass_hz > 0.0 else 100.0,
+                floor_tracker=tracker,
+            )
+            wake_vad = NoiseAwareVad(
+                raw_wake_vad,
+                min_rms_dbfs=float(vad_min_rms_dbfs),
+                snr_margin_db=float(vad_snr_margin_db),
+                sustain_margin_db=float(vad_sustain_margin_db),
+                hangover_frames=hangover_frames,
+                high_pass_hz=float(high_pass_hz) if high_pass_hz > 0.0 else 100.0,
+                floor_tracker=tracker,
+            )
+            noise_aware_vads = (vad, wake_vad)
+        node.get_logger().info(f'stt_vad:silero,threshold={float(vad_threshold)}')
+        resolved_pulse = os.environ.get('MALBUT_STT_RESOLVED_PULSE_SOURCE', '')
+        if input_pulse_source or resolved_pulse:
+            node.get_logger().info(
+                f'stt_input_pulse_source:selector={input_pulse_source or "env"},'
+                f'resolved={resolved_pulse or "unmanaged"}')
+        if noise_aware_vads or high_pass_hz > 0.0 or noise_suppression_mode != 'off':
+            node.get_logger().info(
+                f'stt_noise_guard:vad_threshold={float(vad_threshold)},'
+                f'min_rms_dbfs={float(vad_min_rms_dbfs)},'
+                f'snr_margin_db={float(vad_snr_margin_db)},'
+                f'sustain_margin_db={float(vad_sustain_margin_db)},'
+                f'hangover_ms={vad_hangover_ms},'
+                f'high_pass_hz={float(high_pass_hz)},'
+                f'ns_mode={noise_suppression_mode},'
+                f'ns_level={noise_suppression_level}')
         phase = 'creating_publisher'
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST, depth=10,
@@ -491,8 +602,15 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             speech_vad = SuppressedSilenceVad(vad).is_speech
             wake_speech_vad = SuppressedSilenceVad(wake_vad).is_speech
         def recorder_factory():
-            raw = lambda: SoundDeviceRecorder(frame_length=512, device_index=device_index)
+            def raw():
+                return SoundDeviceRecorder(frame_length=512, device_index=device_index)
             if aec_backend == 'none':
+                if high_pass_hz > 0.0 or noise_suppression_mode != 'off':
+                    from malbut_stt.noise_guard import PreprocessedRecorder
+
+                    return PreprocessedRecorder(
+                        raw(), high_pass_hz=float(high_pass_hz),
+                        ns_level=noise_suppression_level, ns_mode=noise_suppression_mode)
                 return raw()
             from malbut_stt.echo.recorder import EchoCancelledRecorder, IsolatedMicrophoneRecorder
             return EchoCancelledRecorder(dict(source=aec_source, sink=aec_sink,
@@ -545,10 +663,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             endpoint_min_silence_s=(endpoint_min_silence_s
                                    if settings.silence_timeout_s > 1.0 else 1.0),
             endpoint_preempt_s=endpoint_preempt_s,
+            wake_min_speech_s=float(wake_min_speech_s),
         )
 
         timing_names = ('endpoint_min_silence_s', 'silence_timeout_s')
+        noise_names = ('vad_threshold', 'vad_min_rms_dbfs', 'vad_snr_margin_db')
         validated_timings = {}
+        validated_noise = {}
 
         def validate_turn_timing(parameters):
             if any(p.name == 'voice_profile_version' and (type(p.value) is not int or p.value != 1)
@@ -572,6 +693,29 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 except ValueError as error:
                     return SetParametersResult(successful=False, reason=str(error))
                 validated_timings[(minimum, fallback)] = updated
+            noise_changes = {p.name: p.value for p in parameters if p.name in noise_names}
+            if noise_changes:
+                new_threshold, new_min_rms, new_snr = (
+                    noise_changes[name] if name in noise_changes else node.get_parameter(name).value
+                    for name in noise_names)
+                if (type(new_threshold) not in (float, int) or not isfinite(new_threshold)
+                        or not 0.0 < new_threshold < 1.0):
+                    return SetParametersResult(
+                        successful=False, reason='vad_threshold must be strictly between 0 and 1')
+                if (type(new_min_rms) not in (float, int) or not isfinite(new_min_rms)
+                        or not -120.0 <= new_min_rms <= 0.0):
+                    return SetParametersResult(
+                        successful=False, reason='vad_min_rms_dbfs must be between -120 and 0')
+                if (type(new_snr) not in (float, int) or not isfinite(new_snr)
+                        or not 0.0 <= new_snr <= 40.0):
+                    return SetParametersResult(
+                        successful=False, reason='vad_snr_margin_db must be between 0 and 40')
+                if not noise_aware_vads and (new_min_rms > -96.0 or new_snr > 0.0):
+                    return SetParametersResult(
+                        successful=False,
+                        reason='noise guard energy parameters require startup activation')
+                validated_noise[(new_threshold, new_min_rms, new_snr)] = (
+                    float(new_threshold), float(new_min_rms), float(new_snr))
             return SetParametersResult(successful=True)
 
         node.add_on_set_parameters_callback(validate_turn_timing)
@@ -688,6 +832,21 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     if updated is not None:
                         pipeline.command_stream.set_next_turn_timing(
                             committed[0], updated, endpoint_predecode_s)
+                if validated_noise:
+                    committed_noise = tuple(node.get_parameter(name).value for name in noise_names)
+                    updated_noise = validated_noise.get(committed_noise)
+                    validated_noise.clear()
+                    if updated_noise is not None:
+                        new_thr, new_rms, new_snr = updated_noise
+                        for detector in (raw_vad, raw_wake_vad):
+                            if hasattr(detector, 'threshold'):
+                                detector.threshold = new_thr
+                        if silero_gate is not None:
+                            silero_gate.threshold = new_thr
+                            silero_gate.min_rms_dbfs = new_rms if new_rms > -96.0 else None
+                        for guard in noise_aware_vads:
+                            guard.min_rms_dbfs = new_rms
+                            guard.snr_margin_db = new_snr
         return 0
     except KeyboardInterrupt:
         return 0

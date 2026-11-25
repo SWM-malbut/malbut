@@ -109,3 +109,66 @@ def test_invalid_pulse_configuration_fails_clearly(tmp_path, document):
 def test_unreadable_stt_configuration_fails_clearly(tmp_path):
     with pytest.raises(RuntimeError, match='STT audio configuration'):
         speech_audio.pulse_reference_environment(tmp_path / 'missing.yaml')
+
+
+DJI = {
+    'name': 'alsa_input.usb-DJI_Technology_Co.__Ltd._DJI_Mic_Mini-00.mono-fallback',
+    'description': 'DJI Mic Mini Mono',
+    'properties': {
+        'alsa.card_name': 'DJI Mic Mini',
+        'device.product.name': 'DJI Mic Mini',
+        'device.vendor.name': 'DJI Technology Co., Ltd.',
+    },
+}
+
+
+def test_resolve_pulse_source_matches_dji_keyword_and_ignores_monitors(monkeypatch):
+    sources = [
+        XFM,
+        {**DJI, 'name': DJI['name'] + '.monitor', 'properties': {**DJI['properties'], 'device.class': 'monitor'}},
+        DJI,
+    ]
+    monkeypatch.setattr(subprocess, 'run', Mock(
+        return_value=SimpleNamespace(stdout=json.dumps(sources))))
+    assert speech_audio.resolve_pulse_source('match:dji', {}) == DJI['name']
+    assert speech_audio.resolve_pulse_source(DJI['name'], {}) == DJI['name']
+
+
+@pytest.mark.parametrize('sources', [[XFM], [DJI, {**DJI, 'name': 'alsa_input.usb-DJI-2'}]])
+def test_resolve_pulse_source_fails_closed_when_missing_or_ambiguous(monkeypatch, sources):
+    monkeypatch.setattr(subprocess, 'run', Mock(
+        return_value=SimpleNamespace(stdout=json.dumps(sources))))
+    with pytest.raises(speech_audio.SharedMicrophoneNotFoundError, match='requires one PulseAudio'):
+        speech_audio.resolve_pulse_source('match:DJI', {})
+
+
+def test_stt_input_pulse_source_reads_dji_profile_and_rejects_aec_conflict(tmp_path):
+    from pathlib import Path
+
+    profile = Path(__file__).parents[2] / 'malbut_stt/config/jetson_dji_mic.yaml'
+    assert speech_audio.stt_input_pulse_source(profile) == 'match:DJI'
+    assert speech_audio.pulse_reference_environment(profile) == {}
+
+    conflict = tmp_path / 'conflict.yaml'
+    conflict.write_text(
+        'malbut_stt:\n  ros__parameters:\n'
+        '    aec_backend: pulse_reference\n    aec_source: xfm\n    aec_sink: spk\n'
+        '    input_pulse_source: "match:DJI"\n')
+    with pytest.raises(RuntimeError, match='cannot combine input_pulse_source'):
+        speech_audio.stt_input_pulse_source(conflict)
+    with pytest.raises(RuntimeError, match='cannot combine input_pulse_source'):
+        speech_audio.pulse_reference_environment(conflict)
+
+    blank_match = tmp_path / 'blank.yaml'
+    blank_match.write_text('malbut_stt:\n  ros__parameters:\n    input_pulse_source: "match:  "\n')
+    with pytest.raises(RuntimeError, match='nonempty keyword'):
+        speech_audio.stt_input_pulse_source(blank_match)
+
+
+def test_ensure_pulse_source_unmuted_runs_pactl(monkeypatch):
+    run = Mock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert speech_audio.ensure_pulse_source_unmuted(
+        DJI['name'], {'XDG_RUNTIME_DIR': '/run/user/1000'}) is True
+    assert run.call_args[0][0] == ['pactl', 'set-source-mute', DJI['name'], '0']
+    assert speech_audio.ensure_pulse_source_unmuted('', {}) is False

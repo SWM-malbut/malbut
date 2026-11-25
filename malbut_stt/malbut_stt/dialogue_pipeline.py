@@ -96,7 +96,8 @@ class DialoguePipeline:
                  validate_wake_command=None, start_qualifier=None, smart_turn=None,
                  adaptive_endpoint=False, fused_endpoint=False,
                  wake_is_speech=None, barge_in_ducking=False, barge_in_mode='legacy',
-                 interruption_transcriber=None, barge_in_pre_roll_s=2.0):
+                 interruption_transcriber=None, barge_in_pre_roll_s=2.0,
+                 wake_min_speech_s: float = 0.08):
         if type(barge_in_ducking) is not bool:
             raise ValueError('barge_in_ducking must be a boolean')
         if type(adaptive_partials) is not bool:
@@ -217,7 +218,8 @@ class DialoguePipeline:
         self._partial_submitted_frame = None
         self.wake_stream = StreamingUtteranceCollector(
             observe_vad(wake_is_speech, kind='wake') if callable(observe_vad) else wake_is_speech,
-            settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
+            settings=CaptureSettings(
+                silence_timeout_s=0.4, max_utterance_s=6.0, min_speech_s=wake_min_speech_s),
         )
         self.audio = Queue(maxsize=64)
         self.jobs = Queue(maxsize=1)

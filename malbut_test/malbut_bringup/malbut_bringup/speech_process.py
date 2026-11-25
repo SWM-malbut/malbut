@@ -36,15 +36,26 @@ def _stop(process, signum=signal.SIGTERM):
 
 
 def _wait_for_microphone(python, device_index, interrupted):
-    """Wait without loading ASR; discard hung probes and refresh the XFM route."""
-    from malbut_bringup.speech_audio import shared_xfm_source
+    """Wait without loading ASR; discard hung probes and refresh the Pulse route."""
+    from malbut_bringup.speech_audio import (
+        ensure_pulse_source_unmuted, resolve_pulse_source, shared_xfm_source,
+    )
 
     waiting = False
     while not interrupted():
         environment = {**os.environ, 'PYTHONUNBUFFERED': '1'}
         process = None
         try:
-            if device_index == 0 and environment.get('MALBUT_SHARED_MICROPHONE'):
+            pulse_selector = environment.get('MALBUT_STT_PULSE_SOURCE', '').strip()
+            if pulse_selector:
+                source = resolve_pulse_source(pulse_selector, environment)
+                ensure_pulse_source_unmuted(source, environment)
+                environment.update(
+                    MALBUT_STT_RESOLVED_PULSE_SOURCE=source,
+                    PULSE_SOURCE=source,
+                    MALBUT_SHARED_MICROPHONE='',
+                )
+            elif device_index == 0 and environment.get('MALBUT_SHARED_MICROPHONE'):
                 source = shared_xfm_source(environment)
                 environment.update(MALBUT_SHARED_MICROPHONE=source, PULSE_SOURCE=source)
             process = subprocess.Popen(
@@ -96,6 +107,18 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
             environment = _wait_for_microphone(command[0], microphone_device, lambda: interrupted)
             if environment is None:
                 return 128 + interrupted
+        elif environment.get('MALBUT_STT_PULSE_SOURCE', '').strip():
+            from malbut_bringup.speech_audio import (
+                ensure_pulse_source_unmuted, resolve_pulse_source,
+            )
+            source = resolve_pulse_source(
+                environment['MALBUT_STT_PULSE_SOURCE'].strip(), environment)
+            ensure_pulse_source_unmuted(source, environment)
+            environment.update(
+                MALBUT_STT_RESOLVED_PULSE_SOURCE=source,
+                PULSE_SOURCE=source,
+                MALBUT_SHARED_MICROPHONE='',
+            )
         # Missing USB hardware is not a model startup attempt or CUDA retry.
         deadline = time.monotonic() + startup_timeout_s
         for attempt, delay in enumerate((0.0, *retry_delays), start=1):
@@ -131,14 +154,23 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
                         print('speech_shutdown_timeout', flush=True)
                         _stop(process)
                         return 124
-                    if (microphone_device == 0 and environment.get('MALBUT_SHARED_MICROPHONE')
+                    pulse_selector = environment.get('MALBUT_STT_PULSE_SOURCE', '').strip()
+                    watch_shared = (
+                        microphone_device == 0 and bool(environment.get('MALBUT_SHARED_MICROPHONE'))
+                    )
+                    if ((pulse_selector or watch_shared)
                             and shutdown_deadline is None and time.monotonic() >= source_check_at):
                         from malbut_bringup.speech_audio import (
-                            PulseAudioUnavailableError, shared_xfm_source,
+                            PulseAudioUnavailableError, resolve_pulse_source, shared_xfm_source,
                         )
                         lost_reason = None
                         try:
-                            source = shared_xfm_source(environment)
+                            if pulse_selector:
+                                source = resolve_pulse_source(pulse_selector, environment)
+                                expected = environment.get('MALBUT_STT_RESOLVED_PULSE_SOURCE', '')
+                            else:
+                                source = shared_xfm_source(environment)
+                                expected = environment['MALBUT_SHARED_MICROPHONE']
                         except PulseAudioUnavailableError:
                             source_unavailable_streak += 1
                             if source_unavailable_streak >= 2:
@@ -147,7 +179,7 @@ def run(command, startup_timeout_s, *, wait_for_ready=False, retry_delays=(5.0, 
                             lost_reason = 'missing'
                         else:
                             source_unavailable_streak = 0
-                            if source != environment['MALBUT_SHARED_MICROPHONE']:
+                            if source != expected:
                                 lost_reason = 'changed'
                         if lost_reason is not None:
                             print(f'speech_microphone_lost reason={lost_reason}', flush=True)

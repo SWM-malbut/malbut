@@ -17,7 +17,9 @@ setup(
             'requirements-turn-detection.txt',
             'requirements-aec.txt',
         ]),
-        ('share/' + package_name + '/config', ['config/jetson.yaml']),
+        ('share/' + package_name + '/config', [
+            'config/jetson.yaml', 'config/jetson_noisy_venue.yaml', 'config/jetson_dji_mic.yaml',
+        ]),
         ('share/' + package_name + '/native', [
             'native/CMakeLists.txt', 'native/README.md', 'native/whisper_cpp_bridge.cpp',
             'native/whisper_trace.h', 'native/whisper_trace.cpp', 'native/instrument_whisper.py',

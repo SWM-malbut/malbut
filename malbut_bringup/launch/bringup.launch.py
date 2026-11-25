@@ -9,7 +9,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from malbut_bringup.launch_support import defaults, declarations, include, package_file
-from malbut_bringup.speech_audio import shared_xfm_source
+from malbut_bringup.speech_audio import shared_xfm_source, stt_input_pulse_source
 
 
 def _setup(context):
@@ -41,12 +41,16 @@ def _setup(context):
     # A failure affects only the two microphone consumers, never navigation.
     actions = [SetEnvironmentVariable('need_compile', 'False')]
     audio_env = {}
+    stt_config = Path.home() / '.config/malbut/stt.yaml'
+    stt_custom_pulse = bool(
+        'speech' in enabled and stt_config.is_file() and stt_input_pulse_source(stt_config))
     if media and 'speech' in enabled and value('speech_input_device') == '0':
         try:
             source = shared_xfm_source(dict(context.environment))
             audio_env = {'MALBUT_SHARED_MICROPHONE': source, 'PULSE_SOURCE': source}
         except RuntimeError as error:
-            for name in ('homecam', 'speech'):
+            affected = ('homecam',) if stt_custom_pulse else ('homecam', 'speech')
+            for name in affected:
                 enabled.remove(name)
                 context.locals.malbut_modules[name] = str(error)
             actions.append(LogInfo(msg=str(error)))
@@ -81,7 +85,9 @@ def _setup(context):
             }
         actions.append(include(
             package_file('malbut_bringup', f'launch/{name}.launch.py'), settings,
-            environment=audio_env if name in ('homecam', 'speech') else None))
+            environment=audio_env if (
+                name == 'homecam' or (name == 'speech' and not stt_custom_pulse)
+            ) else None))
     nodes = {
         'robot': ['system_manager', 'runtime_control', 'controller_server', 'planner_server',
                   'bt_navigator',

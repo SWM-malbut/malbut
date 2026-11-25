@@ -897,6 +897,64 @@ VAD 양성 시간이 0.6초 이하일 때 한글 음절 수가 `max(6, ceil(20 *
   않습니다. commit 직후 종료하면 화면 로그가 누락될 수 있으므로 로그 출력까지
   정확히 한 번 보장한다고 표현하지 않습니다.
 
+### 시연장·소음 환경 대응 (`noise_guard`)
+
+기본 실행은 조용한 실내 설정을 유지합니다(`vad_threshold=0.5`, `vad_min_rms_dbfs=-96.0`,
+`vad_snr_margin_db=0.0`, `high_pass_hz=0.0`, `noise_suppression_mode=off`, `wake_min_speech_s=0.08`).
+전시장·시연장처럼 주변 말소리와 저주파 소음이 큰 환경에서는
+[시연장 프로필](config/jetson_noisy_venue.yaml)을 `~/.config/malbut/stt.yaml`에 복사하거나
+현장 보정 도구로 자동 생성해 적용합니다.
+
+| 파라미터 | 기본값 | 시연장 권장값 | 역할 |
+|---|---|---|---|
+| `high_pass_hz` | `0.0` | `100.0` | 공조·발소리·모터 저주파 진동 제거 (1차 IIR HPF) |
+| `noise_suppression_mode` | `off` | `vad_only` | `vad_only`: VAD 입력에만 WebRTC NS 적용(ASR 원음 보존), `vad_and_asr`: 양쪽 적용 |
+| `noise_suppression_level` | `2` | `2` (`0`–`3`) | WebRTC NS 감쇠 강도 (`0`: 6dB, `1`: 12dB, `2`: 18dB, `3`: 21dB) |
+| `vad_threshold` | `0.5` | `0.65` | Silero VAD 및 `SileroGate` 음성 확률 임계값 |
+| `vad_min_rms_dbfs` | `-96.0` | `-38.0` | 근접 발화 최소 음압 바닥 (dBFS, `-96.0` 이하는 비활성) |
+| `vad_snr_margin_db` | `0.0` | `8.0` | 적응형 배경 소음 바닥 대비 발화 시작 최소 SNR 마진 (dB) |
+| `vad_sustain_margin_db` | `4.0` | `4.0` | 발화 유지 중 임계값 완화폭 (끝말·약한 자음 잘림 방지) |
+| `vad_hangover_ms` | `160` | `160` | 발화 중 짧은 음량 저하 유지 시간 (ms) |
+| `wake_min_speech_s` | `0.08` | `0.18` | 호출 대기 중 최소 연속 음성 길이 (짧은 잡음 오트리거 차단) |
+
+현장 도착 후 10초 보정으로 현재 마이크의 배경 소음·시연 발화 SNR과 권장 `stt.yaml`을 바로 생성할 수 있습니다:
+
+```bash
+speech_python="${MALBUT_SPEECH_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/runtime}/bin/python"
+PYTHONPATH=~/ros2_ws/src/malbut/malbut_stt \
+  "$speech_python" ~/ros2_ws/src/malbut/malbut_stt/tools/calibrate_venue_noise.py \
+  --device-index 0 --write-config ~/.config/malbut/stt.yaml
+```
+
+실행 중 시연장 소음이 변하면 재시작 없이 실시간 조정도 가능합니다:
+
+```bash
+ros2 param set /malbut_stt vad_threshold 0.7
+ros2 param set /malbut_stt vad_min_rms_dbfs -34.0
+ros2 param set /malbut_stt vad_snr_margin_db 10.0
+```
+
+### USB 무선 핀마이크 (DJI Mic Mini 등) 자동 연결
+
+`~/.config/malbut/stt.yaml`에 `input_pulse_source: "match:DJI"`(또는 정확한 PulseAudio source 이름)를
+지정하면 터미널 `bringup.launch.py`뿐만 아니라 **웹 Bringup(`cloud.launch.py` → "Bringup 준비")**에서도
+홈캠·스피커는 그대로 유지한 채 STT만 자동으로 무선 핀마이크에 연결됩니다. PulseAudio를 경유하므로
+48 kHz USB 마이크의 16 kHz 모노 변환과 USB 분리·재연결 자동 복구도 함께 동작합니다.
+
+```bash
+# 1. 연결 확인 + 16 kHz 라이브 프로브 + ~/.config/malbut/stt.yaml 자동 작성
+speech_python="${MALBUT_SPEECH_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/runtime}/bin/python"
+PYTHONPATH=~/ros2_ws/src/malbut/malbut_stt \
+  "$speech_python" ~/ros2_ws/src/malbut/malbut_stt/tools/setup_pin_mic.py --match DJI --apply
+
+# (또는 프로필 직접 복사)
+mkdir -p ~/.config/malbut
+cp ~/ros2_ws/src/malbut/malbut_stt/config/jetson_dji_mic.yaml ~/.config/malbut/stt.yaml
+
+# 시연 종료 후 기존 XFM 설정으로 원복 (백업 자동 복원)
+"$speech_python" ~/ros2_ws/src/malbut/malbut_stt/tools/setup_pin_mic.py --revert
+```
+
 ## 시험과 검증 범위
 
 패키지 디렉터리에서 순수 Python 시험을 실행합니다.

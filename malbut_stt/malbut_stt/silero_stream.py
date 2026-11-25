@@ -24,14 +24,18 @@ class SileroStreamVad:
     One instance belongs to one capture stream, separate from ASR admission.
     """
 
-    def __init__(self, model_path=None, *, model=None):
+    def __init__(self, model_path=None, *, model=None, threshold=0.5):
+        if (type(threshold) not in (int, float) or not math.isfinite(threshold)
+                or not 0.0 < threshold < 1.0):
+            raise ValueError('Silero VAD threshold must be strictly between 0 and 1')
+        self.threshold = float(threshold)
         self.model = model if model is not None else load_pinned_model(
             default_model_path() if model_path is None else model_path)
         self.reset()
 
     def new_stream(self):
         """Create an independent capture clock using the already loaded model."""
-        return type(self)(model=self.model.new_stream())
+        return type(self)(model=self.model.new_stream(), threshold=self.threshold)
 
     def reset(self):
         self.model.reset()
@@ -52,11 +56,11 @@ class SileroStreamVad:
                 raise ValueError('Invalid Silero probability')
             self.probability = probability
             self.window_has_signal = any(frame)
-            if probability >= .5:
+            if probability >= self.threshold:
                 self.quiet_samples = 0
             else:
                 self.quiet_samples += 512
                 if self.quiet_samples >= 8000:
                     self.model.reset()
                     self.quiet_samples = 0
-        return self.probability >= .5
+        return self.probability >= self.threshold

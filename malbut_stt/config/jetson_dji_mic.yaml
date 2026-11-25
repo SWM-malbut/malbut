@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    # DJI Mic Mini / USB wireless lavalier profile for Jetson.
+    # Routes STT input to DJI while keeping all default STT/VAD/turn-detection behavior unchanged.
+    input_pulse_source: "match:DJI"  # Auto-matches the DJI USB Audio PulseAudio source.
+    aec_backend: none                # Close-talk wireless mic does not use XFM pulse_reference AEC.
+    barge_in_mode: legacy            # Keep input closed during TTS playback without AEC.
+    wake_input_gain: 1.0             # DJI USB Audio already delivers strong close-talk levels.

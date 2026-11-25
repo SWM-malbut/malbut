@@ -17,7 +17,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from malbut_bringup.launch_support import file_path, module_actions
-from malbut_bringup.speech_audio import pulse_reference_environment
+from malbut_bringup.speech_audio import pulse_reference_environment, stt_input_pulse_source
 
 
 def _setup(context):
@@ -64,6 +64,14 @@ def _setup(context):
     stt_config = Path.home() / '.config/malbut/stt.yaml'
     stt_overrides = [str(stt_config)] if stt_config.is_file() else []
     audio_env = pulse_reference_environment(stt_config) if stt_overrides else {}
+    input_pulse_selector = stt_input_pulse_source(stt_config) if stt_overrides else ''
+    stt_env = dict(audio_env)
+    if input_pulse_selector:
+        stt_env.update({
+            'MALBUT_STT_PULSE_SOURCE': input_pulse_selector,
+            'MALBUT_SHARED_MICROPHONE': '',
+            'PULSE_SOURCE': '',
+        })
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     # Under Bringup the agent module starts the Agent (with the fall rules),
@@ -78,6 +86,7 @@ def _setup(context):
              '--input-device', str(input_device), '--output-device', str(output_device),
              '--cpp-threads', str(threads), '--agent-provider', agent_provider,
              *(['--tts-config', str(tts_config)] if tts_overrides else [])],
+        additional_env=stt_env or None,
         name='speech_preflight', output='screen',
     )
     stage = 'preflight'
@@ -153,7 +162,7 @@ def _setup(context):
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             respawn=True, respawn_delay=5.0,
-            additional_env=audio_env or None,
+            additional_env=stt_env or None,
             prefix=shlex.join([*supervised, '--wait-for-ready',
                                '--microphone-device', str(input_device), '--', python]),
             parameters=[str(config), {

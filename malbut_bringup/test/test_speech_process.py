@@ -300,6 +300,60 @@ def test_transient_pactl_failure_retries_once_before_exiting_75(microphone_gate,
             finish(process)
 
 
+def test_custom_pulse_source_resolves_dji_mic_and_detects_unplug(microphone_gate, tmp_path):
+    start, available, model_started, env = microphone_gate
+    mode = tmp_path / 'dji_mode'
+    mode.write_text('present')
+    dji_name = 'alsa_input.usb-DJI_Mic_Mini-00.mono-fallback'
+    sources_present = json.dumps([
+        {'name': 'alsa_input.xfm', 'properties': {'device.product.name': 'XFM-DP-V0.0.18'}},
+        {'name': dji_name, 'properties': {'device.product.name': 'DJI Mic Mini'}},
+    ])
+    sources_missing = json.dumps([
+        {'name': 'alsa_input.xfm', 'properties': {'device.product.name': 'XFM-DP-V0.0.18'}},
+    ])
+    unmute_log = tmp_path / 'unmute_log'
+    pactl = tmp_path / 'pactl'
+    pactl.write_text(
+        f'#!{sys.executable}\n'
+        'import sys\n'
+        'from pathlib import Path\n'
+        'if sys.argv[1:2] == ["set-source-mute"]:\n'
+        f'    Path({str(unmute_log)!r}).write_text(" ".join(sys.argv[1:]))\n'
+        '    sys.exit(0)\n'
+        f'state = Path({str(mode)!r}).read_text().strip()\n'
+        f'print({sources_present!r} if state == "present" else {sources_missing!r})\n'
+    )
+    pactl.chmod(0o755)
+    env.update(
+        PATH=str(tmp_path) + os.pathsep + env.get('PATH', ''),
+        MALBUT_STT_PULSE_SOURCE='match:DJI',
+        MALBUT_SHARED_MICROPHONE='',
+        PULSE_SOURCE='',
+    )
+    available.touch()
+    process = start(
+        'import os, time\n'
+        'assert os.environ["PULSE_SOURCE"] == ' + repr(dji_name) + '\n'
+        'assert os.environ["MALBUT_STT_RESOLVED_PULSE_SOURCE"] == ' + repr(dji_name) + '\n'
+        'assert os.environ["MALBUT_SHARED_MICROPHONE"] == ""\n'
+        'print("dji_child_ready", flush=True)\n'
+        'time.sleep(30)\n'
+    )
+    try:
+        wait_line(process, 'dji_child_ready')
+        assert model_started.exists()
+        assert unmute_log.read_text() == f'set-source-mute {dji_name} 0'
+        mode.write_text('unplugged')
+        code, output = finish(process)
+        assert code == 75
+        assert 'speech_microphone_lost reason=missing' in output
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            finish(process)
+
+
 def test_cancel_reaps_hung_microphone_probe(microphone_gate, tmp_path):
     start, _, model_started, _ = microphone_gate
     pidfile = tmp_path / 'probe_pid'

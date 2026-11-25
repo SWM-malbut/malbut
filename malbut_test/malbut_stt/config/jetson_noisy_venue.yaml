@@ -1,0 +1,21 @@
+malbut_stt:
+  ros__parameters:
+    # Noisy exhibition / demo-hall override profile for Jetson.
+    # Copy to ~/.config/malbut/stt.yaml to activate; remove to revert to home defaults.
+    # Run `calibrate_venue_noise.py` on site to tailor vad_min_rms_dbfs / vad_snr_margin_db.
+    followup_timeout_s: 0.0        # Require wake phrase again; blocks crowd chatter after replies.
+    barge_in_mode: legacy          # Keep input closed during TTS playback.
+    short_speech_guard: true       # Reject short noise bursts hallucinated as long Korean text.
+    min_speech_s: 0.22             # Require 220 ms continuous speech onset for commands.
+    wake_min_speech_s: 0.18        # Require 180 ms continuous onset for wake phrases ("제이크").
+    max_utterance_s: 12.0          # Bound utterance length if ambient noise delays silence.
+    endpoint_min_silence_s: 0.6    # Finalize complete utterances faster between noise bursts.
+    silence_timeout_s: 1.5         # Shorter fallback silence timeout for noisy rooms.
+    high_pass_hz: 100.0            # Strip low-frequency HVAC / crowd rumble / motor vibration.
+    noise_suppression_mode: vad_only  # Suppress stationary noise on VAD stream without distorting ASR.
+    noise_suppression_level: 2     # WebRTC NS level 2 (18 dB suppression).
+    vad_threshold: 0.65            # Stricter Silero voice probability threshold.
+    vad_min_rms_dbfs: -38.0        # Near-field energy floor (adjust via calibrate_venue_noise.py).
+    vad_snr_margin_db: 8.0         # Require +8 dB above adaptive ambient noise floor on onset.
+    vad_sustain_margin_db: 4.0     # Relax by 4 dB mid-utterance to preserve soft endings.
+    vad_hangover_ms: 160           # Short hangover for trailing Korean syllables.
