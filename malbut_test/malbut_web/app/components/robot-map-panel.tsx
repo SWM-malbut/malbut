@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import type { HomecamDevice } from "./homecam-dashboard";
 import type { ManualVelocity, RobotOperation } from "../robot-contract";
+import { BringupFallToggle } from "./fall-homecam-settings";
 import { ManagedRobotControls } from "./managed-robot-controls";
 import { OwnerVoiceSettings } from "./owner-voice-settings";
 import type { VoiceSettingsView } from "../voice-profile";
@@ -1172,7 +1173,8 @@ export function RobotMapPanel({
           <aside className="robot-map-sidebar">
             {snapshot ? <>
               <ManagedRobotControls key={deviceId} deviceId={deviceId} snapshot={snapshot} isOwner={isOwner}
-                busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal} />
+                busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal}
+                fallDetectionControl={<BringupFallToggle deviceId={deviceId} disabled={!isOwner || !snapshot.online} />} />
               <ManagedRobotTools snapshot={snapshot} isOwner={isOwner}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} drive={driveCommand}
                 workspace={workspace} />

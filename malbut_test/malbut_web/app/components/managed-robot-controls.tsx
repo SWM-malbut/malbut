@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { RobotOperation } from "../robot-contract";
 import type { RobotSnapshot } from "./robot-map-panel";
 import { VoiceAgentPanel } from "./voice-agent-panel";
@@ -15,13 +15,14 @@ const LOCALIZATION_LABEL: Record<string, string> = {
 };
 
 /** The service UI adapts existing robot contracts; scheduling stays on the robot. */
-export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goal, deviceId }: {
+export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goal, deviceId, fallDetectionControl }: {
   snapshot: RobotSnapshot;
   isOwner: boolean;
   busy: boolean;
   sendCommand: SendCommand;
   goal: { x: number; y: number } | null;
   deviceId: string;
+  fallDetectionControl?: ReactNode;
 }) {
   const [mapName, setMapName] = useState("home");
   const [selectedMap, setSelectedMap] = useState("");
@@ -69,13 +70,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
           onClick={() => void sendCommand("runtime_start", { mode: "mapping" })}>
           Bringup 시작
         </button>
-        <button className="is-secondary"
-          disabled={disabled || !running || servers.manager !== true || switching || recovering}
-          onClick={() => void mission("recovery", {})}>
-          {recovering ? "Bringup 복구 중…" : "Bringup 복구"}
-        </button>
         <button className="is-secondary" disabled={disabled || stopped || runtime.state === "STOPPING"} onClick={() => void sendCommand("runtime_stop")}>Bringup 종료</button>
       </div>
+      {fallDetectionControl}
       <label>저장 지도
         <select value={selectedMap} onChange={(event) => setSelectedMap(event.target.value)}>
           <option value="">지도를 선택하세요</option>
@@ -96,7 +93,6 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       <small>{stopped
         ? "준비만으로 자동 주행하지 않습니다."
         : "실행 중에는 재시작 없이 위치 추정만 바꿉니다. 이동 중인 작업이 있으면 거부합니다. 사용 중인 지도는 삭제할 수 없습니다."}</small>
-      <small>복구는 Bringup 순서대로 꺼진 실행 대상만 다시 켭니다. 정상 노드와 지도는 유지하며, 이전 주행을 자동 재개하지 않습니다.</small>
     </div>
     <div className="robot-map-panel-card managed-robot-controls">
       <h3>기능 실행</h3>
