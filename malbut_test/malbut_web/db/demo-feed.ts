@@ -11,9 +11,16 @@ const owner =
   "EXISTS (SELECT 1 FROM device_memberships m WHERE m.device_id=s.device_id AND m.user_id=s.owner_id AND m.role='owner')";
 const live = "s.expires_at > now() AND " + owner;
 
+export async function purgeExpiredDemoLines() {
+  const result = await getPostgresPool().query(
+    "DELETE FROM demo_lines WHERE spoken_at < now()-interval '1 hour'",
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function demoLease(device: string) {
   const result = await getPostgresPool().query(
-    `WITH expired AS (DELETE FROM demo_lines WHERE spoken_at<now()-interval '1 hour') SELECT session_id AS session,
+    `SELECT session_id AS session,
     ceil(extract(epoch FROM (expires_at-now())) * 1000)::integer AS "ttlMs"
     FROM demo_sessions s WHERE device_id=$1 AND ${live}`,
     [device],
@@ -73,10 +80,6 @@ export async function viewerDemo(
     if (membership.rows[0]?.role !== "owner") throw new Error("FORBIDDEN");
     // Serialize first-open, renewal, and exit, including when no session row exists.
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [device]);
-    if (!prior)
-      await client.query(
-        "DELETE FROM demo_lines WHERE spoken_at < now()-interval '1 hour'",
-      );
     const existing = (
       await client.query(
         `SELECT owner_id,session_id,last_clear_at,expires_at>now() AS active,

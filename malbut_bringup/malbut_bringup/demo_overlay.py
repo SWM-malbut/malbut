@@ -109,6 +109,8 @@ def main(args=None):
             self.poses = deque(maxlen=12)
             self.candidates = deque(maxlen=12)
             self.last_frame = -math.inf
+            self.camera = None
+            self.last_pose_at = -math.inf
             self.timer = None
             self.create_timer(0.25, self._check)
 
@@ -128,6 +130,12 @@ def main(args=None):
             for sub in self.inputs:
                 self.destroy_subscription(sub)
             self.inputs.clear()
+            self._stop_camera()
+
+        def _stop_camera(self):
+            if self.camera is not None:
+                self.destroy_subscription(self.camera)
+                self.camera = None
             if self.timer is not None:
                 self.destroy_timer(self.timer)
                 self.timer = None
@@ -141,13 +149,13 @@ def main(args=None):
                 if self.inputs:
                     self._reset()
             elif not self.inputs:
-                for kind, topic, callback in (
-                        (Image, self.image_topic, self._frame),
-                        (String, '/homecam/person_poses', self._pose),
-                        (String, '/homecam/fall_candidates', self._candidate)):
+                for topic, callback in (
+                        ('/homecam/person_poses', self._pose),
+                        ('/homecam/fall_candidates', self._candidate)):
                     self.inputs.append(self.create_subscription(
-                        kind, topic, callback, qos_profile_sensor_data))
-                self.timer = self.create_timer(1/45, self._render)
+                        String, topic, callback, qos_profile_sensor_data))
+            elif self.camera is not None and time.monotonic()-self.last_pose_at >= 2:
+                self._stop_camera()
 
         def _frame(self, msg):
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1_000_000_000.0
@@ -161,22 +169,39 @@ def main(args=None):
                 self.frames.append((time.monotonic(), stamp, msg.header.frame_id, msg))
 
         def _pose(self, msg):
-            data = json.loads(msg.data)
-            capture = data.get('captureStamp')
-            if capture and data['status'] == 'ok':
+            if not self.inputs or time.monotonic() >= self.deadline:
+                return
+            try:
+                data = json.loads(msg.data)
+                if data['status'] != 'ok':
+                    self._stop_camera()
+                    return
+                capture = data['captureStamp']
                 stamp = capture['sec'] + capture['nanosec'] / 1_000_000_000.0
-                self.poses.append((stamp, observed_people(data), data['frameId']))
-            else:
-                self.poses.clear()
+                observation = (stamp, observed_people(data), data['frameId'])
+            except (ValueError, TypeError, KeyError, AttributeError):
+                return
+            self.last_pose_at = time.monotonic()
+            self.poses.append(observation)
+            if self.camera is None:
+                self.camera = self.create_subscription(
+                    Image, self.image_topic, self._frame, qos_profile_sensor_data)
+                self.timer = self.create_timer(1/45, self._render)
 
         def _candidate(self, msg):
-            data = json.loads(msg.data)
-            if data.get('status') == 'ok' and 'captureTimeSec' in data:
+            try:
+                data = json.loads(msg.data)
+                if data['status'] != 'ok':
+                    self.candidates.clear()
+                    return
+                stamp = data['captureTimeSec']
+                if not isinstance(stamp, (float, int)) or not math.isfinite(stamp):
+                    return
                 suspects = {t['targetTrackId'] for t in data['tracks']
                             if t.get('subjectCheck', {}).get('state') == 'suspected'}
-                self.candidates.append((data['captureTimeSec'], suspects, data['frameId']))
-            else:
-                self.candidates.clear()
+                self.candidates.append((stamp, suspects, data['frameId']))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                return
 
         def _render(self):
             now = time.monotonic()

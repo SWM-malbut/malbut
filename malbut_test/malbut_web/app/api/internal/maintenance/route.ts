@@ -10,6 +10,7 @@ import { dispatchHomecamEventPush } from "../../../push-broker";
 import { deliverPendingFallNotice, deliverPendingFallPush } from "../../../fall-event-push";
 import { scheduleFallReminders } from "../../../../db/fall-review";
 import { recoverFallAiJobs } from "../../../../db/fall-ai-review";
+import { purgeExpiredDemoLines } from "../../../../db/demo-feed";
 import { purgeExpiredFallPeople } from "../../../../db/fall-people";
 import { startFallAiJob } from "../../../fall-ai-review-worker";
 
@@ -113,8 +114,12 @@ export async function POST(request: Request) {
   let fallPeople: unknown;
   try { fallPeople = { purged: await purgeExpiredFallPeople() }; }
   catch { fallPeople = { purged: 0, reason: "fall_people_cleanup_unavailable" }; }
+  const demoLines = await purgeExpiredDemoLines()
+    .then((purged) => ({ purged }))
+    .catch(() => ({ reason: "demo_cleanup_unavailable" }));
   return noStore(
     {
+      demoLines,
       retentionCleanup: true,
       processedDevices: deviceIds.length,
       delivered,

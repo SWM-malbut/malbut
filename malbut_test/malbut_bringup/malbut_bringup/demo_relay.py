@@ -50,10 +50,12 @@ class DemoRelay:
             changed = self.session != session
             self.session, self.deadline = session, deadline
         if changed or session:
-            self.lease_pub.publish(self.string(data=json.dumps([session, deadline])))
+            try:
+                self.lease_pub.publish(self.string(data=json.dumps([session, deadline])))
+            except RuntimeError:
+                self.node.get_logger().debug('Demo lease publisher unavailable')
 
     def _subscriptions(self):
-        from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest
         with self.lock:
             session = self.session if time.monotonic() < self.deadline else ''
         if self.sub_session == session:
@@ -65,6 +67,7 @@ class DemoRelay:
         self.started.clear()
         self.sub_session = session
         if session:
+            from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest
             for cls, topic, callback in (
                     (self.string, '/malbut/demo/user', self._user),
                     (self.string, '/malbut/demo/pose_status', self._pose),

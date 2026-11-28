@@ -53,8 +53,11 @@ export function DemoScreen({
     let active = true;
     let nextRenew = 0;
     let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
+    let inFlight: AbortController | null = null;
     async function poll() {
+      const controller = new AbortController();
+      inFlight = controller;
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const action = !session.current
         ? "open"
         : Date.now() >= nextRenew
@@ -89,9 +92,14 @@ export function DemoScreen({
         setView(data);
         setError("");
       } catch (e) {
-        if (active)
-          setError(e instanceof Error ? e.message : "연결을 확인해 주세요.");
+        if (active) {
+          setView((previous) => previous && { ...previous, badge: null, count: null });
+          setError(controller.signal.aborted ? "시연 응답이 지연되고 있어요."
+            : e instanceof Error ? e.message : "연결을 확인해 주세요.");
+        }
       } finally {
+        clearTimeout(timeout);
+        inFlight = null;
         if (active && !stop.current) timer = setTimeout(schedule, 1000);
       }
     }
@@ -102,7 +110,7 @@ export function DemoScreen({
     return () => {
       active = false;
       clearTimeout(timer);
-      controller.abort();
+      inFlight?.abort();
     };
   }, [endpoint, local]);
 
@@ -118,6 +126,7 @@ export function DemoScreen({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "exit", session: session.current }),
+          signal: AbortSignal.timeout(5000),
         });
         if (!res.ok && res.status !== 409) throw new Error();
       } catch {

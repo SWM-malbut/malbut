@@ -81,10 +81,14 @@ class _CommunicationSpeechMixin(CommunicationNodeCore):
 
     def _demo_user(self, utterance_id: str, text: str, confirmation: bool) -> None:
         pub = self._demo_user_pub
-        if pub.get_subscription_count():
-            pub.publish(self._deps.string_msg_cls(data=json.dumps({
-                'id': utterance_id, 'text': text, 'confirmation': confirmation,
-            }, ensure_ascii=False)))
+        try:
+            if pub.get_subscription_count():
+                pub.publish(self._deps.string_msg_cls(data=json.dumps({
+                    'id': utterance_id, 'text': text, 'confirmation': confirmation,
+                }, ensure_ascii=False)))
+        except RuntimeError:
+            node: Any = self
+            node.get_logger().debug('Demo transcript publisher unavailable')
 
     def _receive_speech(self, message: Any) -> None:
         if self._closing:

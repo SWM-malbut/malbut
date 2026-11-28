@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { FallSettingsView } from "../fall-settings-contract";
 import { demoIncidentFetch } from "./fall-incidents-demo";
@@ -27,15 +27,26 @@ function useFallSettings(deviceId: string, demo = false) {
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState(false);
 
+  const reads = useRef({ issued: 0, applied: 0 });
   const load = useCallback(async () => {
+    const sequence = ++reads.current.issued;
     const fallResponse = await request(`${base}/fall-settings`, { cache: "no-store" }).catch(() => null);
-    if (fallResponse?.ok) setFall(await fallResponse.json());
+    if (!fallResponse?.ok) return;
+    const view: FallSettingsView | null = await fallResponse.json().catch(() => null);
+    if (view && sequence > reads.current.applied) {
+      reads.current.applied = sequence;
+      setFall(view);
+    }
   }, [base, request]);
 
   useEffect(() => {
+    const order = reads.current;
     window.queueMicrotask(() => void load());
     const timer = window.setInterval(() => void load(), 5_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      order.applied = order.issued;
+    };
   }, [load]);
 
   const updateFall = async (field: "enabled" | "cloudConsent", value: boolean) => {

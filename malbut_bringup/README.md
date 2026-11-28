@@ -245,14 +245,14 @@ Depth costmap 제외 근거는 [영상·점군 운영 안내](README_OPERATIONS.
 카메라는 공통 하드웨어가 한 번 실행하고, 추적·낙상·홈캠이 같은 Topic을 구독합니다.
 
 소유자가 보호자 웹에서 시연 화면을 열면 cloud bridge가 20초짜리 세션을 전달합니다.
-낙상 모듈의 `demo_overlay`가 RGB 프레임을 약 0.4초 보관하고 촬영 시각이 맞는
+낙상 모듈의 `demo_overlay`는 유효한 Pose 관측이 들어올 때만 RGB를 구독합니다. RGB 프레임을 약 0.4초 보관하고 촬영 시각이 맞는
 `/homecam/person_poses`의 같은 트랙 관절을 보간해 표시합니다. 시연 세션이 끝나면
 이미지 구독을 해제하고, 홈캠 송출기는 주석 영상이 1초간 없으면 원본 RGB를 사용합니다.
 STT와 홈캠이 XFM 마이크 0번을 함께 쓰는 통합 구성에서는 PulseAudio 입력 공유를 적용합니다.
 
 | 설정 | 적용 범위 | 목적 |
 | --- | --- | --- |
-| [카메라 DDS XML](config/fastdds_camera.xml) | Bringup이 시작하는 제조사 하드웨어 그룹 | SHM 8 MiB, UDPv4 유지 |
+| [카메라 DDS XML](config/fastdds_camera.xml) | 제조사 하드웨어 그룹과 시연 RGB 송출 프로세스 | SHM 8 MiB, UDPv4 유지 |
 | [Nav2 DDS XML](config/fastdds_nav2.xml) | `nav2_container` 프로세스 | `send_buffers.dynamic=true` |
 | [마이크 입력 공유](malbut_bringup/speech_audio.py) | STT·홈캠 | 같은 입력을 두 소비자에게 전달 |
 | 낙상 전용 Python | Pose 노드 | 준비된 ONNX Runtime에서 `auto`로 CUDA 우선 선택 |

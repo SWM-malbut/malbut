@@ -64,7 +64,7 @@ test("a changed owner cannot read the previous owner's lines, and expired lines 
     load = moduleLoader();
   try {
     await load("db/postgres.ts").withPostgresPoolForTest(h.pool, async () => {
-      const { viewerDemo, exchangeDemo, demoLease } = load("db/demo-feed.ts");
+      const { viewerDemo, exchangeDemo, demoLease, purgeExpiredDemoLines } = load("db/demo-feed.ts");
       const { session } = await viewerDemo("robot-a", "u-owner", null, false);
       const line = {
         id: "a",
@@ -82,7 +82,7 @@ test("a changed owner cannot read the previous owner's lines, and expired lines 
       await h.db.exec(
         "UPDATE demo_lines SET spoken_at=now()-interval '61 minutes'",
       );
-      await demoLease("robot-a");
+      assert.equal(await purgeExpiredDemoLines(), 1);
       assert.equal(
         (await h.db.query("SELECT * FROM demo_lines")).rows.length,
         0,
