@@ -1,7 +1,6 @@
 """Manage detector demand and monotonic diagnostics around upstream inference."""
 
 import gc
-import json
 import math
 import time
 
@@ -11,9 +10,7 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
 from std_srvs.srv import SetBool
-from yolo_msgs.msg import DetectionArray
 from yolo_ros.yolo_node import YoloNode
 
 
@@ -31,13 +28,6 @@ class TimedYoloNode(YoloNode):
         self._idle_since = None
         self._activated = False
         self._processing_enabled = False
-        self._demo_requested = False
-        self._demo_deadline = 0.0
-        self._demo_retry_at = 0.0
-        self._next_demo_frame = 0.0
-        self._demo_pub = self.create_publisher(DetectionArray, '~/demo_detections', 1)
-        self.create_subscription(String, '/malbut/demo/lease', self._demo_lease, 1)
-        self.create_timer(1.0, self._update_demo_demand)
         self._sub = None
         self._enable_srv = None
         self._set_classes_srv = None
@@ -106,7 +96,7 @@ class TimedYoloNode(YoloNode):
 
     def _expire_model(self):
         if (self._idle_since is not None
-                and self._sub is None
+                and not (self._processing_enabled and self.enable)
                 and time.monotonic() - self._idle_since >= self._idle_timeout):
             self._release_model()
             self._idle_timer.cancel()
@@ -133,14 +123,13 @@ class TimedYoloNode(YoloNode):
         except Exception as error:
             self.get_logger().error(f'Error setting classes: {error}')
         finally:
-            if self._sub is None:
+            if not (self._processing_enabled and self.enable):
                 self._idle_since = time.monotonic()
                 self._idle_timer.reset()
         return response
 
     def on_deactivate(self, state):
         """Release weights and endpoints without assuming they were ever loaded."""
-        self._demo_requested = False
         self._change_processing(False)
         self._idle_timer.cancel()
         self._release_model()
@@ -152,37 +141,8 @@ class TimedYoloNode(YoloNode):
         self._activated = False
         return LifecycleNode.on_deactivate(self, state)
 
-    def _demo_lease(self, message):
-        try:
-            session, deadline = json.loads(message.data)
-            if not isinstance(session, str) or not isinstance(deadline, (int, float)):
-                return
-            self._demo_deadline = min(time.monotonic()+20, deadline) if session else 0.0
-        except (ValueError, TypeError):
-            return
-
-    def _update_demo_demand(self):
-        if not self._activated:
-            return
-        now = time.monotonic()
-        requested = now < self._demo_deadline and self._demo_pub.get_subscription_count() > 0
-        if requested == self._demo_requested or (requested and now < self._demo_retry_at):
-            return
-        self._demo_requested = requested
-        try:
-            self._change_processing(self._processing_enabled)
-        except Exception as error:
-            self._pause_demo(error)
-
-    def _pause_demo(self, error):
-        self._demo_requested = False
-        self._demo_retry_at = time.monotonic() + 15
-        self.get_logger().warning(f'Demo object detection unavailable: {type(error).__name__}')
-        if not self._processing_enabled:
-            self._change_processing(False)
-
     def _change_processing(self, enabled):
-        wanted = (enabled or self._demo_requested) and self.enable
+        wanted = enabled and self.enable
         if wanted:
             self._load_model()
             self._idle_timer.cancel()
@@ -213,18 +173,7 @@ class TimedYoloNode(YoloNode):
 
     def image_cb(self, message):
         """Measure before inference, retaining the exact source RGB stamp."""
-        if not self.enable:
-            return
-        if not self._processing_enabled:
-            now = time.monotonic()
-            if not self._demo_requested or not self._next_demo_frame <= now < self._demo_deadline:
-                return
-            # Demo frames go only to the viewer. Mission consumers keep their own demand.
-            self._next_demo_frame = now + 0.2
-            try:
-                super().image_cb(message, publisher=self._demo_pub)
-            except Exception as error:
-                self._pause_demo(error)
+        if not self._processing_enabled or not self.enable:
             return
         received_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
         super().image_cb(message)

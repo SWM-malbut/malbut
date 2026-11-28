@@ -51,9 +51,7 @@ class DemoRelay:
             self.session, self.deadline = session, deadline
         if changed or session:
             try:
-                # Chat uses the owner session even when the homecam camera is off.
-                camera_session = session if session and data.get('cameraEnabled') is True else ''
-                self.lease_pub.publish(self.string(data=json.dumps([camera_session, deadline])))
+                self.lease_pub.publish(self.string(data=json.dumps([session, deadline])))
             except RuntimeError:
                 self.node.get_logger().debug('Demo lease publisher unavailable')
 

@@ -64,17 +64,6 @@ def object_boxes(message):
     return boxes
 
 
-def overlaps_person(box, poses):
-    """Suppress a duplicate person label when both detectors see the same person."""
-    x1, y1, x2, y2 = box
-    for a, b, c, d in poses:
-        overlap = max(0, min(x2, c)-max(x1, a)) * max(0, min(y2, d)-max(y1, b))
-        union = (x2-x1)*(y2-y1) + (c-a)*(d-b) - overlap
-        if overlap > 0.35 * union:
-            return True
-    return False
-
-
 def annotate(msg, people, suspects, objects=()):
     """Draw on a private image copy, preserving the camera encoding and timestamp."""
     import cv2
@@ -87,38 +76,28 @@ def annotate(msg, people, suspects, objects=()):
         return msg
     pixels = np.ndarray((h, w, channels), np.uint8, buffer=msg.data,
                         strides=(msg.step, channels, 1)).copy()
-    rgb = msg.encoding.startswith('rgb')
-    red = (248, 77, 68) if rgb else (68, 77, 248)
-    green = (62, 205, 156, 255) if rgb else (156, 205, 62, 255)
-    pose_boxes = []
+    green = (62, 205, 156, 255) if msg.encoding.startswith('rgb') else (156, 205, 62, 255)
+    for label, x1, y1, x2, y2 in objects:
+        left, right = round(max(0, x1)), round(min(w-1, x2))
+        top, bottom = round(max(0, y1)), round(min(h-1, y2))
+        if left >= right or top >= bottom:
+            continue
+        cv2.rectangle(pixels, (left, top), (right, bottom), green, 2)
+        cv2.putText(pixels, label, (left, max(14, top-4)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45, green, 1, cv2.LINE_AA)
     for track, joints in people.items():
+        red = (248, 77, 68) if msg.encoding.startswith('rgb') else (68, 77, 248)
         color = (*red, 255) if track in suspects else (247, 249, 250, 255)
         pts = {k: (round(max(0, min(1, x))*(w-1)), round(max(0, min(1, y))*(h-1)))
                for k, (x, y) in joints.items() if math.isfinite(x) and math.isfinite(y)}
-        if 'box_min' in pts and 'box_max' in pts:
-            left, top = pts['box_min']
-            right, bottom = pts['box_max']
-            pose_boxes.append((left, top, right, bottom))
-            box_color = color if track in suspects else green
-            cv2.rectangle(pixels, (left, top), (right, bottom), box_color, 2)
-            cv2.putText(pixels, 'person', (left, max(14, top-4)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45, box_color, 1, cv2.LINE_AA)
+        if track in suspects and 'box_min' in pts and 'box_max' in pts:
+            cv2.rectangle(pixels, pts['box_min'], pts['box_max'], color, 2)
         for a, b in BONES:
             if a in pts and b in pts:
                 cv2.line(pixels, pts[a], pts[b], color, 3, cv2.LINE_AA)
         for name, point in pts.items():
             if not name.startswith('box_'):
                 cv2.circle(pixels, point, 3, color, -1, cv2.LINE_AA)
-    for label, x1, y1, x2, y2 in objects:
-        left, right = round(max(0, x1)), round(min(w-1, x2))
-        top, bottom = round(max(0, y1)), round(min(h-1, y2))
-        if left >= right or top >= bottom:
-            continue
-        if label == 'person' and overlaps_person((left, top, right, bottom), pose_boxes):
-            continue
-        cv2.rectangle(pixels, (left, top), (right, bottom), green, 2)
-        cv2.putText(pixels, label, (left, max(14, top-4)), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45, green, 1, cv2.LINE_AA)
     msg.step = w*channels
     data = array('B')
     data.frombytes(memoryview(pixels).cast('B'))
@@ -200,8 +179,7 @@ def main(args=None):
                 for kind, topic, callback in (
                         (String, '/homecam/person_poses', self._pose),
                         (String, '/homecam/fall_candidates', self._candidate),
-                        (DetectionArray, '/yolo/detections', self._objects),
-                        (DetectionArray, '/yolo/yolo_node/demo_detections', self._objects)):
+                        (DetectionArray, '/yolo/detections', self._objects)):
                     self.inputs.append(self.create_subscription(
                         kind, topic, callback, qos_profile_sensor_data))
             elif time.monotonic()-max(self.last_pose_at, self.last_objects_at) >= 2:
@@ -218,9 +196,11 @@ def main(args=None):
             if not self.inputs or time.monotonic() >= self.deadline:
                 return
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1_000_000_000.0
-            self.objects.append((stamp, object_boxes(msg), msg.header.frame_id))
-            self.last_objects_at = time.monotonic()
-            self._start_camera()
+            boxes = object_boxes(msg)
+            self.objects.append((stamp, boxes, msg.header.frame_id))
+            if boxes:
+                self.last_objects_at = time.monotonic()
+                self._start_camera()
 
         def _frame(self, msg):
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1_000_000_000.0

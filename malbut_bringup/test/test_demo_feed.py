@@ -45,7 +45,7 @@ def test_speech_waits_for_playing_and_accepts_reordered_delivery():
     assert len(relay.lines) == 2
 
 
-def test_overlay_image_keeps_stamp_encoding_and_distinguishes_people():
+def test_overlay_image_keeps_stamp_encoding_and_marks_only_the_suspect():
     """Check the emitted pixel buffer including padded RGB input rows."""
     import numpy as np
     from malbut_bringup.demo_overlay import annotate
@@ -57,13 +57,10 @@ def test_overlay_image_keeps_stamp_encoding_and_distinguishes_people():
                   'left_hip': (.2, .4), 'left_knee': (.2, .8)},
               2: {'box_min': (.5, .1), 'box_max': (.9, .9),
                   'left_hip': (.7, .4), 'left_knee': (.7, .8)}}
-    objects = [('person', 49, 9, 88, 70), ('chair', 2, 27, 9, 43)]
-    image = annotate(frame, people, {1}, objects)
+    image = annotate(frame, people, {1})
     pixels = np.frombuffer(image.data, dtype=np.uint8).reshape(height, width, 3)
     assert image.header.stamp == 1234
     assert image.step == width*3
     assert tuple(pixels[48, 20]) == (248, 77, 68)
     assert tuple(pixels[48, 69]) == (247, 249, 250)
-    assert tuple(pixels[8, 50]) == (62, 205, 156)
-    assert tuple(pixels[8, 10]) == (248, 77, 68)
-    assert tuple(pixels[34, 2]) == (62, 205, 156)
+    assert not pixels[8, 50].any()

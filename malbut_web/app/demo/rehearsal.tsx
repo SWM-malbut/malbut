@@ -51,15 +51,6 @@ export function RehearsalCamera({ seconds }: { seconds: number }) {
   const upright = seconds > 27 ? 1 - Math.min(1, (seconds - 27) / 1.2) : 1;
   const fall = tilt * upright;
   const color = fall > 0.8 ? "#ff5d50" : "#f7f5ec";
-  const x = 318 + 48 * fall;
-  const y = 258 + 61 * fall;
-  const angle = -89 * fall;
-  const radians = angle * Math.PI / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const corners = [[-57, -178], [37, -178], [-57, 79], [37, 79]];
-  const xs = corners.map(([dx, dy]) => x + dx * cos - dy * sin);
-  const ys = corners.map(([dx, dy]) => y + dx * sin + dy * cos);
   const limbs = [
     "0,-130 0,-68 0,2",
     "-18,-125 -16,-66 -17,5",
@@ -95,20 +86,21 @@ export function RehearsalCamera({ seconds }: { seconds: number }) {
       />
       <rect x="460" y="150" width="151" height="85" fill="#728078" />
       <rect x="454" y="135" width="165" height="31" fill="#5c685f" />
-      <rect x="452" y="133" width="169" height="104" fill="none" stroke="#3ecd9c" strokeWidth="2" />
-      <text x="452" y="128" fill="#166649" fontSize="13">couch</text>
-      <rect
-        x={Math.min(...xs)}
-        y={Math.min(...ys)}
-        width={Math.max(...xs) - Math.min(...xs)}
-        height={Math.max(...ys) - Math.min(...ys)}
-        fill="none"
-        stroke={fall > 0.8 ? color : "#3ecd9c"}
-        strokeWidth="3"
-      />
-      <text x={Math.min(...xs)} y={Math.min(...ys) - 4}
-        fill={fall > 0.8 ? "#b33730" : "#166649"} fontSize="13">person</text>
-      <g transform={`translate(${x} ${y}) rotate(${angle})`}>
+      <g
+        transform={`translate(${318 + 48 * fall} ${258 + 61 * fall}) rotate(${-89 * fall})`}
+      >
+        {fall > 0.8 && (
+          <rect
+            x="-57"
+            y="-178"
+            width="94"
+            height="257"
+            rx="8"
+            fill="none"
+            stroke={color}
+            strokeWidth="3"
+          />
+        )}
         <circle cy="-151" cx="-10" r="13" fill="#e5b892" />
         {limbs.map((points) => (
           <g key={points}>

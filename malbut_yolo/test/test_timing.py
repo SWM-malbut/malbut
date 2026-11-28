@@ -18,11 +18,9 @@ def wrapper(monkeypatch):
     class StubYoloNode:
         """Record forwarding without importing Torch or loading any weights."""
 
-        def image_cb(self, message, *, publisher=None):
+        def image_cb(self, message):
             """Stand in for one successful upstream inference callback."""
             self.seen.append(message)
-            if publisher is not None:
-                publisher.publish(message)
             if self.failure:
                 raise RuntimeError('inference failed')
 
@@ -39,7 +37,6 @@ def _instance(module, enabled=True):
     node = module.TimedYoloNode.__new__(module.TimedYoloNode)
     node.enable = enabled
     node._processing_enabled = True
-    node._demo_requested = False
     node.seen = []
     node.failure = False
     node._timing_sequence = 0
@@ -130,35 +127,6 @@ def _lifecycle_instance(wrapper):
     node.destroy_subscription = Mock()
     node.create_service = Mock(return_value=object())
     return node, model
-
-
-def test_demo_uses_one_detector_and_releases_only_its_demand(wrapper, monkeypatch):
-    """Only a live viewer gets demo-only frames; tracking retains its normal output."""
-    from unittest.mock import Mock
-    node, _ = _lifecycle_instance(wrapper)
-    now = [1.0]
-    monkeypatch.setattr(wrapper.time, 'monotonic', lambda: now[0])
-    node._demo_pub = Mock()
-    node._demo_pub.get_subscription_count.return_value = 1
-    node._demo_deadline = node._demo_retry_at = node._next_demo_frame = 0.0
-    node._update_demo_demand()
-    assert node._sub is None
-    node._demo_lease(SimpleNamespace(data='["viewer", 5.0]'))
-    node._update_demo_demand()
-    frame = _image()
-    node.image_cb(frame)
-    node.image_cb(frame)
-    assert node.seen == [frame] and not node.traces
-    node._demo_pub.publish.assert_called_once_with(frame)
-    node._change_processing(True)
-    node.image_cb(frame)
-    assert len(node.traces) == 1 and node._demo_pub.publish.call_count == 1
-    now[0] = 6.0
-    node._update_demo_demand()
-    assert node._sub is not None and not node._demo_requested
-    node._change_processing(False)
-    assert node._sub is None
-    node.type_to_model['YOLO'].assert_called_once()
 
 
 def test_idle_has_no_weights_and_quick_resume_reuses_loaded_model(wrapper, monkeypatch):

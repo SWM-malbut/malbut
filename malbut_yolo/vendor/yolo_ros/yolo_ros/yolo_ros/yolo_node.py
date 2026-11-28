@@ -426,7 +426,7 @@ class YoloNode(LifecycleNode):
 
         return keypoints_list
 
-    def image_cb(self, msg: Image, *, publisher=None) -> None:
+    def image_cb(self, msg: Image) -> None:
         """
         Image callback for processing detections.
 
@@ -490,8 +490,7 @@ class YoloNode(LifecycleNode):
 
             # Publish detections
             detections_msg.header = msg.header
-            output = self._pub if publisher is None else publisher
-            output.publish(detections_msg)
+            self._pub.publish(detections_msg)
 
             del results
             del cv_image

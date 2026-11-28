@@ -58,6 +58,5 @@ ONNX 경로를 쓰지 않는다. 기존 `malbut_perception` 모델 캐시
 upstream yolo_ros 라이선스는 GPL-3.0, Ultralytics는 AGPL-3.0/상용 라이선스다.
 배포 시 각 라이선스 조건을 확인해야 한다.
 
-시연만 열려 있으면 같은 모델로 초당 최대 5회 검출해 `~/demo_detections`로 발행한다. 사람 추적 중에는 시연도 기존 `/yolo/detections` 결과를 사용한다.
-vendored `yolo_ros/yolo_node.py`는 추론 라이브러리 import를 지연하고, 시연 시 결과를 보낼 publisher를 선택할 수 있다.
+vendored `yolo_ros/yolo_node.py`에는 추론 라이브러리 import 지연만 적용한다.
 모델 종류, 추론과 박스·마스크·키포인트 변환은 기존 구현을 사용한다.
