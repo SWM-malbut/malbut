@@ -336,7 +336,17 @@ public:
 
     image_subscription_ = create_subscription<sensor_msgs::msg::Image>(
       config_.image_topic, rclcpp::SensorDataQoS(),
-      std::bind(&MediaAgentNode::on_image, this, std::placeholders::_1));
+      [this](sensor_msgs::msg::Image::ConstSharedPtr message) {
+        if (std::chrono::steady_clock::now() >= demo_until_) {
+          on_image(message);
+        }
+      });
+    demo_subscription_ = create_subscription<sensor_msgs::msg::Image>(
+      "/malbut/demo/image", rclcpp::SensorDataQoS(),
+      [this](sensor_msgs::msg::Image::ConstSharedPtr message) {
+        demo_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        on_image(message);
+      });
 
     if (!config_.camera_info_topic.empty()) {
       camera_info_subscription_ = create_subscription<sensor_msgs::msg::CameraInfo>(
@@ -2657,6 +2667,8 @@ private:
   int session_failure_count_{0};
   std::chrono::steady_clock::time_point next_session_attempt_{
     std::chrono::steady_clock::time_point::min()};
+  std::chrono::steady_clock::time_point demo_until_{};
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr demo_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr
     camera_info_subscription_;

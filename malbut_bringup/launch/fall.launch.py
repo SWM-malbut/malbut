@@ -8,9 +8,9 @@ from uuid import uuid4
 from launch.actions import ExecuteProcess, LogInfo
 from malbut_bringup.fall_setup import prepare_fall_monitor, prepare_fall_upload
 
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.substitutions import ExecutableInPackage
+from launch_ros.substitutions import ExecutableInPackage, FindPackageShare
 
 from malbut_bringup.launch_support import (
     description, file_path as _file,
@@ -118,7 +118,14 @@ def _setup(context):
 
     if fall_inputs is None:
         return [LogInfo(msg='Fall module disabled: no configured fall runtime.')]
-    actions = [fall_monitor, fall_pose]
+    actions = [fall_monitor, fall_pose, Node(
+        package='malbut_bringup', executable='demo_overlay', output='screen',
+        additional_env={
+            'RMW_IMPLEMENTATION': 'rmw_fastrtps_cpp',
+            'FASTRTPS_DEFAULT_PROFILES_FILE': PathJoinSubstitution([
+                FindPackageShare('malbut_bringup'), 'config', 'fastdds_camera.xml']),
+        },
+        parameters=[{'image_topic': value('rgb_topic')}])]
     if not getattr(context.locals, 'malbut_modular_bringup', False):
         # Run alone, this module brings the fall rules as the coordinator did;
         # under Bringup the agent module runs them beside the dialogue.

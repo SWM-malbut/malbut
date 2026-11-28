@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Camera/vendor hardware processes only. Keep remote UDP communication. -->
+<!-- Raw image publishers (camera hardware and demo overlay). Keep remote UDP communication. -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <transport_descriptors>
     <transport_descriptor>

@@ -460,8 +460,8 @@ class CommunicationNodeCore:
     def _follow_fall_window(self) -> None:
         follow_fall_window(self)
 
-    def _answer_during_fall_check(self, utterance_id: str, text: str) -> None:
-        answer_during_fall_check(self, utterance_id, text)
+    def _answer_during_fall_check(self, utterance_id: str, text: str) -> bool:
+        return answer_during_fall_check(self, utterance_id, text)
 
     def _drain_preparations(self) -> None:
         drain_preparations(self)

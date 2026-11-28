@@ -26,6 +26,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, getproxie
 import yaml
 
 from .navigation import escape_point, NavigationError, Navigator
+from .demo_relay import DemoRelay
 from .drive_mode import FOLLOW_DISTANCE_M, robot_drive_mode
 from .voice_profile import VoiceProfileRelay
 from .web_panel import (
@@ -678,7 +679,7 @@ def map_payload(metadata, png, runtime, zones=None, user_map=None, map_revision=
 class CloudSync:
     """Poll off the ROS executor and report dispatch separately from completion."""
 
-    def __init__(self, bridge, client, *, interval=1.0, homecam=None, voice=None):
+    def __init__(self, bridge, client, *, interval=1.0, homecam=None, voice=None, demo=None):
         """Prepare an idle bounded worker without starting any robot process."""
         if not 1.0 <= interval <= 60.0:
             raise ValueError('Cloud interval must be between 1 and 60 seconds')
@@ -687,6 +688,7 @@ class CloudSync:
         self.interval = interval
         self.homecam = homecam
         self.voice = voice
+        self.demo = demo
         self.stop_event = threading.Event()
         self.commands_stopped = threading.Event()
         self.pending = OrderedDict()
@@ -909,6 +911,8 @@ class CloudSync:
             navigation = self.navigator.target(snapshot.get('requests', []),
                                                snapshot.get('system'))
             payload = state_payload(snapshot, info, self.maps, navigation=navigation)
+            if self.demo is not None and not draining:
+                payload['demoCapable'] = True
             if self.voice is not None and not draining:
                 applied = self.voice.advance()
                 if applied is not None:
@@ -930,6 +934,8 @@ class CloudSync:
                                     body=body, failure=failure)
             if self.voice is not None and not draining:
                 self.voice.receive(reply)
+            if self.demo is not None and not draining:
+                self.demo.lease(reply.get('demo'), requested_at)
             self.last_state_at = now
             if not draining:
                 closed = closed_fall_incidents(reply)
@@ -990,6 +996,8 @@ class CloudSync:
         self.commands_stopped.set()
         self.stop_event.set()
         self.client.close()
+        if self.demo is not None:
+            self.demo.close()
         if self.thread.is_alive():
             self.thread.join(timeout=35.0)
 
@@ -1024,7 +1032,8 @@ def main(args=None):
             raise ValueError('A cloud bridge already owns this device credential') from None
         sync = CloudSync(bridge, CloudClient(backend, token), interval=float(interval),
                          homecam=HomecamHeartbeatRelay(bridge.node),
-                         voice=VoiceProfileRelay(bridge.node))
+                         voice=VoiceProfileRelay(bridge.node),
+                         demo=DemoRelay(bridge.node, CloudClient(backend, token, timeout=3.0)))
         sync.thread.start()
         bridge.node.get_logger().info('Real robot cloud bridge started; no motion requested')
         executor.spin()

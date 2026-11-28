@@ -1,6 +1,7 @@
 """ROS speech dialogue with independent Manager communication."""
 
 import argparse
+import json
 from dataclasses import replace
 import math
 import os
@@ -76,17 +77,33 @@ class _CommunicationSpeechMixin(CommunicationNodeCore):
         if not self._in_fall_window:
             self.say('대화 종료할게요.')
 
+    _demo_user_pub: Any
+
+    def _demo_user(self, utterance_id: str, text: str, confirmation: bool) -> None:
+        pub = self._demo_user_pub
+        try:
+            if pub.get_subscription_count():
+                pub.publish(self._deps.string_msg_cls(data=json.dumps({
+                    'id': utterance_id, 'text': text, 'confirmation': confirmation,
+                }, ensure_ascii=False)))
+        except RuntimeError:
+            node: Any = self
+            node.get_logger().debug('Demo transcript publisher unavailable')
+
     def _receive_speech(self, message: Any) -> None:
         if self._closing:
             return
         if self._patrol_chat is not None and self._patrol_chat.receive(message):
+            if self._patrol_chat.reply_id == message.utterance_id == self._awaiting_reply:
+                self._demo_user(message.utterance_id, message.text, False)
             if message.utterance_id == self._input_utterance_id:
                 self._input_utterance_id = None
             if message.utterance_id not in self._seen_input_ids:
                 self._seen_input_ids.append(message.utterance_id)
             return
         if self.situation is not None and self.situation.active:
-            self.situation.transcript(message)
+            if self.situation.transcript(message):
+                self._demo_user(message.utterance_id, message.text, True)
             return
         if getattr(message, 'session_id', ''):
             # A late answer from an ended confirmation is not ordinary chat.
@@ -101,7 +118,8 @@ class _CommunicationSpeechMixin(CommunicationNodeCore):
             if utterance_id not in self._seen_input_ids:
                 self._seen_input_ids.append(utterance_id)
             if self._fall_check is not None and self._fall_check.in_window():
-                self._answer_during_fall_check(utterance_id, text)
+                if self._answer_during_fall_check(utterance_id, text):
+                    self._demo_user(utterance_id, text, True)
                 return
             previous = self._receipts.lookup(utterance_id, text)
         except SpeechInputTooLongError as error:
@@ -159,6 +177,7 @@ class _CommunicationSpeechMixin(CommunicationNodeCore):
             )
         elif outcome == 'received':
             self._awaiting_reply = utterance_id
+            self._demo_user(utterance_id, text, False)
 
 
 def create_communication_node(
@@ -224,6 +243,7 @@ def create_communication_node(
 
         def __init__(self) -> None:
             super().__init__('malbut_agent_communication')
+            self._demo_user_pub = self.create_publisher(String, '/malbut/demo/user', 10)
             self._init_communication(
                 deps=deps,
                 settings=settings,

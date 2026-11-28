@@ -1,18 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import type { FallSettingsView } from "../fall-settings-contract";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 
 // 홈캠 설정 block from the reviewed mockup (Settings.dc.html). Only the owner
 // changes settings; shared users see the current state.
 
 type Request = (url: string, init?: RequestInit) => Promise<Response>;
-type FallView = {
-  settings: { settingsRevision: string; enabled: boolean; cameraEnabled: boolean; cloudConsent: boolean };
-  receiptState: "waiting" | "no_response" | "reported";
-};
-
 function Switch({ checked, disabled, label, onChange }: {
   checked: boolean; disabled: boolean; label: string; onChange: () => void;
 }) {
@@ -20,6 +16,85 @@ function Switch({ checked, disabled, label, onChange }: {
     <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
       className={`fall-switch ${checked ? "is-on" : ""}`} onClick={onChange}><span /></button>
   );
+}
+
+function useFallSettings(deviceId: string, demo = false) {
+  const base = `/api/devices/${encodeURIComponent(deviceId)}`;
+  const request = useCallback<Request>((url, init) =>
+    demo ? demoIncidentFetch(url, init) : fetch(url, init), [demo]);
+  const [fall, setFall] = useState<FallSettingsView | null>(null);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [saveError, setSaveError] = useState(false);
+
+  const reads = useRef({ issued: 0, applied: 0 });
+  const load = useCallback(async () => {
+    const sequence = ++reads.current.issued;
+    const fallResponse = await request(`${base}/fall-settings`, { cache: "no-store" }).catch(() => null);
+    if (!fallResponse?.ok) return;
+    const view: FallSettingsView | null = await fallResponse.json().catch(() => null);
+    if (view && sequence > reads.current.applied) {
+      reads.current.applied = sequence;
+      setFall(view);
+    }
+  }, [base, request]);
+
+  useEffect(() => {
+    const order = reads.current;
+    window.queueMicrotask(() => void load());
+    const timer = window.setInterval(() => void load(), 5_000);
+    return () => {
+      window.clearInterval(timer);
+      order.applied = order.issued;
+    };
+  }, [load]);
+
+  const updateFall = async (field: "enabled" | "cloudConsent", value: boolean) => {
+    if (!fall || busy) return;
+    setBusy(field);
+    setSaveError(false);
+    setMessage("");
+    try {
+      const response = await request(`${base}/fall-settings`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedRevision: fall.settings.settingsRevision, [field]: value }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? "설정을 저장하지 못했어요.");
+      setMessage("저장했어요. 말벗이 적용하면 상태가 바뀌어요.");
+    } catch (reason) {
+      setSaveError(true);
+      setMessage(reason instanceof Error ? reason.message : "설정을 저장하지 못했어요.");
+    } finally {
+      await load();
+      setBusy("");
+    }
+  };
+
+  return { fall, busy, message, saveError, updateFall };
+}
+
+export function BringupFallToggle({ deviceId, disabled }: { deviceId: string; disabled: boolean }) {
+  const { fall, busy, message, saveError, updateFall } = useFallSettings(deviceId);
+  const report = fall?.reports?.[0];
+  const enabled = fall?.settings.enabled ?? false;
+  const applied = report?.applied && report.appliedRevision === fall?.settings.settingsRevision
+    && report.enabled === enabled;
+  let status = "설정 확인 중";
+  if (fall) {
+    if (busy) status = "저장 중";
+    else if (applied) status = enabled ? "켜기 설정 적용 기록 있음" : "끄기 설정 적용 기록 있음";
+    else if (fall.receiptState === "waiting") status = "로봇 적용 확인 중";
+    else status = "로봇 적용 미확인";
+  }
+  return <div className="fall-settings-row">
+    <span><strong>낙상 감지</strong><small role="status">{status}</small>
+      {saveError && <small>{message}</small>}
+    </span>
+    <Switch label="낙상 감지" checked={enabled}
+      disabled={disabled || !fall || !!busy || (!enabled && !fall.settings.cameraEnabled)}
+      onChange={() => void updateFall("enabled", !enabled)} />
+  </div>;
 }
 
 export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordingEnabled, microphoneEnabled,
@@ -35,43 +110,7 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
   /** 목록 마지막 줄(음성으로 홈캠 사용, 목업 51번). */
   lastRow?: ReactNode;
 }) {
-  const base = `/api/devices/${encodeURIComponent(deviceId)}`;
-  const request = useCallback<Request>((url, init) =>
-    demo ? demoIncidentFetch(url, init) : fetch(url, init), [demo]);
-  const [fall, setFall] = useState<FallView | null>(null);
-  const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
-
-  const load = useCallback(async () => {
-    const fallResponse = await request(`${base}/fall-settings`, { cache: "no-store" }).catch(() => null);
-    if (fallResponse?.ok) setFall(await fallResponse.json());
-  }, [base, request]);
-
-  useEffect(() => {
-    window.queueMicrotask(() => void load());
-    const timer = window.setInterval(() => void load(), 5_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  const updateFall = async (field: "enabled" | "cloudConsent", value: boolean) => {
-    if (!fall) return;
-    setBusy(field);
-    setMessage("");
-    try {
-      const response = await request(`${base}/fall-settings`, {
-        method: "PATCH", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ expectedRevision: fall.settings.settingsRevision, [field]: value }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "설정을 저장하지 못했어요.");
-      setMessage("저장했어요. 말벗이 적용하면 상태가 바뀌어요.");
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "설정을 저장하지 못했어요.");
-    } finally {
-      await load();
-      setBusy("");
-    }
-  };
+  const { fall, busy, message, updateFall } = useFallSettings(deviceId, demo);
 
   const rows: Array<{ title: string; desc: string; checked: boolean; needsCamera: boolean; onChange: () => void; busy: boolean }> = [
     { title: "카메라 사용", desc: "끄면 실시간 보기·연속 녹화·영상 분석이 모두 멈춰요.", checked: cameraEnabled,

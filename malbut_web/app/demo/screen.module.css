@@ -1,0 +1,256 @@
+.page {
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: clamp(10px, 1.1vw, 20px);
+  background: #f4efe7;
+  color: #17353a;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1vw, 18px);
+  font-family: Pretendard, sans-serif;
+}
+.header,
+.camera,
+.chat {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 3px 12px #312b1d12;
+}
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fcf9f4;
+  padding: 8px 14px;
+}
+.header h1,
+.chat h2 {
+  margin: 0;
+  font-size: clamp(17px, 1.45vw, 25px);
+  font-weight: 750;
+}
+.header div {
+  display: flex;
+  gap: 7px;
+}
+.header button {
+  background: transparent;
+  border: 1px solid #ded6c9;
+  border-radius: 12px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+}
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.72fr) minmax(0, 1fr);
+  gap: clamp(10px, 1vw, 18px);
+}
+.camera {
+  position: relative;
+  background: #101614;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tags {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.tags span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 20px;
+  padding: 5px 9px;
+  background: #050909c9;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+}
+.tags i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff584a;
+}
+.tags span + span i {
+  background: #49dc92;
+}
+.frame {
+  width: 100%;
+  max-height: 100%;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.frame video,
+.frame svg[role="img"] {
+  display: block;
+  width: 100%;
+  max-height: calc(100dvh - 95px);
+  object-fit: contain;
+}
+.frame > span {
+  position: absolute;
+  color: white;
+  background: #182323c9;
+  padding: 8px;
+  border-radius: 8px;
+}
+.frame > span button {
+  margin-inline-start: 8px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.frame strong {
+  position: absolute;
+  top: clamp(16px, 3%, 30px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: white;
+  font-size: clamp(16px, 1.65vw, 30px);
+  padding: 12px 22px;
+  border-radius: 99px;
+  box-shadow: 0 6px 18px #0003;
+}
+.ok {
+  background: #287c52;
+}
+.alert {
+  background: #b63732;
+}
+.chat {
+  min-height: 0;
+  background: #bdcfdf;
+  display: flex;
+  flex-direction: column;
+  color: #1d3038;
+}
+.chat header {
+  padding: 13px 15px;
+  background: #d5e1eb;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 9px;
+}
+.chat h2 {
+  font-size: 16px;
+}
+.chat small {
+  font-size: 11px;
+  color: #435761;
+}
+.history {
+  padding: 16px 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.robot,
+.user {
+  position: relative;
+  margin-bottom: 14px;
+}
+.robot {
+  padding-left: 29px;
+}
+.robot > b {
+  font-size: 11px;
+  display: block;
+  margin: 0 0 4px;
+}
+.robot > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: #226974;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  border-radius: 7px;
+  padding: 6px 2px;
+}
+.message {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+}
+.user .message {
+  flex-direction: row-reverse;
+}
+.message p {
+  font-size: clamp(14px, 1.12vw, 22px);
+  line-height: 1.5;
+  background: white;
+  color: #232323;
+  border-radius: 4px 15px 15px;
+  padding: 9px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 78%;
+}
+.user p {
+  background: #ffe400;
+  border-radius: 15px 4px 15px 15px;
+}
+.message time {
+  font-size: 10px;
+  color: #4a5964;
+  white-space: nowrap;
+}
+.message em {
+  display: table;
+  color: #b13d30;
+  background: #fbe8e5;
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-bottom: 3px;
+}
+.empty {
+  text-align: center;
+  color: #475d69;
+  font-size: 14px;
+}
+.error {
+  padding: 8px 14px;
+  color: #8b3326;
+  background: #fff2eb;
+  margin: 0;
+}
+@media (max-width: 720px) and (orientation: portrait) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .frame svg[role="img"],
+  .frame video {
+    max-height: 43dvh;
+  }
+}

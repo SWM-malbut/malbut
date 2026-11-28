@@ -174,7 +174,8 @@ function formatViewerClock(value: number) {
   }).format(new Date(value));
 }
 
-function Viewer({
+export function Viewer({
+  cameraOnly = false,
   deviceId,
   device,
   onExit,
@@ -187,6 +188,7 @@ function Viewer({
   device?: HomecamDevice;
   onExit: (tab?: HomecamTab) => void;
   embedded?: boolean;
+  cameraOnly?: boolean;
   onMediaReadyChange?: (ready: boolean) => void;
   /** Embedded in the app: the 스피커 switch lives in the 현재 상태 card, outside this viewer. */
   onSpeakerChange?: (speaker: LiveSpeaker | null) => void;
@@ -1330,6 +1332,37 @@ function Viewer({
   }, [onTalkChange, talkPhase, state, talkRemainingMs, talkHolder, talkEnded, microphoneNotice]);
   useEffect(() => () => onTalkChange?.(null), [onTalkChange]);
 
+  function reconnect() {
+    if (automaticReconnectTimerRef.current !== null) {
+      window.clearTimeout(automaticReconnectTimerRef.current);
+      automaticReconnectTimerRef.current = null;
+    }
+    if (stableLiveTimerRef.current !== null) {
+      window.clearTimeout(stableLiveTimerRef.current);
+      stableLiveTimerRef.current = null;
+    }
+    automaticReconnectAttemptsRef.current = 0;
+    reconnectPendingRef.current = false;
+    viewerAccessRevokedRef.current = false;
+    releaseTalkLease();
+    setError("");
+    viewerStateRef.current = "connecting";
+    setState("connecting");
+    setSoundBlocked(false);
+    setStorageMode(null);
+    viewerGenerationRef.current += 1;
+    setAttempt((value) => value + 1);
+  }
+
+  if (cameraOnly) return <>
+    <video ref={videoRef} autoPlay playsInline muted aria-label="말벗 실시간 카메라" />
+    {state !== "live" && <span role="status">
+      {error || STATE_COPY[state]}
+      {(state === "offline" || state === "error") &&
+        <button type="button" onClick={reconnect}>다시 연결</button>}
+    </span>}
+  </>;
+
   return (
     <div className={`homecam-shell homecam-stream-shell ${embedded ? "is-embedded" : ""}`}>
       <HomecamHeader activeTab="live" onNavigate={onExit} />
@@ -1487,27 +1520,7 @@ function Viewer({
                   type="button"
                   className="homecam-stream-control-button"
                   disabled={microphonePending}
-                  onClick={() => {
-                    if (automaticReconnectTimerRef.current !== null) {
-                      window.clearTimeout(automaticReconnectTimerRef.current);
-                      automaticReconnectTimerRef.current = null;
-                    }
-                    if (stableLiveTimerRef.current !== null) {
-                      window.clearTimeout(stableLiveTimerRef.current);
-                      stableLiveTimerRef.current = null;
-                    }
-                    automaticReconnectAttemptsRef.current = 0;
-                    reconnectPendingRef.current = false;
-                    viewerAccessRevokedRef.current = false;
-                    releaseTalkLease();
-                    setError("");
-                    viewerStateRef.current = "connecting";
-                    setState("connecting");
-                    setSoundBlocked(false);
-                    setStorageMode(null);
-                    viewerGenerationRef.current += 1;
-                    setAttempt((value) => value + 1);
-                  }}
+                  onClick={reconnect}
                 >
                   <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
                   다시 연결

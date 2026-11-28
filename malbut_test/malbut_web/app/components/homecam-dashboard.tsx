@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { FallHomecamSettings } from "./fall-homecam-settings";
 import { VoiceAgentPanel } from "./voice-agent-panel";
 import { FallIncidentsPanel } from "./fall-incidents-panel";
@@ -549,6 +550,7 @@ export function HomecamDashboard({
   onReleaseLive,
   liveViewer,
 }: HomecamDashboardProps) {
+  const router = useRouter();
   const [devices, setDevices] = useState<HomecamDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [tab, setTab] = useState<HomecamTab>(initialTab);
@@ -1615,6 +1617,9 @@ export function HomecamDashboard({
                   <span>개발자 화면 (주행·디버그)</span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
+                {isOwner && selectedDevice && <button type="button" onClick={() => router.push("/demo?device=" + encodeURIComponent(selectedDevice.id))}>
+                  <span>시연 화면 (낙상 확인 · 대화)</span><CaretRight size={18} aria-hidden="true" />
+                </button>}
               </div>
             </div>
           </section>

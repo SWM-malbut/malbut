@@ -55,6 +55,7 @@ install(PROGRAMS
   scripts/wait_for_robot scripts/zone_filter scripts/robot_web_panel scripts/robot_cloud_sync
   scripts/speech_preflight
   scripts/runtime_control
+  scripts/demo_overlay
   scripts/velocity_controller
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME}
