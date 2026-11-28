@@ -118,7 +118,9 @@ def _setup(context):
 
     if fall_inputs is None:
         return [LogInfo(msg='Fall module disabled: no configured fall runtime.')]
-    actions = [fall_monitor, fall_pose]
+    actions = [fall_monitor, fall_pose, Node(
+        package='malbut_bringup', executable='demo_overlay', output='screen',
+        parameters=[{'image_topic': value('rgb_topic')}])]
     if not getattr(context.locals, 'malbut_modular_bringup', False):
         # Run alone, this module brings the fall rules as the coordinator did;
         # under Bringup the agent module runs them beside the dialogue.

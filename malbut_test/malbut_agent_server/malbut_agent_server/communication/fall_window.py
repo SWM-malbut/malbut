@@ -97,7 +97,7 @@ def follow_fall_window(node: Any) -> None:
         announce()
 
 
-def answer_during_fall_check(node: Any, utterance_id: str, text: str) -> None:
+def answer_during_fall_check(node: Any, utterance_id: str, text: str) -> bool:
     """Before the question: help alerts at once, a stop ends the check, else wait."""
     kind = (
         'help' if asks_for_help(text)
@@ -105,7 +105,7 @@ def answer_during_fall_check(node: Any, utterance_id: str, text: str) -> None:
     )
     if kind is None:
         node.say(FALL_CHECK_BUSY, request_id=utterance_id)
-        return
+        return False
     node._fall_voice.publish(node._fall_voice_message(data=json.dumps(
         {'kind': kind, 'utterance_id': utterance_id},
     )))
@@ -116,3 +116,4 @@ def answer_during_fall_check(node: Any, utterance_id: str, text: str) -> None:
     node.get_logger().info(json.dumps({
         'event': 'fall_check_voice', 'kind': kind, 'utterance_id': utterance_id,
     }, ensure_ascii=False))
+    return True

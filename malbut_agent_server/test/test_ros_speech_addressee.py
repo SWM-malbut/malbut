@@ -1,5 +1,6 @@
 """Exercise asynchronous Service callbacks without a ROS installation."""
 
+import json
 import sqlite3
 import sys
 from types import SimpleNamespace
@@ -77,7 +78,7 @@ def node(monkeypatch, tmp_path, request):
 
         def create_publisher(self, message_type, topic, qos):
             messages[topic] = []
-            return SimpleNamespace(publish=messages[topic].append)
+            return SimpleNamespace(publish=messages[topic].append, get_subscription_count=lambda: 0)
 
         def create_subscription(self, message_type, topic, callback, qos):
             subscriptions[topic] = (callback, qos)
@@ -184,6 +185,17 @@ def request(uid='uid', pid='pid', text='  원문\n'):
 def result(uid='uid', pid='pid', decision='addressed'):
     return {'kind': 'addressee', 'utterance_id': uid,
             'playback_id': pid, 'decision': decision}
+
+
+@pytest.mark.parametrize('listeners', [0, 1])
+def test_demo_relay_only_receives_an_admitted_transcript_once(node, listeners):
+    node._demo_user_pub.get_subscription_count = lambda: listeners
+    message = SimpleNamespace(session_id='', utterance_id='demo-turn', text='지금 몇 시예요?')
+    node._receive_speech(message)
+    node._receive_speech(message)
+    messages = [json.loads(item.data) for item in node.sent['/malbut/demo/user']]
+    expected = {'id': 'demo-turn', 'text': message.text, 'confirmation': False}
+    assert messages == ([expected] if listeners else [])
 
 
 def test_semantic_close_announces_only_the_current_turn_once(node):

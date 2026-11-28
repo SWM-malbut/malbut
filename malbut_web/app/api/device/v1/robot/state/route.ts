@@ -1,4 +1,5 @@
 import { listClosedFallIncidentsForRobot } from "../../../../../../db/fall-review";
+import { demoLease } from "../../../../../../db/demo-feed";
 import { storeRobotState } from "../../../../../../db/robot-map";
 import { parseRobotState, readRobotJson } from "../../../../../robot-contract";
 import { noStore, unauthorized } from "../../../../../api-response";
@@ -23,6 +24,8 @@ export async function POST(request: Request) {
       accepted: true, closedFallIncidents: await closedFallIncidents(device.deviceId),
       ...(voiceProfile ? { voiceProfile } : {}),
       ...(homecam ? { homecam } : {}),
+      ...(body && typeof body === "object" && "demoCapable" in body && body.demoCapable === true
+        ? { demo: await demoLease(device.deviceId).catch(() => null) } : {}),
     }, 202);
   } catch (error) {
     return robotUploadError(error);

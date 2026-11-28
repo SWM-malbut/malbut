@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Render time-aligned pose overlays while a demo viewer is active."""
+
+from malbut_bringup.demo_overlay import main
+
+
+if __name__ == '__main__':
+    main()

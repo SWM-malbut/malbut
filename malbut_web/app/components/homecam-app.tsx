@@ -174,7 +174,8 @@ function formatViewerClock(value: number) {
   }).format(new Date(value));
 }
 
-function Viewer({
+export function Viewer({
+  cameraOnly = false,
   deviceId,
   device,
   onExit,
@@ -187,6 +188,7 @@ function Viewer({
   device?: HomecamDevice;
   onExit: (tab?: HomecamTab) => void;
   embedded?: boolean;
+  cameraOnly?: boolean;
   onMediaReadyChange?: (ready: boolean) => void;
   /** Embedded in the app: the 스피커 switch lives in the 현재 상태 card, outside this viewer. */
   onSpeakerChange?: (speaker: LiveSpeaker | null) => void;
@@ -1329,6 +1331,11 @@ function Viewer({
     });
   }, [onTalkChange, talkPhase, state, talkRemainingMs, talkHolder, talkEnded, microphoneNotice]);
   useEffect(() => () => onTalkChange?.(null), [onTalkChange]);
+
+  if (cameraOnly) return <>
+    <video ref={videoRef} autoPlay playsInline muted aria-label="말벗 실시간 카메라" />
+    {state !== "live" && <span role="status">{error || STATE_COPY[state]}</span>}
+  </>;
 
   return (
     <div className={`homecam-shell homecam-stream-shell ${embedded ? "is-embedded" : ""}`}>
