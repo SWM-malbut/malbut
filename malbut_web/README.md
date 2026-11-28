@@ -12,7 +12,7 @@
 
 개발 PC에서는 `NEXT_PUBLIC_HOMECAM_UI_DEMO=1 npm run dev -- -p 3100`으로 시작한 뒤
 `http://localhost:3100/demo`에서 48초짜리 로컬 시연을 볼 수 있습니다.
-실서비스는 장치 인증과 소유자 세션, DB 마이그레이션 `0030_demo_feed`를 사용합니다.
+실서비스는 장치 인증과 소유자 세션, DB 마이그레이션 `0031_demo_clear_observation`까지 적용해야 합니다.
 시연 중 로봇이 그린 관절은 같은 영상 스트림을 쓰는 홈캠과 녹화에도 표시됩니다.
 
 ## 현재 실기기 연결

@@ -283,6 +283,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
     "/api/device/v1/heartbeat",
     "/api/device/v1/events",
     "/api/device/v1/event-clips/*",
+    "/api/device/v1/robot/demo",
     "/api/device/v1/robot/state",
     "/api/device/v1/robot/map",
     "/api/device/v1/robot/commands",

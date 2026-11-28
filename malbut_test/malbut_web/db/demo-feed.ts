@@ -26,7 +26,8 @@ export async function exchangeDemo(device: string, report: DemoReport) {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `UPDATE demo_sessions s SET pose_count=$3,suspect=$4,pose_at=now()
+      `UPDATE demo_sessions s SET pose_count=$3,suspect=$4,pose_at=now(),
+       last_clear_at=CASE WHEN $3::integer IS NOT NULL AND NOT $4 THEN now() ELSE last_clear_at END
       WHERE device_id=$1 AND session_id=$2 AND ${live} RETURNING owner_id,started_at`,
       [device, report.session, report.count, report.suspect],
     );
@@ -78,7 +79,7 @@ export async function viewerDemo(
       );
     const existing = (
       await client.query(
-        `SELECT owner_id,session_id,expires_at>now() AS active,
+        `SELECT owner_id,session_id,last_clear_at,expires_at>now() AS active,
       CASE WHEN pose_at>now()-interval '4 seconds' THEN pose_count END AS count,
       (pose_at>now()-interval '4 seconds' AND suspect) AS suspect
       FROM demo_sessions WHERE device_id=$1 FOR UPDATE`,
@@ -112,6 +113,7 @@ export async function viewerDemo(
       VALUES ($1,$2,$3,now()+interval '20 seconds') ON CONFLICT(device_id) DO UPDATE SET
       owner_id=$2,session_id=$3,expires_at=excluded.expires_at,
       pose_at=CASE WHEN demo_sessions.session_id=$3 THEN demo_sessions.pose_at ELSE NULL END,
+      last_clear_at=CASE WHEN demo_sessions.session_id=$3 THEN demo_sessions.last_clear_at ELSE NULL END,
       started_at=CASE WHEN demo_sessions.session_id=$3 THEN demo_sessions.started_at ELSE now() END`,
         [device, user, session],
       );
@@ -125,13 +127,13 @@ export async function viewerDemo(
       .reverse()
       .map((r) => ({ ...r, at: Number(r.at) }) as DemoLine);
     const incidents = await client.query(
-      `SELECT i.state,i.answer,
+      `SELECT i.state,i.answer, e.received_at < $2::timestamptz AS "clearedAfterResult",
       (extract(epoch FROM (e.payload_json::jsonb->>'occurredAt')::timestamptz)*1000)::bigint AS updated,
       (extract(epoch FROM i.occurred_at)*1000)::bigint AS opened
       FROM fall_incidents i JOIN fall_incident_events e ON (e.device_id,e.incident_id,e.sequence)=(i.device_id,i.incident_id,i.latest_sequence)
       WHERE i.device_id=$1 AND i.updated_at>=now()-interval '10 minutes'
       ORDER BY opened DESC LIMIT 1`,
-      [device],
+      [device, pose?.last_clear_at ?? null],
     );
     await client.query("COMMIT");
     return {

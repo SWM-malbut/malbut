@@ -72,7 +72,7 @@ export function BringupFallToggle({ deviceId, disabled }: { deviceId: string; di
   let status = "설정 확인 중";
   if (fall) {
     if (busy) status = "저장 중";
-    else if (applied) status = enabled ? "켜짐 · 로봇 적용 확인" : "꺼짐 · 로봇 적용 확인";
+    else if (applied) status = enabled ? "켜기 설정 적용 기록 있음" : "끄기 설정 적용 기록 있음";
     else if (fall.receiptState === "waiting") status = "로봇 적용 확인 중";
     else status = "로봇 적용 미확인";
   }

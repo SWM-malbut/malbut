@@ -112,6 +112,16 @@
   padding: 8px;
   border-radius: 8px;
 }
+.frame > span button {
+  margin-inline-start: 8px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
 .frame strong {
   position: absolute;
   top: clamp(16px, 3%, 30px);

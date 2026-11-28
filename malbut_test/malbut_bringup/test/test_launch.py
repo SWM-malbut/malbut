@@ -835,7 +835,8 @@ def test_upload_setup_failure_does_not_disable_detection(launch_module, fall_con
     context.environment.update(environment)
     actions = module._setup(context)
     assert {a.node_executable for a in actions if isinstance(a, Node)} == {
-        'malbut-fall-monitor', 'homecam_detector_node', 'agent_communication', 'fall_approach'}
+        'malbut-fall-monitor', 'homecam_detector_node', 'demo_overlay',
+        'agent_communication', 'fall_approach'}
     assert not any(isinstance(a, ExecuteProcess) and not isinstance(a, Node) for a in actions)
     assert any(isinstance(a, LogInfo) for a in actions)
 

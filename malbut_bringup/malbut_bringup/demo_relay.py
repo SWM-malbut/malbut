@@ -136,7 +136,7 @@ class DemoRelay:
                                count=count if now-at < 2 else None,
                                suspect=suspect and now-at < 2)
             try:
-                reply = self.client.request('/api/device/v1/demo', 'POST', payload)
+                reply = self.client.request('/api/device/v1/robot/demo', 'POST', payload)
             except RuntimeError:
                 continue
             if isinstance(reply, dict) and reply.get('accepted') is True:

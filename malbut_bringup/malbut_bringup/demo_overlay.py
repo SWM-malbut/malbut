@@ -150,7 +150,7 @@ def main(args=None):
                 self.timer = self.create_timer(1/45, self._render)
 
         def _frame(self, msg):
-            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1_000_000_000.0
             if stamp < self.last_frame:
                 self.frames.clear()
                 self.poses.clear()
@@ -164,7 +164,7 @@ def main(args=None):
             data = json.loads(msg.data)
             capture = data.get('captureStamp')
             if capture and data['status'] == 'ok':
-                stamp = capture['sec'] + capture['nanosec']*1e-9
+                stamp = capture['sec'] + capture['nanosec'] / 1_000_000_000.0
                 self.poses.append((stamp, observed_people(data), data['frameId']))
             else:
                 self.poses.clear()
@@ -194,10 +194,13 @@ def main(args=None):
                           key=lambda c: abs(c[0]-stamp), default=None)
             suspects = nearest[1] if nearest and abs(nearest[0]-stamp) <= .2 else set()
             self.output.publish(annotate(msg, people, suspects))
-            # A healthy pose packet with no people is distinct from a missing detector.
-            if any(abs(p[0]-stamp) <= .22 for p in observations):
-                status = [len(people), bool(suspects & people.keys())]
-                self.status.publish(String(data=json.dumps(status)))
+            # Report a clear only from a detector frame that has both observations.
+            # Interpolation can be empty when two tracks do not overlap.
+            if nearest and abs(nearest[0]-stamp) <= .2:
+                observed = next((p[1] for p in observations if p[0] == nearest[0]), None)
+                if observed is not None:
+                    status = [len(observed), bool(nearest[1] & observed.keys())]
+                    self.status.publish(String(data=json.dumps(status)))
 
     rclpy.init(args=args)
     node = Overlay()

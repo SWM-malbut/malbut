@@ -72,6 +72,7 @@ type Incident = {
   answer: string | null;
   opened: number;
   updated: number;
+  clearedAfterResult: boolean | null;
 };
 export function fallBadge(
   incident: Incident | undefined,
@@ -79,7 +80,9 @@ export function fallBadge(
   suspect: boolean,
   now: number,
 ): DemoBadge | null {
-  if (incident && now - incident.updated <= 600_000) {
+  // A new detection after an observed clear starts a separate episode.
+  const nextEpisode = suspect && incident?.state === "resolved" && incident.clearedAfterResult;
+  if (incident && !nextEpisode && now - incident.updated <= 600_000) {
     if (
       incident.answer === "help_request" ||
       incident.state === "help_required"
@@ -106,6 +109,7 @@ export function fallBadge(
       (l) =>
         l.confirmation &&
         l.speaker === "robot" &&
+        (!nextEpisode || l.at > incident.updated) &&
         Math.abs(now - l.at) < 15_000,
     )
   )

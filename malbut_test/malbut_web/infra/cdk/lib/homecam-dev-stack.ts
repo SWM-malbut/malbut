@@ -827,7 +827,7 @@ export class HomecamDevStack extends Stack {
         ["PublicHealth", 1, ["/api/health"]],
         ["PublicLogoutLanding", 2, ["/auth/logout", "/auth/logout/complete"]],
         ["DeviceSessionApi", 3, ["/api/device/v1/session"]],
-        ["DeviceHeartbeatApi", 4, ["/api/device/v1/heartbeat"]],
+        ["DeviceHeartbeatApi", 4, ["/api/device/v1/heartbeat", "/api/device/v1/robot/demo"]],
         [
           "DeviceEventsApi",
           5,
