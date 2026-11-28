@@ -21,7 +21,8 @@ export async function purgeExpiredDemoLines() {
 export async function demoLease(device: string) {
   const result = await getPostgresPool().query(
     `SELECT session_id AS session,
-    ceil(extract(epoch FROM (expires_at-now())) * 1000)::integer AS "ttlMs"
+    ceil(extract(epoch FROM (expires_at-now())) * 1000)::integer AS "ttlMs",
+    EXISTS (SELECT 1 FROM device_state d WHERE d.device_id=s.device_id AND d.camera_enabled=1) AS "cameraEnabled"
     FROM demo_sessions s WHERE device_id=$1 AND ${live}`,
     [device],
   );
